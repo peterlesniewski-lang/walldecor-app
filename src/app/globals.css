@@ -1,26 +1,58 @@
 @import "tailwindcss";
 
+/* ─── WallDecor Design System ──────────────────────────────────────────────── */
+
 :root {
-  --background: #ffffff;
-  --foreground: #171717;
+  /* Brand palette */
+  --wd-sand:       #E4DCD1;  /* ciepły beż — główny akcent, aktywne elementy */
+  --wd-sand-light: #E4DBD1;  /* jaśniejszy wariant beżu — hover, tła kart */
+  --wd-dark:       #1E1E1E;  /* prawie czarny — sidebar, nagłówki */
+  --wd-off-white:  #FCFCFC;  /* tło aplikacji */
+  --wd-white:      #FFFFFF;  /* karty, panele */
+
+  /* shadcn/ui CSS variables */
+  --background:    #FCFCFC;
+  --foreground:    #1E1E1E;
+  --card:          #FFFFFF;
+  --card-foreground: #1E1E1E;
+  --popover:       #FFFFFF;
+  --popover-foreground: #1E1E1E;
+  --primary:       #E4DCD1;
+  --primary-foreground: #1E1E1E;
+  --secondary:     #F5F2EF;
+  --secondary-foreground: #1E1E1E;
+  --muted:         #F5F2EF;
+  --muted-foreground: #6B6560;
+  --accent:        #E4DCD1;
+  --accent-foreground: #1E1E1E;
+  --destructive:   #DC2626;
+  --destructive-foreground: #FFFFFF;
+  --border:        #E8E4E0;
+  --input:         #E8E4E0;
+  --ring:          #E4DCD1;
+  --radius:        0.5rem;
+
+  /* Sidebar */
+  --sidebar-bg:          #1E1E1E;
+  --sidebar-text:        #C9C3BC;
+  --sidebar-active-bg:   #E4DCD1;
+  --sidebar-active-text: #1E1E1E;
+  --sidebar-hover-bg:    #2A2A2A;
+  --sidebar-border:      #2E2E2E;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-geist-sans);
-  --font-mono: var(--font-geist-mono);
-}
-
-@media (prefers-color-scheme: dark) {
-  :root {
-    --background: #0a0a0a;
-    --foreground: #ededed;
-  }
+  --font-sans: var(--font-inter);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: Arial, Helvetica, sans-serif;
+  font-family: var(--font-inter), Arial, sans-serif;
+}
+
+* {
+  border-color: var(--border);
 }

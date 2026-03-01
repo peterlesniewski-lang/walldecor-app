@@ -1,0 +1,13 @@
+node_modules
+.next
+.env.local
+*.db
+*.db-journal
+*.db-shm
+*.db-wal
+__tests__
+e2e
+coverage
+.git
+.claude
+README.md

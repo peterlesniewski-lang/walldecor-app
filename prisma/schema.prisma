@@ -1,0 +1,212 @@
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "sqlite"
+  url      = env("DATABASE_URL")
+}
+
+// ─── M1 Core Models ──────────────────────────────────────────────────────────
+
+model CostCenter {
+  id          String  @id
+  name        String
+  description String?
+
+  budgetEntries    BudgetEntry[]
+  actualEntries    ActualEntry[]
+  revenues         Revenue[]
+  employees        Employee[]
+  paymentReminders PaymentReminder[]
+}
+
+model AccountCategory {
+  id            String        @id @default(cuid())
+  name          String        @unique
+  order         Int
+  subCategories SubCategory[]
+}
+
+model SubCategory {
+  id         String          @id @default(cuid())
+  name       String
+  order      Int
+  categoryId String
+  category   AccountCategory @relation(fields: [categoryId], references: [id])
+
+  budgetEntries BudgetEntry[]
+  actualEntries ActualEntry[]
+}
+
+// Role: ADMIN | MANAGER | EMPLOYEE
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  name         String
+  role         String    @default("EMPLOYEE")
+  passwordHash String
+  employeeId   String?   @unique
+  employee     Employee? @relation(fields: [employeeId], references: [id])
+  createdAt    DateTime  @default(now())
+}
+
+// ─── Finance Models ───────────────────────────────────────────────────────────
+
+model BudgetEntry {
+  id            String      @id @default(cuid())
+  year          Int
+  month         Int
+  amount        Float
+  costCenterId  String
+  costCenter    CostCenter  @relation(fields: [costCenterId], references: [id])
+  subCategoryId String
+  subCategory   SubCategory @relation(fields: [subCategoryId], references: [id])
+
+  @@unique([year, month, costCenterId, subCategoryId])
+}
+
+model ActualEntry {
+  id            String      @id @default(cuid())
+  year          Int
+  month         Int
+  amount        Float
+  costCenterId  String
+  costCenter    CostCenter  @relation(fields: [costCenterId], references: [id])
+  subCategoryId String
+  subCategory   SubCategory @relation(fields: [subCategoryId], references: [id])
+
+  @@unique([year, month, costCenterId, subCategoryId])
+}
+
+// channel: SALON | ECOMMERCE
+model Revenue {
+  id           String     @id @default(cuid())
+  year         Int
+  month        Int
+  amount       Float
+  costCenterId String
+  costCenter   CostCenter @relation(fields: [costCenterId], references: [id])
+  channel      String
+
+  @@unique([year, month, costCenterId, channel])
+}
+
+model PaymentReminder {
+  id           String     @id @default(cuid())
+  name         String
+  amount       Float
+  dayOfMonth   Int
+  costCenterId String
+  costCenter   CostCenter @relation(fields: [costCenterId], references: [id])
+  active       Boolean    @default(true)
+  createdAt    DateTime   @default(now())
+}
+
+// ─── HR Models ────────────────────────────────────────────────────────────────
+
+// costCenterId: JAG | PUL | GLOBAL
+model Employee {
+  id           String     @id @default(cuid())
+  firstName    String
+  lastName     String
+  email        String     @unique
+  phone        String?
+  position     String
+  costCenterId String
+  costCenter   CostCenter @relation(fields: [costCenterId], references: [id])
+  startDate    DateTime
+  endDate      DateTime?
+  active       Boolean    @default(true)
+  userId       String?    @unique
+  user         User?
+
+  contracts           Contract[]
+  additionalContracts AdditionalContract[]
+  salaryHistory       SalaryHistory[]
+  leaveRequests       LeaveRequest[]
+  leaveBalances       LeaveBalance[]
+  workTimeRecords     WorkTimeRecord[]
+
+  createdAt DateTime @default(now())
+}
+
+// type: UOP | B2B | UZ
+model Contract {
+  id         String    @id @default(cuid())
+  employeeId String
+  employee   Employee  @relation(fields: [employeeId], references: [id])
+  type       String
+  startDate  DateTime
+  endDate    DateTime?
+  salary     Float
+  active     Boolean   @default(true)
+  createdAt  DateTime  @default(now())
+}
+
+// type: UOP | B2B | UZ
+model AdditionalContract {
+  id          String    @id @default(cuid())
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id])
+  description String
+  type        String
+  amount      Float
+  startDate   DateTime
+  endDate     DateTime?
+  active      Boolean   @default(true)
+}
+
+model SalaryHistory {
+  id            String   @id @default(cuid())
+  employeeId    String
+  employee      Employee @relation(fields: [employeeId], references: [id])
+  amount        Float
+  effectiveFrom DateTime
+  notes         String?
+  createdAt     DateTime @default(now())
+}
+
+// type: VACATION | SICK | CARE | OTHER
+// status: PENDING | APPROVED | REJECTED
+model LeaveRequest {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  type       String
+  startDate  DateTime
+  endDate    DateTime
+  days       Int
+  status     String   @default("PENDING")
+  note       String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+// type: VACATION | SICK | CARE | OTHER
+model LeaveBalance {
+  id         String   @id @default(cuid())
+  employeeId String
+  employee   Employee @relation(fields: [employeeId], references: [id])
+  year       Int
+  type       String
+  total      Int
+  used       Int      @default(0)
+
+  @@unique([employeeId, year, type])
+}
+
+model WorkTimeRecord {
+  id            String   @id @default(cuid())
+  employeeId    String
+  employee      Employee @relation(fields: [employeeId], references: [id])
+  date          DateTime
+  startTime     String
+  endTime       String
+  regularHours  Float
+  overtimeHours Float    @default(0)
+  note          String?
+
+  @@unique([employeeId, date])
+}

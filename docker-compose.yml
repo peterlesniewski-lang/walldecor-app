@@ -1,0 +1,26 @@
+version: '3.8'
+
+services:
+  app:
+    build: .
+    ports:
+      - "3000:3000"
+    volumes:
+      - walldecor_db:/data
+    environment:
+      DATABASE_URL: "file:/data/walldecor.db"
+      NEXTAUTH_URL: "${NEXTAUTH_URL:-http://localhost:3000}"
+      NEXTAUTH_SECRET: "${NEXTAUTH_SECRET}"
+      ADMIN_EMAIL: "${ADMIN_EMAIL:-admin@walldecor.pl}"
+      ADMIN_PASSWORD: "${ADMIN_PASSWORD:-ChangeMe123!}"
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:3000/api/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 60s
+    restart: unless-stopped
+
+volumes:
+  walldecor_db:
+    driver: local
