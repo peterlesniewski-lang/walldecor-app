@@ -4,10 +4,10 @@ set -e
 echo "WallDecor — starting..."
 
 echo "Running database migrations..."
-node ./node_modules/prisma/dist/bin.js migrate deploy
+node ./node_modules/prisma/build/index.js migrate deploy
 
 echo "Running database seed..."
-node ./node_modules/prisma/dist/bin.js db seed
+node ./node_modules/prisma/build/index.js db seed
 
 echo "Starting Next.js server..."
 exec node server.js
