@@ -55,9 +55,9 @@ COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
 COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
 COPY --from=deps /app/node_modules/prisma ./node_modules/prisma
 
-# Copy tsx for seed script
-COPY --from=deps /app/node_modules/.bin/tsx ./node_modules/.bin/tsx
-COPY --from=deps /app/node_modules/tsx ./node_modules/tsx
+# Copy tsx for seed script (from builder which has devDependencies)
+COPY --from=builder /app/node_modules/.bin/tsx ./node_modules/.bin/tsx
+COPY --from=builder /app/node_modules/tsx ./node_modules/tsx
 
 # Copy entrypoint
 COPY docker-entrypoint.sh ./
