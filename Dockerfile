@@ -15,7 +15,7 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 
 # Install all dependencies (production + devDependencies for build)
-RUN npm ci && npm install -D typescript
+RUN npm install
 
 COPY . .
 
