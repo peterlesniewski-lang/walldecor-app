@@ -15,7 +15,8 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 
 # Install all dependencies (production + devDependencies for build)
-RUN npm install
+# CRITICAL: --include=dev ensures TypeScript and other build tools are available
+RUN npm ci --include=dev
 
 COPY . .
 
