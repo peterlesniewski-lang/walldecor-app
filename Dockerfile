@@ -12,7 +12,11 @@ FROM base AS builder
 RUN apk add --no-cache libc6-compat openssl
 WORKDIR /app
 
-COPY --from=deps /app/node_modules ./node_modules
+COPY package.json package-lock.json ./
+
+# Install all dependencies (production + devDependencies for build)
+RUN npm ci
+
 COPY . .
 
 # Generate Prisma client
