@@ -259,6 +259,29 @@ M9  — Migracja danych             [ ] Nie rozpoczęta
 
 ---
 
+## Przyszłe funkcje (v2+)
+
+### Hierarchiczne podkategorie (drzewo)
+**Pomysł:** Podkategorie mogą mieć podkategorie (max 1 poziom zagnieżdżenia). Rodzic zawsze pokazuje sumę dzieci — nie można wpisywać wartości bezpośrednio do rodzica.
+
+**Przypadek użycia:** W widoku GLOBAL zamiast "Prąd PUL" i "Prąd JAG" jako osobnych wierszy — jeden wiersz "Prąd" z rozwinięciem na salony.
+
+**Wymagana zmiana schematu:**
+```prisma
+model SubCategory {
+  parentId  String?
+  parent    SubCategory?  @relation("SubCategoryTree", fields: [parentId], references: [id])
+  children  SubCategory[] @relation("SubCategoryTree")
+}
+```
+
+**Reguła biznesowa (ustalona):** Rodzic = suma dzieci, zawsze. Rodzic bez dzieci = leaf (można wpisywać bezpośrednio). Rodzic z dziećmi = czysta suma (edycja zablokowana).
+
+**Złożoność:** Wysoka — refactor grida, rekurencyjne zapytania, DnD w kontekście drzewa.
+**Priorytet:** Po ustabilizowaniu MVP (M5-M8).
+
+---
+
 ## Otwarte decyzje
 
 | Temat | Pytanie | Priorytet |

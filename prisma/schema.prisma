@@ -108,6 +108,55 @@ model Revenue {
   @@unique([year, month, costCenterId, channel])
 }
 
+model CashAccount {
+  id        String               @id @default(cuid())
+  name      String
+  currency  String               @default("PLN")
+  type      String               @default("bank")
+  balance   Float                @default(0)
+  order     Int                  @default(0)
+  isActive  Boolean              @default(true)
+  createdAt DateTime             @default(now())
+  updatedAt DateTime             @updatedAt
+  history   CashBalanceHistory[]
+}
+
+model CashBalanceHistory {
+  id              String      @id @default(cuid())
+  accountId       String
+  account         CashAccount @relation(fields: [accountId], references: [id])
+  previousBalance Float
+  newBalance      Float
+  changedBy       String
+  createdAt       DateTime    @default(now())
+}
+
+model ReceivableEntry {
+  id         String   @id @default(cuid())
+  clientName String?
+  amount     Float
+  dueDate    DateTime
+  status     String   @default("PENDING")
+  notes      String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model CashLiabilitySnapshot {
+  id        String   @id @default(cuid())
+  amount    Float
+  date      DateTime @default(now())
+  notes     String?
+  createdBy String
+  createdAt DateTime @default(now())
+}
+
+model AppSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+}
+
 model PaymentReminder {
   id           String     @id @default(cuid())
   name         String

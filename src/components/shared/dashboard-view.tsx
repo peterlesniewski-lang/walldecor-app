@@ -2,6 +2,7 @@
 
 import { useEffect } from 'react'
 import { useRouter } from 'next/navigation'
+import { CashFlowRow } from '@/components/shared/cash-flow-row'
 import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
@@ -13,6 +14,36 @@ interface CcBreakdown {
   realIncome: number
   planExpenses: number
   realExpenses: number
+}
+
+interface CashAccount {
+  id: string
+  name: string
+  currency: string
+  type: string
+  balance: number
+  order: number
+}
+
+interface ReceivableEntry {
+  id: string
+  clientName?: string | null
+  amount: number
+  dueDate: Date | string
+  status: string
+}
+
+interface CashLiabilitySnapshot {
+  id: string
+  amount: number
+  date: Date | string
+  notes?: string | null
+}
+
+interface Thresholds {
+  cashThresholdVeryGood: number
+  cashThresholdGood: number
+  cashThresholdBad: number
 }
 
 interface DashboardViewProps {
@@ -28,6 +59,13 @@ interface DashboardViewProps {
   userName: string
   prevYearTotalIncome: number
   prevYearTotalExpenses: number
+  cashAccounts: CashAccount[]
+  receivables: ReceivableEntry[]
+  latestLiability: CashLiabilitySnapshot | null
+  thresholds: Thresholds
+  eurRate: number | null
+  eurRateDate: string | null
+  isAdmin: boolean
 }
 
 const MONTHS = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru']
@@ -74,6 +112,13 @@ export function DashboardView({
   userName,
   prevYearTotalIncome,
   prevYearTotalExpenses,
+  cashAccounts,
+  receivables,
+  latestLiability,
+  thresholds,
+  eurRate,
+  eurRateDate,
+  isAdmin,
 }: DashboardViewProps) {
   const router = useRouter()
 
@@ -340,6 +385,17 @@ export function DashboardView({
           </BarChart>
         </ResponsiveContainer>
       </div>
+
+      {/* ── Cash Flow Row ────────────────────────────────────────────────── */}
+      <CashFlowRow
+        initialAccounts={cashAccounts}
+        receivables={receivables}
+        latestLiability={latestLiability}
+        thresholds={thresholds}
+        eurRate={eurRate}
+        eurRateDate={eurRateDate}
+        isAdmin={isAdmin}
+      />
 
       {/* ── Cost center breakdown ────────────────────────────────────────── */}
       <div className="rounded-2xl bg-white overflow-hidden" style={{ boxShadow: 'var(--card-shadow)' }}>

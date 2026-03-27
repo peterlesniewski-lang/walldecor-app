@@ -193,6 +193,32 @@ async function main() {
   })
   console.log(`✅ Admin user seeded (${adminEmail})`)
 
+  // Cash accounts
+  const cashAccountCount = await prisma.cashAccount.count()
+  if (cashAccountCount === 0) {
+    await prisma.cashAccount.createMany({
+      data: [
+        { name: 'Konto 1',        currency: 'PLN', type: 'bank', order: 0 },
+        { name: 'Konto 2',        currency: 'PLN', type: 'bank', order: 1 },
+        { name: 'Gotówka Sejf 1', currency: 'PLN', type: 'cash', order: 2 },
+        { name: 'Gotówka Sejf 2', currency: 'PLN', type: 'cash', order: 3 },
+        { name: 'Konto EUR',      currency: 'EUR', type: 'bank', order: 4 },
+      ],
+    })
+  }
+
+  // App settings (cash thresholds)
+  const settingKeys = ['cashThresholdVeryGood', 'cashThresholdGood', 'cashThresholdBad']
+  for (const key of settingKeys) {
+    const existing = await prisma.appSetting.findUnique({ where: { key } })
+    if (!existing) {
+      const value = key === 'cashThresholdVeryGood' ? '300000'
+                  : key === 'cashThresholdGood'     ? '200000'
+                  :                                   '100000'
+      await prisma.appSetting.create({ data: { key, value } })
+    }
+  }
+
   console.log('🎉 Seeding complete!')
 }
 

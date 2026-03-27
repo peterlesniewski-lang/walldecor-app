@@ -96,7 +96,7 @@ export function RevenueActualsGrid({
     [channels]
   )
 
-  const planCellClass = 'text-right font-mono text-xs px-1 py-1 bg-gray-50 text-gray-400 border-r border-gray-100'
+  const planCellClass = 'text-right font-mono text-[11px] tabular-nums px-1 py-1 bg-gray-100 text-gray-600 border-r border-gray-200'
 
   return (
     <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">

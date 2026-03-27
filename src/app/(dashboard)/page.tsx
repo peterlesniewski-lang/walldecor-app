@@ -17,7 +17,8 @@ export default async function DashboardPage() {
   const prevYear = year - 1
 
   const [revenuePlans, revenueActuals, budgets, actualsWithSubcat,
-         prevRevenuePlans, prevRevenueActuals, prevBudgets, prevActuals] = await Promise.all([
+         prevRevenuePlans, prevRevenueActuals, prevBudgets, prevActuals,
+         cashAccounts, receivables, latestLiability, appSettings] = await Promise.all([
     prisma.revenueBudget.findMany({ where: { year } }),
     prisma.revenue.findMany({ where: { year } }),
     prisma.budgetEntry.findMany({ where: { year } }),
@@ -30,7 +31,37 @@ export default async function DashboardPage() {
     prisma.revenue.findMany({ where: { year: prevYear } }),
     prisma.budgetEntry.findMany({ where: { year: prevYear } }),
     prisma.actualEntry.findMany({ where: { year: prevYear } }),
+    prisma.cashAccount.findMany({ where: { isActive: true }, orderBy: { order: 'asc' } }),
+    prisma.receivableEntry.findMany({ orderBy: { dueDate: 'asc' } }),
+    prisma.cashLiabilitySnapshot.findFirst({ orderBy: { date: 'desc' } }),
+    prisma.appSetting.findMany({
+      where: { key: { in: ['cashThresholdVeryGood', 'cashThresholdGood', 'cashThresholdBad'] } },
+    }),
   ])
+
+  // NBP EUR rate
+  let eurRate: number | null = null
+  let eurRateDate: string | null = null
+  try {
+    const nbpRes = await fetch('https://api.nbp.pl/api/exchangerates/rates/A/EUR/?format=json', {
+      signal: AbortSignal.timeout(3000),
+      next: { revalidate: 3600 },
+    })
+    if (nbpRes.ok) {
+      const nbpData = await nbpRes.json() as { rates: Array<{ mid: number; effectiveDate: string }> }
+      eurRate = nbpData.rates[0]?.mid ?? null
+      eurRateDate = nbpData.rates[0]?.effectiveDate ?? null
+    }
+  } catch {
+    // fallback: null
+  }
+
+  // Cash thresholds
+  const thresholds = {
+    cashThresholdVeryGood: parseFloat(appSettings.find((s) => s.key === 'cashThresholdVeryGood')?.value ?? '300000'),
+    cashThresholdGood: parseFloat(appSettings.find((s) => s.key === 'cashThresholdGood')?.value ?? '200000'),
+    cashThresholdBad: parseFloat(appSettings.find((s) => s.key === 'cashThresholdBad')?.value ?? '100000'),
+  }
 
   // Previous year aggregates
   const prevYearTotalIncome = prevRevenueActuals.length > 0
@@ -81,6 +112,13 @@ export default async function DashboardPage() {
       userName={session.user.name ?? ''}
       prevYearTotalIncome={prevYearTotalIncome}
       prevYearTotalExpenses={prevYearTotalExpenses}
+      cashAccounts={cashAccounts}
+      receivables={receivables}
+      latestLiability={latestLiability}
+      thresholds={thresholds}
+      eurRate={eurRate}
+      eurRateDate={eurRateDate}
+      isAdmin={session.user.role === 'ADMIN'}
     />
   )
 }

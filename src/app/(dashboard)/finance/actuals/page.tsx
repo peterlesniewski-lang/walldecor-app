@@ -18,11 +18,10 @@ export default async function ActualsPage({ searchParams }: PageProps) {
   const isGlobal = costCenterId === 'GLOBAL'
   const where = isGlobal ? { year } : { year, costCenterId }
 
-  const [rawRevenuePlan, rawRevenueReal, rawBudget, rawActuals] = await Promise.all([
+  const [rawRevenuePlan, rawRevenueReal, rawBudget] = await Promise.all([
     prisma.revenueBudget.findMany({ where }),
     prisma.revenue.findMany({ where }),
     prisma.budgetEntry.findMany({ where }),
-    prisma.actualEntry.findMany({ where }),
   ])
 
   const planIncomeByMonth = new Array(12).fill(0) as number[]
@@ -35,7 +34,7 @@ export default async function ActualsPage({ searchParams }: PageProps) {
   for (const e of rawBudget) planExpensesByMonth[e.month - 1] += e.amount
 
   const realExpensesByMonth = new Array(12).fill(0) as number[]
-  for (const e of rawActuals) realExpensesByMonth[e.month - 1] += e.amount
+  for (const e of rawBudget) realExpensesByMonth[e.month - 1] += e.amount
 
   return (
     <PnlView

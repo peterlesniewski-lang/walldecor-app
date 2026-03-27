@@ -14,6 +14,15 @@ Szczegółowe instrukcje dotyczące testów znajdziesz w: @.claude/rules/testing
 
 ---
 
+## Git — reguła po każdej zmianie
+
+**Po zakończeniu każdego bloku pracy** (feature, fix, refactor) zawsze zapytaj użytkownika:
+> „Czy mam zrobić commit i push na git?"
+
+Nie pushuj automatycznie — zawsze czekaj na potwierdzenie.
+
+---
+
 ## Stack — nie zmieniaj bez konsultacji
 
 - **Framework:** Next.js 14+ App Router, TypeScript (strict)

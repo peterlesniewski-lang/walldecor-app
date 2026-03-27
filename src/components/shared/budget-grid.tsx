@@ -30,6 +30,7 @@ interface BudgetGridProps {
   costCenterId: string
   editable: boolean
   canManage: boolean
+  revenueByMonth?: number[]
 }
 
 type ActiveCell = { subId: string; month: number } | null
@@ -43,6 +44,7 @@ export function BudgetGrid({
   costCenterId,
   editable,
   canManage,
+  revenueByMonth = new Array(12).fill(0) as number[],
 }: BudgetGridProps) {
   const [entries, setEntries] = useState<Record<string, number>>(initialEntries)
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
@@ -552,6 +554,91 @@ export function BudgetGrid({
               </td>
             </tr>
           </tfoot>
+          <tbody>
+            {(() => {
+              const profitByMonth = MONTHS.map((_, i) => revenueByMonth[i] - colSum(i + 1))
+              const totalProfit = profitByMonth.reduce((s, v) => s + v, 0)
+
+              const cumulativeProfit: number[] = []
+              let running = 0
+              for (const p of profitByMonth) {
+                running += p
+                cumulativeProfit.push(running)
+              }
+
+              const fmtProfit = (n: number) =>
+                n === 0 ? '—' : (n > 0 ? '+' : '') + Math.round(n).toLocaleString('pl-PL')
+
+              return (
+                <>
+                  {/* Wiersz: Zysk */}
+                  <tr className="border-t-2" style={{ borderColor: 'var(--wd-border)' }}>
+                    <td
+                      className="px-3 py-2 text-sm font-semibold"
+                      style={{ color: 'var(--wd-dark)' }}
+                    >
+                      Zysk
+                    </td>
+                    {profitByMonth.map((p, i) => (
+                      <td
+                        key={i}
+                        className="text-right text-xs font-semibold tabular-nums px-1 py-2 border-r"
+                        style={{
+                          color: p > 0 ? '#16a34a' : p < 0 ? '#dc2626' : '#9ca3af',
+                          borderColor: 'var(--wd-border)',
+                        }}
+                      >
+                        {fmtProfit(p)}
+                      </td>
+                    ))}
+                    <td
+                      className="text-right text-xs font-bold tabular-nums px-3 py-2"
+                      style={{
+                        color: totalProfit > 0 ? '#16a34a' : totalProfit < 0 ? '#dc2626' : '#9ca3af',
+                      }}
+                    >
+                      {fmtProfit(totalProfit)}
+                    </td>
+                  </tr>
+
+                  {/* Wiersz: Zysk narastająco */}
+                  <tr style={{ background: 'var(--wd-off-white, #f9f7f5)' }}>
+                    <td
+                      className="px-3 py-2 text-sm font-semibold"
+                      style={{ color: 'var(--wd-dark)', opacity: 0.75 }}
+                    >
+                      Zysk narastająco
+                    </td>
+                    {cumulativeProfit.map((cp, i) => (
+                      <td
+                        key={i}
+                        className="text-right text-xs font-medium tabular-nums px-1 py-2 border-r"
+                        style={{
+                          color: cp > 0 ? '#16a34a' : cp < 0 ? '#dc2626' : '#9ca3af',
+                          borderColor: 'var(--wd-border)',
+                        }}
+                      >
+                        {fmtProfit(cp)}
+                      </td>
+                    ))}
+                    <td
+                      className="text-right text-xs font-bold tabular-nums px-3 py-2"
+                      style={{
+                        color:
+                          (cumulativeProfit[11] ?? 0) > 0
+                            ? '#16a34a'
+                            : (cumulativeProfit[11] ?? 0) < 0
+                              ? '#dc2626'
+                              : '#9ca3af',
+                      }}
+                    >
+                      {fmtProfit(cumulativeProfit[11] ?? 0)}
+                    </td>
+                  </tr>
+                </>
+              )
+            })()}
+          </tbody>
         </table>
       </div>
     </div>

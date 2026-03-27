@@ -23,12 +23,13 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
   const prevYear = year - 1
 
-  const [revenuePlans, revenueActuals, budgets, actualsWithSubcat,
-         prevRevenuePlans, prevRevenueActuals, prevBudgets, prevActuals] = await Promise.all([
+  const [revenuePlans, revenueActuals, budgets, budgetsWithSubcat,
+         prevRevenuePlans, prevRevenueActuals, prevBudgets, prevBudgetsYoy,
+         cashAccounts, receivables, latestLiability, appSettings] = await Promise.all([
     prisma.revenueBudget.findMany({ where: { year } }),
     prisma.revenue.findMany({ where: { year } }),
     prisma.budgetEntry.findMany({ where: { year } }),
-    prisma.actualEntry.findMany({
+    prisma.budgetEntry.findMany({
       where: { year },
       include: { subCategory: { select: { isFixed: true } } },
     }),
@@ -36,16 +37,44 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     prisma.revenueBudget.findMany({ where: { year: prevYear } }),
     prisma.revenue.findMany({ where: { year: prevYear } }),
     prisma.budgetEntry.findMany({ where: { year: prevYear } }),
-    prisma.actualEntry.findMany({ where: { year: prevYear } }),
+    prisma.budgetEntry.findMany({ where: { year: prevYear } }),
+    prisma.cashAccount.findMany({ where: { isActive: true }, orderBy: { order: 'asc' } }),
+    prisma.receivableEntry.findMany({ orderBy: { dueDate: 'asc' } }),
+    prisma.cashLiabilitySnapshot.findFirst({ orderBy: { date: 'desc' } }),
+    prisma.appSetting.findMany({
+      where: { key: { in: ['cashThresholdVeryGood', 'cashThresholdGood', 'cashThresholdBad'] } },
+    }),
   ])
+
+  // NBP EUR rate
+  let eurRate: number | null = null
+  let eurRateDate: string | null = null
+  try {
+    const nbpRes = await fetch('https://api.nbp.pl/api/exchangerates/rates/A/EUR/?format=json', {
+      signal: AbortSignal.timeout(3000),
+      next: { revalidate: 3600 },
+    })
+    if (nbpRes.ok) {
+      const nbpData = await nbpRes.json() as { rates: Array<{ mid: number; effectiveDate: string }> }
+      eurRate = nbpData.rates[0]?.mid ?? null
+      eurRateDate = nbpData.rates[0]?.effectiveDate ?? null
+    }
+  } catch {
+    // fallback: null
+  }
+
+  // Cash thresholds
+  const thresholds = {
+    cashThresholdVeryGood: parseFloat(appSettings.find((s) => s.key === 'cashThresholdVeryGood')?.value ?? '300000'),
+    cashThresholdGood: parseFloat(appSettings.find((s) => s.key === 'cashThresholdGood')?.value ?? '200000'),
+    cashThresholdBad: parseFloat(appSettings.find((s) => s.key === 'cashThresholdBad')?.value ?? '100000'),
+  }
 
   // Previous year aggregates
   const prevYearTotalIncome = prevRevenueActuals.length > 0
     ? prevRevenueActuals.reduce((s, r) => s + r.amount, 0)
     : prevRevenuePlans.reduce((s, r) => s + r.amount, 0)
-  const prevYearTotalExpenses = prevActuals.length > 0
-    ? prevActuals.reduce((s, e) => s + e.amount, 0)
-    : prevBudgets.reduce((s, e) => s + e.amount, 0)
+  const prevYearTotalExpenses = prevBudgetsYoy.reduce((s, e) => s + e.amount, 0)
 
   // Aggregate by month across all cost centers (or per CC for breakdown)
   const planIncomeByMonth = new Array(12).fill(0) as number[]
@@ -59,7 +88,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
 
   const fixedCostsByMonth = new Array(12).fill(0) as number[]
   const variableCostsByMonth = new Array(12).fill(0) as number[]
-  for (const e of actualsWithSubcat) {
+  for (const e of budgetsWithSubcat) {
     if (e.subCategory.isFixed) fixedCostsByMonth[e.month - 1] += e.amount
     else variableCostsByMonth[e.month - 1] += e.amount
   }
@@ -70,7 +99,7 @@ export default async function DashboardPage({ searchParams }: PageProps) {
     const planIncome = revenuePlans.filter((r) => r.costCenterId === cc).reduce((s, r) => s + r.amount, 0)
     const realIncome = revenueActuals.filter((r) => r.costCenterId === cc).reduce((s, r) => s + r.amount, 0)
     const planExpenses = budgets.filter((e) => e.costCenterId === cc).reduce((s, e) => s + e.amount, 0)
-    const realExpenses = actualsWithSubcat.filter((e) => e.costCenterId === cc).reduce((s, e) => s + e.amount, 0)
+    const realExpenses = budgetsWithSubcat.filter((e) => e.costCenterId === cc).reduce((s, e) => s + e.amount, 0)
     return { cc, planIncome, realIncome, planExpenses, realExpenses }
   })
 
@@ -88,6 +117,13 @@ export default async function DashboardPage({ searchParams }: PageProps) {
       userName={session.user.name ?? ''}
       prevYearTotalIncome={prevYearTotalIncome}
       prevYearTotalExpenses={prevYearTotalExpenses}
+      cashAccounts={cashAccounts}
+      receivables={receivables}
+      latestLiability={latestLiability}
+      thresholds={thresholds}
+      eurRate={eurRate}
+      eurRateDate={eurRateDate}
+      isAdmin={session.user.role === 'ADMIN'}
     />
   )
 }
