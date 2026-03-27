@@ -51,17 +51,9 @@ COPY --from=builder /app/public ./.next/standalone/public
 
 # Copy Prisma files
 COPY --from=builder /app/prisma ./prisma
-COPY --from=builder /app/node_modules/.prisma ./node_modules/.prisma
-COPY --from=builder /app/node_modules/@prisma ./node_modules/@prisma
-COPY --from=deps /app/node_modules/prisma ./node_modules/prisma
 
-# Copy tsx for seed script (from builder which has devDependencies)
-COPY --from=builder /app/node_modules/.bin/tsx ./node_modules/.bin/tsx
-COPY --from=builder /app/node_modules/tsx ./node_modules/tsx
-
-# Copy esbuild (required by tsx for TypeScript transpilation)
-COPY --from=builder /app/node_modules/esbuild ./node_modules/esbuild
-COPY --from=builder /app/node_modules/@esbuild ./node_modules/@esbuild
+# Copy entire node_modules from builder (includes all devDeps needed for seed: tsx, esbuild, etc.)
+COPY --from=builder /app/node_modules ./node_modules
 
 # Copy entrypoint
 COPY docker-entrypoint.sh ./
