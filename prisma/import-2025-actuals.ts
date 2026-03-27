@@ -272,7 +272,7 @@ const IMPORT_DATA: Row[] = [
       null,                    // sie
       43.00,                   // wrz: inne
       9307.52 + 354.87,        // paź: wzorniki + inne
-      1459.23 + null,          // lis: wzorniki
+      1459.23,                 // lis: wzorniki
       4756.28 + 45.00,         // gru: wzorniki + inne
     ],
   },
