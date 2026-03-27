@@ -16,7 +16,7 @@ const NAV_SECTIONS = [
   {
     label: null,
     items: [
-      { href: '/dashboard', label: 'Dashboard', icon: LayoutDashboard },
+      { href: '/', label: 'Dashboard', icon: LayoutDashboard },
     ],
   },
   {

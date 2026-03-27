@@ -433,11 +433,47 @@ npx shadcn-ui@latest add card
 
 ---
 
+## Critical Deployment Checklist
+
+**Before every Coolify deployment, verify:**
+
+- [ ] Dependencies synced: `npm install`, `package-lock.json` committed
+- [ ] Dockerfile has `npm ci --include=dev` in builder stage
+- [ ] `.env.example` created with all required variables
+- [ ] Docker build tested locally: `docker build -t test .`
+- [ ] No hardcoded secrets in code
+- [ ] Health check endpoint exists at `/api/health`
+- [ ] Database path is `DATABASE_URL=file:/data/walldecor.db`
+- [ ] All env vars set in Coolify UI with both "Buildtime" and "Runtime" checkboxes enabled
+- [ ] Coolify **Redeploy** clicked (not just "Deploy") after env var changes
+
+**For detailed deployment lessons and troubleshooting**, see **[DEPLOY.md](./DEPLOY.md)** in this directory.
+
+---
+
 ## Troubleshooting
 
 ### "Cannot find module 'typescript'" in Docker build
 
-✅ **Fixed:** Builder stage now runs `npm ci && npm install -D typescript`
+**Root Cause:** DevDependencies not installed in builder stage
+
+**Fix:** Ensure Dockerfile builder stage has:
+```dockerfile
+RUN npm ci --include=dev  # ← CRITICAL: includes TypeScript for next.config.ts
+```
+
+See [DEPLOY.md](./DEPLOY.md#1--docker-build-missing-devdependencies-in-builder-stage) for full explanation.
+
+### "npm ci can only install packages when in sync"
+
+**Fix:** Regenerate lock file and commit:
+```bash
+npm install
+git add package-lock.json
+git commit -m "Update dependencies"
+```
+
+See [DEPLOY.md](./DEPLOY.md#2--package-lock-file-out-of-sync) for details.
 
 ### Database doesn't initialize on first run
 
@@ -455,6 +491,15 @@ openssl rand -base64 32
 
 # Update .env.local and re-deploy
 ```
+
+### App deployed but won't start
+
+Check Coolify logs for common causes:
+1. Missing environment variables (check Coolify UI → Environment)
+2. Database file permissions (run migration in Coolify logs)
+3. Missing `/api/health` endpoint
+
+See [DEPLOY.md](./DEPLOY.md#troubleshooting-checklist) for full troubleshooting flow.
 
 ### Port 3000 already in use
 
