@@ -25,8 +25,8 @@ export default async function FinancePage({ searchParams }: PageProps) {
   })
 
   const isGlobal = costCenterId === 'GLOBAL'
-  const editable = session.user.role === 'ADMIN' && !isGlobal
-  const canManage = (session.user.role === 'ADMIN' || session.user.role === 'MANAGER') && !isGlobal
+  const editable = session.user.role === 'ADMIN'
+  const canManage = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
 
   if (tab === 'actuals') {
     const [rawBudget, rawActuals] = await Promise.all([

@@ -174,7 +174,7 @@ export function ActualsGrid({
   }
 
   const handleCopyPrevMonth = useCallback(async () => {
-    if (costCenterId === 'GLOBAL') return
+    // GLOBAL is now editable — no early return
     const monthInput = window.prompt('Kopiuj dane z poprzedniego miesiąca do miesiąca (1-12):', String(new Date().getMonth() + 1))
     if (!monthInput) return
     const month = parseInt(monthInput, 10)
@@ -222,7 +222,7 @@ export function ActualsGrid({
               ›
             </button>
           </div>
-          {editable && costCenterId !== 'GLOBAL' && (
+          {editable && (
             <button
               onClick={handleCopyPrevMonth}
               disabled={copyingMonth}
