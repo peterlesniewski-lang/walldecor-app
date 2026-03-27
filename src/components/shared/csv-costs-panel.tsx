@@ -85,8 +85,8 @@ export function CsvCostsPanel({ userRole }: CsvCostsPanelProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: dataType, rows: parsedRows }),
       })
-      const data: ImportResult = await res.json()
-      setImportResult(data)
+      const data = await res.json()
+      setImportResult({ imported: data.imported ?? 0, errors: data.errors ?? [] })
       if (data.imported > 0) {
         setParsedRows([])
         setFileName('')

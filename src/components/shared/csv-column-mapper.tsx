@@ -194,8 +194,8 @@ export function CsvColumnMapper({ userRole }: Props) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: dataType, rows: transformed }),
       })
-      const data: ImportResult = await res.json()
-      setResult(data)
+      const data = await res.json()
+      setResult({ imported: data.imported ?? 0, errors: data.errors ?? [] })
       setStep('done')
     } catch {
       setParseError('Błąd połączenia z serwerem.')

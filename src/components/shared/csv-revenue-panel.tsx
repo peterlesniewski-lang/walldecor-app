@@ -84,9 +84,10 @@ export function CsvRevenuePanel({ userRole }: CsvRevenuePanelProps) {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ type: dataType, rows: parsedRows }),
       })
-      const data: ImportResult = await res.json()
-      setImportResult(data)
-      if (data.imported > 0) {
+      const data = await res.json()
+      const result: ImportResult = { imported: data.imported ?? 0, errors: data.errors ?? [] }
+      setImportResult(result)
+      if (result.imported > 0) {
         setParsedRows([])
         setFileName('')
         if (fileRef.current) fileRef.current.value = ''
