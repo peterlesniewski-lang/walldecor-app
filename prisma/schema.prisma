@@ -18,6 +18,7 @@ model CostCenter {
   budgetEntries    BudgetEntry[]
   actualEntries    ActualEntry[]
   revenues         Revenue[]
+  revenueBudgets   RevenueBudget[]
   employees        Employee[]
   paymentReminders PaymentReminder[]
 }
@@ -34,6 +35,7 @@ model SubCategory {
   name       String
   order      Int
   categoryId String
+  isFixed    Boolean         @default(false)
   category   AccountCategory @relation(fields: [categoryId], references: [id])
 
   budgetEntries BudgetEntry[]
@@ -80,7 +82,20 @@ model ActualEntry {
   @@unique([year, month, costCenterId, subCategoryId])
 }
 
-// channel: SALON | ECOMMERCE
+// channel: SALON | MONTAZ | ECOMMERCE
+model RevenueBudget {
+  id           String     @id @default(cuid())
+  year         Int
+  month        Int
+  amount       Float
+  costCenterId String
+  costCenter   CostCenter @relation(fields: [costCenterId], references: [id])
+  channel      String
+
+  @@unique([year, month, costCenterId, channel])
+}
+
+// channel: SALON | MONTAZ | ECOMMERCE
 model Revenue {
   id           String     @id @default(cuid())
   year         Int

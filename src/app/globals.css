@@ -7,11 +7,18 @@
   --wd-sand:       #E4DCD1;  /* ciepły beż — główny akcent, aktywne elementy */
   --wd-sand-light: #E4DBD1;  /* jaśniejszy wariant beżu — hover, tła kart */
   --wd-dark:       #1E1E1E;  /* prawie czarny — sidebar, nagłówki */
-  --wd-off-white:  #FCFCFC;  /* tło aplikacji */
+  --wd-off-white:  #F7F6F4;  /* tło aplikacji — ciepłe jasne */
   --wd-white:      #FFFFFF;  /* karty, panele */
+  --wd-surface-2:  #F3F2F0;  /* alternating table rows */
+  --wd-border:     #E8E6E3;  /* ciepłe borders */
+  --wd-text-muted: #8A8582;  /* wyciszone etykiety */
+  --wd-text-primary: #1E1E1E;
+
+  /* Card shadow */
+  --card-shadow:   0 1px 3px 0 rgba(0,0,0,0.08), 0 1px 2px -1px rgba(0,0,0,0.06);
 
   /* shadcn/ui CSS variables */
-  --background:    #FCFCFC;
+  --background:    #F7F6F4;
   --foreground:    #1E1E1E;
   --card:          #FFFFFF;
   --card-foreground: #1E1E1E;
@@ -35,24 +42,88 @@
   /* Sidebar */
   --sidebar-bg:          #1E1E1E;
   --sidebar-text:        #C9C3BC;
-  --sidebar-active-bg:   #E4DCD1;
-  --sidebar-active-text: #1E1E1E;
-  --sidebar-hover-bg:    #2A2A2A;
+  --sidebar-active-bg:   rgba(255,255,255,0.10);
+  --sidebar-active-text: #FFFFFF;
+  --sidebar-hover-bg:    rgba(255,255,255,0.05);
   --sidebar-border:      #2E2E2E;
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
-  --font-sans: var(--font-inter);
+  --font-sans: var(--font-jakarta);
 }
 
 body {
   background: var(--background);
   color: var(--foreground);
-  font-family: var(--font-inter), Arial, sans-serif;
+  font-family: var(--font-jakarta), system-ui, sans-serif;
 }
 
 * {
   border-color: var(--border);
+}
+
+/* ─── Typography utilities ──────────────────────────────────────────────────── */
+
+.num {
+  font-family: var(--font-mono, 'DM Mono', monospace);
+  font-variant-numeric: tabular-nums;
+}
+
+.data-label {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--wd-text-muted);
+}
+
+/* ─── Card utility ──────────────────────────────────────────────────────────── */
+
+.card {
+  background: #FFFFFF;
+  border-radius: 1rem;
+  box-shadow: var(--card-shadow);
+  padding: 1.25rem;
+}
+
+/* ─── Data table utility ────────────────────────────────────────────────────── */
+
+.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.875rem;
+}
+
+.data-table thead tr {
+  border-bottom: 2px solid #E8E4E0;
+}
+
+.data-table thead th {
+  padding: 0.625rem 0.75rem;
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: #6B6560;
+}
+
+.data-table tbody tr {
+  border-bottom: 1px solid #F0EDEA;
+  transition: background 0.1s;
+}
+
+.data-table tbody tr:hover {
+  background: #F8F8F8;
+}
+
+.data-table tbody td {
+  padding: 0.625rem 0.75rem;
+}
+
+.data-table tfoot tr {
+  border-top: 2px solid #E8E4E0;
+  font-weight: 600;
 }

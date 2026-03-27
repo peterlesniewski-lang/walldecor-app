@@ -1,11 +1,11 @@
-export default function DashboardPage() {
+export default function LeavesPage() {
   return (
     <div>
       <h1 className="text-2xl font-semibold mb-1" style={{ color: 'var(--wd-dark)' }}>
-        Dashboard
+        Urlopy
       </h1>
       <p style={{ color: 'var(--muted-foreground)' }} className="text-sm">
-        Widok KPI będzie dostępny w M4 — po wdrożeniu modułu budżetowego i wykonania.
+        Moduł urlopowy — wdrożenie w M7.
       </p>
     </div>
   )
