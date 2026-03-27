@@ -51,6 +51,7 @@ COPY --from=builder /app/public ./.next/standalone/public
 
 # Copy Prisma files
 COPY --from=builder /app/prisma ./prisma
+COPY --from=builder /app/src/generated ./src/generated
 
 # Copy entire node_modules from builder (includes all devDeps needed for seed: tsx, esbuild, etc.)
 COPY --from=builder /app/node_modules ./node_modules
