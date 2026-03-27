@@ -2,8 +2,11 @@
 import { useState, useCallback, useMemo, useRef } from 'react'
 import { useRouter } from 'next/navigation'
 import React from 'react'
+import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core'
+import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
 import { BudgetCell, NavDirection } from '@/components/shared/budget-cell'
 import { BudgetCharts } from '@/components/shared/budget-charts'
+import { SortableRow, DragHandle } from '@/components/shared/sortable-row'
 
 const MONTH_NAMES = ['styczeń','luty','marzec','kwiecień','maj','czerwiec','lipiec','sierpień','wrzesień','październik','listopad','grudzień']
 
@@ -228,6 +231,31 @@ export function BudgetGrid({
     router.push(`/finance?year=${year}&costCenterId=${newCostCenter}`)
   }
 
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  )
+
+  const handleDragEnd = useCallback((event: DragEndEvent, catId: string) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+
+    setLocalCategories(prev => {
+      const catIdx = prev.findIndex(c => c.id === catId)
+      if (catIdx === -1) return prev
+      const cat = prev[catIdx]
+      const oldIdx = cat.subCategories.findIndex(s => s.id === active.id)
+      const newIdx = cat.subCategories.findIndex(s => s.id === over.id)
+      if (oldIdx === -1 || newIdx === -1) return prev
+      const newSubs = arrayMove(cat.subCategories, oldIdx, newIdx)
+      fetch('/api/subcategories/reorder', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: newSubs.map((s, i) => ({ id: s.id, order: i })) }),
+      })
+      return prev.map((c, i) => i === catIdx ? { ...c, subCategories: newSubs } : c)
+    })
+  }, [])
+
   const handleCopyPrevMonth = useCallback(async () => {
     if (costCenterId === 'GLOBAL') return
     const monthInput = window.prompt('Kopiuj dane z poprzedniego miesiąca do miesiąca (1-12):', String(new Date().getMonth() + 1))
@@ -389,77 +417,96 @@ export function BudgetGrid({
                 </tr>
 
                 {/* Subcategory rows */}
-                {!collapsed[cat.id] && cat.subCategories.map((sub, subIdx) => (
-                  <tr
-                    key={sub.id}
-                    className="border-t group"
-                    style={{
-                      borderColor: 'var(--wd-border)',
-                      background: subIdx % 2 === 1 ? 'color-mix(in srgb, var(--wd-surface-2) 50%, transparent)' : undefined,
-                    }}
+                {!collapsed[cat.id] && (
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={(e) => handleDragEnd(e, cat.id)}
                   >
-                    {/* Name cell — editable for canManage */}
-                    <td className="px-3 py-2.5 pl-6 text-sm" style={{ color: '#4B4846' }}>
-                      {editingSubId === sub.id ? (
-                        <input
-                          ref={renameInputRef}
-                          type="text"
-                          defaultValue={sub.name}
-                          autoFocus
-                          className="w-full px-1 py-0.5 border border-amber-300 rounded text-sm outline-none"
-                          onKeyDown={(e) => {
-                            if (e.key === 'Enter') { e.preventDefault(); handleRename(sub.id) }
-                            if (e.key === 'Escape') setEditingSubId(null)
+                    <SortableContext items={cat.subCategories.map(s => s.id)} strategy={verticalListSortingStrategy}>
+                      {cat.subCategories.map((sub, subIdx) => (
+                        <SortableRow
+                          key={sub.id}
+                          id={sub.id}
+                          showHandle={editable}
+                          className="border-t group"
+                          style={{
+                            borderColor: 'var(--wd-border)',
+                            background: subIdx % 2 === 1 ? 'color-mix(in srgb, var(--wd-surface-2) 50%, transparent)' : undefined,
                           }}
-                          onBlur={() => handleRename(sub.id)}
-                        />
-                      ) : (
-                        <div className="flex items-center justify-between gap-1">
-                          <span className="truncate">{sub.name}</span>
-                          {canManage && (
-                            <div className="flex gap-0.5 shrink-0">
-                              <button
-                                title="Zmień nazwę"
-                                onClick={() => setEditingSubId(sub.id)}
-                                className="p-0.5 rounded hover:bg-gray-200 text-gray-300 hover:text-gray-600"
-                              >
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-1.414a2 2 0 01.586-1.414z" />
-                                </svg>
-                              </button>
-                              <button
-                                title="Usuń podkategorię"
-                                onClick={() => handleDelete(sub.id, sub.name)}
-                                className="p-0.5 rounded hover:bg-red-100 text-gray-300 hover:text-red-500"
-                              >
-                                <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
-                                </svg>
-                              </button>
-                            </div>
-                          )}
-                        </div>
-                      )}
-                    </td>
+                        >
+                          {(handleProps) => (
+                            <>
+                              {/* Name cell — editable for canManage */}
+                              <td className="px-3 py-2.5 pl-4 text-sm" style={{ color: '#4B4846' }}>
+                                {editingSubId === sub.id ? (
+                                  <input
+                                    ref={renameInputRef}
+                                    type="text"
+                                    defaultValue={sub.name}
+                                    autoFocus
+                                    className="w-full px-1 py-0.5 border border-amber-300 rounded text-sm outline-none"
+                                    onKeyDown={(e) => {
+                                      if (e.key === 'Enter') { e.preventDefault(); handleRename(sub.id) }
+                                      if (e.key === 'Escape') setEditingSubId(null)
+                                    }}
+                                    onBlur={() => handleRename(sub.id)}
+                                  />
+                                ) : (
+                                  <div className="flex items-center gap-1">
+                                    {handleProps && <DragHandle handleProps={handleProps} />}
+                                    <div className="flex items-center justify-between gap-1 flex-1 min-w-0">
+                                      <span className="truncate">{sub.name}</span>
+                                      {canManage && (
+                                        <div className="flex gap-0.5 shrink-0">
+                                          <button
+                                            title="Zmień nazwę"
+                                            onClick={() => setEditingSubId(sub.id)}
+                                            className="p-0.5 rounded hover:bg-gray-200 text-gray-300 hover:text-gray-600"
+                                          >
+                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.232 5.232l3.536 3.536M9 13l6.586-6.586a2 2 0 112.828 2.828L11.828 15.828a2 2 0 01-1.414.586H9v-1.414a2 2 0 01.586-1.414z" />
+                                            </svg>
+                                          </button>
+                                          <button
+                                            title="Usuń podkategorię"
+                                            onClick={() => handleDelete(sub.id, sub.name)}
+                                            className="p-0.5 rounded hover:bg-red-100 text-gray-300 hover:text-red-500"
+                                          >
+                                            <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                            </svg>
+                                          </button>
+                                        </div>
+                                      )}
+                                    </div>
+                                  </div>
+                                )}
+                              </td>
 
-                    {MONTHS.map((_, i) => (
-                      <BudgetCell
-                        key={i}
-                        value={getEntry(sub.id, i + 1)}
-                        editable={editable}
-                        isEditing={editable && activeCell?.subId === sub.id && activeCell?.month === i + 1}
-                        onActivate={() => setActiveCell({ subId: sub.id, month: i + 1 })}
-                        onDeactivate={() => setActiveCell(null)}
-                        onNavigate={(dir) => handleNavigate(sub.id, i + 1, dir)}
-                        onSave={(v) => onSave(sub.id, i + 1, v)}
-                        tdClassName="border-r"
-                      />
-                    ))}
-                    <td className="text-right px-3 py-2.5 num text-sm font-medium" style={{ color: 'var(--wd-dark)' }}>
-                      {rowSum(sub.id) === 0 ? '—' : rowSum(sub.id).toLocaleString('pl-PL')}
-                    </td>
-                  </tr>
-                ))}
+                              {MONTHS.map((_, i) => (
+                                <BudgetCell
+                                  key={i}
+                                  value={getEntry(sub.id, i + 1)}
+                                  editable={editable}
+                                  isEditing={editable && activeCell?.subId === sub.id && activeCell?.month === i + 1}
+                                  onActivate={() => setActiveCell({ subId: sub.id, month: i + 1 })}
+                                  onDeactivate={() => setActiveCell(null)}
+                                  onNavigate={(dir) => handleNavigate(sub.id, i + 1, dir)}
+                                  onSave={(v) => onSave(sub.id, i + 1, v)}
+                                  tdClassName="border-r"
+                                />
+                              ))}
+                              <td className="text-right px-3 py-2.5 num text-sm font-medium" style={{ color: 'var(--wd-dark)' }}>
+                                {rowSum(sub.id) === 0 ? '—' : rowSum(sub.id).toLocaleString('pl-PL')}
+                              </td>
+                            </>
+                          )}
+                        </SortableRow>
+                      ))}
+                    </SortableContext>
+                  </DndContext>
+                )}
 
                 {/* Add new subcategory row */}
                 {!collapsed[cat.id] && canManage && (

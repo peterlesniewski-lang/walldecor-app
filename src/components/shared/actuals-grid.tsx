@@ -2,7 +2,10 @@
 import { useState, useCallback, useMemo } from 'react'
 import { useRouter } from 'next/navigation'
 import React from 'react'
+import { DndContext, DragEndEvent, PointerSensor, useSensor, useSensors, closestCenter } from '@dnd-kit/core'
+import { SortableContext, verticalListSortingStrategy, arrayMove } from '@dnd-kit/sortable'
 import { BudgetCell, NavDirection } from '@/components/shared/budget-cell'
+import { SortableRow, DragHandle } from '@/components/shared/sortable-row'
 
 const MONTH_NAMES = ['styczeń','luty','marzec','kwiecień','maj','czerwiec','lipiec','sierpień','wrzesień','październik','listopad','grudzień']
 
@@ -49,12 +52,13 @@ export function ActualsGrid({
   const [collapsed, setCollapsed] = useState<Record<string, boolean>>({})
   const [activeCell, setActiveCell] = useState<ActiveCell>(null)
   const [copyingMonth, setCopyingMonth] = useState(false)
+  const [localCategories, setLocalCategories] = useState<Category[]>(categories)
 
   const router = useRouter()
 
   const allSubCategories = useMemo(
-    () => categories.flatMap((cat) => cat.subCategories),
-    [categories]
+    () => localCategories.flatMap((cat) => cat.subCategories),
+    [localCategories]
   )
 
   const getPlan = (subId: string, month: number) => budgetEntries[`${subId}_${month}`] ?? 0
@@ -101,7 +105,7 @@ export function ActualsGrid({
 
   const visibleSubIds = useMemo(() => {
     const result: string[] = []
-    for (const cat of categories) {
+    for (const cat of localCategories) {
       if (!collapsed[cat.id]) {
         for (const sub of cat.subCategories) {
           result.push(sub.id)
@@ -109,7 +113,7 @@ export function ActualsGrid({
       }
     }
     return result
-  }, [categories, collapsed])
+  }, [localCategories, collapsed])
 
   const onSave = useCallback(
     async (subCategoryId: string, month: number, amount: number) => {
@@ -172,6 +176,31 @@ export function ActualsGrid({
   const handleCostCenterChange = (newCostCenter: string) => {
     router.push(`${navBase}${navSep}year=${year}&costCenterId=${newCostCenter}`)
   }
+
+  const sensors = useSensors(
+    useSensor(PointerSensor, { activationConstraint: { distance: 5 } })
+  )
+
+  const handleDragEnd = useCallback((event: DragEndEvent, catId: string) => {
+    const { active, over } = event
+    if (!over || active.id === over.id) return
+
+    setLocalCategories(prev => {
+      const catIdx = prev.findIndex(c => c.id === catId)
+      if (catIdx === -1) return prev
+      const cat = prev[catIdx]
+      const oldIdx = cat.subCategories.findIndex(s => s.id === active.id)
+      const newIdx = cat.subCategories.findIndex(s => s.id === over.id)
+      if (oldIdx === -1 || newIdx === -1) return prev
+      const newSubs = arrayMove(cat.subCategories, oldIdx, newIdx)
+      fetch('/api/subcategories/reorder', {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ items: newSubs.map((s, i) => ({ id: s.id, order: i })) }),
+      })
+      return prev.map((c, i) => i === catIdx ? { ...c, subCategories: newSubs } : c)
+    })
+  }, [])
 
   const handleCopyPrevMonth = useCallback(async () => {
     // GLOBAL is now editable — no early return
@@ -312,7 +341,7 @@ export function ActualsGrid({
           </thead>
 
           <tbody>
-            {categories.map((cat) => (
+            {localCategories.map((cat) => (
               <React.Fragment key={cat.id}>
                 {/* Category header row */}
                 <tr
@@ -359,59 +388,77 @@ export function ActualsGrid({
                 </tr>
 
                 {/* Subcategory rows */}
-                {!collapsed[cat.id] &&
-                  cat.subCategories.map((sub, subIdx) => (
-                    <tr
-                      key={sub.id}
-                      className="border-t"
-                      style={{
-                        borderColor: 'var(--wd-border)',
-                        background: subIdx % 2 === 1 ? 'color-mix(in srgb, var(--wd-surface-2) 50%, transparent)' : undefined,
-                      }}
-                    >
-                      <td className="px-3 py-2.5 pl-6 text-sm border-r truncate" style={{ color: '#4B4846', borderColor: 'var(--wd-border)' }}>
-                        {sub.name}
-                      </td>
+                {!collapsed[cat.id] && (
+                  <DndContext
+                    sensors={sensors}
+                    collisionDetection={closestCenter}
+                    onDragEnd={(e) => handleDragEnd(e, cat.id)}
+                  >
+                    <SortableContext items={cat.subCategories.map(s => s.id)} strategy={verticalListSortingStrategy}>
+                      {cat.subCategories.map((sub, subIdx) => (
+                        <SortableRow
+                          key={sub.id}
+                          id={sub.id}
+                          showHandle={editable}
+                          className="border-t"
+                          style={{
+                            borderColor: 'var(--wd-border)',
+                            background: subIdx % 2 === 1 ? 'color-mix(in srgb, var(--wd-surface-2) 50%, transparent)' : undefined,
+                          }}
+                        >
+                          {(handleProps) => (
+                            <>
+                              <td className="px-3 py-2.5 pl-4 text-sm border-r" style={{ color: '#4B4846', borderColor: 'var(--wd-border)' }}>
+                                <div className="flex items-center gap-1 min-w-0">
+                                  {handleProps && <DragHandle handleProps={handleProps} />}
+                                  <span className="truncate">{sub.name}</span>
+                                </div>
+                              </td>
 
-                      {MONTHS.map((_, i) => {
-                        const month = i + 1
-                        const planVal = getPlan(sub.id, month)
-                        return (
-                          <React.Fragment key={i}>
-                            <td className={planCellClass}>
-                              {planVal === 0 ? '—' : planVal.toLocaleString('pl-PL')}
-                            </td>
-                            <BudgetCell
-                              value={getReal(sub.id, month)}
-                              editable={editable}
-                              isEditing={
-                                editable &&
-                                activeCell?.subId === sub.id &&
-                                activeCell?.month === month
-                              }
-                              onActivate={() => setActiveCell({ subId: sub.id, month })}
-                              onDeactivate={() => setActiveCell(null)}
-                              onNavigate={(dir) => handleNavigate(sub.id, month, dir)}
-                              onSave={(v) => onSave(sub.id, month, v)}
-                            />
-                          </React.Fragment>
-                        )
-                      })}
+                              {MONTHS.map((_, i) => {
+                                const month = i + 1
+                                const planVal = getPlan(sub.id, month)
+                                return (
+                                  <React.Fragment key={i}>
+                                    <td className={planCellClass}>
+                                      {planVal === 0 ? '—' : planVal.toLocaleString('pl-PL')}
+                                    </td>
+                                    <BudgetCell
+                                      value={getReal(sub.id, month)}
+                                      editable={editable}
+                                      isEditing={
+                                        editable &&
+                                        activeCell?.subId === sub.id &&
+                                        activeCell?.month === month
+                                      }
+                                      onActivate={() => setActiveCell({ subId: sub.id, month })}
+                                      onDeactivate={() => setActiveCell(null)}
+                                      onNavigate={(dir) => handleNavigate(sub.id, month, dir)}
+                                      onSave={(v) => onSave(sub.id, month, v)}
+                                    />
+                                  </React.Fragment>
+                                )
+                              })}
 
-                      {/* SUMA Plan */}
-                      <td className="text-right px-1 py-2.5 num text-xs border-l" style={{ color: 'var(--wd-text-muted)', background: 'var(--wd-surface-2)', borderColor: 'var(--wd-border)' }}>
-                        {fmt(rowPlanSum(sub.id))}
-                      </td>
-                      {/* SUMA Real */}
-                      <td className="text-right px-2 py-2.5 num text-sm font-medium border-r" style={{ color: 'var(--wd-dark)', borderColor: 'var(--wd-border)' }}>
-                        {fmt(rowRealSum(sub.id))}
-                      </td>
-                      {/* % */}
-                      <td className={`text-right px-2 py-2.5 num text-sm font-semibold ${pctClass(rowPct(sub.id))}`}>
-                        {fmtPct(rowPct(sub.id))}
-                      </td>
-                    </tr>
-                  ))}
+                              {/* SUMA Plan */}
+                              <td className="text-right px-1 py-2.5 num text-xs border-l" style={{ color: 'var(--wd-text-muted)', background: 'var(--wd-surface-2)', borderColor: 'var(--wd-border)' }}>
+                                {fmt(rowPlanSum(sub.id))}
+                              </td>
+                              {/* SUMA Real */}
+                              <td className="text-right px-2 py-2.5 num text-sm font-medium border-r" style={{ color: 'var(--wd-dark)', borderColor: 'var(--wd-border)' }}>
+                                {fmt(rowRealSum(sub.id))}
+                              </td>
+                              {/* % */}
+                              <td className={`text-right px-2 py-2.5 num text-sm font-semibold ${pctClass(rowPct(sub.id))}`}>
+                                {fmtPct(rowPct(sub.id))}
+                              </td>
+                            </>
+                          )}
+                        </SortableRow>
+                      ))}
+                    </SortableContext>
+                  </DndContext>
+                )}
               </React.Fragment>
             ))}
           </tbody>
