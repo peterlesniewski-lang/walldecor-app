@@ -5,7 +5,7 @@ export default function TimesheetsPage() {
         Czas pracy
       </h1>
       <p style={{ color: 'var(--muted-foreground)' }} className="text-sm">
-        Moduł czasu pracy będzie dostępny w M4.
+        Ewidencja czasu pracy — wdrożenie w M8.
       </p>
     </div>
   )

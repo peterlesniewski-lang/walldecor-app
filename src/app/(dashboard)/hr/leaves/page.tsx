@@ -5,7 +5,7 @@ export default function LeavesPage() {
         Urlopy
       </h1>
       <p style={{ color: 'var(--muted-foreground)' }} className="text-sm">
-        Moduł urlopów będzie dostępny w M4.
+        Moduł urlopowy — wdrożenie w M7.
       </p>
     </div>
   )

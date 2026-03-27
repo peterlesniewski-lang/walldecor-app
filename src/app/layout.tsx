@@ -1,11 +1,18 @@
 import type { Metadata } from 'next'
-import { Inter } from 'next/font/google'
+import { Plus_Jakarta_Sans, DM_Mono } from 'next/font/google'
 import './globals.css'
 import { SessionProvider } from '@/components/shared/session-provider'
 
-const inter = Inter({
-  variable: '--font-inter',
+const jakarta = Plus_Jakarta_Sans({
+  variable: '--font-jakarta',
   subsets: ['latin', 'latin-ext'],
+  weight: ['400', '500', '600', '800'],
+})
+
+const mono = DM_Mono({
+  variable: '--font-mono',
+  subsets: ['latin'],
+  weight: ['400', '500'],
 })
 
 export const metadata: Metadata = {
@@ -20,7 +27,7 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="pl">
-      <body className={`${inter.variable} antialiased`}>
+      <body className={`${jakarta.variable} ${mono.variable} antialiased`}>
         <SessionProvider>{children}</SessionProvider>
       </body>
     </html>

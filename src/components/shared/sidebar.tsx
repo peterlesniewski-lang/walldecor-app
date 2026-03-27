@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   TrendingUp,
   BarChart3,
+  Banknote,
   Users,
   CalendarOff,
   Clock,
@@ -22,14 +23,15 @@ const NAV_SECTIONS = [
   {
     label: 'Finanse',
     items: [
-      { href: '/finance/budget', label: 'Budżet', icon: TrendingUp },
+      { href: '/finance/revenue', label: 'Przychody', icon: Banknote },
+      { href: '/finance', label: 'Budżet', icon: TrendingUp },
       { href: '/finance/actuals', label: 'Wykonanie', icon: BarChart3 },
     ],
   },
   {
     label: 'HR',
     items: [
-      { href: '/hr/employees', label: 'Pracownicy', icon: Users },
+      { href: '/hr', label: 'Pracownicy', icon: Users },
       { href: '/hr/leaves', label: 'Urlopy', icon: CalendarOff },
       { href: '/hr/timesheets', label: 'Czas pracy', icon: Clock },
     ],
@@ -52,14 +54,14 @@ export function Sidebar() {
       }}
     >
       {/* Logo */}
-      <div className="px-4 mb-6">
+      <div className="px-4 pt-7 pb-5 mb-2 border-b" style={{ borderColor: 'rgba(255,255,255,0.10)' }}>
         <span
-          className="text-base font-semibold tracking-wide"
-          style={{ color: 'var(--wd-sand)' }}
+          className="text-lg tracking-wide"
+          style={{ color: 'var(--wd-sand)', fontWeight: 800 }}
         >
           WallDecor
         </span>
-        <p className="text-xs mt-0.5" style={{ color: 'var(--sidebar-text)' }}>
+        <p className="text-xs mt-0.5" style={{ color: 'var(--sidebar-text)', opacity: 0.6 }}>
           Panel zarządzania
         </p>
       </div>
@@ -70,8 +72,8 @@ export function Sidebar() {
           <div key={i}>
             {section.label && (
               <p
-                className="px-3 mb-1 text-xs font-medium uppercase tracking-wider"
-                style={{ color: 'var(--sidebar-text)', opacity: 0.5 }}
+                className="px-3 mb-1 uppercase"
+                style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--sidebar-text)', opacity: 0.4 }}
               >
                 {section.label}
               </p>

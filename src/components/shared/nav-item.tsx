@@ -13,31 +13,39 @@ interface NavItemProps {
 
 export function NavItem({ href, label, icon: Icon, collapsed }: NavItemProps) {
   const pathname = usePathname()
-  const isActive = pathname === href || pathname.startsWith(href + '/')
+  const isActive = pathname === href
 
   return (
     <Link
       href={href}
       title={collapsed ? label : undefined}
-      className="flex items-center gap-3 px-3 py-2 rounded-md text-sm font-medium transition-colors"
+      className="flex items-center gap-3 py-2 rounded-md text-sm font-medium transition-colors"
       style={
         isActive
           ? {
               background: 'var(--sidebar-active-bg)',
               color: 'var(--sidebar-active-text)',
+              borderLeft: '2px solid #E4DCD1',
+              paddingLeft: '0.625rem',
+              paddingRight: '0.75rem',
             }
           : {
               color: 'var(--sidebar-text)',
+              borderLeft: '2px solid transparent',
+              paddingLeft: '0.625rem',
+              paddingRight: '0.75rem',
             }
       }
       onMouseEnter={(e) => {
         if (!isActive) {
           e.currentTarget.style.background = 'var(--sidebar-hover-bg)'
+          e.currentTarget.style.color = '#FFFFFF'
         }
       }}
       onMouseLeave={(e) => {
         if (!isActive) {
           e.currentTarget.style.background = 'transparent'
+          e.currentTarget.style.color = 'var(--sidebar-text)'
         }
       }}
     >
