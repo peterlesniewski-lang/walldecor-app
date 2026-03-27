@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { authOptions } from '@/lib/auth'
 import { Sidebar } from '@/components/shared/sidebar'
 import { Header } from '@/components/shared/header'
+import { AiChatWidget } from '@/components/shared/ai-chat-widget'
 
 export default async function DashboardLayout({
   children,
@@ -15,6 +16,8 @@ export default async function DashboardLayout({
     redirect('/login')
   }
 
+  const canUseAi = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
+
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: 'var(--wd-off-white)' }}>
       <Sidebar />
@@ -24,6 +27,7 @@ export default async function DashboardLayout({
           {children}
         </main>
       </div>
+      {canUseAi && <AiChatWidget />}
     </div>
   )
 }

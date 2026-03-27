@@ -4,12 +4,19 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { DashboardView } from '@/components/shared/dashboard-view'
 
-export default async function DashboardPage() {
+interface PageProps {
+  searchParams: Promise<{ year?: string }>
+}
+
+export default async function DashboardPage({ searchParams }: PageProps) {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
 
-  const year = new Date().getFullYear()
-  const currentMonth = new Date().getMonth() + 1 // 1-12
+  const { year: yearParam } = await searchParams
+  const now = new Date()
+  const todayYear = now.getFullYear()
+  const year = yearParam ? parseInt(yearParam, 10) : todayYear
+  const currentMonth = year === todayYear ? now.getMonth() + 1 : 12
 
   // Fetch all cost centers in parallel
   const costCenters = ['JAG', 'PUL', 'GLOBAL']

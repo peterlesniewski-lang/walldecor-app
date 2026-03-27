@@ -124,13 +124,32 @@ export function DashboardView({
   return (
     <div>
       {/* ── Header ──────────────────────────────────────────────────────── */}
-      <div className="mb-6">
-        <h1 className="font-extrabold tracking-tight" style={{ fontSize: '1.75rem', color: 'var(--wd-dark)' }}>
-          Dzień dobry{userName ? `, ${userName.split(' ')[0]}` : ''}
-        </h1>
-        <p className="text-sm mt-0.5" style={{ color: 'var(--wd-text-muted)' }}>
-          {MONTHS[cmIdx]} {year} — podsumowanie roku
-        </p>
+      <div className="flex items-start justify-between mb-6">
+        <div>
+          <h1 className="font-extrabold tracking-tight" style={{ fontSize: '1.75rem', color: 'var(--wd-dark)' }}>
+            Dzień dobry{userName ? `, ${userName.split(' ')[0]}` : ''}
+          </h1>
+          <p className="text-sm mt-0.5" style={{ color: 'var(--wd-text-muted)' }}>
+            {MONTHS[cmIdx]} {year} — podsumowanie roku
+          </p>
+        </div>
+        <div className="flex items-center gap-1 mt-1">
+          <button
+            onClick={() => router.push(`/dashboard?year=${year - 1}`)}
+            className="p-1.5 rounded hover:bg-gray-100 transition-colors"
+            style={{ color: 'var(--wd-text-muted)' }}
+          >
+            ‹
+          </button>
+          <span className="font-semibold px-2 text-sm" style={{ color: 'var(--wd-dark)' }}>{year}</span>
+          <button
+            onClick={() => router.push(`/dashboard?year=${year + 1}`)}
+            className="p-1.5 rounded hover:bg-gray-100 transition-colors"
+            style={{ color: 'var(--wd-text-muted)' }}
+          >
+            ›
+          </button>
+        </div>
       </div>
 
       {/* ── Annual KPI cards ─────────────────────────────────────────────── */}
