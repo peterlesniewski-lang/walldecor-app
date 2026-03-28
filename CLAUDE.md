@@ -61,6 +61,8 @@ Nie pushuj automatycznie — zawsze czekaj na potwierdzenie.
 - **ORM:** Prisma
 - **Baza:** SQLite (plik `walldecor.db`) — nie przełączaj na PostgreSQL bez polecenia
 - **Deployment:** Docker Compose na VPS OVH Ubuntu
+- **PDF:** jspdf + jspdf-autotable (raporty miesięczne HR)
+- **Zarządzanie kontami:** /settings/users (ADMIN) — blokowanie, role, reset hasła
 
 ---
 
@@ -192,6 +194,22 @@ Ecommerce to kanał przychodów przypisany zawsze do `PUL`.
 - Budżet: roczny, podzielony na 12 miesięcy, ustalany przez ADMIN
 - GLOBAL: osobne centrum kosztów, **nie alokowane** do JAG/PUL w MVP
 - Break-even per lokal = suma kosztów bezpośrednich lokalu + proporcja GLOBAL (do decyzji właściciela)
+
+---
+
+## Znane bugi i ich naprawy
+
+1. **Double navigation (hr/layout.tsx)** — `hr/layout.tsx` renderował `HrSidebar` jako dodatkowy panel obok globalnego sidebaru. Fix: usunięto `HrSidebar` z layout — renderuje tylko `{children}`.
+
+2. **Produkcja P2021 (Prisma migrate)** — entrypoint Docker używał `prisma migrate deploy`, ale repo nie zawiera plików migracji — Prisma rzucał P2021. Fix: zmieniono na `prisma db push --accept-data-loss`.
+
+3. **Next.js 16 params — patrz reguła na górze CLAUDE.md** — `{ params: { id: string } }` nie kompiluje się w Next.js 16. Fix: `{ params: Promise<{ id: string }> }` + `await params`. Dotknięte pliki: `alerts/thresholds/[id]`, `alerts/payment-reminders/[id]`, `users/[id]`, `users/[id]/reset-password`.
+
+4. **onClick w Server Component (employees/page.tsx)** — `<td onClick={...}>` użyty w Server Component. Next.js zabrania event handlerów w SC. Fix: usunięto handler `onClick`.
+
+5. **"Dodaj wpis" Invalid input (notes: null)** — modal wysyłał `notes: null` gdy pole puste, ale Zod `.optional()` nie akceptuje `null`. Fix: zmieniono na `undefined` zamiast `null` przy pustym polu.
+
+6. **"Zapisz zmiany" pracownika Invalid input (puste pola enum/string)** — formularz wysyłał `employmentType: ""` i `phone: null` — Zod odrzucał puste stringi dla enum fields i `null` dla string fields. Fix: schema rozszerzona o `.nullish()` dla clearable fields; pola enum omijane gdy puste.
 
 ---
 
