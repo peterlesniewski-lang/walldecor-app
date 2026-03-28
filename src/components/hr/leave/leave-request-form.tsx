@@ -34,6 +34,7 @@ interface LeaveRequestFormProps {
 
 export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, onSuccess, onCancel }: LeaveRequestFormProps) {
   const [balances, setBalances] = useState<LeaveBalance[]>([])
+  const [allLeaveTypes, setAllLeaveTypes] = useState<LeaveType[]>([])
   const [loadingBalances, setLoadingBalances] = useState(false)
 
   // When admin mode without pre-set employeeId — let admin pick from dropdown
@@ -57,24 +58,38 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
 
   const currentYear = new Date().getFullYear()
 
+  // Admin: load all leave types on mount so dropdown is always populated
+  useEffect(() => {
+    if (!isAdmin) return
+    fetch('/api/hr/leave-types')
+      .then((r) => r.json())
+      .then((data: unknown) => {
+        const list = Array.isArray(data) ? data as LeaveType[] : (data as { leaveTypes?: LeaveType[] }).leaveTypes ?? []
+        setAllLeaveTypes(list)
+        if (list.length > 0 && !leaveTypeId) setLeaveTypeId(list[0].id)
+      })
+      .catch(() => {})
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [isAdmin])
+
   const loadBalances = useCallback(async () => {
     if (!employeeId) {
       setBalances([])
-      setLeaveTypeId('')
+      if (!isAdmin) setLeaveTypeId('')
       return
     }
     setLoadingBalances(true)
     try {
       const res = await fetch(`/api/hr/leave-balances?employeeId=${employeeId}&year=${currentYear}`)
       if (res.ok) {
-        const data = await res.json()
+        const data = await res.json() as LeaveBalance[]
         setBalances(data)
-        if (data.length > 0) setLeaveTypeId(data[0].leaveTypeId)
+        if (!isAdmin && data.length > 0) setLeaveTypeId(data[0].leaveTypeId)
       }
     } finally {
       setLoadingBalances(false)
     }
-  }, [employeeId, currentYear])
+  }, [employeeId, currentYear, isAdmin])
 
   const loadOnDemandCount = useCallback(async () => {
     if (!leaveTypeId || !employeeId) return
@@ -220,14 +235,25 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
           className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-white text-[var(--wd-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--wd-dark)]/20 focus:border-[var(--wd-dark)] transition-colors"
         >
           <option value="">Wybierz typ urlopu…</option>
-          {balances.map((b) => {
-            const avail = b.totalDays - b.usedDays - b.pendingDays
-            return (
-              <option key={b.leaveTypeId} value={b.leaveTypeId}>
-                {b.leaveType.code} — {b.leaveType.name} ({avail % 1 === 0 ? avail : avail.toFixed(1)} dni pozostałych)
-              </option>
-            )
-          })}
+          {isAdmin
+            ? allLeaveTypes.map((lt) => {
+                const bal = balances.find((b) => b.leaveTypeId === lt.id)
+                const avail = bal ? bal.totalDays - bal.usedDays - bal.pendingDays : null
+                return (
+                  <option key={lt.id} value={lt.id}>
+                    {lt.code} — {lt.name}{avail !== null ? ` (${avail % 1 === 0 ? avail : avail.toFixed(1)} dni pozostałych)` : ''}
+                  </option>
+                )
+              })
+            : balances.map((b) => {
+                const avail = b.totalDays - b.usedDays - b.pendingDays
+                return (
+                  <option key={b.leaveTypeId} value={b.leaveTypeId}>
+                    {b.leaveType.code} — {b.leaveType.name} ({avail % 1 === 0 ? avail : avail.toFixed(1)} dni pozostałych)
+                  </option>
+                )
+              })
+          }
         </select>
 
         {/* Balance progress */}
