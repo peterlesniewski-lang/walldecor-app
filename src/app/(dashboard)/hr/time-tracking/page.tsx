@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma'
 import { WeeklyTimesheet } from '@/components/hr/time-tracking/weekly-timesheet'
 import { ClockWidget } from '@/components/hr/time-tracking/clock-widget'
 import { getWeekRange, getMonthRange, formatDuration } from '@/lib/hr/utils'
+import { getHrSettings } from '@/lib/hr/hr-settings'
 
 const DAYS_PL = ['Nie', 'Pon', 'Wto', 'Śro', 'Czw', 'Pią', 'Sob']
 
@@ -39,7 +40,10 @@ export default async function TimeTrackingPage({
 
   // ── ADMIN / MANAGER → weekly manager view ──────────────────────────────────
   if (role === 'ADMIN' || role === 'MANAGER') {
-    const divisions = await prisma.division.findMany({ orderBy: { name: 'asc' } })
+    const [divisions, hrSettings] = await Promise.all([
+      prisma.division.findMany({ orderBy: { name: 'asc' } }),
+      getHrSettings(),
+    ])
 
     return (
       <div className="p-6 lg:p-8 bg-[var(--wd-off-white)] min-h-full">
@@ -60,6 +64,7 @@ export default async function TimeTrackingPage({
             userRole={role}
             divisions={divisions}
             initialWeek={sp.week ?? null}
+            saturdayWorkable={hrSettings.saturdayWorkable}
           />
         </Suspense>
       </div>

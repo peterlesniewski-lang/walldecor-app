@@ -47,6 +47,7 @@ interface WeeklyTimesheetProps {
   userRole: 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
   divisions: Division[]
   initialWeek: string | null
+  saturdayWorkable?: boolean
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -232,7 +233,7 @@ function EntryCell({
 
 // ─── Main Component ────────────────────────────────────────────────────────────
 
-export function WeeklyTimesheet({ userRole, divisions, initialWeek }: WeeklyTimesheetProps) {
+export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWorkable = true }: WeeklyTimesheetProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -496,24 +497,29 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek }: WeeklyTime
                       </td>
 
                       {/* Day cells */}
-                      {days.map((day) => (
-                        <EntryCell
-                          key={day}
-                          entry={emp.entries[day]}
-                          isWknd={new Date(day + 'T12:00:00').getDay() === 0}  // Sunday only
-                          isCurrentDay={isToday(day)}
-                          onClick={() => {
-                            const dayOfWeek = new Date(day + 'T12:00:00').getDay()
-                            if (dayOfWeek === 0) return  // Block Sunday only; Saturday is clickable
-                            setEditModal({
-                              employeeId: emp.id,
-                              employeeName: `${emp.firstName} ${emp.lastName}`,
-                              date: day,
-                              entry: emp.entries[day] ?? null,
-                            })
-                          }}
-                        />
-                      ))}
+                      {days.map((day) => {
+                        const dow = new Date(day + 'T12:00:00').getDay()
+                        const isSunday = dow === 0
+                        const isSaturday = dow === 6
+                        const blocked = isSunday || (isSaturday && !saturdayWorkable)
+                        return (
+                          <EntryCell
+                            key={day}
+                            entry={emp.entries[day]}
+                            isWknd={blocked}
+                            isCurrentDay={isToday(day)}
+                            onClick={() => {
+                              if (blocked) return
+                              setEditModal({
+                                employeeId: emp.id,
+                                employeeName: `${emp.firstName} ${emp.lastName}`,
+                                date: day,
+                                entry: emp.entries[day] ?? null,
+                              })
+                            }}
+                          />
+                        )
+                      })}
 
                       {/* Weekly total */}
                       <td
