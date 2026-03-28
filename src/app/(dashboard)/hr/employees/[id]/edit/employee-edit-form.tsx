@@ -173,12 +173,17 @@ export function EmployeeEditForm({
         payload[key] = value
       } else if (value === '') {
         // Send null for optional relational fields to clear them
-        const nullableFields = ['phone', 'positionId', 'divisionId', 'departmentId', 'managerId', 'avatarUrl', 'endDate']
+        // Date fields must NOT be sent as null/empty — omit them so z.coerce.date().optional() receives undefined
+        const nullableFields = ['phone', 'positionId', 'divisionId', 'departmentId', 'managerId', 'avatarUrl']
         if (nullableFields.includes(key)) {
           payload[key] = null
         }
+        // startDate and endDate: omit entirely when empty — schema expects undefined, not null/""
       }
     }
+    // Ensure date fields are never sent as empty string or null (z.coerce.date("") throws)
+    if (!payload.startDate) delete payload.startDate
+    if (!payload.endDate) delete payload.endDate
 
     try {
       const res = await fetch(`/api/hr/employees/${employee.id}`, {

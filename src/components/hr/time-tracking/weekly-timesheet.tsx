@@ -406,7 +406,7 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek }: WeeklyTime
                 {/* Day columns */}
                 {days.map((day) => {
                   const { dow, day: d, month } = dayLabel(day)
-                  const wknd = isWeekend(day)
+                  const isSunday = new Date(day + 'T12:00:00').getDay() === 0
                   const today = isToday(day)
                   return (
                     <th
@@ -416,8 +416,8 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek }: WeeklyTime
                         padding: '8px 4px',
                         fontWeight: 600,
                         fontSize: '0.6875rem',
-                        color: today ? 'var(--wd-dark)' : wknd ? 'var(--wd-text-muted)' : 'var(--wd-text-muted)',
-                        background: today ? 'rgba(228,220,209,0.3)' : wknd ? 'var(--wd-surface-2)' : undefined,
+                        color: today ? 'var(--wd-dark)' : 'var(--wd-text-muted)',
+                        background: today ? 'rgba(228,220,209,0.3)' : isSunday ? 'var(--wd-surface-2)' : undefined,
                         minWidth: '68px',
                         borderRight: '1px solid var(--wd-border)',
                       }}
@@ -500,10 +500,11 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek }: WeeklyTime
                         <EntryCell
                           key={day}
                           entry={emp.entries[day]}
-                          isWknd={isWeekend(day)}
+                          isWknd={new Date(day + 'T12:00:00').getDay() === 0}  // Sunday only
                           isCurrentDay={isToday(day)}
                           onClick={() => {
-                            if (isWeekend(day)) return
+                            const dayOfWeek = new Date(day + 'T12:00:00').getDay()
+                            if (dayOfWeek === 0) return  // Block Sunday only; Saturday is clickable
                             setEditModal({
                               employeeId: emp.id,
                               employeeName: `${emp.firstName} ${emp.lastName}`,

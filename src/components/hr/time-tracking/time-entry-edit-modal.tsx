@@ -118,7 +118,7 @@ export function TimeEntryEditModal({
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
             employeeId,
-            date: new Date(`${date}T00:00:00`).toISOString(),
+            date,  // "YYYY-MM-DD" — z.coerce.date() parses this correctly
             ...body,
             source: 'manual',
           }),
