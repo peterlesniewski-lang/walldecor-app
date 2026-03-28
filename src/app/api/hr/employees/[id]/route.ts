@@ -71,13 +71,53 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   const existing = await prisma.employee.findUnique({ where: { id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // Check for historical data — prevent hard delete if any exists
-  const [timeEntryCount, leaveRequestCount] = await Promise.all([
+  // Check for any related data — prevent hard delete if any exists (FK constraints)
+  const [
+    timeEntryCount,
+    leaveRequestNewCount,
+    contractCount,
+    additionalContractCount,
+    salaryHistoryCount,
+    leaveRequestCount,
+    leaveBalanceCount,
+    workTimeRecordCount,
+    workScheduleCount,
+    overtimeRequestCount,
+    leaveBalanceNewCount,
+    userCount,
+    subordinateCount,
+  ] = await Promise.all([
     prisma.timeEntry.count({ where: { employeeId: id } }),
     prisma.leaveRequestNew.count({ where: { employeeId: id } }),
+    prisma.contract.count({ where: { employeeId: id } }),
+    prisma.additionalContract.count({ where: { employeeId: id } }),
+    prisma.salaryHistory.count({ where: { employeeId: id } }),
+    prisma.leaveRequest.count({ where: { employeeId: id } }),
+    prisma.leaveBalance.count({ where: { employeeId: id } }),
+    prisma.workTimeRecord.count({ where: { employeeId: id } }),
+    prisma.workSchedule.count({ where: { employeeId: id } }),
+    prisma.overtimeRequest.count({ where: { employeeId: id } }),
+    prisma.leaveBalanceNew.count({ where: { employeeId: id } }),
+    prisma.user.count({ where: { employeeId: id } }),
+    prisma.employee.count({ where: { managerId: id } }),
   ])
 
-  if (timeEntryCount > 0 || leaveRequestCount > 0) {
+  const hasRelatedData =
+    timeEntryCount > 0 ||
+    leaveRequestNewCount > 0 ||
+    contractCount > 0 ||
+    additionalContractCount > 0 ||
+    salaryHistoryCount > 0 ||
+    leaveRequestCount > 0 ||
+    leaveBalanceCount > 0 ||
+    workTimeRecordCount > 0 ||
+    workScheduleCount > 0 ||
+    overtimeRequestCount > 0 ||
+    leaveBalanceNewCount > 0 ||
+    userCount > 0 ||
+    subordinateCount > 0
+
+  if (hasRelatedData) {
     return NextResponse.json(
       { error: 'Pracownik ma dane historyczne. Użyj opcji "Ukryj".' },
       { status: 409 }
