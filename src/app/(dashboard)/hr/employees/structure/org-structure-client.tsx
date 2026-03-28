@@ -10,7 +10,7 @@ interface Department {
   name: string
   divisionId: string
   _count: { employees: number }
-  employees?: { id: string; firstName: string; lastName: string }[]
+  employees?: { id: string; firstName: string; lastName: string; position: string }[]
 }
 
 interface Division {
@@ -204,9 +204,14 @@ function DeptRow({ dept, onEdit, onDelete }: DeptRowProps) {
       {open && dept.employees && dept.employees.length > 0 && (
         <div className="ml-8 mt-0.5 space-y-0.5">
           {dept.employees.map((emp) => (
-            <div key={emp.id} className="flex items-center gap-2 py-1 px-2 text-sm text-[var(--wd-text-muted)]">
-              <span className="w-1 h-1 rounded-full bg-[var(--wd-text-muted)] shrink-0 mt-0.5" />
-              {emp.firstName} {emp.lastName}
+            <div key={emp.id} className="flex items-center gap-2 py-1 px-2 text-sm">
+              <span className="w-5 h-5 rounded-full bg-[var(--wd-dark)] text-white text-[9px] font-semibold flex items-center justify-center shrink-0">
+                {emp.firstName[0]}{emp.lastName[0]}
+              </span>
+              <span className="text-[var(--wd-text-primary)]">{emp.firstName} {emp.lastName}</span>
+              {emp.position && (
+                <span className="text-xs text-[var(--wd-text-muted)]">· {emp.position}</span>
+              )}
             </div>
           ))}
         </div>

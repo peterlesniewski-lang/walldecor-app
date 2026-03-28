@@ -19,6 +19,11 @@ export async function GET() {
       departments: {
         include: {
           _count: { select: { employees: true } },
+          employees: {
+            where: { active: true },
+            select: { id: true, firstName: true, lastName: true, position: true },
+            orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
+          },
         },
       },
       _count: { select: { employees: true } },
