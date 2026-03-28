@@ -26,14 +26,21 @@ interface LeaveBalance {
 }
 
 interface LeaveRequestFormProps {
-  employeeId: string
+  employeeId?: string
+  isAdmin?: boolean
   onSuccess: () => void
   onCancel: () => void
 }
 
-export function LeaveRequestForm({ employeeId, onSuccess, onCancel }: LeaveRequestFormProps) {
+export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, onSuccess, onCancel }: LeaveRequestFormProps) {
   const [balances, setBalances] = useState<LeaveBalance[]>([])
-  const [loadingBalances, setLoadingBalances] = useState(true)
+  const [loadingBalances, setLoadingBalances] = useState(false)
+
+  // When admin mode without pre-set employeeId — let admin pick from dropdown
+  const [selectedEmployeeId, setSelectedEmployeeId] = useState<string | undefined>(employeeIdProp)
+
+  // The effective employeeId used for fetching and submitting
+  const employeeId = isAdmin ? selectedEmployeeId : employeeIdProp
 
   const [leaveTypeId, setLeaveTypeId] = useState('')
   const [startDate, setStartDate] = useState('')
@@ -51,6 +58,11 @@ export function LeaveRequestForm({ employeeId, onSuccess, onCancel }: LeaveReque
   const currentYear = new Date().getFullYear()
 
   const loadBalances = useCallback(async () => {
+    if (!employeeId) {
+      setBalances([])
+      setLeaveTypeId('')
+      return
+    }
     setLoadingBalances(true)
     try {
       const res = await fetch(`/api/hr/leave-balances?employeeId=${employeeId}&year=${currentYear}`)
@@ -65,7 +77,7 @@ export function LeaveRequestForm({ employeeId, onSuccess, onCancel }: LeaveReque
   }, [employeeId, currentYear])
 
   const loadOnDemandCount = useCallback(async () => {
-    if (!leaveTypeId) return
+    if (!leaveTypeId || !employeeId) return
     try {
       const res = await fetch(
         `/api/hr/leave-requests?employeeId=${employeeId}&year=${currentYear}`
@@ -106,6 +118,11 @@ export function LeaveRequestForm({ employeeId, onSuccess, onCancel }: LeaveReque
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
     setError(null)
+
+    if (!employeeId) {
+      setError('Wybierz pracownika')
+      return
+    }
 
     if (!leaveTypeId || !startDate || !endDate) {
       setError('Wypełnij wszystkie wymagane pola')
@@ -150,16 +167,44 @@ export function LeaveRequestForm({ employeeId, onSuccess, onCancel }: LeaveReque
     }
   }
 
-  if (loadingBalances) {
-    return (
-      <div className="flex items-center justify-center py-12">
-        <Loader2 size={20} className="animate-spin text-[var(--wd-text-muted)]" />
-      </div>
-    )
-  }
-
   return (
     <form onSubmit={handleSubmit} className="flex flex-col gap-5">
+      {/* Employee picker — admin only, when no employeeId pre-set */}
+      {isAdmin && !employeeIdProp && (
+        <div className="flex flex-col gap-1.5">
+          <label className="text-xs font-semibold text-[var(--wd-text-primary)] uppercase tracking-wide">
+            Pracownik <span className="text-red-500">*</span>
+          </label>
+          <EmployeeSelect
+            value={selectedEmployeeId}
+            onChange={(val) => {
+              setSelectedEmployeeId(val)
+              setBalances([])
+              setLeaveTypeId('')
+            }}
+            placeholder="Wybierz pracownika…"
+          />
+        </div>
+      )}
+
+      {/* Loading indicator for balances */}
+      {loadingBalances && (
+        <div className="flex items-center justify-center py-6">
+          <Loader2 size={18} className="animate-spin text-[var(--wd-text-muted)]" />
+        </div>
+      )}
+
+      {/* Prompt to pick employee first (admin mode) */}
+      {isAdmin && !employeeId && !loadingBalances && (
+        <div className="py-4 text-center text-sm text-[var(--wd-text-muted)]">
+          Wybierz pracownika, aby załadować saldo urlopowe
+        </div>
+      )}
+
+      {/* Rest of form — only when employee is known */}
+      {!!employeeId && !loadingBalances && (
+      <>
+
       {/* Leave type */}
       <div className="flex flex-col gap-1.5">
         <label className="text-xs font-semibold text-[var(--wd-text-primary)] uppercase tracking-wide">
@@ -314,7 +359,7 @@ export function LeaveRequestForm({ employeeId, onSuccess, onCancel }: LeaveReque
           value={substituteId}
           onChange={setSubstituteId}
           placeholder="Wybierz zastępcę (opcjonalnie)"
-          excludeIds={[employeeId]}
+          excludeIds={employeeId ? [employeeId] : []}
         />
       </div>
 
@@ -352,7 +397,10 @@ export function LeaveRequestForm({ employeeId, onSuccess, onCancel }: LeaveReque
         </div>
       )}
 
-      {/* Error */}
+      </>
+      )}
+
+      {/* Error — always visible */}
       {error && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
           <AlertCircle size={14} className="shrink-0" />
@@ -371,7 +419,7 @@ export function LeaveRequestForm({ employeeId, onSuccess, onCancel }: LeaveReque
         </button>
         <button
           type="submit"
-          disabled={submitting || !hasEnoughBalance || workingDays <= 0}
+          disabled={submitting || !employeeId || !hasEnoughBalance || workingDays <= 0}
           className="flex items-center gap-2 px-5 py-2 text-sm font-semibold bg-[var(--wd-dark)] text-[var(--wd-off-white)] rounded-lg hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity"
         >
           {submitting && <Loader2 size={14} className="animate-spin" />}

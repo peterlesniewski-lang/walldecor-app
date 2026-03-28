@@ -1,7 +1,9 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
+import { useSession } from 'next-auth/react'
 import { PieChart, Loader2, Pencil, X, Check, RefreshCw } from 'lucide-react'
+import { AdminLeaveButton } from '@/components/hr/leave/admin-leave-button'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -361,6 +363,8 @@ function CarryoverModal({
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function LeaveBalancesPage() {
+  const { data: session } = useSession()
+  const isAdmin = session?.user?.role === 'ADMIN'
   const currentYear = new Date().getFullYear()
 
   const [balances, setBalances] = useState<LeaveBalance[]>([])
@@ -423,13 +427,16 @@ export default function LeaveBalancesPage() {
             {balances.length} rekordów · rok {selectedYear}
           </p>
         </div>
-        <button
-          onClick={() => setCarryoverOpen(true)}
-          className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-[var(--wd-border)] bg-white text-[var(--wd-text-primary)] hover:bg-[var(--wd-surface-2)] transition-colors"
-        >
-          <RefreshCw size={14} />
-          Przenieś na nowy rok
-        </button>
+        <div className="flex items-center gap-2 flex-wrap">
+          {isAdmin && <AdminLeaveButton onSuccess={fetchBalances} />}
+          <button
+            onClick={() => setCarryoverOpen(true)}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-[var(--wd-border)] bg-white text-[var(--wd-text-primary)] hover:bg-[var(--wd-surface-2)] transition-colors"
+          >
+            <RefreshCw size={14} />
+            Przenieś na nowy rok
+          </button>
+        </div>
       </div>
 
       {/* Filters */}

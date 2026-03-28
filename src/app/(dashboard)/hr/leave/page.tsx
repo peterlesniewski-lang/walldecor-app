@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { getMonthRange } from '@/lib/hr/utils'
 import { getPolishHolidays } from '@/lib/hr/constants'
 import { AbsenceCalendar } from '@/components/hr/leave/absence-calendar'
+import { AdminLeaveButton } from '@/components/hr/leave/admin-leave-button'
 
 function pad(n: number) {
   return String(n).padStart(2, '0')
@@ -69,6 +70,8 @@ interface PageProps {
 export default async function LeavePage({ searchParams }: PageProps) {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
+
+  const isAdmin = session.user.role === 'ADMIN'
 
   const params = await searchParams
   const monthParam = typeof params.month === 'string' ? params.month : null
@@ -195,13 +198,16 @@ export default async function LeavePage({ searchParams }: PageProps) {
 
   return (
     <div className="p-6 lg:p-8">
-      <div className="mb-6">
-        <h1 className="text-2xl font-semibold mb-1" style={{ color: 'var(--wd-dark)' }}>
-          Urlopy
-        </h1>
-        <p className="text-sm" style={{ color: 'var(--wd-text-muted)' }}>
-          Kalendarz nieobecności — widok miesięczny
-        </p>
+      <div className="mb-6 flex items-start justify-between gap-4 flex-wrap">
+        <div>
+          <h1 className="text-2xl font-semibold mb-1" style={{ color: 'var(--wd-dark)' }}>
+            Urlopy
+          </h1>
+          <p className="text-sm" style={{ color: 'var(--wd-text-muted)' }}>
+            Kalendarz nieobecności — widok miesięczny
+          </p>
+        </div>
+        {isAdmin && <AdminLeaveButton />}
       </div>
 
       <AbsenceCalendar
