@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
 import { Download, BarChart2, Users, Clock, FolderKanban, TrendingUp, FileText } from 'lucide-react'
 import { EmployeeSelect } from '@/components/hr/employees/employee-select'
 import { formatDuration } from '@/lib/hr/utils'
