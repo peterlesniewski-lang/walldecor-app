@@ -135,7 +135,13 @@ export function EmployeeForm({ divisions, departments, managers }: EmployeeFormP
   }
 
   async function handleStep2(data: Step2) {
-    setStepData((prev) => ({ ...prev, ...data }))
+    // Strip empty strings — Zod rejects "" for enum/date fields
+    const cleaned: Step2 = {
+      ...data,
+      employmentType: data.employmentType || undefined,
+      endDate: data.endDate || undefined,
+    }
+    setStepData((prev) => ({ ...prev, ...cleaned }))
     setStep(2)
   }
 
