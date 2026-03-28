@@ -9,6 +9,9 @@ import {
   Calendar,
   TrendingUp,
   Check,
+  AlertTriangle,
+  AlertOctagon,
+  CreditCard,
 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
@@ -39,6 +42,12 @@ function getTypeIcon(type: string) {
       return <Calendar className="h-4 w-4 shrink-0 text-blue-500" />
     case 'overtime':
       return <TrendingUp className="h-4 w-4 shrink-0 text-orange-500" />
+    case 'budget_warning':
+      return <AlertTriangle className="h-4 w-4 shrink-0 text-amber-600" />
+    case 'budget_critical':
+      return <AlertOctagon className="h-4 w-4 shrink-0 text-red-600" />
+    case 'payment_due':
+      return <CreditCard className="h-4 w-4 shrink-0 text-blue-600" />
     default:
       return <Bell className="h-4 w-4 shrink-0 text-gray-400" />
   }

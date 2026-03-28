@@ -21,6 +21,7 @@ model CostCenter {
   revenueBudgets   RevenueBudget[]
   employees        Employee[]
   paymentReminders PaymentReminder[]
+  budgetThresholds BudgetThreshold[]
 }
 
 model AccountCategory {
@@ -38,8 +39,9 @@ model SubCategory {
   isFixed    Boolean         @default(false)
   category   AccountCategory @relation(fields: [categoryId], references: [id])
 
-  budgetEntries BudgetEntry[]
-  actualEntries ActualEntry[]
+  budgetEntries    BudgetEntry[]
+  actualEntries    ActualEntry[]
+  budgetThresholds BudgetThreshold[]
 }
 
 // Role: ADMIN | MANAGER | EMPLOYEE
@@ -158,14 +160,30 @@ model AppSetting {
 }
 
 model PaymentReminder {
-  id           String     @id @default(cuid())
-  name         String
-  amount       Float
-  dayOfMonth   Int
-  costCenterId String
-  costCenter   CostCenter @relation(fields: [costCenterId], references: [id])
-  active       Boolean    @default(true)
-  createdAt    DateTime   @default(now())
+  id                String     @id @default(cuid())
+  name              String
+  amount            Float
+  dayOfMonth        Int
+  costCenterId      String
+  costCenter        CostCenter @relation(fields: [costCenterId], references: [id])
+  active            Boolean    @default(true)
+  alertDaysInAdvance Int       @default(3)
+  lastAlertedDate   String?
+  createdAt         DateTime   @default(now())
+}
+
+model BudgetThreshold {
+  id              String   @id @default(cuid())
+  name            String
+  warningPercent  Int      @default(80)
+  criticalPercent Int      @default(100)
+  costCenterId    String?
+  subCategoryId   String?
+  active          Boolean  @default(true)
+  createdAt       DateTime @default(now())
+
+  costCenter  CostCenter?  @relation(fields: [costCenterId], references: [id])
+  subCategory SubCategory? @relation(fields: [subCategoryId], references: [id])
 }
 
 // ─── HR Models ────────────────────────────────────────────────────────────────

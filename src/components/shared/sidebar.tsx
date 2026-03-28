@@ -9,6 +9,7 @@ import {
   CalendarOff,
   Clock,
   Settings,
+  ShieldAlert,
 } from 'lucide-react'
 import { NavItem } from './nav-item'
 import { Separator } from '@/components/ui/separator'
@@ -26,6 +27,7 @@ const NAV_SECTIONS = [
       { href: '/finance/revenue', label: 'Przychody', icon: Banknote },
       { href: '/finance', label: 'Budżet', icon: TrendingUp },
       { href: '/finance/actuals', label: 'Wykonanie', icon: BarChart3 },
+      { href: '/finance/alerts', label: 'Alerty', icon: ShieldAlert },
     ],
   },
   {

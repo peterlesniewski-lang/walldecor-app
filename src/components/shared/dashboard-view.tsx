@@ -7,6 +7,8 @@ import {
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer, ReferenceLine,
 } from 'recharts'
 import { calcBep } from '@/lib/bep'
+import { AlertsWidget } from '@/components/alerts/alerts-widget'
+import type { AlertNotification, PaymentReminderWithDays } from '@/components/alerts/alerts-widget'
 
 interface CcBreakdown {
   cc: string
@@ -66,6 +68,8 @@ interface DashboardViewProps {
   eurRate: number | null
   eurRateDate: string | null
   isAdmin: boolean
+  budgetAlerts?: AlertNotification[]
+  paymentAlerts?: PaymentReminderWithDays[]
 }
 
 const MONTHS = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru']
@@ -119,6 +123,8 @@ export function DashboardView({
   eurRate,
   eurRateDate,
   isAdmin,
+  budgetAlerts = [],
+  paymentAlerts = [],
 }: DashboardViewProps) {
   const router = useRouter()
 
@@ -396,6 +402,17 @@ export function DashboardView({
         eurRateDate={eurRateDate}
         isAdmin={isAdmin}
       />
+
+      {/* ── Alerts Widget ───────────────────────────────────────────────── */}
+      {isAdmin && (
+        <div className="mb-6">
+          <AlertsWidget
+            budgetAlerts={budgetAlerts}
+            paymentAlerts={paymentAlerts}
+            isAdmin={isAdmin}
+          />
+        </div>
+      )}
 
       {/* ── Cost center breakdown ────────────────────────────────────────── */}
       <div className="rounded-2xl bg-white overflow-hidden" style={{ boxShadow: 'var(--card-shadow)' }}>
