@@ -14,6 +14,19 @@ Szczegółowe instrukcje dotyczące testów znajdziesz w: @.claude/rules/testing
 
 ---
 
+## Memory — reguła obowiązkowa
+
+**Przed przystąpieniem do każdego zadania** sprawdź memory projektu:
+- `~/.claude/projects/-Users-piotr-projekty/memory/project_walldecor_app.md` — status milestones, decyzje techniczne, co zostało zbudowane
+
+**Po ukończeniu każdego istotnego bloku pracy** (nowy moduł, milestone, fix, zmiana schematu) zaktualizuj memory:
+- Zaktualizuj `project_walldecor_app.md` — oznacz milestone jako ukończony, dodaj nowe komponenty/endpointy, wpisz kluczowe decyzje
+- Jeśli pojawiły się nowe wzorce/decyzje techniczne — dodaj je do sekcji "Kluczowe decyzje techniczne"
+
+> **Istotny blok** = ukończony milestone, nowy moduł lub feature, zmiana schematu bazy, naprawa istotnego bugu, nowe wzorce kodowania.
+
+---
+
 ## Git — reguła po każdej zmianie
 
 **Po zakończeniu każdego bloku pracy** (feature, fix, refactor) zawsze zapytaj użytkownika:
