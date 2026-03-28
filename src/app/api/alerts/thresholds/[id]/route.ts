@@ -6,8 +6,9 @@ import { budgetThresholdPatchSchema } from '@/lib/validations/alerts'
 
 export async function PATCH(
   req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   const session = await getServerSession(authOptions)
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -17,7 +18,7 @@ export async function PATCH(
   }
 
   const existing = await prisma.budgetThreshold.findUnique({
-    where: { id: params.id },
+    where: { id },
   })
   if (!existing) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -44,7 +45,7 @@ export async function PATCH(
   }
 
   const threshold = await prisma.budgetThreshold.update({
-    where: { id: params.id },
+    where: { id },
     data: {
       ...(data.name !== undefined && { name: data.name }),
       ...(data.warningPercent !== undefined && { warningPercent: data.warningPercent }),
@@ -64,8 +65,9 @@ export async function PATCH(
 
 export async function DELETE(
   _req: NextRequest,
-  { params }: { params: { id: string } }
+  { params }: { params: Promise<{ id: string }> }
 ) {
+  const { id } = await params
   const session = await getServerSession(authOptions)
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -75,13 +77,13 @@ export async function DELETE(
   }
 
   const existing = await prisma.budgetThreshold.findUnique({
-    where: { id: params.id },
+    where: { id },
   })
   if (!existing) {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
   }
 
-  await prisma.budgetThreshold.delete({ where: { id: params.id } })
+  await prisma.budgetThreshold.delete({ where: { id } })
 
   return NextResponse.json({ success: true })
 }
