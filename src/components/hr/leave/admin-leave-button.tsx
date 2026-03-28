@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { Plus, X } from 'lucide-react'
+import { Plus } from 'lucide-react'
 import {
   Dialog,
   DialogContent,
@@ -34,21 +34,13 @@ export function AdminLeaveButton({ onSuccess }: AdminLeaveButtonProps) {
 
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
-          className="max-w-lg rounded-xl border-[#E8E6E3] p-0 overflow-hidden"
-          style={{ background: 'white' }}
+          className="max-w-lg rounded-xl border-[#E8E6E3] p-0"
+          style={{ background: 'white', overflow: 'visible' }}
         >
           <DialogHeader className="px-6 pt-5 pb-4 border-b border-[#E8E6E3]">
-            <div className="flex items-center justify-between">
-              <DialogTitle className="text-base font-semibold text-[var(--wd-text-primary)]">
-                Dodaj urlop — widok admina
-              </DialogTitle>
-              <button
-                onClick={() => setOpen(false)}
-                className="p-1 rounded-md text-[var(--wd-text-muted)] hover:bg-[var(--wd-surface-2)] transition-colors"
-              >
-                <X size={16} />
-              </button>
-            </div>
+            <DialogTitle className="text-base font-semibold text-[var(--wd-text-primary)]">
+              Dodaj urlop — widok admina
+            </DialogTitle>
           </DialogHeader>
 
           <div className="px-6 py-5">

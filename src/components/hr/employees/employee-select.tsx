@@ -136,7 +136,7 @@ export function EmployeeSelect({
           </div>
 
           {/* List */}
-          <div className="max-h-52 overflow-y-auto py-1">
+          <div className="max-h-80 overflow-y-auto py-1">
             {filtered.length === 0 ? (
               <div className="px-4 py-3 text-xs text-[var(--wd-text-muted)] text-center">
                 {loading ? 'Ładowanie…' : 'Brak wyników'}

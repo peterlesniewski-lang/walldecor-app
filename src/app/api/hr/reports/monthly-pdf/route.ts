@@ -2,293 +2,401 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { getMonthRange, isPublicHoliday } from '@/lib/hr/utils'
+import { getMonthRange } from '@/lib/hr/utils'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 
-// Polish month names
+// ─── Utility functions ────────────────────────────────────────────────────────
+
+function formatHHMM(iso: string | null | Date | undefined): string {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
+}
+
+function formatDuration(minutes: number | null | undefined): string {
+  if (!minutes || minutes <= 0) return '—'
+  const h = Math.floor(minutes / 60)
+  const m = minutes % 60
+  if (h === 0) return `${m}min`
+  return m === 0 ? `${h}h` : `${h}h ${m}min`
+}
+
+const PL_DAYS = ['Nd', 'Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb']
 const PL_MONTHS = [
   'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
   'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień',
 ]
 
-// Day name abbreviations (0=Sunday)
-const DAY_NAMES = ['Nd', 'Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb']
+// ─── Types ────────────────────────────────────────────────────────────────────
 
-function pad(n: number): string {
-  return String(n).padStart(2, '0')
+type TimeEntryData = {
+  date: Date
+  clockIn: Date
+  clockOut: Date | null
+  totalMinutes: number | null
+  breakMinutes: number | null
+  overtimeMinutes: number
+  status: string
+  notes: string | null
 }
 
-function localDateStr(d: Date): string {
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+type LeaveRequestData = {
+  startDate: Date
+  endDate: Date
+  leaveType: { name: string }
 }
 
-function formatMinutesH(min: number): string {
-  if (min <= 0) return '0:00'
-  const h = Math.floor(min / 60)
-  const m = min % 60
-  return `${h}:${pad(m)}`
-}
-
-function formatTimeFromDate(d: Date | null): string {
-  if (!d) return '—'
-  return `${pad(d.getHours())}:${pad(d.getMinutes())}`
-}
-
-type EmployeeWithData = {
+type EmployeeReport = {
   id: string
   firstName: string
   lastName: string
-  timeEntries: Array<{
-    date: Date
-    clockIn: Date | null
-    clockOut: Date | null
-    totalMinutes: number | null
-    breakMinutes: number | null
-    notes: string | null
-    project: { name: string } | null
-  }>
-  leaveRequestsNew: Array<{
-    startDate: Date
-    endDate: Date
-    status: string
-    leaveType: { name: string }
-  }>
+  timeEntries: TimeEntryData[]
+  leaveRequests: LeaveRequestData[]
 }
 
-function buildEmployeePages(doc: jsPDF, emp: EmployeeWithData, year: number, month: number) {
-  const { start, end } = getMonthRange(year, month)
-  const monthLabel = `${PL_MONTHS[month - 1]} ${year}`
+// ─── PDF section builder ──────────────────────────────────────────────────────
 
-  // Build lookup maps
-  const entryByDay = new Map<string, EmployeeWithData['timeEntries'][number]>()
-  for (const entry of emp.timeEntries) {
-    entryByDay.set(localDateStr(entry.date), entry)
+function generateEmployeeSection(
+  doc: jsPDF,
+  employee: EmployeeReport,
+  year: number,
+  month: number, // 1-indexed
+) {
+  const monthLabel = PL_MONTHS[month - 1]
+  const fullName = `${employee.firstName} ${employee.lastName}`
+  const pageWidth = doc.internal.pageSize.getWidth()
+
+  // Build a quick lookup: "YYYY-MM-DD" → TimeEntry
+  const entryByDate = new Map<string, TimeEntryData>()
+  for (const entry of employee.timeEntries) {
+    const d = new Date(entry.date)
+    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
+    entryByDate.set(key, entry)
   }
 
-  // Build leave day map: dateStr -> leaveType name
-  const leaveByDay = new Map<string, string>()
-  for (const lr of emp.leaveRequestsNew) {
-    if (lr.status === 'rejected') continue
-    const cur = new Date(lr.startDate)
-    cur.setHours(12, 0, 0, 0)
-    const endDate = new Date(lr.endDate)
-    endDate.setHours(12, 0, 0, 0)
-    while (cur <= endDate) {
-      leaveByDay.set(localDateStr(cur), lr.leaveType.name)
-      cur.setDate(cur.getDate() + 1)
-    }
-  }
-
-  // Header
-  doc.setFontSize(14)
+  // ── Header ────────────────────────────────────────────────────────────────
+  doc.setFontSize(22)
   doc.setFont('helvetica', 'bold')
-  doc.text('Ewidencja czasu pracy', 14, 20)
-  doc.setFontSize(11)
+  doc.text('WallDecor', 14, 20)
+
+  doc.setFontSize(14)
   doc.setFont('helvetica', 'normal')
-  doc.text(`${emp.firstName} ${emp.lastName}  —  ${monthLabel}`, 14, 28)
+  doc.text(`Ewidencja czasu pracy — ${fullName}`, 14, 30)
 
-  // Build table rows
-  const head = [['Dzień', 'Wejście', 'Wyjście', 'Godziny', 'Typ', 'Uwagi']]
-  const body: Array<Array<string | { content: string; styles: Record<string, string | number> }>> = []
+  doc.setFontSize(11)
+  doc.setTextColor(80, 80, 80)
+  doc.text(`Miesiąc: ${monthLabel} ${year}`, 14, 38)
+  doc.setTextColor(0, 0, 0)
 
+  // ── Build table rows ──────────────────────────────────────────────────────
+  const daysInMonth = new Date(year, month, 0).getDate()
+
+  // Row: [Dzień, Data, Wejście, Wyjście, Czas pracy, Typ, Uwagi]
+  // We pass fill color info via willDrawCell hook using a parallel array
+  const tableRows: string[][] = []
+  const rowColors: ([number, number, number] | null)[] = []
+
+  let totalWorkDays = 0
   let totalWorkMinutes = 0
-  let saturdayMinutes = 0
-  let leaveDays = 0
+  let totalOvertimeMinutes = 0
+  let totalLeaveDays = 0
 
-  const cur = new Date(start)
-  cur.setHours(12, 0, 0, 0)
-  const endDay = new Date(end)
-  endDay.setHours(12, 0, 0, 0)
+  for (let day = 1; day <= daysInMonth; day++) {
+    const dateObj = new Date(year, month - 1, day)
+    const dow = dateObj.getDay() // 0=Sun … 6=Sat
+    const dayLabel = PL_DAYS[dow]
+    const mm = String(month).padStart(2, '0')
+    const dd = String(day).padStart(2, '0')
+    const dateKey = `${year}-${mm}-${dd}`
+    const dateFormatted = `${dayLabel} ${dd}.${mm}`
 
-  while (cur <= endDay) {
-    const dow = cur.getDay()
-    const dateStr = localDateStr(cur)
-    const dayLabel = `${DAY_NAMES[dow]} ${cur.getDate()}.${pad(cur.getMonth() + 1)}`
+    const entry = entryByDate.get(dateKey)
 
-    const isSaturday = dow === 6
-    const isSunday = dow === 0
-    const isHoliday = isPublicHoliday(cur)
-    const entry = entryByDay.get(dateStr)
-    const leaveName = leaveByDay.get(dateStr)
+    // Check leave requests overlapping this day
+    const leaveForDay = employee.leaveRequests.find((lr) => {
+      const s = new Date(lr.startDate)
+      const e = new Date(lr.endDate)
+      s.setHours(0, 0, 0, 0)
+      e.setHours(23, 59, 59, 999)
+      return dateObj >= s && dateObj <= e
+    })
 
-    if (isHoliday) {
-      body.push([dayLabel, '—', '—', '—', 'Święto ustawowe', ''])
-    } else if (leaveName) {
-      leaveDays++
-      body.push([dayLabel, '—', '—', '—', leaveName, ''])
+    const clockInStr = entry ? formatHHMM(entry.clockIn) : '—'
+    const clockOutStr = entry && entry.clockOut ? formatHHMM(entry.clockOut) : '—'
+    const durationStr = entry ? formatDuration(entry.totalMinutes) : '—'
+
+    let type = ''
+    if (entry && dow === 6) {
+      type = 'Nadg. 2×'
+    } else if (leaveForDay) {
+      type = leaveForDay.leaveType.name
     } else if (entry) {
-      const net = (entry.totalMinutes ?? 0) - (entry.breakMinutes ?? 0)
-      const hoursStr = formatMinutesH(net)
-      const typ = isSaturday ? 'Nadg. 2×' : 'Praca'
-
-      totalWorkMinutes += net
-      if (isSaturday) saturdayMinutes += net
-
-      const row = [
-        dayLabel,
-        formatTimeFromDate(entry.clockIn),
-        formatTimeFromDate(entry.clockOut),
-        hoursStr,
-        typ,
-        entry.notes ?? '',
-      ]
-
-      if (isSaturday) {
-        body.push(row.map((cell) => ({
-          content: String(cell),
-          styles: { fillColor: '#FFF3E0' },
-        })))
-      } else {
-        body.push(row)
-      }
-    } else if (!isSunday) {
-      // Weekday with no data — skip (don't clutter with empty rows for weekdays)
-      // Only show Saturday with no data if they worked that day (handled above)
+      type = 'Norma'
     }
 
-    cur.setDate(cur.getDate() + 1)
+    const notes = entry?.notes ?? ''
+
+    // Determine background color
+    let fillColor: [number, number, number] | null = null
+    if (dow === 0) {
+      fillColor = [240, 240, 240]
+    } else if (dow === 6 && entry) {
+      fillColor = [255, 237, 213]
+    } else if (leaveForDay) {
+      fillColor = [219, 234, 254]
+    } else if (day % 2 === 0) {
+      fillColor = [248, 247, 245]
+    }
+
+    tableRows.push([String(day), dateFormatted, clockInStr, clockOutStr, durationStr, type, notes])
+    rowColors.push(fillColor)
+
+    // Accumulate summaries
+    if (entry && dow !== 0) {
+      totalWorkDays++
+      totalWorkMinutes += entry.totalMinutes ?? 0
+      if (dow === 6) {
+        totalOvertimeMinutes += entry.totalMinutes ?? 0
+      }
+    }
+    if (leaveForDay && dow !== 0 && dow !== 6) {
+      totalLeaveDays++
+    }
   }
 
+  // ── Render table ──────────────────────────────────────────────────────────
   autoTable(doc, {
-    head,
-    body,
-    startY: 34,
+    startY: 45,
+    head: [['Dzień', 'Data', 'Wejście', 'Wyjście', 'Czas pracy', 'Typ', 'Uwagi']],
+    body: tableRows,
     styles: {
-      fontSize: 9,
-      cellPadding: 2.5,
+      fontSize: 8,
+      cellPadding: 2,
       font: 'helvetica',
     },
     headStyles: {
-      fillColor: '#1C1C1E',
-      textColor: '#FFFFFF',
+      fillColor: [30, 30, 30],
+      textColor: [255, 255, 255],
       fontStyle: 'bold',
-      fontSize: 9,
     },
     columnStyles: {
-      0: { cellWidth: 28 },
-      1: { cellWidth: 18 },
+      0: { cellWidth: 12 },
+      1: { cellWidth: 30 },
       2: { cellWidth: 18 },
       3: { cellWidth: 18 },
-      4: { cellWidth: 35 },
-      5: { cellWidth: 'auto' },
+      4: { cellWidth: 22 },
+      5: { cellWidth: 32 },
+      6: { cellWidth: 'auto' },
     },
-    alternateRowStyles: {
-      fillColor: '#F8F8F8',
+    willDrawCell: (data) => {
+      if (data.section === 'body') {
+        const color = rowColors[data.row.index]
+        if (color) {
+          data.cell.styles.fillColor = color
+        }
+      }
     },
     margin: { left: 14, right: 14 },
   })
 
-  // Summary rows after table
+  // ── Summary footer ────────────────────────────────────────────────────────
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const finalY = (doc as any).lastAutoTable.finalY as number
-  const summaryY = finalY + 8
+  const finalY = (doc as any).lastAutoTable?.finalY ?? 200
+  const summaryY = (finalY as number) + 10
 
   doc.setFontSize(9)
   doc.setFont('helvetica', 'bold')
-  doc.text(`Łącznie przepracowano:`, 14, summaryY)
+  doc.text('Podsumowanie:', 14, summaryY)
   doc.setFont('helvetica', 'normal')
-  doc.text(`${formatMinutesH(totalWorkMinutes)} h`, 70, summaryY)
+  doc.text(`Łącznie dni pracy: ${totalWorkDays}`, 14, summaryY + 6)
+  doc.text(`Łącznie godzin: ${formatDuration(totalWorkMinutes)}`, 14, summaryY + 12)
+  doc.text(`Nadgodziny (soboty): ${formatDuration(totalOvertimeMinutes)}`, 14, summaryY + 18)
+  doc.text(`Dni urlopu: ${totalLeaveDays}`, 14, summaryY + 24)
 
-  doc.setFont('helvetica', 'bold')
-  doc.text(`Nadgodziny sobotnie (2×):`, 14, summaryY + 6)
+  // ── Signature block ───────────────────────────────────────────────────────
+  const sigY = summaryY + 40
+  doc.setFontSize(9)
   doc.setFont('helvetica', 'normal')
-  doc.text(`${formatMinutesH(saturdayMinutes)} h`, 70, summaryY + 6)
-
-  doc.setFont('helvetica', 'bold')
-  doc.text(`Urlopy / nieobecności:`, 14, summaryY + 12)
-  doc.setFont('helvetica', 'normal')
-  doc.text(`${leaveDays} dni`, 70, summaryY + 12)
-
-  // Signature line
-  const sigY = summaryY + 28
-  doc.setFont('helvetica', 'normal')
-  doc.setFontSize(8)
-  doc.text('Podpis pracownika: ___________________________', 14, sigY)
-  doc.text('Podpis pracodawcy: ___________________________', 110, sigY)
+  doc.text('Pracownik: ___________________________', 14, sigY)
+  doc.text('Kierownik: ___________________________', pageWidth / 2 + 10, sigY)
 }
 
+// ─── Route handler ────────────────────────────────────────────────────────────
+
 export async function GET(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session) {
-    return new Response(JSON.stringify({ error: 'Unauthorized' }), { status: 401 })
-  }
-
-  const role = session.user.role
-  if (role !== 'ADMIN' && role !== 'MANAGER') {
-    return new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 })
-  }
-
-  const { searchParams } = new URL(req.url)
-  const monthParam = searchParams.get('month')
-  const employeeIdParam = searchParams.get('employeeId') ?? 'all'
-
-  if (!monthParam) {
-    return new Response(JSON.stringify({ error: 'month is required' }), { status: 400 })
-  }
-
-  const [yearStr, monthStr] = monthParam.split('-')
-  const year = parseInt(yearStr, 10)
-  const month = parseInt(monthStr, 10)
-  if (isNaN(year) || isNaN(month)) {
-    return new Response(JSON.stringify({ error: 'Invalid month format' }), { status: 400 })
-  }
-
-  const { start, end } = getMonthRange(year, month)
-
-  // Build employee where clause
-  const empWhere = employeeIdParam === 'all'
-    ? { active: true }
-    : { id: employeeIdParam }
-
-  const employees = await prisma.employee.findMany({
-    where: empWhere,
-    select: {
-      id: true,
-      firstName: true,
-      lastName: true,
-      timeEntries: {
-        where: { date: { gte: start, lte: end } },
-        include: { project: { select: { name: true } } },
-        orderBy: { date: 'asc' },
-      },
-      leaveRequestsNew: {
-        where: {
-          status: { not: 'rejected' },
-          startDate: { lte: end },
-          endDate: { gte: start },
-        },
-        include: { leaveType: { select: { name: true } } },
-      },
-    },
-    orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
-  })
-
-  if (employees.length === 0) {
-    return new Response(JSON.stringify({ error: 'No employees found' }), { status: 404 })
-  }
-
-  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
-
-  employees.forEach((emp, idx) => {
-    if (idx > 0) {
-      doc.addPage()
+  try {
+    const session = await getServerSession(authOptions)
+    if (!session) {
+      return new Response(JSON.stringify({ error: 'Unauthorized' }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      })
     }
-    buildEmployeePages(doc, emp, year, month)
-  })
 
-  const buffer = Buffer.from(doc.output('arraybuffer'))
+    const { searchParams } = new URL(req.url)
+    const monthParam = searchParams.get('month')
+    const employeeIdParam = searchParams.get('employeeId') ?? 'all'
 
-  const nameSlug = employees.length === 1
-    ? `${employees[0].lastName.toLowerCase()}-${employees[0].firstName.toLowerCase()}`
-    : 'wszyscy'
+    // Validate required month param
+    if (!monthParam || !/^\d{4}-\d{2}$/.test(monthParam)) {
+      return new Response(
+        JSON.stringify({ error: 'Missing or invalid "month" parameter (expected YYYY-MM)' }),
+        { status: 400, headers: { 'Content-Type': 'application/json' } },
+      )
+    }
 
-  const filename = `raport-${nameSlug}-${monthParam}.pdf`
+    const [yearStr, monthStr] = monthParam.split('-')
+    const year = parseInt(yearStr!, 10)
+    const month = parseInt(monthStr!, 10)
 
-  return new Response(buffer, {
-    headers: {
-      'Content-Type': 'application/pdf',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-    },
-  })
+    if (isNaN(year) || isNaN(month) || month < 1 || month > 12) {
+      return new Response(JSON.stringify({ error: 'Invalid month value' }), {
+        status: 400,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    const { start, end } = getMonthRange(year, month)
+
+    const role = session.user.role
+    const sessionEmployeeId = session.user.employeeId
+
+    // ── Determine which employees to report ──────────────────────────────────
+    // EMPLOYEE can only generate for themselves
+    let filterIds: string[] | undefined
+
+    if (role === 'EMPLOYEE') {
+      if (!sessionEmployeeId) {
+        return new Response(
+          JSON.stringify({ error: 'No employee record linked to your account' }),
+          { status: 403, headers: { 'Content-Type': 'application/json' } },
+        )
+      }
+      filterIds = [sessionEmployeeId]
+    } else {
+      // ADMIN / MANAGER
+      if (employeeIdParam !== 'all') {
+        filterIds = [employeeIdParam]
+      }
+      // else filterIds stays undefined → fetch all active
+    }
+
+    // ── Fetch employees ───────────────────────────────────────────────────────
+    const employeesRaw = await prisma.employee.findMany({
+      where: {
+        ...(filterIds ? { id: { in: filterIds } } : { active: true }),
+      },
+      select: {
+        id: true,
+        firstName: true,
+        lastName: true,
+      },
+      orderBy: { lastName: 'asc' },
+    })
+
+    if (employeesRaw.length === 0) {
+      return new Response(JSON.stringify({ error: 'No employees found' }), {
+        status: 404,
+        headers: { 'Content-Type': 'application/json' },
+      })
+    }
+
+    const allEmployeeIds = employeesRaw.map((e) => e.id)
+
+    // ── Fetch time entries for the month ──────────────────────────────────────
+    const timeEntriesRaw = await prisma.timeEntry.findMany({
+      where: {
+        employeeId: { in: allEmployeeIds },
+        date: { gte: start, lte: end },
+      },
+      include: {
+        breaks: true,
+      },
+      orderBy: { date: 'asc' },
+    })
+
+    // ── Fetch approved leave requests overlapping the month ───────────────────
+    const leaveRequestsRaw = await prisma.leaveRequestNew.findMany({
+      where: {
+        employeeId: { in: allEmployeeIds },
+        status: 'approved',
+        startDate: { lte: end },
+        endDate: { gte: start },
+      },
+      include: {
+        leaveType: {
+          select: { name: true },
+        },
+      },
+    })
+
+    // ── Group by employee ─────────────────────────────────────────────────────
+    const entriesByEmployee = new Map<string, TimeEntryData[]>()
+    const leaveByEmployee = new Map<string, LeaveRequestData[]>()
+
+    for (const emp of employeesRaw) {
+      entriesByEmployee.set(emp.id, [])
+      leaveByEmployee.set(emp.id, [])
+    }
+
+    for (const entry of timeEntriesRaw) {
+      const list = entriesByEmployee.get(entry.employeeId)
+      if (list) {
+        list.push({
+          date: entry.date,
+          clockIn: entry.clockIn,
+          clockOut: entry.clockOut,
+          totalMinutes: entry.totalMinutes,
+          breakMinutes: entry.breakMinutes,
+          overtimeMinutes: entry.overtimeMinutes,
+          status: entry.status,
+          notes: entry.notes,
+        })
+      }
+    }
+
+    for (const lr of leaveRequestsRaw) {
+      const list = leaveByEmployee.get(lr.employeeId)
+      if (list) {
+        list.push({
+          startDate: lr.startDate,
+          endDate: lr.endDate,
+          leaveType: { name: lr.leaveType.name },
+        })
+      }
+    }
+
+    // ── Generate PDF ──────────────────────────────────────────────────────────
+    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+
+    const reports: EmployeeReport[] = employeesRaw.map((emp) => ({
+      id: emp.id,
+      firstName: emp.firstName,
+      lastName: emp.lastName,
+      timeEntries: entriesByEmployee.get(emp.id) ?? [],
+      leaveRequests: leaveByEmployee.get(emp.id) ?? [],
+    }))
+
+    reports.forEach((report, idx) => {
+      if (idx > 0) doc.addPage()
+      generateEmployeeSection(doc, report, year, month)
+    })
+
+    const pdfBuffer = Buffer.from(doc.output('arraybuffer'))
+
+    return new Response(pdfBuffer, {
+      status: 200,
+      headers: {
+        'Content-Type': 'application/pdf',
+        'Content-Disposition': `attachment; filename="raport-${monthParam}.pdf"`,
+      },
+    })
+  } catch (err) {
+    const message = err instanceof Error ? err.message : 'Internal server error'
+    return new Response(JSON.stringify({ error: message }), {
+      status: 500,
+      headers: { 'Content-Type': 'application/json' },
+    })
+  }
 }
