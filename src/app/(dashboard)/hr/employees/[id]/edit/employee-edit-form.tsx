@@ -166,24 +166,27 @@ export function EmployeeEditForm({
   async function onSubmit(data: FormValues) {
     setServerError(null)
 
-    // Strip empty strings → undefined so PATCH only sends changed fields
+    // Build PATCH payload: omit unchanged/empty fields, send null to explicitly clear optional ones
     const payload: Record<string, unknown> = {}
+    // Fields that can be cleared by sending null (schema accepts nullable)
+    const nullableFields = ['phone', 'positionId', 'divisionId', 'departmentId', 'managerId', 'avatarUrl']
+    // Enum fields: empty string means "not set" — omit rather than send invalid enum value
+    const enumFields = ['employmentType']
     for (const [key, value] of Object.entries(data)) {
       if (value !== '' && value !== undefined) {
         payload[key] = value
       } else if (value === '') {
-        // Send null for optional relational fields to clear them
-        // Date fields must NOT be sent as null/empty — omit them so z.coerce.date().optional() receives undefined
-        const nullableFields = ['phone', 'positionId', 'divisionId', 'departmentId', 'managerId', 'avatarUrl']
         if (nullableFields.includes(key)) {
-          payload[key] = null
+          payload[key] = null   // explicitly clear
         }
-        // startDate and endDate: omit entirely when empty — schema expects undefined, not null/""
+        // enumFields and date fields: omit entirely when empty
       }
     }
-    // Ensure date fields are never sent as empty string or null (z.coerce.date("") throws)
+    // Date fields must never be empty string or null — omit so schema receives undefined
     if (!payload.startDate) delete payload.startDate
     if (!payload.endDate) delete payload.endDate
+    // Sanity: remove enum fields that slipped through as empty string
+    if (payload.employmentType === '') delete payload.employmentType
 
     try {
       const res = await fetch(`/api/hr/employees/${employee.id}`, {

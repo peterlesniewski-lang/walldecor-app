@@ -20,6 +20,15 @@ export const employeeCreateSchema = z.object({
 
 export const employeeUpdateSchema = employeeCreateSchema.partial().extend({
   active: z.boolean().optional(),
+  // Allow null to clear optional fields (PATCH semantics: null = clear, undefined = don't change)
+  phone: z.string().nullable().optional(),
+  positionId: z.string().nullable().optional(),
+  divisionId: z.string().nullable().optional(),
+  departmentId: z.string().nullable().optional(),
+  teamId: z.string().nullable().optional(),
+  managerId: z.string().nullable().optional(),
+  avatarUrl: z.string().nullable().optional(),
+  employmentType: z.enum(EMPLOYMENT_TYPES).nullable().optional(),
 })
 
 export const timeEntryCreateSchema = z.object({
