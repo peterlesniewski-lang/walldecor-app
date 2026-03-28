@@ -282,43 +282,34 @@ async function main() {
   console.log('Divisions seeded (2)')
 
   // 7. Departments (2 per division)
-  const deptJAGSales = await prisma.department.upsert({
+  await prisma.department.upsert({
     where: { id: 'dept-jag-sales' },
     update: { name: 'Sprzedaż' },
     create: { id: 'dept-jag-sales', name: 'Sprzedaż', divisionId: divJAG.id },
   })
-  const deptJAGService = await prisma.department.upsert({
+  await prisma.department.upsert({
     where: { id: 'dept-jag-service' },
     update: { name: 'Obsługa klienta' },
     create: { id: 'dept-jag-service', name: 'Obsługa klienta', divisionId: divJAG.id },
   })
-  const deptPULSales = await prisma.department.upsert({
+  await prisma.department.upsert({
     where: { id: 'dept-pul-sales' },
     update: { name: 'Sprzedaż' },
     create: { id: 'dept-pul-sales', name: 'Sprzedaż', divisionId: divPUL.id },
   })
-  const deptPULService = await prisma.department.upsert({
+  await prisma.department.upsert({
     where: { id: 'dept-pul-service' },
     update: { name: 'Obsługa klienta' },
     create: { id: 'dept-pul-service', name: 'Obsługa klienta', divisionId: divPUL.id },
   })
   console.log('Departments seeded (4)')
 
-  // Suppress unused variable warnings
-  void deptJAGService
-  void deptPULSales
-  void deptPULService
-
   // 8. Positions
   const positionNames = ['Sprzedawca', 'Kierownik salonu', 'Konsultant', 'CEO', 'Office Manager']
-  const positions: Record<string, string> = {}
   for (const name of positionNames) {
     const existing = await prisma.position.findFirst({ where: { name } })
-    if (existing) {
-      positions[name] = existing.id
-    } else {
-      const pos = await prisma.position.create({ data: { name } })
-      positions[name] = pos.id
+    if (!existing) {
+      await prisma.position.create({ data: { name } })
     }
   }
   console.log('Positions seeded (5)')
@@ -394,144 +385,7 @@ async function main() {
   }
   console.log('Leave types seeded (14)')
 
-  // 12. Employees (5)
-  const employeesData = [
-    {
-      email: 'piotr@walldecor.pl',
-      firstName: 'Piotr',
-      lastName: 'Bielecki',
-      position: 'CEO',
-      costCenterId: 'JAG',
-      divisionId: divJAG.id,
-      departmentId: deptJAGSales.id,
-      positionName: 'CEO',
-      employmentType: 'UoP',
-      startDate: new Date('2020-01-01'),
-    },
-    {
-      email: 'anna.k@walldecor.pl',
-      firstName: 'Anna',
-      lastName: 'Kowalska',
-      position: 'Kierownik salonu',
-      costCenterId: 'JAG',
-      divisionId: divJAG.id,
-      departmentId: deptJAGSales.id,
-      positionName: 'Kierownik salonu',
-      employmentType: 'UoP',
-      startDate: new Date('2021-03-01'),
-    },
-    {
-      email: 'marek.n@walldecor.pl',
-      firstName: 'Marek',
-      lastName: 'Nowak',
-      position: 'Kierownik salonu',
-      costCenterId: 'PUL',
-      divisionId: divPUL.id,
-      departmentId: deptPULSales.id,
-      positionName: 'Kierownik salonu',
-      employmentType: 'UoP',
-      startDate: new Date('2021-06-01'),
-    },
-    {
-      email: 'ewa.w@walldecor.pl',
-      firstName: 'Ewa',
-      lastName: 'Wiśniewska',
-      position: 'Sprzedawca',
-      costCenterId: 'JAG',
-      divisionId: divJAG.id,
-      departmentId: deptJAGSales.id,
-      positionName: 'Sprzedawca',
-      employmentType: 'UoP',
-      startDate: new Date('2022-01-10'),
-    },
-    {
-      email: 'jan.a@walldecor.pl',
-      firstName: 'Jan',
-      lastName: 'Adamski',
-      position: 'Sprzedawca',
-      costCenterId: 'PUL',
-      divisionId: divPUL.id,
-      departmentId: deptPULSales.id,
-      positionName: 'Sprzedawca',
-      employmentType: 'UoP',
-      startDate: new Date('2022-04-01'),
-    },
-  ]
-
-  const employeeIds: string[] = []
-  for (const emp of employeesData) {
-    const { positionName, ...empData } = emp
-    const created = await prisma.employee.upsert({
-      where: { email: emp.email },
-      update: {
-        firstName: emp.firstName,
-        lastName: emp.lastName,
-        position: emp.position,
-        divisionId: emp.divisionId,
-        departmentId: emp.departmentId,
-        employmentType: emp.employmentType,
-        positionId: positions[positionName],
-      },
-      create: {
-        ...empData,
-        positionId: positions[positionName],
-        active: true,
-      },
-    })
-    employeeIds.push(created.id)
-  }
-  console.log('Employees seeded (5)')
-
-  // 13. LeaveBalanceNew for each employee (VL + SL for 2025)
-  const vlId = leaveTypeIds['VL']
-  const slId = leaveTypeIds['SL']
-
-  for (const empId of employeeIds) {
-    // VL balance
-    await prisma.leaveBalanceNew.upsert({
-      where: {
-        employeeId_leaveTypeId_year: {
-          employeeId: empId,
-          leaveTypeId: vlId,
-          year: 2025,
-        },
-      },
-      update: { totalDays: 26 },
-      create: {
-        employeeId: empId,
-        leaveTypeId: vlId,
-        year: 2025,
-        totalDays: 26,
-        usedDays: 0,
-        pendingDays: 0,
-        carriedOver: 0,
-      },
-    })
-
-    // SL balance (sick leave - no limit, start at 0)
-    await prisma.leaveBalanceNew.upsert({
-      where: {
-        employeeId_leaveTypeId_year: {
-          employeeId: empId,
-          leaveTypeId: slId,
-          year: 2025,
-        },
-      },
-      update: { totalDays: 0 },
-      create: {
-        employeeId: empId,
-        leaveTypeId: slId,
-        year: 2025,
-        totalDays: 0,
-        usedDays: 0,
-        pendingDays: 0,
-        carriedOver: 0,
-      },
-    })
-  }
-  console.log('Leave balances seeded (5 employees x 2 types)')
-
-  // 14. TimeTrackingRule per division
+  // 12. TimeTrackingRule per division
   await prisma.timeTrackingRule.upsert({
     where: { id: 'ttr-jag' },
     update: { name: 'Reguła JAG', dailyHours: 8, weeklyHours: 40, overtimeThreshold: 8 },
