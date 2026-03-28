@@ -223,7 +223,7 @@ export function EmployeeForm({ divisions, departments, managers }: EmployeeFormP
               <Label htmlFor="costCenterId" required>Centrum kosztów</Label>
               <select id="costCenterId" {...form2.register('costCenterId')} className={inputClass}>
                 <option value="">Wybierz centrum</option>
-                <option value="JAG">JAG — Jagodowa</option>
+                <option value="JAG">JAG — Jagiellońska</option>
                 <option value="PUL">PUL — Puławska</option>
                 <option value="GLOBAL">GLOBAL</option>
               </select>

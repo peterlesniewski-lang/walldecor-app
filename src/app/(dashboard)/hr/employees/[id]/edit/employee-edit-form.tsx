@@ -336,7 +336,7 @@ export function EmployeeEditForm({
                   className={selectClass}
                 >
                   <option value="">Wybierz centrum</option>
-                  <option value="JAG">JAG — Jagodowa</option>
+                  <option value="JAG">JAG — Jagiellońska</option>
                   <option value="PUL">PUL — Puławska</option>
                   <option value="GLOBAL">GLOBAL</option>
                 </select>
