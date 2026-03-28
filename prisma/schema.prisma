@@ -51,6 +51,7 @@ model User {
   name         String
   role         String    @default("EMPLOYEE")
   passwordHash String
+  isActive     Boolean   @default(true)
   employeeId   String?   @unique
   employee     Employee? @relation(fields: [employeeId], references: [id])
   createdAt    DateTime  @default(now())

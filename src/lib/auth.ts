@@ -29,6 +29,10 @@ export const authOptions: NextAuthOptions = {
 
         if (!user) return null
 
+        if (!user.isActive) {
+          throw new Error('Konto zostało zablokowane. Skontaktuj się z administratorem.')
+        }
+
         const passwordMatch = await bcrypt.compare(
           result.data.password,
           user.passwordHash

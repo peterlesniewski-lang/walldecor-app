@@ -89,6 +89,26 @@ export default async function SettingsPage() {
           </Link>
         </section>
       )}
+
+      {userRole === 'ADMIN' && (
+        <section className="space-y-4">
+          <div className="border-b border-[var(--wd-border)] pb-3">
+            <h2 className="text-base font-semibold" style={{ color: 'var(--wd-dark)' }}>
+              Użytkownicy i dostęp
+            </h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Zarządzaj kontami użytkowników, rolami i blokadami dostępu
+            </p>
+          </div>
+          <Link
+            href="/settings/users"
+            className="inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-opacity hover:opacity-80"
+            style={{ background: 'var(--wd-dark)', color: '#fff' }}
+          >
+            Zarządzaj użytkownikami →
+          </Link>
+        </section>
+      )}
     </div>
   )
 }
