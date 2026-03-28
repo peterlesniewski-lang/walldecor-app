@@ -27,6 +27,23 @@ Szczegółowe instrukcje dotyczące testów znajdziesz w: @.claude/rules/testing
 
 ---
 
+## Next.js 16 — krytyczna reguła dla API routes
+
+W Next.js 16 `params` w route handlerach to **Promise** — zawsze używaj:
+```typescript
+// ✅ POPRAWNIE
+export async function GET(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const { id } = await params
+}
+
+// ❌ BŁĄD — build się nie skompiluje
+export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
+  const { id } = params
+}
+```
+
+---
+
 ## Git — reguła po każdej zmianie
 
 **Po zakończeniu każdego bloku pracy** (feature, fix, refactor) zawsze zapytaj użytkownika:
