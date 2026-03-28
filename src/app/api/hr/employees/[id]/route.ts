@@ -71,7 +71,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   const existing = await prisma.employee.findUnique({ where: { id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // Check for any related data — prevent hard delete if any exists (FK constraints)
+  // Check for real historical data — these block hard delete (use soft hide instead)
   const [
     timeEntryCount,
     leaveRequestNewCount,
@@ -79,11 +79,9 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     additionalContractCount,
     salaryHistoryCount,
     leaveRequestCount,
-    leaveBalanceCount,
     workTimeRecordCount,
     workScheduleCount,
     overtimeRequestCount,
-    leaveBalanceNewCount,
     userCount,
     subordinateCount,
   ] = await Promise.all([
@@ -93,38 +91,39 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     prisma.additionalContract.count({ where: { employeeId: id } }),
     prisma.salaryHistory.count({ where: { employeeId: id } }),
     prisma.leaveRequest.count({ where: { employeeId: id } }),
-    prisma.leaveBalance.count({ where: { employeeId: id } }),
     prisma.workTimeRecord.count({ where: { employeeId: id } }),
     prisma.workSchedule.count({ where: { employeeId: id } }),
     prisma.overtimeRequest.count({ where: { employeeId: id } }),
-    prisma.leaveBalanceNew.count({ where: { employeeId: id } }),
     prisma.user.count({ where: { employeeId: id } }),
     prisma.employee.count({ where: { managerId: id } }),
   ])
 
-  const hasRelatedData =
+  const hasRealHistoricalData =
     timeEntryCount > 0 ||
     leaveRequestNewCount > 0 ||
     contractCount > 0 ||
     additionalContractCount > 0 ||
     salaryHistoryCount > 0 ||
     leaveRequestCount > 0 ||
-    leaveBalanceCount > 0 ||
     workTimeRecordCount > 0 ||
     workScheduleCount > 0 ||
     overtimeRequestCount > 0 ||
-    leaveBalanceNewCount > 0 ||
     userCount > 0 ||
     subordinateCount > 0
 
-  if (hasRelatedData) {
+  if (hasRealHistoricalData) {
     return NextResponse.json(
       { error: 'Pracownik ma dane historyczne. Użyj opcji "Ukryj".' },
       { status: 409 }
     )
   }
 
-  await prisma.employee.delete({ where: { id } })
+  // Auto-generated records (leave balances) — cascade delete before removing employee
+  await prisma.$transaction([
+    prisma.leaveBalanceNew.deleteMany({ where: { employeeId: id } }),
+    prisma.leaveBalance.deleteMany({ where: { employeeId: id } }),
+    prisma.employee.delete({ where: { id } }),
+  ])
 
   return NextResponse.json({ success: true })
 }
