@@ -31,9 +31,9 @@ const NAV_SECTIONS = [
   {
     label: 'HR',
     items: [
-      { href: '/hr', label: 'Pracownicy', icon: Users },
-      { href: '/hr/leaves', label: 'Urlopy', icon: CalendarOff },
-      { href: '/hr/timesheets', label: 'Czas pracy', icon: Clock },
+      { href: '/hr/employees', label: 'Pracownicy', icon: Users },
+      { href: '/hr/leave', label: 'Urlopy', icon: CalendarOff },
+      { href: '/hr/time-tracking', label: 'Czas pracy', icon: Clock },
     ],
   },
   {
