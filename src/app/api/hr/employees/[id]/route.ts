@@ -71,10 +71,20 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   const existing = await prisma.employee.findUnique({ where: { id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  await prisma.employee.update({
-    where: { id },
-    data: { active: false },
-  })
+  // Check for historical data — prevent hard delete if any exists
+  const [timeEntryCount, leaveRequestCount] = await Promise.all([
+    prisma.timeEntry.count({ where: { employeeId: id } }),
+    prisma.leaveRequestNew.count({ where: { employeeId: id } }),
+  ])
+
+  if (timeEntryCount > 0 || leaveRequestCount > 0) {
+    return NextResponse.json(
+      { error: 'Pracownik ma dane historyczne. Użyj opcji "Ukryj".' },
+      { status: 409 }
+    )
+  }
+
+  await prisma.employee.delete({ where: { id } })
 
   return NextResponse.json({ success: true })
 }

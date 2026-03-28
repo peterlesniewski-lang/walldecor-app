@@ -5,6 +5,8 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { EmployeeAvatar } from '@/components/hr/employees/employee-avatar'
 import { EmployeeTabs } from './employee-tabs'
+import { EmployeeActions } from './employee-actions'
+import { getWeekRange } from '@/lib/hr/utils'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -101,21 +103,131 @@ function PersonalDataTab({
   )
 }
 
-function WorkTimeTab() {
-  return (
-    <div className="flex flex-col items-center justify-center py-16 text-center">
-      <div
-        className="w-12 h-12 rounded-xl flex items-center justify-center mb-4"
-        style={{ background: 'var(--wd-surface-2)' }}
-      >
-        <svg className="w-6 h-6" style={{ color: 'var(--wd-text-muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
-        </svg>
+// ─── TimeEntry type ───────────────────────────────────────────────────────────
+
+type TimeEntryWithProject = {
+  id: string
+  date: Date
+  clockIn: Date
+  clockOut: Date | null
+  totalMinutes: number | null
+  status: string
+  project: { id: string; name: string } | null
+}
+
+function WorkTimeTab({ entries }: { entries: TimeEntryWithProject[] }) {
+  const STATUS_STYLES: Record<string, string> = {
+    approved: 'bg-emerald-50 text-emerald-700 border-emerald-200',
+    pending: 'bg-amber-50 text-amber-700 border-amber-200',
+    rejected: 'bg-red-50 text-red-600 border-red-200',
+  }
+  const STATUS_LABELS: Record<string, string> = {
+    approved: 'Zatwierdzone',
+    pending: 'Oczekujące',
+    rejected: 'Odrzucone',
+  }
+
+  const DAY_SHORT: Record<number, string> = {
+    1: 'Pn', 2: 'Wt', 3: 'Śr', 4: 'Cz', 5: 'Pt', 6: 'So', 0: 'Nd',
+  }
+
+  function formatDay(date: Date): string {
+    const d = new Date(date)
+    const dow = DAY_SHORT[d.getDay()] ?? '?'
+    const day = String(d.getDate()).padStart(2, '0')
+    const month = String(d.getMonth() + 1).padStart(2, '0')
+    return `${dow} ${day}.${month}`
+  }
+
+  function formatDuration(entry: TimeEntryWithProject): string {
+    if (entry.totalMinutes != null && entry.totalMinutes > 0) {
+      const h = Math.floor(entry.totalMinutes / 60)
+      const m = entry.totalMinutes % 60
+      return m === 0 ? `${h}h` : `${h}h ${m}m`
+    }
+    if (entry.clockOut) {
+      const mins = Math.round((new Date(entry.clockOut).getTime() - new Date(entry.clockIn).getTime()) / 60000)
+      const h = Math.floor(mins / 60)
+      const m = mins % 60
+      return m === 0 ? `${h}h` : `${h}h ${m}m`
+    }
+    const start = new Date(entry.clockIn)
+    return `Od ${String(start.getHours()).padStart(2, '0')}:${String(start.getMinutes()).padStart(2, '0')}`
+  }
+
+  if (entries.length === 0) {
+    return (
+      <div className="flex flex-col items-center justify-center py-16 text-center">
+        <div
+          className="w-12 h-12 rounded-xl flex items-center justify-center mb-4"
+          style={{ background: 'var(--wd-surface-2)' }}
+        >
+          <svg className="w-6 h-6" style={{ color: 'var(--wd-text-muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        <p className="font-medium text-[var(--wd-text-primary)] mb-1">Brak wpisów</p>
+        <p className="text-sm max-w-sm" style={{ color: 'var(--wd-text-muted)' }}>
+          Brak wpisów w bieżącym tygodniu
+        </p>
       </div>
-      <p className="font-medium text-[var(--wd-text-primary)] mb-1">Dane czasu pracy</p>
-      <p className="text-sm max-w-sm" style={{ color: 'var(--wd-text-muted)' }}>
-        Dane czasu pracy dostępne po implementacji Fazy 2
-      </p>
+    )
+  }
+
+  // Summary row
+  const totalMins = entries.reduce((acc, e) => {
+    if (e.totalMinutes != null) return acc + e.totalMinutes
+    if (e.clockOut) return acc + Math.round((new Date(e.clockOut).getTime() - new Date(e.clockIn).getTime()) / 60000)
+    return acc
+  }, 0)
+  const totalH = Math.floor(totalMins / 60)
+  const totalM = totalMins % 60
+
+  return (
+    <div className="space-y-4">
+      <div className="flex items-center justify-between">
+        <h3 className="text-base font-semibold text-[var(--wd-text-primary)]">Czas pracy — bieżący tydzień</h3>
+        <span className="text-sm font-medium num text-[var(--wd-text-primary)]">
+          Suma: {totalH}h {totalM > 0 ? `${totalM}m` : ''}
+        </span>
+      </div>
+
+      <div className="overflow-x-auto rounded-lg border border-[var(--wd-border)]">
+        <table className="data-table w-full">
+          <thead>
+            <tr>
+              <th>Dzień</th>
+              <th>Godziny</th>
+              <th>Status</th>
+              <th>Projekt</th>
+            </tr>
+          </thead>
+          <tbody>
+            {entries.map((entry) => (
+              <tr key={entry.id}>
+                <td className="font-medium text-[var(--wd-text-primary)] num">
+                  {formatDay(entry.date)}
+                </td>
+                <td className="num text-[var(--wd-text-primary)]">
+                  {formatDuration(entry)}
+                </td>
+                <td>
+                  <span
+                    className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${
+                      STATUS_STYLES[entry.status] ?? 'bg-stone-50 text-stone-600 border-stone-200'
+                    }`}
+                  >
+                    {STATUS_LABELS[entry.status] ?? entry.status}
+                  </span>
+                </td>
+                <td className="text-sm" style={{ color: 'var(--wd-text-muted)' }}>
+                  {entry.project?.name ?? '—'}
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
     </div>
   )
 }
@@ -266,6 +378,17 @@ export default async function EmployeeProfilePage({ params }: Params) {
 
   const isAdmin = session.user.role === 'ADMIN'
 
+  // Fetch current week time entries
+  const { start, end } = getWeekRange(new Date())
+  const timeEntries = await prisma.timeEntry.findMany({
+    where: {
+      employeeId: employee.id,
+      date: { gte: start, lte: end },
+    },
+    include: { project: true },
+    orderBy: { date: 'asc' },
+  })
+
   const tabs = [
     {
       id: 'personal',
@@ -275,7 +398,7 @@ export default async function EmployeeProfilePage({ params }: Params) {
     {
       id: 'time',
       label: 'Czas pracy',
-      content: <WorkTimeTab />,
+      content: <WorkTimeTab entries={timeEntries} />,
     },
     {
       id: 'leave',
@@ -326,6 +449,14 @@ export default async function EmployeeProfilePage({ params }: Params) {
             </span>
           )}
         </div>
+
+        {/* Admin actions */}
+        {isAdmin && (
+          <EmployeeActions
+            employeeId={employee.id}
+            employeeName={`${employee.firstName} ${employee.lastName}`}
+          />
+        )}
       </div>
 
       {/* Main card */}

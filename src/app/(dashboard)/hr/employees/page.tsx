@@ -5,6 +5,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { EmployeeAvatar } from '@/components/hr/employees/employee-avatar'
 import { EmployeeFilters } from '@/components/hr/employees/employee-filters'
+import { EmployeeRowActions } from '@/components/hr/employees/employee-row-actions'
 import { Suspense } from 'react'
 
 // ─── Badges ──────────────────────────────────────────────────────────────────
@@ -50,6 +51,7 @@ interface SearchParams {
   employmentType?: string
   search?: string
   page?: string
+  showHidden?: string
 }
 
 export default async function EmployeesPage({
@@ -67,6 +69,8 @@ export default async function EmployeesPage({
   const limit = 20
   const skip = (page - 1) * limit
 
+  const showHidden = isAdmin && sp.showHidden === 'true'
+
   // Build filters
   type WhereClause = {
     divisionId?: string
@@ -81,7 +85,8 @@ export default async function EmployeesPage({
   if (sp.departmentId) where.departmentId = sp.departmentId
   if (sp.employmentType) where.employmentType = sp.employmentType
   if (sp.status === 'active') where.active = true
-  if (sp.status === 'inactive') where.active = false
+  else if (sp.status === 'inactive') where.active = false
+  else if (!showHidden) where.active = true
   if (sp.search) {
     where.OR = [
       { firstName: { contains: sp.search } },
@@ -116,7 +121,12 @@ export default async function EmployeesPage({
         <div>
           <h1 className="text-2xl font-bold text-[var(--wd-text-primary)]">Pracownicy</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--wd-text-muted)' }}>
-            {total} {total === 1 ? 'pracownik' : total < 5 ? 'pracowników' : 'pracowników'} w systemie
+            {total} {total === 1 ? 'pracownik' : total < 5 ? 'pracownicy' : 'pracowników'} w systemie
+            {showHidden && (
+              <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-amber-50 text-amber-700 border border-amber-200">
+                Widoczni ukryci
+              </span>
+            )}
           </p>
         </div>
         {isAdmin && (
@@ -137,7 +147,7 @@ export default async function EmployeesPage({
         {/* Filters */}
         <div className="p-4 border-b border-[var(--wd-border)]">
           <Suspense fallback={null}>
-            <EmployeeFilters divisions={divisions} />
+            <EmployeeFilters divisions={divisions} isAdmin={isAdmin} />
           </Suspense>
         </div>
 
@@ -158,6 +168,7 @@ export default async function EmployeesPage({
                   <th>Oddział</th>
                   <th>Umowa</th>
                   <th>Status</th>
+                  {isAdmin && <th className="w-12" />}
                 </tr>
               </thead>
               <tbody>
@@ -196,6 +207,14 @@ export default async function EmployeesPage({
                     <td>
                       <StatusBadge active={emp.active} />
                     </td>
+                    {isAdmin && (
+                      <td onClick={(e) => e.stopPropagation()}>
+                        <EmployeeRowActions
+                          employeeId={emp.id}
+                          employeeName={`${emp.firstName} ${emp.lastName}`}
+                        />
+                      </td>
+                    )}
                   </tr>
                 ))}
               </tbody>

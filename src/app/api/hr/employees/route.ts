@@ -14,6 +14,7 @@ export async function GET(req: NextRequest) {
   const status = searchParams.get('status')
   const employmentType = searchParams.get('employmentType')
   const search = searchParams.get('search')
+  const showHidden = searchParams.get('showHidden') === 'true'
   const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10))
   const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') ?? '20', 10)))
   const skip = (page - 1) * limit
@@ -24,7 +25,8 @@ export async function GET(req: NextRequest) {
   if (departmentId) where.departmentId = departmentId
   if (employmentType) where.employmentType = employmentType
   if (status === 'active') where.active = true
-  if (status === 'inactive') where.active = false
+  else if (status === 'inactive') where.active = false
+  else if (!showHidden || session.user.role !== 'ADMIN') where.active = true
   if (search) {
     // SQLite does not support mode:'insensitive' — use default (case-insensitive by default for ASCII in SQLite)
     where.OR = [

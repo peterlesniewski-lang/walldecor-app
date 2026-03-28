@@ -18,7 +18,9 @@ export const employeeCreateSchema = z.object({
   position: z.string().min(1),     // legacy field
 })
 
-export const employeeUpdateSchema = employeeCreateSchema.partial()
+export const employeeUpdateSchema = employeeCreateSchema.partial().extend({
+  active: z.boolean().optional(),
+})
 
 export const timeEntryCreateSchema = z.object({
   employeeId: z.string().min(1),
