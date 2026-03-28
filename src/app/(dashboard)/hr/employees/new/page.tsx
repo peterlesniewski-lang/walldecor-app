@@ -14,10 +14,7 @@ export default async function NewEmployeePage() {
     prisma.division.findMany({ orderBy: { name: 'asc' } }),
     prisma.department.findMany({ orderBy: { name: 'asc' } }),
     prisma.employee.findMany({
-      where: {
-        active: true,
-        user: { role: { in: ['ADMIN', 'MANAGER'] } },
-      },
+      where: { active: true },
       select: { id: true, firstName: true, lastName: true },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     }),

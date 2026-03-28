@@ -140,7 +140,13 @@ export function EmployeeForm({ divisions, departments, managers }: EmployeeFormP
   }
 
   async function handleStep3(data: Step3) {
-    const finalData = { ...stepData, ...data } as FormPayload
+    // Strip empty strings from optional FK fields — Prisma rejects "" as a foreign key
+    const cleaned: Step3 = {
+      divisionId: data.divisionId || undefined,
+      departmentId: data.departmentId || undefined,
+      managerId: data.managerId || undefined,
+    }
+    const finalData = { ...stepData, ...cleaned } as FormPayload
     setIsSubmitting(true)
     setError(null)
 
