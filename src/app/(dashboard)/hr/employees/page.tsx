@@ -208,7 +208,7 @@ export default async function EmployeesPage({
                       <StatusBadge active={emp.active} />
                     </td>
                     {isAdmin && (
-                      <td onClick={(e) => e.stopPropagation()}>
+                      <td>
                         <EmployeeRowActions
                           employeeId={emp.id}
                           employeeName={`${emp.firstName} ${emp.lastName}`}
