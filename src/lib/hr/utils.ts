@@ -96,3 +96,23 @@ export function getMonthRange(year: number, month: number): { start: Date; end: 
   const end = new Date(year, month, 0, 23, 59, 59, 999)
   return { start, end }
 }
+
+/**
+ * Oblicza proporcjonalną liczbę dni urlopowych dla pracownika zatrudnionego w ciągu roku.
+ * - Zatrudniony przed danym rokiem → pełny wymiar
+ * - Zatrudniony w danym roku → ceil(annualDays × pozostałeMiesiące / 12)
+ * - Zatrudniony po danym roku → 0
+ * Zaokrąglenie w górę (kodeks pracy: niepełny miesiąc = pełny miesiąc na korzyść pracownika).
+ */
+export function calcProportionalLeaveDays(
+  startDate: Date,
+  year: number,
+  annualDays: number = 26
+): number {
+  const startYear = startDate.getFullYear()
+  if (startYear > year) return 0
+  if (startYear < year) return annualDays
+  // zatrudniony w tym samym roku: od miesiąca startowego do grudnia włącznie
+  const monthsLeft = 12 - startDate.getMonth() // getMonth() jest 0-indexed
+  return Math.ceil(annualDays * monthsLeft / 12)
+}

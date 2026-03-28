@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { employeeCreateSchema } from '@/lib/hr/schemas'
+import { calcProportionalLeaveDays } from '@/lib/hr/utils'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -76,6 +77,33 @@ export async function POST(req: NextRequest) {
       costCenter: true,
     },
   })
+
+  // Auto-create proportional leave balances for UoP/UoD employees
+  const employmentType = parsed.data.employmentType
+  const annualDays = employmentType === 'B2B' || employmentType === 'UZ' ? 0 : 26
+
+  if (annualDays > 0) {
+    const leaveTypes = await prisma.leaveType.findMany({
+      where: { isActive: true, isPaid: true },
+      select: { id: true },
+    })
+    if (leaveTypes.length > 0) {
+      const currentYear = new Date().getFullYear()
+      const days = calcProportionalLeaveDays(
+        new Date(parsed.data.startDate),
+        currentYear,
+        annualDays
+      )
+      await prisma.leaveBalanceNew.createMany({
+        data: leaveTypes.map((lt) => ({
+          employeeId: employee.id,
+          leaveTypeId: lt.id,
+          year: currentYear,
+          totalDays: days,
+        })),
+      })
+    }
+  }
 
   return NextResponse.json(employee, { status: 201 })
 }
