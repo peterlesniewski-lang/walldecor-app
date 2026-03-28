@@ -8,21 +8,13 @@ import autoTable from 'jspdf-autotable'
 
 // ─── Utility functions ────────────────────────────────────────────────────────
 
-function formatHHMM(iso: string | null | Date | undefined): string {
-  if (!iso) return '—'
-  const d = new Date(iso)
-  return `${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`
-}
-
-function formatDuration(minutes: number | null | undefined): string {
-  if (!minutes || minutes <= 0) return '—'
+function formatDuration(minutes: number): string {
+  if (!minutes || minutes <= 0) return '0h'
   const h = Math.floor(minutes / 60)
   const m = minutes % 60
-  if (h === 0) return `${m}min`
   return m === 0 ? `${h}h` : `${h}h ${m}min`
 }
 
-const PL_DAYS = ['Nd', 'Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb']
 const PL_MONTHS = [
   'Styczeń', 'Luty', 'Marzec', 'Kwiecień', 'Maj', 'Czerwiec',
   'Lipiec', 'Sierpień', 'Wrzesień', 'Październik', 'Listopad', 'Grudzień',
@@ -32,19 +24,13 @@ const PL_MONTHS = [
 
 type TimeEntryData = {
   date: Date
-  clockIn: Date
-  clockOut: Date | null
   totalMinutes: number | null
-  breakMinutes: number | null
   overtimeMinutes: number
-  status: string
-  notes: string | null
 }
 
 type LeaveRequestData = {
   startDate: Date
   endDate: Date
-  leaveType: { name: string }
 }
 
 type EmployeeReport = {
@@ -55,171 +41,162 @@ type EmployeeReport = {
   leaveRequests: LeaveRequestData[]
 }
 
-// ─── PDF section builder ──────────────────────────────────────────────────────
+type EmployeeSummary = {
+  name: string
+  standardMinutes: number
+  overtimeMinutes: number
+  leaveDays: number
+}
 
-function generateEmployeeSection(
-  doc: jsPDF,
-  employee: EmployeeReport,
-  year: number,
-  month: number, // 1-indexed
-) {
-  const monthLabel = PL_MONTHS[month - 1]
-  const fullName = `${employee.firstName} ${employee.lastName}`
-  const pageWidth = doc.internal.pageSize.getWidth()
+// ─── Summary calculator ───────────────────────────────────────────────────────
 
-  // Build a quick lookup: "YYYY-MM-DD" → TimeEntry
-  const entryByDate = new Map<string, TimeEntryData>()
+function calcSummary(employee: EmployeeReport, year: number, month: number): EmployeeSummary {
+  let standardMinutes = 0
+  let overtimeMinutes = 0
+
   for (const entry of employee.timeEntries) {
     const d = new Date(entry.date)
-    const key = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`
-    entryByDate.set(key, entry)
+    const dow = d.getDay() // 0=Sun, 6=Sat
+    const mins = entry.totalMinutes ?? 0
+
+    if (dow === 6) {
+      // Saturday = overtime
+      overtimeMinutes += mins
+    } else if (dow !== 0) {
+      // Mon–Fri: standard hours + any overtime field
+      standardMinutes += mins
+      overtimeMinutes += entry.overtimeMinutes ?? 0
+    }
   }
 
-  // ── Header ────────────────────────────────────────────────────────────────
-  doc.setFontSize(22)
-  doc.setFont('helvetica', 'bold')
-  doc.text('WallDecor', 14, 20)
-
-  doc.setFontSize(14)
-  doc.setFont('helvetica', 'normal')
-  doc.text(`Ewidencja czasu pracy — ${fullName}`, 14, 30)
-
-  doc.setFontSize(11)
-  doc.setTextColor(80, 80, 80)
-  doc.text(`Miesiąc: ${monthLabel} ${year}`, 14, 38)
-  doc.setTextColor(0, 0, 0)
-
-  // ── Build table rows ──────────────────────────────────────────────────────
+  // Count working days (Mon–Fri) covered by approved leave requests
   const daysInMonth = new Date(year, month, 0).getDate()
-
-  // Row: [Dzień, Data, Wejście, Wyjście, Czas pracy, Typ, Uwagi]
-  // We pass fill color info via willDrawCell hook using a parallel array
-  const tableRows: string[][] = []
-  const rowColors: ([number, number, number] | null)[] = []
-
-  let totalWorkDays = 0
-  let totalWorkMinutes = 0
-  let totalOvertimeMinutes = 0
-  let totalLeaveDays = 0
+  let leaveDays = 0
 
   for (let day = 1; day <= daysInMonth; day++) {
     const dateObj = new Date(year, month - 1, day)
-    const dow = dateObj.getDay() // 0=Sun … 6=Sat
-    const dayLabel = PL_DAYS[dow]
-    const mm = String(month).padStart(2, '0')
-    const dd = String(day).padStart(2, '0')
-    const dateKey = `${year}-${mm}-${dd}`
-    const dateFormatted = `${dayLabel} ${dd}.${mm}`
+    const dow = dateObj.getDay()
+    if (dow === 0 || dow === 6) continue // skip weekends
 
-    const entry = entryByDate.get(dateKey)
-
-    // Check leave requests overlapping this day
-    const leaveForDay = employee.leaveRequests.find((lr) => {
+    const covered = employee.leaveRequests.some((lr) => {
       const s = new Date(lr.startDate)
       const e = new Date(lr.endDate)
       s.setHours(0, 0, 0, 0)
       e.setHours(23, 59, 59, 999)
       return dateObj >= s && dateObj <= e
     })
-
-    const clockInStr = entry ? formatHHMM(entry.clockIn) : '—'
-    const clockOutStr = entry && entry.clockOut ? formatHHMM(entry.clockOut) : '—'
-    const durationStr = entry ? formatDuration(entry.totalMinutes) : '—'
-
-    let type = ''
-    if (entry && dow === 6) {
-      type = 'Nadg. 2×'
-    } else if (leaveForDay) {
-      type = leaveForDay.leaveType.name
-    } else if (entry) {
-      type = 'Norma'
-    }
-
-    const notes = entry?.notes ?? ''
-
-    // Determine background color
-    let fillColor: [number, number, number] | null = null
-    if (dow === 0) {
-      fillColor = [240, 240, 240]
-    } else if (dow === 6 && entry) {
-      fillColor = [255, 237, 213]
-    } else if (leaveForDay) {
-      fillColor = [219, 234, 254]
-    } else if (day % 2 === 0) {
-      fillColor = [248, 247, 245]
-    }
-
-    tableRows.push([String(day), dateFormatted, clockInStr, clockOutStr, durationStr, type, notes])
-    rowColors.push(fillColor)
-
-    // Accumulate summaries
-    if (entry && dow !== 0) {
-      totalWorkDays++
-      totalWorkMinutes += entry.totalMinutes ?? 0
-      if (dow === 6) {
-        totalOvertimeMinutes += entry.totalMinutes ?? 0
-      }
-    }
-    if (leaveForDay && dow !== 0 && dow !== 6) {
-      totalLeaveDays++
-    }
+    if (covered) leaveDays++
   }
 
-  // ── Render table ──────────────────────────────────────────────────────────
-  autoTable(doc, {
-    startY: 45,
-    head: [['Dzień', 'Data', 'Wejście', 'Wyjście', 'Czas pracy', 'Typ', 'Uwagi']],
-    body: tableRows,
-    styles: {
-      fontSize: 8,
-      cellPadding: 2,
-      font: 'helvetica',
-    },
-    headStyles: {
-      fillColor: [30, 30, 30],
-      textColor: [255, 255, 255],
-      fontStyle: 'bold',
-    },
-    columnStyles: {
-      0: { cellWidth: 12 },
-      1: { cellWidth: 30 },
-      2: { cellWidth: 18 },
-      3: { cellWidth: 18 },
-      4: { cellWidth: 22 },
-      5: { cellWidth: 32 },
-      6: { cellWidth: 'auto' },
-    },
-    willDrawCell: (data) => {
-      if (data.section === 'body') {
-        const color = rowColors[data.row.index]
-        if (color) {
-          data.cell.styles.fillColor = color
-        }
-      }
-    },
-    margin: { left: 14, right: 14 },
-  })
+  return {
+    name: `${employee.firstName} ${employee.lastName}`,
+    standardMinutes,
+    overtimeMinutes,
+    leaveDays,
+  }
+}
 
-  // ── Summary footer ────────────────────────────────────────────────────────
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const finalY = (doc as any).lastAutoTable?.finalY ?? 200
-  const summaryY = (finalY as number) + 10
+// ─── PDF generator ────────────────────────────────────────────────────────────
 
-  doc.setFontSize(9)
+function generatePDF(reports: EmployeeReport[], year: number, month: number): jsPDF {
+  const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+  const pageWidth = doc.internal.pageSize.getWidth()
+  const monthLabel = `${PL_MONTHS[month - 1]} ${year}`
+
+  const summaries = reports.map((r) => calcSummary(r, year, month))
+
+  // ── Header ────────────────────────────────────────────────────────────────
+  doc.setFontSize(22)
   doc.setFont('helvetica', 'bold')
-  doc.text('Podsumowanie:', 14, summaryY)
-  doc.setFont('helvetica', 'normal')
-  doc.text(`Łącznie dni pracy: ${totalWorkDays}`, 14, summaryY + 6)
-  doc.text(`Łącznie godzin: ${formatDuration(totalWorkMinutes)}`, 14, summaryY + 12)
-  doc.text(`Nadgodziny (soboty): ${formatDuration(totalOvertimeMinutes)}`, 14, summaryY + 18)
-  doc.text(`Dni urlopu: ${totalLeaveDays}`, 14, summaryY + 24)
+  doc.text('WallDecor', 14, 20)
 
-  // ── Signature block ───────────────────────────────────────────────────────
-  const sigY = summaryY + 40
-  doc.setFontSize(9)
+  doc.setFontSize(13)
   doc.setFont('helvetica', 'normal')
-  doc.text('Pracownik: ___________________________', 14, sigY)
-  doc.text('Kierownik: ___________________________', pageWidth / 2 + 10, sigY)
+  doc.setTextColor(60, 60, 60)
+  doc.text(`Raport miesięczny — ${monthLabel}`, 14, 30)
+  doc.setTextColor(0, 0, 0)
+
+  if (summaries.length === 1) {
+    // ── Single employee: summary card ────────────────────────────────────────
+    const s = summaries[0]!
+
+    doc.setFontSize(11)
+    doc.setFont('helvetica', 'bold')
+    doc.text(`Pracownik: ${s.name}`, 14, 44)
+
+    // Card box
+    const boxX = 14
+    const boxY = 52
+    const boxW = pageWidth - 28
+    const rowH = 14
+    const boxH = rowH * 3 + 4
+
+    doc.setDrawColor(220, 220, 220)
+    doc.setFillColor(248, 247, 245)
+    doc.roundedRect(boxX, boxY, boxW, boxH, 3, 3, 'FD')
+
+    const rows = [
+      { label: 'Godziny standardowe', value: formatDuration(s.standardMinutes) },
+      { label: 'Nadgodziny', value: formatDuration(s.overtimeMinutes) },
+      { label: 'Dni urlopu', value: `${s.leaveDays}` },
+    ]
+
+    rows.forEach((row, i) => {
+      const y = boxY + 10 + i * rowH
+      doc.setFontSize(10)
+      doc.setFont('helvetica', 'normal')
+      doc.setTextColor(80, 80, 80)
+      doc.text(row.label, boxX + 8, y)
+      doc.setFont('helvetica', 'bold')
+      doc.setTextColor(0, 0, 0)
+      doc.text(row.value, boxX + boxW - 8, y, { align: 'right' })
+    })
+
+    // Signature block
+    const sigY = boxY + boxH + 20
+    doc.setFontSize(9)
+    doc.setFont('helvetica', 'normal')
+    doc.text('Pracownik: ___________________________', 14, sigY)
+    doc.text('Kierownik: ___________________________', pageWidth / 2 + 10, sigY)
+
+  } else {
+    // ── All employees: summary table ─────────────────────────────────────────
+    const tableBody = summaries.map((s) => [
+      s.name,
+      formatDuration(s.standardMinutes),
+      formatDuration(s.overtimeMinutes),
+      `${s.leaveDays}`,
+    ])
+
+    autoTable(doc, {
+      startY: 40,
+      head: [['Pracownik', 'Godz. standardowe', 'Nadgodziny', 'Dni urlopu']],
+      body: tableBody,
+      styles: { fontSize: 9, cellPadding: 3, font: 'helvetica' },
+      headStyles: {
+        fillColor: [30, 30, 30],
+        textColor: [255, 255, 255],
+        fontStyle: 'bold',
+      },
+      alternateRowStyles: { fillColor: [248, 247, 245] },
+      columnStyles: {
+        0: { cellWidth: 'auto' },
+        1: { cellWidth: 38, halign: 'right' },
+        2: { cellWidth: 30, halign: 'right' },
+        3: { cellWidth: 26, halign: 'right' },
+      },
+      margin: { left: 14, right: 14 },
+    })
+
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    const finalY = ((doc as any).lastAutoTable?.finalY ?? 100) as number
+    doc.setFontSize(9)
+    doc.setTextColor(100, 100, 100)
+    doc.text(`Łącznie: ${summaries.length} pracowników`, 14, finalY + 8)
+    doc.setTextColor(0, 0, 0)
+  }
+
+  return doc
 }
 
 // ─── Route handler ────────────────────────────────────────────────────────────
@@ -238,7 +215,6 @@ export async function GET(req: NextRequest) {
     const monthParam = searchParams.get('month')
     const employeeIdParam = searchParams.get('employeeId') ?? 'all'
 
-    // Validate required month param
     if (!monthParam || !/^\d{4}-\d{2}$/.test(monthParam)) {
       return new Response(
         JSON.stringify({ error: 'Missing or invalid "month" parameter (expected YYYY-MM)' }),
@@ -258,14 +234,10 @@ export async function GET(req: NextRequest) {
     }
 
     const { start, end } = getMonthRange(year, month)
-
     const role = session.user.role
     const sessionEmployeeId = session.user.employeeId
 
-    // ── Determine which employees to report ──────────────────────────────────
-    // EMPLOYEE can only generate for themselves
     let filterIds: string[] | undefined
-
     if (role === 'EMPLOYEE') {
       if (!sessionEmployeeId) {
         return new Response(
@@ -275,23 +247,12 @@ export async function GET(req: NextRequest) {
       }
       filterIds = [sessionEmployeeId]
     } else {
-      // ADMIN / MANAGER
-      if (employeeIdParam !== 'all') {
-        filterIds = [employeeIdParam]
-      }
-      // else filterIds stays undefined → fetch all active
+      if (employeeIdParam !== 'all') filterIds = [employeeIdParam]
     }
 
-    // ── Fetch employees ───────────────────────────────────────────────────────
     const employeesRaw = await prisma.employee.findMany({
-      where: {
-        ...(filterIds ? { id: { in: filterIds } } : { active: true }),
-      },
-      select: {
-        id: true,
-        firstName: true,
-        lastName: true,
-      },
+      where: filterIds ? { id: { in: filterIds } } : { active: true },
+      select: { id: true, firstName: true, lastName: true },
       orderBy: { lastName: 'asc' },
     })
 
@@ -302,73 +263,33 @@ export async function GET(req: NextRequest) {
       })
     }
 
-    const allEmployeeIds = employeesRaw.map((e) => e.id)
+    const allIds = employeesRaw.map((e) => e.id)
 
-    // ── Fetch time entries for the month ──────────────────────────────────────
-    const timeEntriesRaw = await prisma.timeEntry.findMany({
-      where: {
-        employeeId: { in: allEmployeeIds },
-        date: { gte: start, lte: end },
-      },
-      include: {
-        breaks: true,
-      },
-      orderBy: { date: 'asc' },
-    })
-
-    // ── Fetch approved leave requests overlapping the month ───────────────────
-    const leaveRequestsRaw = await prisma.leaveRequestNew.findMany({
-      where: {
-        employeeId: { in: allEmployeeIds },
-        status: 'approved',
-        startDate: { lte: end },
-        endDate: { gte: start },
-      },
-      include: {
-        leaveType: {
-          select: { name: true },
+    const [timeEntriesRaw, leaveRequestsRaw] = await Promise.all([
+      prisma.timeEntry.findMany({
+        where: { employeeId: { in: allIds }, date: { gte: start, lte: end } },
+        select: { employeeId: true, date: true, totalMinutes: true, overtimeMinutes: true },
+        orderBy: { date: 'asc' },
+      }),
+      prisma.leaveRequestNew.findMany({
+        where: {
+          employeeId: { in: allIds },
+          status: 'approved',
+          startDate: { lte: end },
+          endDate: { gte: start },
         },
-      },
-    })
+        select: { employeeId: true, startDate: true, endDate: true },
+      }),
+    ])
 
-    // ── Group by employee ─────────────────────────────────────────────────────
     const entriesByEmployee = new Map<string, TimeEntryData[]>()
     const leaveByEmployee = new Map<string, LeaveRequestData[]>()
-
     for (const emp of employeesRaw) {
       entriesByEmployee.set(emp.id, [])
       leaveByEmployee.set(emp.id, [])
     }
-
-    for (const entry of timeEntriesRaw) {
-      const list = entriesByEmployee.get(entry.employeeId)
-      if (list) {
-        list.push({
-          date: entry.date,
-          clockIn: entry.clockIn,
-          clockOut: entry.clockOut,
-          totalMinutes: entry.totalMinutes,
-          breakMinutes: entry.breakMinutes,
-          overtimeMinutes: entry.overtimeMinutes,
-          status: entry.status,
-          notes: entry.notes,
-        })
-      }
-    }
-
-    for (const lr of leaveRequestsRaw) {
-      const list = leaveByEmployee.get(lr.employeeId)
-      if (list) {
-        list.push({
-          startDate: lr.startDate,
-          endDate: lr.endDate,
-          leaveType: { name: lr.leaveType.name },
-        })
-      }
-    }
-
-    // ── Generate PDF ──────────────────────────────────────────────────────────
-    const doc = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' })
+    for (const e of timeEntriesRaw) entriesByEmployee.get(e.employeeId)?.push(e)
+    for (const l of leaveRequestsRaw) leaveByEmployee.get(l.employeeId)?.push(l)
 
     const reports: EmployeeReport[] = employeesRaw.map((emp) => ({
       id: emp.id,
@@ -378,11 +299,7 @@ export async function GET(req: NextRequest) {
       leaveRequests: leaveByEmployee.get(emp.id) ?? [],
     }))
 
-    reports.forEach((report, idx) => {
-      if (idx > 0) doc.addPage()
-      generateEmployeeSection(doc, report, year, month)
-    })
-
+    const doc = generatePDF(reports, year, month)
     const pdfBuffer = Buffer.from(doc.output('arraybuffer'))
 
     return new Response(pdfBuffer, {
