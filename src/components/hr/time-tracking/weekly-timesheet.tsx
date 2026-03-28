@@ -2,11 +2,11 @@
 
 import { useState, useEffect, useCallback } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
-import { ChevronLeft, ChevronRight, Calendar, Plus, Check } from 'lucide-react'
+import { ChevronLeft, ChevronRight, Calendar, Plus, Check, X, CheckCheck, XCircle } from 'lucide-react'
 import { EmployeeAvatar } from '@/components/hr/employees/employee-avatar'
 import { TimeEntryEditModal } from './time-entry-edit-modal'
 import { BulkAddModal } from './bulk-add-modal'
-import { formatDuration } from '@/lib/hr/utils'
+import { formatDuration, isPublicHoliday } from '@/lib/hr/utils'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -73,6 +73,14 @@ function isToday(dateStr: string): boolean {
   return dateStr === todayStr
 }
 
+function isSaturdayDate(dateStr: string): boolean {
+  return new Date(dateStr + 'T12:00:00').getDay() === 6
+}
+
+function isPublicHolidayStr(dateStr: string): boolean {
+  return isPublicHoliday(new Date(dateStr + 'T12:00:00'))
+}
+
 function getCurrentIsoWeek(): string {
   const now = new Date()
   const dow = now.getDay() === 0 ? 7 : now.getDay()
@@ -123,67 +131,108 @@ function totalMinutesForEmployee(employee: EmployeeRow, days: string[]): number 
   return days.reduce((sum, d) => sum + (employee.entries[d]?.totalMinutes ?? 0), 0)
 }
 
+// Collect all pending entry IDs for an employee in the current week
+function getPendingEntryIds(employee: EmployeeRow, days: string[]): string[] {
+  return days
+    .map((d) => employee.entries[d])
+    .filter((e): e is DayEntry & { id: string } => !!e?.id && e.status === 'pending')
+    .map((e) => e.id)
+}
+
 // ─── Cell rendering ───────────────────────────────────────────────────────────
 
 function EntryCell({
   entry,
-  isWknd,
+  isBlocked,
+  isSat,
   isCurrentDay,
+  isHoliday,
   onClick,
+  isSelectable,
+  isSelected,
+  onToggleSelect,
 }: {
   entry: DayEntry | undefined
-  isWknd: boolean
+  isBlocked: boolean
+  isSat: boolean
   isCurrentDay: boolean
+  isHoliday: boolean
   onClick: () => void
+  isSelectable?: boolean
+  isSelected?: boolean
+  onToggleSelect?: (id: string) => void
 }) {
-  if (isWknd) {
+  // Blocked cell (Sunday or unworkable Saturday or holiday)
+  if (isBlocked || isHoliday) {
     return (
       <td
-        onClick={onClick}
-        className="text-center align-middle cursor-pointer transition-colors"
+        onClick={isHoliday && !isBlocked ? onClick : undefined}
+        className="text-center align-middle"
         style={{
           background: isCurrentDay ? 'rgba(228,220,209,0.25)' : 'var(--wd-surface-2)',
           padding: '6px 4px',
           minWidth: '68px',
           borderRight: '1px solid var(--wd-border)',
+          cursor: isHoliday && !isBlocked ? 'not-allowed' : 'default',
         }}
       >
-        <span className="text-[var(--wd-text-muted)] text-xs">—</span>
+        {isHoliday ? (
+          <span className="text-[10px] font-medium text-red-400 leading-tight">Święto</span>
+        ) : (
+          <span className="text-[var(--wd-text-muted)] text-xs">—</span>
+        )}
       </td>
     )
   }
 
+  const isSatOT = isSat && !isHoliday
+
+  // Empty cell
   if (!entry || (!entry.id && !entry.leaveType)) {
     return (
       <td
         onClick={onClick}
         className="text-center align-middle cursor-pointer hover:bg-[var(--wd-off-white)] transition-colors group"
         style={{
-          background: isCurrentDay ? 'rgba(228,220,209,0.15)' : 'transparent',
+          background: isCurrentDay
+            ? 'rgba(228,220,209,0.15)'
+            : isSatOT
+            ? 'rgba(234,88,12,0.04)'
+            : 'transparent',
           padding: '6px 4px',
           minWidth: '68px',
           borderRight: '1px solid var(--wd-border)',
         }}
       >
-        <span
-          className="text-[var(--wd-text-muted)] text-xs group-hover:opacity-60"
-        >—</span>
+        <span className="text-[var(--wd-text-muted)] text-xs group-hover:opacity-60">—</span>
       </td>
     )
   }
 
   const isLeave = entry.status === 'leave' && !entry.id
   const isApproved = entry.status === 'approved'
+  const isPending = entry.status === 'pending'
+
+  const canSelect = isSelectable && !!entry.id && isPending
+  const selected = isSelected && canSelect
 
   return (
     <td
-      onClick={onClick}
+      onClick={canSelect && onToggleSelect && entry.id ? () => onToggleSelect(entry.id!) : onClick}
       className="align-middle cursor-pointer transition-colors hover:brightness-95"
       style={{
-        background: isCurrentDay ? 'rgba(228,220,209,0.15)' : 'transparent',
+        background: selected
+          ? 'rgba(234,88,12,0.12)'
+          : isCurrentDay
+          ? 'rgba(228,220,209,0.15)'
+          : isSatOT && entry.id
+          ? 'rgba(234,88,12,0.07)'
+          : 'transparent',
         padding: '6px 4px',
         minWidth: '68px',
         borderRight: '1px solid var(--wd-border)',
+        outline: selected ? '2px solid rgba(234,88,12,0.4)' : undefined,
+        outlineOffset: '-2px',
       }}
     >
       <div className="flex flex-col items-center gap-0.5">
@@ -213,6 +262,9 @@ function EntryCell({
             {isApproved && (
               <Check className="w-3 h-3 text-emerald-500 mt-0.5" />
             )}
+            {isSatOT && (
+              <span className="text-[10px] font-semibold text-orange-700 leading-tight">Nadg. 2×</span>
+            )}
             {entry.leaveType && (
               <span
                 className="px-1 py-px rounded text-[10px] font-medium"
@@ -222,6 +274,11 @@ function EntryCell({
                 }}
               >
                 {entry.leaveType.length > 6 ? entry.leaveType.slice(0, 5) + '…' : entry.leaveType}
+              </span>
+            )}
+            {selected && (
+              <span className="w-3 h-3 rounded-sm bg-orange-500 flex items-center justify-center mt-0.5">
+                <Check className="w-2 h-2 text-white" />
               </span>
             )}
           </>
@@ -249,6 +306,12 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWork
   } | null>(null)
   const [bulkModal, setBulkModal] = useState(false)
 
+  // Bulk selection state
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkLoading, setBulkLoading] = useState(false)
+
+  const isAdminOrManager = userRole === 'ADMIN' || userRole === 'MANAGER'
+
   const fetchData = useCallback(async () => {
     setLoading(true)
     try {
@@ -258,6 +321,8 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWork
       if (!res.ok) return
       const json = await res.json() as WeeklyData
       setData(json)
+      // Clear selection when data refreshes
+      setSelectedIds(new Set())
     } catch {
       // silent
     } finally {
@@ -288,6 +353,50 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWork
     if (val) params.set('divisionId', val)
     else params.delete('divisionId')
     router.push(`?${params.toString()}`)
+  }
+
+  const toggleEmployeeSelection = (employee: EmployeeRow, days: string[]) => {
+    const pendingIds = getPendingEntryIds(employee, days)
+    if (pendingIds.length === 0) return
+
+    const allSelected = pendingIds.every((id) => selectedIds.has(id))
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (allSelected) {
+        pendingIds.forEach((id) => next.delete(id))
+      } else {
+        pendingIds.forEach((id) => next.add(id))
+      }
+      return next
+    })
+  }
+
+  const toggleEntrySelection = (id: string) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  const handleBulkAction = async (action: 'approve' | 'reject') => {
+    if (selectedIds.size === 0) return
+    setBulkLoading(true)
+    try {
+      const res = await fetch('/api/hr/time-tracking/bulk-approve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ ids: Array.from(selectedIds), action }),
+      })
+      if (res.ok) {
+        await fetchData()
+      }
+    } catch {
+      // silent
+    } finally {
+      setBulkLoading(false)
+    }
   }
 
   if (loading || !data) {
@@ -362,7 +471,7 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWork
         <div className="flex-1" />
 
         {/* Bulk add */}
-        {(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+        {isAdminOrManager && (
           <button
             onClick={() => setBulkModal(true)}
             className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-semibold transition-all"
@@ -408,7 +517,10 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWork
                 {days.map((day) => {
                   const { dow, day: d, month } = dayLabel(day)
                   const isSunday = new Date(day + 'T12:00:00').getDay() === 0
+                  const isSat = isSaturdayDate(day)
+                  const isHoliday = isPublicHolidayStr(day)
                   const today = isToday(day)
+                  const isSatWorkable = isSat && saturdayWorkable && !isHoliday
                   return (
                     <th
                       key={day}
@@ -427,6 +539,12 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWork
                       <div style={{ fontWeight: 700, fontSize: '0.75rem', color: today ? 'var(--wd-dark)' : undefined }}>
                         {d} {month}
                       </div>
+                      {isSatWorkable && (
+                        <span className="ml-1 text-xs font-semibold text-orange-600 bg-orange-50 px-1 rounded">2×</span>
+                      )}
+                      {isHoliday && (
+                        <span className="text-[10px] font-medium text-red-400 block leading-tight mt-0.5">Święto</span>
+                      )}
                     </th>
                   )
                 })}
@@ -463,6 +581,10 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWork
               ) : (
                 employees.map((emp) => {
                   const weekTotal = totalMinutesForEmployee(emp, days)
+                  const pendingIds = getPendingEntryIds(emp, days)
+                  const allPendingSelected = pendingIds.length > 0 && pendingIds.every((id) => selectedIds.has(id))
+                  const somePendingSelected = pendingIds.some((id) => selectedIds.has(id))
+
                   return (
                     <tr
                       key={emp.id}
@@ -477,6 +599,22 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWork
                         }}
                       >
                         <div className="flex items-center gap-2.5">
+                          {/* Checkbox for admin/manager */}
+                          {isAdminOrManager && pendingIds.length > 0 && (
+                            <input
+                              type="checkbox"
+                              checked={allPendingSelected}
+                              ref={(el) => {
+                                if (el) el.indeterminate = somePendingSelected && !allPendingSelected
+                              }}
+                              onChange={() => toggleEmployeeSelection(emp, days)}
+                              className="w-3.5 h-3.5 rounded accent-orange-500 cursor-pointer flex-shrink-0"
+                              title="Zaznacz wszystkie wpisy pracownika"
+                            />
+                          )}
+                          {isAdminOrManager && pendingIds.length === 0 && (
+                            <span className="w-3.5 h-3.5 flex-shrink-0" />
+                          )}
                           <EmployeeAvatar
                             firstName={emp.firstName}
                             lastName={emp.lastName}
@@ -500,21 +638,29 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWork
                       {days.map((day) => {
                         const dow = new Date(day + 'T12:00:00').getDay()
                         const isSunday = dow === 0
-                        const isSaturday = dow === 6
-                        const blocked = isSunday || (isSaturday && !saturdayWorkable)
+                        const isSat = dow === 6
+                        const isHoliday = isPublicHolidayStr(day)
+                        const blocked = isSunday || (isSat && !saturdayWorkable) || isHoliday
+                        const entry = emp.entries[day]
+                        const entryId = entry?.id
                         return (
                           <EntryCell
                             key={day}
-                            entry={emp.entries[day]}
-                            isWknd={blocked}
+                            entry={entry}
+                            isBlocked={isSunday || (isSat && !saturdayWorkable)}
+                            isSat={isSat && saturdayWorkable}
                             isCurrentDay={isToday(day)}
+                            isHoliday={isHoliday}
+                            isSelectable={isAdminOrManager}
+                            isSelected={!!entryId && selectedIds.has(entryId)}
+                            onToggleSelect={toggleEntrySelection}
                             onClick={() => {
                               if (blocked) return
                               setEditModal({
                                 employeeId: emp.id,
                                 employeeName: `${emp.firstName} ${emp.lastName}`,
                                 date: day,
-                                entry: emp.entries[day] ?? null,
+                                entry: entry ?? null,
                               })
                             }}
                           />
@@ -598,6 +744,52 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWork
       <p className="text-xs" style={{ color: 'var(--wd-text-muted)' }}>
         {employees.length} {employees.length === 1 ? 'pracownik' : 'pracowników'} · tydzień {currentWeek}
       </p>
+
+      {/* ── Floating Bulk Action Bar ── */}
+      {isAdminOrManager && selectedIds.size > 0 && (
+        <div
+          className="fixed bottom-6 left-1/2 -translate-x-1/2 z-50 flex items-center gap-3 px-5 py-3 rounded-2xl shadow-2xl"
+          style={{
+            background: 'var(--wd-dark)',
+            border: '1px solid rgba(255,255,255,0.08)',
+            color: '#fff',
+            backdropFilter: 'blur(8px)',
+          }}
+        >
+          <span className="text-sm font-medium text-white/70">
+            {selectedIds.size} {selectedIds.size === 1 ? 'wpis zaznaczony' : 'wpisów zaznaczonych'}
+          </span>
+
+          <div className="w-px h-5 bg-white/20" />
+
+          <button
+            onClick={() => void handleBulkAction('approve')}
+            disabled={bulkLoading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all hover:bg-emerald-500 bg-emerald-600 disabled:opacity-50"
+          >
+            <CheckCheck className="w-3.5 h-3.5" />
+            Zatwierdź zaznaczone
+          </button>
+
+          <button
+            onClick={() => void handleBulkAction('reject')}
+            disabled={bulkLoading}
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-semibold transition-all hover:bg-red-500 bg-red-600 disabled:opacity-50"
+          >
+            <XCircle className="w-3.5 h-3.5" />
+            Odrzuć zaznaczone
+          </button>
+
+          <button
+            onClick={() => setSelectedIds(new Set())}
+            disabled={bulkLoading}
+            className="p-1.5 rounded-lg transition-all hover:bg-white/10 disabled:opacity-50"
+            title="Anuluj zaznaczenie"
+          >
+            <X className="w-4 h-4 text-white/60" />
+          </button>
+        </div>
+      )}
 
       {/* ── Edit Modal ── */}
       {editModal && (
