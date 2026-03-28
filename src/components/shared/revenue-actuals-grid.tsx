@@ -96,7 +96,7 @@ export function RevenueActualsGrid({
     [channels]
   )
 
-  const planCellClass = 'text-right font-mono text-[11px] tabular-nums px-1 py-1 bg-gray-100 text-gray-600 border-r border-gray-200'
+  const planCellClass = 'text-right font-mono text-[11px] tabular-nums whitespace-nowrap px-1 py-1 bg-gray-100 text-gray-600 border-r border-gray-200'
 
   return (
     <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">
@@ -105,12 +105,12 @@ export function RevenueActualsGrid({
           <col style={{ width: '11rem' }} />
           {MONTHS.map((_, i) => (
             <React.Fragment key={i}>
-              <col style={{ width: '3.5rem' }} />
-              <col style={{ width: '4rem' }} />
+              <col style={{ width: '4.5rem' }} />
+              <col style={{ width: '5rem' }} />
             </React.Fragment>
           ))}
-          <col style={{ width: '4.5rem' }} />
-          <col style={{ width: '4.5rem' }} />
+          <col style={{ width: '5rem' }} />
+          <col style={{ width: '5rem' }} />
           <col style={{ width: '3rem' }} />
         </colgroup>
         <thead>
@@ -164,10 +164,10 @@ export function RevenueActualsGrid({
                   </React.Fragment>
                 )
               })}
-              <td className="text-right px-1 py-1 font-mono text-xs text-gray-400 bg-gray-50 border-l border-gray-100">
+              <td className="text-right whitespace-nowrap px-1 py-1 font-mono text-xs text-gray-400 bg-gray-50 border-l border-gray-100">
                 {fmt(rowPlanSum(ch))}
               </td>
-              <td className="text-right px-2 py-1 font-mono text-sm text-gray-700 font-medium border-r border-gray-200">
+              <td className="text-right whitespace-nowrap px-2 py-1 font-mono text-sm text-gray-700 font-medium border-r border-gray-200">
                 {fmt(rowRealSum(ch))}
               </td>
               <td className={`text-right px-2 py-1 font-mono text-xs font-medium ${pctClass(rowPct(ch))}`}>
@@ -183,19 +183,19 @@ export function RevenueActualsGrid({
               const month = i + 1
               return (
                 <React.Fragment key={i}>
-                  <td className="text-right px-1 py-2 font-mono text-xs text-gray-400 bg-gray-50 border-r border-gray-100">
+                  <td className="text-right whitespace-nowrap px-1 py-2 font-mono text-xs text-gray-400 bg-gray-50 border-r border-gray-100">
                     {fmt(colPlanSum(month))}
                   </td>
-                  <td className="text-right px-2 py-2 font-mono text-sm text-gray-700 border-r border-gray-100">
+                  <td className="text-right whitespace-nowrap px-2 py-2 font-mono text-sm text-gray-700 border-r border-gray-100">
                     {fmt(colRealSum(month))}
                   </td>
                 </React.Fragment>
               )
             })}
-            <td className="text-right px-1 py-2 font-mono text-xs text-gray-400 bg-gray-50 border-l border-gray-100">
+            <td className="text-right whitespace-nowrap px-1 py-2 font-mono text-xs text-gray-400 bg-gray-50 border-l border-gray-100">
               {fmt(grandPlan)}
             </td>
-            <td className="text-right px-2 py-2 font-mono text-sm text-gray-700 border-r border-gray-200">
+            <td className="text-right whitespace-nowrap px-2 py-2 font-mono text-sm text-gray-700 border-r border-gray-200">
               {fmt(grandReal)}
             </td>
             <td className={`text-right px-2 py-2 font-mono text-xs ${pctClass(grandPct)}`}>
