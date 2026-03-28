@@ -186,12 +186,35 @@ model Employee {
   userId       String?    @unique
   user         User?
 
+  // New HR fields
+  employmentType String?   // "UoP" | "B2B" | "UZ" | "UoD" | "inne"
+  avatarUrl      String?
+  divisionId     String?
+  division       Division?   @relation(fields: [divisionId], references: [id])
+  departmentId   String?
+  department     Department? @relation(fields: [departmentId], references: [id])
+  teamId         String?
+  team           Team?       @relation(fields: [teamId], references: [id])
+  positionId     String?
+  positionRef    Position?   @relation(fields: [positionId], references: [id])
+  managerId      String?
+  manager        Employee?   @relation("ManagerRelation", fields: [managerId], references: [id])
+  subordinates   Employee[]  @relation("ManagerRelation")
+
+  // Existing relations
   contracts           Contract[]
   additionalContracts AdditionalContract[]
   salaryHistory       SalaryHistory[]
   leaveRequests       LeaveRequest[]
   leaveBalances       LeaveBalance[]
   workTimeRecords     WorkTimeRecord[]
+
+  // New time tracking + leave relations
+  timeEntries       TimeEntry[]
+  workSchedules     WorkSchedule[]
+  overtimeRequests  OvertimeRequest[]
+  leaveBalancesNew  LeaveBalanceNew[]
+  leaveRequestsNew  LeaveRequestNew[]
 
   createdAt DateTime @default(now())
 }
@@ -273,4 +296,220 @@ model WorkTimeRecord {
   note          String?
 
   @@unique([employeeId, date])
+}
+
+// ─── HR Org Structure ─────────────────────────────────────────────────────────
+
+model Division {
+  id           String     @id @default(cuid())
+  name         String
+  costCenterId String?    // "JAG" | "PUL" | "GLOBAL" — powiązanie z istniejącym systemem
+  employees    Employee[]
+  departments  Department[]
+  timeRules    TimeTrackingRule[]
+  holidays     CustomHoliday[]
+  createdAt    DateTime   @default(now())
+}
+
+model Department {
+  id         String     @id @default(cuid())
+  name       String
+  divisionId String
+  division   Division   @relation(fields: [divisionId], references: [id])
+  employees  Employee[]
+  teams      Team[]
+}
+
+model Team {
+  id           String     @id @default(cuid())
+  name         String
+  departmentId String
+  department   Department @relation(fields: [departmentId], references: [id])
+  employees    Employee[]
+}
+
+model Position {
+  id        String     @id @default(cuid())
+  name      String
+  employees Employee[]
+}
+
+// ─── HR Time Tracking ─────────────────────────────────────────────────────────
+
+model TimeEntry {
+  id              String    @id @default(cuid())
+  employeeId      String
+  employee        Employee  @relation(fields: [employeeId], references: [id])
+  date            DateTime
+  clockIn         DateTime
+  clockOut        DateTime?
+  breaks          Break[]
+  projectId       String?
+  project         Project?  @relation(fields: [projectId], references: [id])
+  taskName        String?
+  source          String    @default("manual") // "manual" | "auto" | "clock" | "bulk"
+  status          String    @default("pending") // "pending" | "approved" | "rejected"
+  approvedById    String?
+  notes           String?
+  totalMinutes    Int?
+  breakMinutes    Int?
+  overtimeMinutes Int       @default(0)
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  @@unique([employeeId, date])
+}
+
+model Break {
+  id          String    @id @default(cuid())
+  timeEntryId String
+  timeEntry   TimeEntry @relation(fields: [timeEntryId], references: [id], onDelete: Cascade)
+  startTime   DateTime
+  endTime     DateTime?
+  type        String    @default("break") // "break" | "lunch" | "other"
+}
+
+model Project {
+  id          String      @id @default(cuid())
+  name        String
+  code        String      @unique
+  isActive    Boolean     @default(true)
+  timeEntries TimeEntry[]
+}
+
+model WorkSchedule {
+  id           String   @id @default(cuid())
+  employeeId   String
+  employee     Employee @relation(fields: [employeeId], references: [id])
+  date         DateTime
+  startTime    String   // "08:00"
+  endTime      String   // "16:00"
+  breakMinutes Int      @default(30)
+  type         String   @default("regular") // "regular" | "overtime" | "on-call"
+  isTemplate   Boolean  @default(false)
+  templateName String?
+
+  @@unique([employeeId, date])
+}
+
+model TimeTrackingRule {
+  id                String   @id @default(cuid())
+  divisionId        String
+  division          Division @relation(fields: [divisionId], references: [id])
+  name              String
+  dailyHours        Float    @default(8)
+  weeklyHours       Float    @default(40)
+  breakAfterHours   Float    @default(6)
+  breakMinutes      Int      @default(15)
+  roundingRule      String   @default("none") // "none" | "15min" | "30min"
+  overtimeThreshold Float    @default(8)
+  periodType        String   @default("monthly") // "monthly" | "weekly" | "quarterly"
+  periodStart       Int      @default(1)
+}
+
+model BillingPeriod {
+  id         String    @id @default(cuid())
+  name       String
+  startDate  DateTime
+  endDate    DateTime
+  status     String    @default("open") // "open" | "closed" | "locked"
+  closedAt   DateTime?
+  closedById String?
+  createdAt  DateTime  @default(now())
+}
+
+model OvertimeRequest {
+  id           String    @id @default(cuid())
+  employeeId   String
+  employee     Employee  @relation(fields: [employeeId], references: [id])
+  date         DateTime
+  minutes      Int
+  reason       String
+  status       String    @default("pending") // "pending" | "approved" | "rejected"
+  resolution   String?   // "time_off" | "payment" — set on approval
+  rejectionNote String?
+  approvedById String?
+  approvedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+}
+
+// ─── HR Leave Types ───────────────────────────────────────────────────────────
+
+model LeaveType {
+  id               String        @id @default(cuid())
+  name             String
+  code             String        @unique
+  color            String        @default("#3B82F6")
+  isPaid           Boolean       @default(true)
+  requiresApproval Boolean       @default(true)
+  maxDaysPerYear   Int?
+  isActive         Boolean       @default(true)
+  parentId         String?
+  parent           LeaveType?    @relation("LeaveSubtype", fields: [parentId], references: [id])
+  subtypes         LeaveType[]   @relation("LeaveSubtype")
+  leaveBalancesNew LeaveBalanceNew[]
+  leaveRequestsNew LeaveRequestNew[]
+}
+
+model LeaveBalanceNew {
+  id          String    @id @default(cuid())
+  employeeId  String
+  employee    Employee  @relation(fields: [employeeId], references: [id])
+  leaveTypeId String
+  leaveType   LeaveType @relation(fields: [leaveTypeId], references: [id])
+  year        Int
+  totalDays   Float
+  usedDays    Float     @default(0)
+  pendingDays Float     @default(0)
+  carriedOver Float     @default(0)
+
+  @@unique([employeeId, leaveTypeId, year])
+}
+
+model LeaveRequestNew {
+  id               String    @id @default(cuid())
+  employeeId       String
+  employee         Employee  @relation(fields: [employeeId], references: [id])
+  leaveTypeId      String
+  leaveType        LeaveType @relation(fields: [leaveTypeId], references: [id])
+  startDate        DateTime
+  endDate          DateTime
+  days             Float
+  hours            Float?
+  isOnDemand       Boolean   @default(false)
+  isRemoteWork     Boolean   @default(false)
+  isDelegation     Boolean   @default(false)
+  status           String    @default("pending") // "pending" | "approved" | "rejected" | "cancelled"
+  approverId       String?
+  approvedAt       DateTime?
+  rejectionNote    String?
+  substituteId     String?
+  notifySubstitute Boolean   @default(false)
+  note             String?
+  attachments      String?   // JSON array
+  gcalEventId      String?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+}
+
+model CustomHoliday {
+  id          String    @id @default(cuid())
+  name        String
+  date        DateTime
+  divisionId  String?
+  division    Division? @relation(fields: [divisionId], references: [id])
+  isRecurring Boolean   @default(false)
+  country     String    @default("PL")
+}
+
+model Notification {
+  id        String   @id @default(cuid())
+  userId    String
+  type      String   // "leave_request" | "leave_approved" | "overtime" | etc.
+  title     String
+  message   String
+  link      String?
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
 }

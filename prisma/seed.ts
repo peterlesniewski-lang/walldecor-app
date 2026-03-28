@@ -135,8 +135,55 @@ const ACCOUNT_CATEGORIES = [
   },
 ]
 
+// Polish holidays for 2025 and 2026
+const POLISH_HOLIDAYS = [
+  // 2025
+  { name: 'Nowy Rok', date: new Date('2025-01-01'), country: 'PL' },
+  { name: 'Trzech Króli', date: new Date('2025-01-06'), country: 'PL' },
+  { name: 'Wielkanoc', date: new Date('2025-04-20'), country: 'PL' },
+  { name: 'Poniedziałek Wielkanocny', date: new Date('2025-04-21'), country: 'PL' },
+  { name: 'Święto Pracy', date: new Date('2025-05-01'), country: 'PL' },
+  { name: 'Święto Konstytucji 3 Maja', date: new Date('2025-05-03'), country: 'PL' },
+  { name: 'Boże Ciało', date: new Date('2025-06-19'), country: 'PL' },
+  { name: 'Wniebowzięcie NMP', date: new Date('2025-08-15'), country: 'PL' },
+  { name: 'Wszystkich Świętych', date: new Date('2025-11-01'), country: 'PL' },
+  { name: 'Święto Niepodległości', date: new Date('2025-11-11'), country: 'PL' },
+  { name: 'Boże Narodzenie', date: new Date('2025-12-25'), country: 'PL' },
+  { name: 'Drugi dzień Bożego Narodzenia', date: new Date('2025-12-26'), country: 'PL' },
+  // 2026
+  { name: 'Nowy Rok', date: new Date('2026-01-01'), country: 'PL' },
+  { name: 'Trzech Króli', date: new Date('2026-01-06'), country: 'PL' },
+  { name: 'Wielkanoc', date: new Date('2026-04-05'), country: 'PL' },
+  { name: 'Poniedziałek Wielkanocny', date: new Date('2026-04-06'), country: 'PL' },
+  { name: 'Święto Pracy', date: new Date('2026-05-01'), country: 'PL' },
+  { name: 'Święto Konstytucji 3 Maja', date: new Date('2026-05-03'), country: 'PL' },
+  { name: 'Boże Ciało', date: new Date('2026-06-04'), country: 'PL' },
+  { name: 'Wniebowzięcie NMP', date: new Date('2026-08-15'), country: 'PL' },
+  { name: 'Wszystkich Świętych', date: new Date('2026-11-01'), country: 'PL' },
+  { name: 'Święto Niepodległości', date: new Date('2026-11-11'), country: 'PL' },
+  { name: 'Boże Narodzenie', date: new Date('2026-12-25'), country: 'PL' },
+  { name: 'Drugi dzień Bożego Narodzenia', date: new Date('2026-12-26'), country: 'PL' },
+]
+
+const LEAVE_TYPES = [
+  { code: 'VL',  name: 'Urlop wypoczynkowy',       color: '#3B82F6', isPaid: true,  requiresApproval: true,  maxDaysPerYear: 26,   parentCode: null },
+  { code: 'VLD', name: 'Urlop na żądanie',          color: '#8B5CF6', isPaid: true,  requiresApproval: false, maxDaysPerYear: 4,    parentCode: 'VL' },
+  { code: 'SL',  name: 'Zwolnienie chorobowe',      color: '#EF4444', isPaid: true,  requiresApproval: false, maxDaysPerYear: null, parentCode: null },
+  { code: 'RW',  name: 'Praca zdalna',              color: '#10B981', isPaid: true,  requiresApproval: true,  maxDaysPerYear: null, parentCode: null },
+  { code: 'RWO', name: 'Okazjonalna praca zdalna',  color: '#6EE7B7', isPaid: true,  requiresApproval: false, maxDaysPerYear: 24,   parentCode: null },
+  { code: 'DEL', name: 'Delegacja',                 color: '#7C3AED', isPaid: true,  requiresApproval: true,  maxDaysPerYear: null, parentCode: null },
+  { code: 'ML',  name: 'Urlop macierzyński',        color: '#EC4899', isPaid: true,  requiresApproval: true,  maxDaysPerYear: null, parentCode: null },
+  { code: 'PL',  name: 'Urlop tacierzyński',        color: '#F59E0B', isPaid: true,  requiresApproval: true,  maxDaysPerYear: null, parentCode: null },
+  { code: 'UO',  name: 'Urlop opiekuńczy',          color: '#F97316', isPaid: false, requiresApproval: true,  maxDaysPerYear: 5,    parentCode: null },
+  { code: 'OT',  name: 'Czas wolny za nadgodziny',  color: '#14B8A6', isPaid: true,  requiresApproval: true,  maxDaysPerYear: null, parentCode: null },
+  { code: 'FIL', name: 'Opieka nad chorym',         color: '#FB923C', isPaid: true,  requiresApproval: false, maxDaysPerYear: 2,    parentCode: null },
+  { code: 'VBL', name: 'Urlop dodatkowy',           color: '#60A5FA', isPaid: true,  requiresApproval: true,  maxDaysPerYear: null, parentCode: null },
+  { code: 'VSL', name: 'Urlop wolontariacki',       color: '#34D399', isPaid: false, requiresApproval: true,  maxDaysPerYear: 6,    parentCode: null },
+  { code: 'ZOW', name: 'Zwolnienie z pracy',        color: '#94A3B8', isPaid: true,  requiresApproval: true,  maxDaysPerYear: null, parentCode: null },
+]
+
 async function main() {
-  console.log('🌱 Seeding database...')
+  console.log('Seeding database...')
 
   // 1. Cost Centers
   for (const cc of COST_CENTERS) {
@@ -146,7 +193,7 @@ async function main() {
       create: cc,
     })
   }
-  console.log('✅ Cost centers seeded (3)')
+  console.log('Cost centers seeded (3)')
 
   // 2. Account Categories + SubCategories
   let totalSubCategories = 0
@@ -174,7 +221,7 @@ async function main() {
       totalSubCategories++
     }
   }
-  console.log(`✅ Account categories seeded (9 categories, ${totalSubCategories} subcategories)`)
+  console.log(`Account categories seeded (9 categories, ${totalSubCategories} subcategories)`)
 
   // 3. Admin User
   const adminEmail = process.env.ADMIN_EMAIL ?? 'admin@walldecor.pl'
@@ -191,9 +238,9 @@ async function main() {
       passwordHash,
     },
   })
-  console.log(`✅ Admin user seeded (${adminEmail})`)
+  console.log(`Admin user seeded (${adminEmail})`)
 
-  // Cash accounts
+  // 4. Cash accounts
   const cashAccountCount = await prisma.cashAccount.count()
   if (cashAccountCount === 0) {
     await prisma.cashAccount.createMany({
@@ -207,7 +254,7 @@ async function main() {
     })
   }
 
-  // App settings (cash thresholds)
+  // 5. App settings (cash thresholds)
   const settingKeys = ['cashThresholdVeryGood', 'cashThresholdGood', 'cashThresholdBad']
   for (const key of settingKeys) {
     const existing = await prisma.appSetting.findUnique({ where: { key } })
@@ -219,12 +266,314 @@ async function main() {
     }
   }
 
-  console.log('🎉 Seeding complete!')
+  // ─── HR Seed ──────────────────────────────────────────────────────────────
+
+  // 6. Divisions
+  const divJAG = await prisma.division.upsert({
+    where: { id: 'div-jag' },
+    update: { name: 'Oddział Jagiellońska', costCenterId: 'JAG' },
+    create: { id: 'div-jag', name: 'Oddział Jagiellońska', costCenterId: 'JAG' },
+  })
+  const divPUL = await prisma.division.upsert({
+    where: { id: 'div-pul' },
+    update: { name: 'Oddział Puławska', costCenterId: 'PUL' },
+    create: { id: 'div-pul', name: 'Oddział Puławska', costCenterId: 'PUL' },
+  })
+  console.log('Divisions seeded (2)')
+
+  // 7. Departments (2 per division)
+  const deptJAGSales = await prisma.department.upsert({
+    where: { id: 'dept-jag-sales' },
+    update: { name: 'Sprzedaż' },
+    create: { id: 'dept-jag-sales', name: 'Sprzedaż', divisionId: divJAG.id },
+  })
+  const deptJAGService = await prisma.department.upsert({
+    where: { id: 'dept-jag-service' },
+    update: { name: 'Obsługa klienta' },
+    create: { id: 'dept-jag-service', name: 'Obsługa klienta', divisionId: divJAG.id },
+  })
+  const deptPULSales = await prisma.department.upsert({
+    where: { id: 'dept-pul-sales' },
+    update: { name: 'Sprzedaż' },
+    create: { id: 'dept-pul-sales', name: 'Sprzedaż', divisionId: divPUL.id },
+  })
+  const deptPULService = await prisma.department.upsert({
+    where: { id: 'dept-pul-service' },
+    update: { name: 'Obsługa klienta' },
+    create: { id: 'dept-pul-service', name: 'Obsługa klienta', divisionId: divPUL.id },
+  })
+  console.log('Departments seeded (4)')
+
+  // Suppress unused variable warnings
+  void deptJAGService
+  void deptPULSales
+  void deptPULService
+
+  // 8. Positions
+  const positionNames = ['Sprzedawca', 'Kierownik salonu', 'Konsultant', 'CEO', 'Office Manager']
+  const positions: Record<string, string> = {}
+  for (const name of positionNames) {
+    const existing = await prisma.position.findFirst({ where: { name } })
+    if (existing) {
+      positions[name] = existing.id
+    } else {
+      const pos = await prisma.position.create({ data: { name } })
+      positions[name] = pos.id
+    }
+  }
+  console.log('Positions seeded (5)')
+
+  // 9. Projects
+  const projectsData = [
+    { name: 'Showroom Praga', code: 'PRG' },
+    { name: 'Showroom Mokotów', code: 'MOK' },
+    { name: 'E-commerce', code: 'ECOM' },
+  ]
+  for (const proj of projectsData) {
+    await prisma.project.upsert({
+      where: { code: proj.code },
+      update: { name: proj.name },
+      create: { name: proj.name, code: proj.code, isActive: true },
+    })
+  }
+  console.log('Projects seeded (3)')
+
+  // 10. Polish holidays
+  for (const holiday of POLISH_HOLIDAYS) {
+    const existing = await prisma.customHoliday.findFirst({
+      where: { name: holiday.name, date: holiday.date, country: 'PL' },
+    })
+    if (!existing) {
+      await prisma.customHoliday.create({
+        data: {
+          name: holiday.name,
+          date: holiday.date,
+          country: 'PL',
+          divisionId: null,
+          isRecurring: false,
+        },
+      })
+    }
+  }
+  console.log('Polish holidays seeded (24)')
+
+  // 11. Leave Types (with parent relationships)
+  // First pass: create all without parents
+  const leaveTypeIds: Record<string, string> = {}
+  for (const lt of LEAVE_TYPES) {
+    const created = await prisma.leaveType.upsert({
+      where: { code: lt.code },
+      update: {
+        name: lt.name,
+        color: lt.color,
+        isPaid: lt.isPaid,
+        requiresApproval: lt.requiresApproval,
+        maxDaysPerYear: lt.maxDaysPerYear,
+      },
+      create: {
+        code: lt.code,
+        name: lt.name,
+        color: lt.color,
+        isPaid: lt.isPaid,
+        requiresApproval: lt.requiresApproval,
+        maxDaysPerYear: lt.maxDaysPerYear,
+        isActive: true,
+      },
+    })
+    leaveTypeIds[lt.code] = created.id
+  }
+
+  // Second pass: set parent relationships
+  for (const lt of LEAVE_TYPES) {
+    if (lt.parentCode) {
+      await prisma.leaveType.update({
+        where: { code: lt.code },
+        data: { parentId: leaveTypeIds[lt.parentCode] },
+      })
+    }
+  }
+  console.log('Leave types seeded (14)')
+
+  // 12. Employees (5)
+  const employeesData = [
+    {
+      email: 'piotr@walldecor.pl',
+      firstName: 'Piotr',
+      lastName: 'Bielecki',
+      position: 'CEO',
+      costCenterId: 'JAG',
+      divisionId: divJAG.id,
+      departmentId: deptJAGSales.id,
+      positionName: 'CEO',
+      employmentType: 'UoP',
+      startDate: new Date('2020-01-01'),
+    },
+    {
+      email: 'anna.k@walldecor.pl',
+      firstName: 'Anna',
+      lastName: 'Kowalska',
+      position: 'Kierownik salonu',
+      costCenterId: 'JAG',
+      divisionId: divJAG.id,
+      departmentId: deptJAGSales.id,
+      positionName: 'Kierownik salonu',
+      employmentType: 'UoP',
+      startDate: new Date('2021-03-01'),
+    },
+    {
+      email: 'marek.n@walldecor.pl',
+      firstName: 'Marek',
+      lastName: 'Nowak',
+      position: 'Kierownik salonu',
+      costCenterId: 'PUL',
+      divisionId: divPUL.id,
+      departmentId: deptPULSales.id,
+      positionName: 'Kierownik salonu',
+      employmentType: 'UoP',
+      startDate: new Date('2021-06-01'),
+    },
+    {
+      email: 'ewa.w@walldecor.pl',
+      firstName: 'Ewa',
+      lastName: 'Wiśniewska',
+      position: 'Sprzedawca',
+      costCenterId: 'JAG',
+      divisionId: divJAG.id,
+      departmentId: deptJAGSales.id,
+      positionName: 'Sprzedawca',
+      employmentType: 'UoP',
+      startDate: new Date('2022-01-10'),
+    },
+    {
+      email: 'jan.a@walldecor.pl',
+      firstName: 'Jan',
+      lastName: 'Adamski',
+      position: 'Sprzedawca',
+      costCenterId: 'PUL',
+      divisionId: divPUL.id,
+      departmentId: deptPULSales.id,
+      positionName: 'Sprzedawca',
+      employmentType: 'UoP',
+      startDate: new Date('2022-04-01'),
+    },
+  ]
+
+  const employeeIds: string[] = []
+  for (const emp of employeesData) {
+    const { positionName, ...empData } = emp
+    const created = await prisma.employee.upsert({
+      where: { email: emp.email },
+      update: {
+        firstName: emp.firstName,
+        lastName: emp.lastName,
+        position: emp.position,
+        divisionId: emp.divisionId,
+        departmentId: emp.departmentId,
+        employmentType: emp.employmentType,
+        positionId: positions[positionName],
+      },
+      create: {
+        ...empData,
+        positionId: positions[positionName],
+        active: true,
+      },
+    })
+    employeeIds.push(created.id)
+  }
+  console.log('Employees seeded (5)')
+
+  // 13. LeaveBalanceNew for each employee (VL + SL for 2025)
+  const vlId = leaveTypeIds['VL']
+  const slId = leaveTypeIds['SL']
+
+  for (const empId of employeeIds) {
+    // VL balance
+    await prisma.leaveBalanceNew.upsert({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: empId,
+          leaveTypeId: vlId,
+          year: 2025,
+        },
+      },
+      update: { totalDays: 26 },
+      create: {
+        employeeId: empId,
+        leaveTypeId: vlId,
+        year: 2025,
+        totalDays: 26,
+        usedDays: 0,
+        pendingDays: 0,
+        carriedOver: 0,
+      },
+    })
+
+    // SL balance (sick leave - no limit, start at 0)
+    await prisma.leaveBalanceNew.upsert({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: empId,
+          leaveTypeId: slId,
+          year: 2025,
+        },
+      },
+      update: { totalDays: 0 },
+      create: {
+        employeeId: empId,
+        leaveTypeId: slId,
+        year: 2025,
+        totalDays: 0,
+        usedDays: 0,
+        pendingDays: 0,
+        carriedOver: 0,
+      },
+    })
+  }
+  console.log('Leave balances seeded (5 employees x 2 types)')
+
+  // 14. TimeTrackingRule per division
+  await prisma.timeTrackingRule.upsert({
+    where: { id: 'ttr-jag' },
+    update: { name: 'Reguła JAG', dailyHours: 8, weeklyHours: 40, overtimeThreshold: 8 },
+    create: {
+      id: 'ttr-jag',
+      divisionId: divJAG.id,
+      name: 'Reguła JAG',
+      dailyHours: 8,
+      weeklyHours: 40,
+      breakAfterHours: 6,
+      breakMinutes: 15,
+      roundingRule: 'none',
+      overtimeThreshold: 8,
+      periodType: 'monthly',
+      periodStart: 1,
+    },
+  })
+  await prisma.timeTrackingRule.upsert({
+    where: { id: 'ttr-pul' },
+    update: { name: 'Reguła PUL', dailyHours: 8, weeklyHours: 40, overtimeThreshold: 8 },
+    create: {
+      id: 'ttr-pul',
+      divisionId: divPUL.id,
+      name: 'Reguła PUL',
+      dailyHours: 8,
+      weeklyHours: 40,
+      breakAfterHours: 6,
+      breakMinutes: 15,
+      roundingRule: 'none',
+      overtimeThreshold: 8,
+      periodType: 'monthly',
+      periodStart: 1,
+    },
+  })
+  console.log('TimeTrackingRules seeded (2)')
+
+  console.log('Seeding complete!')
 }
 
 main()
   .catch((e) => {
-    console.error('❌ Seed failed:', e)
+    console.error('Seed failed:', e)
     process.exit(1)
   })
   .finally(async () => {

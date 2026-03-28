@@ -10,6 +10,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { SignOutButton } from './sign-out-button'
+import { NotificationBell } from './notification-bell'
 
 const ROLE_LABELS: Record<string, string> = {
   ADMIN: 'Administrator',
@@ -37,40 +38,44 @@ export async function Header() {
     >
       <div />
 
-      {user && (
-        <DropdownMenu>
-          <DropdownMenuTrigger className="flex items-center gap-2.5 outline-none">
-            <div className="text-right hidden sm:block">
-              <p className="text-sm font-medium leading-none">{user.name}</p>
-              <p className="text-xs mt-0.5" style={{ color: 'var(--muted-foreground)' }}>
+      <div className="flex items-center gap-3">
+        <NotificationBell />
+
+        {user && (
+          <DropdownMenu>
+            <DropdownMenuTrigger className="flex items-center gap-2.5 outline-none">
+              <div className="text-right hidden sm:block">
+                <p className="text-sm font-medium leading-none">{user.name}</p>
+                <p className="text-xs mt-0.5" style={{ color: 'var(--muted-foreground)' }}>
+                  {ROLE_LABELS[user.role] ?? user.role}
+                </p>
+              </div>
+              <Avatar className="h-8 w-8">
+                <AvatarFallback
+                  className="text-xs font-medium"
+                  style={{ background: 'var(--wd-sand)', color: 'var(--wd-dark)' }}
+                >
+                  {getInitials(user.name ?? 'U')}
+                </AvatarFallback>
+              </Avatar>
+            </DropdownMenuTrigger>
+            <DropdownMenuContent align="end" className="w-48">
+              <DropdownMenuLabel className="font-normal">
+                <p className="text-sm font-medium">{user.name}</p>
+                <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                  {user.email}
+                </p>
+              </DropdownMenuLabel>
+              <DropdownMenuSeparator />
+              <DropdownMenuItem disabled className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
                 {ROLE_LABELS[user.role] ?? user.role}
-              </p>
-            </div>
-            <Avatar className="h-8 w-8">
-              <AvatarFallback
-                className="text-xs font-medium"
-                style={{ background: 'var(--wd-sand)', color: 'var(--wd-dark)' }}
-              >
-                {getInitials(user.name ?? 'U')}
-              </AvatarFallback>
-            </Avatar>
-          </DropdownMenuTrigger>
-          <DropdownMenuContent align="end" className="w-48">
-            <DropdownMenuLabel className="font-normal">
-              <p className="text-sm font-medium">{user.name}</p>
-              <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
-                {user.email}
-              </p>
-            </DropdownMenuLabel>
-            <DropdownMenuSeparator />
-            <DropdownMenuItem disabled className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
-              {ROLE_LABELS[user.role] ?? user.role}
-            </DropdownMenuItem>
-            <DropdownMenuSeparator />
-            <SignOutButton />
-          </DropdownMenuContent>
-        </DropdownMenu>
-      )}
+              </DropdownMenuItem>
+              <DropdownMenuSeparator />
+              <SignOutButton />
+            </DropdownMenuContent>
+          </DropdownMenu>
+        )}
+      </div>
     </header>
   )
 }

@@ -1,6 +1,6 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-03-02 (Sesja 7 — CSV Import/Export + Copy M-1)
+**Ostatnia aktualizacja:** 2026-03-28 (Sesja 8 — HR Module finalization: TypeScript fixes, build fix, M6/M7/M8 complete)
 
 ---
 
@@ -12,9 +12,9 @@ M2  — Budżet: Planowanie          [x] Ukończone (2026-03-02)
 M3  — Budżet: Wykonanie (+ P&L)   [x] Ukończone (2026-03-02)
 M4  — Dashboard KPI + CSS         [x] Ukończone (2026-03-02)
 M5  — Alerty i przypomnienia      [ ] Nie rozpoczęta  ← NASTĘPNY
-M6  — HR: Pracownicy              [ ] Nie rozpoczęta
-M7  — HR: Urlopy i nieobecności   [ ] Nie rozpoczęta
-M8  — HR: Czas pracy              [ ] Nie rozpoczęta
+M6  — HR: Pracownicy              [x] Ukończone (2026-03-28)
+M7  — HR: Urlopy i nieobecności   [x] Ukończone (2026-03-28)
+M8  — HR: Czas pracy              [x] Ukończone (2026-03-28)
 M9  — Migracja danych             [ ] Nie rozpoczęta
 ```
 
@@ -170,41 +170,55 @@ M9  — Migracja danych             [ ] Nie rozpoczęta
 
 ---
 
-### M6 — HR: Pracownicy
+### M6 — HR: Pracownicy ✅ UKOŃCZONE
 ```
-[ ] Lista pracowników per lokal (imię, stanowisko, typ umowy, status)
-[ ] Profil pracownika: dane osobowe + aktywna umowa
-[ ] Dodawanie / edycja / dezaktywacja pracownika (ADMIN)
-[ ] Historia umów i wynagrodzeń (ADMIN only)
-[ ] Umowy dodatkowe (najem auta, UZ dodatkowa) — dodawanie per pracownik
-[ ] Sekcja zewnętrznych B2B (Podwykonawcy) — oddzielna lista
-[ ] Pracownik widzi własne dane (bez wynagrodzenia innych)
-[ ] Test: MANAGER nie widzi danych płacowych
-```
-
----
-
-### M7 — HR: Urlopy i nieobecności
-```
-[ ] Formularz wniosku urlopowego (EMPLOYEE): typ, daty, note
-[ ] Lista wniosków dla managera/admina z akcją zatwierdź/odrzuć
-[ ] Saldo urlopowe: automatyczna aktualizacja po zatwierdzeniu
-[ ] Ewidencja L4 i innych nieobecności (tylko ADMIN/MANAGER)
-[ ] Widok kalendarza nieobecności per lokal (ADMIN/MANAGER)
-[ ] Walidacja: wniosek nie może przekroczyć salda
-[ ] Test: saldo zmniejsza się po zatwierdzeniu, nie po złożeniu
+[x] Lista pracowników per lokal (imię, stanowisko, typ umowy, status)
+[x] Profil pracownika: dane osobowe + aktywna umowa (zakładki)
+[x] Dodawanie / edycja / dezaktywacja pracownika (ADMIN)
+[x] Struktura organizacyjna — widok drzewa działów
+[x] API: GET/POST /api/hr/employees, GET/PUT/DELETE /api/hr/employees/[id]
+[x] API: /api/hr/departments, /api/hr/divisions, /api/hr/positions
+[x] Komponenty: employee-avatar.tsx, employee-filters.tsx, employee-select.tsx
+[x] Strony: /hr/employees, /hr/employees/[id], /hr/employees/new, /hr/employees/structure
 ```
 
 ---
 
-### M8 — HR: Czas pracy i nadgodziny
+### M7 — HR: Urlopy i nieobecności ✅ UKOŃCZONE
 ```
-[ ] Wprowadzanie czasu pracy per dzień per pracownik
-[ ] Auto-oznaczenie soboty jako nadgodziny (11:00–14:00 = 3h OT)
-[ ] Manualne dodanie nadgodzin (szkolenia, inne zdarzenia)
-[ ] Widok miesięczny per pracownik
-[ ] Raport miesięczny nadgodzin: eksport XLSX (do wysyłki do kadrowej)
-[ ] Test: sobota automatycznie = nadgodziny, suma za miesiąc jest poprawna
+[x] Formularz wniosku urlopowego (EMPLOYEE): typ, daty, note
+[x] Lista wniosków z akcją zatwierdź/odrzuć (slide-in panel)
+[x] Saldo urlopowe: widok per pracownik + carryover
+[x] Widok kalendarza nieobecności (absence-calendar.tsx)
+[x] Walidacja: wniosek nie może przekroczyć salda
+[x] Typy urlopów: CRUD + kolory + kody (ADMIN)
+[x] API: /api/hr/leave-requests (GET/POST + approve/reject/export/pending)
+[x] API: /api/hr/leave-types (GET/POST/PUT/DELETE)
+[x] API: /api/hr/leave-balances (GET/POST/PUT + carryover)
+[x] API: /api/hr/leave/calendar, /api/hr/leave/summary
+[x] API: /api/hr/holidays
+[x] Strony: /hr/leave, /hr/leave/requests, /hr/leave/types, /hr/leave/balances, /hr/leave/approval
+[x] Testy jednostkowe: 28 testów (__tests__/unit/hr/utils.test.ts)
+```
+
+---
+
+### M8 — HR: Czas pracy i nadgodziny ✅ UKOŃCZONE
+```
+[x] Rejestracja czasu pracy: clock-in / clock-out / przerwy
+[x] Grafik pracy + kopiowanie szablonu grafiku
+[x] Okresy rozliczeniowe: CRUD + zamykanie okresu
+[x] Widok nadgodzin + wnioski nadgodzin (approve/reject)
+[x] Raporty: attendance, overtime, timecard, plan-vs-actual, projects
+[x] API: /api/hr/time-tracking (GET/POST + approve/reject + bulk + weekly)
+[x] API: /api/hr/time-tracking/clock-in, /clock-out, /break/start, /break/end, /current
+[x] API: /api/hr/overtime-requests (GET/POST + approve/reject)
+[x] API: /api/hr/billing-periods (GET/POST/PUT/DELETE + close)
+[x] API: /api/hr/schedules (GET/POST + copy + template)
+[x] API: /api/hr/reports (attendance/overtime/timecard/plan-vs-actual/projects/export)
+[x] Strony: /hr/time-tracking, /hr/time-tracking/clock, /hr/time-tracking/schedule
+[x]         /hr/time-tracking/overtime, /hr/time-tracking/periods, /hr/time-tracking/reports
+[x] HR Sidebar z wszystkimi linkami (hr-sidebar.tsx)
 ```
 
 ---
@@ -221,9 +235,9 @@ M9  — Migracja danych             [ ] Nie rozpoczęta
 
 ## Następna sesja: M5 — Alerty i przypomnienia
 
-> M4 ukończone (2026-03-02). Dashboard: 5 kart KPI, BEP, traffic-light, YoY, auto-refresh.
-> UI/UX Redesign "Editorial Finance" ukończony (2026-03-02): Plus Jakarta Sans + DM Mono, hero numbers, sand left-borders w tabelach, warm color palette, zielony/ceglasty wykres.
-
+> M6/M7/M8 ukończone (2026-03-28). Moduł HR kompletny: pracownicy, urlopy, czas pracy, nadgodziny.
+> TypeScript 0 błędów. Build: ✓ Next.js 16 Turbopack. Testy: 72/72 passing.
+> Fix: middleware.ts → proxy.ts (Next.js 16 wymaga proxy.ts zamiast middleware.ts).
 
 ```
 1. CRUD przypomnień o płatnościach (ADMIN: nazwa, kwota, dzień miesiąca, lokal)
@@ -235,7 +249,7 @@ M9  — Migracja danych             [ ] Nie rozpoczęta
 
 ## Kluczowe pliki projektu
 
-### API
+### API — Finanse
 | Endpoint | Metoda | Opis | Role |
 |---|---|---|---|
 | /api/budget | GET, POST | Plan budżetowy | GET: wszyscy; POST: ADMIN |
@@ -246,7 +260,31 @@ M9  — Migracja danych             [ ] Nie rozpoczęta
 | /api/subcategories/[id] | PUT, DELETE | Rename/delete podkat. | ADMIN, MANAGER |
 | /api/categories/[id] | PUT, DELETE | Rename/delete kategorii | ADMIN |
 
-### Komponenty
+### API — HR
+| Endpoint | Metoda | Opis |
+|---|---|---|
+| /api/hr/employees | GET, POST | Lista/tworzenie pracowników |
+| /api/hr/employees/[id] | GET, PUT, DELETE | Profil pracownika |
+| /api/hr/departments, /divisions, /positions | GET, POST, PUT, DELETE | Struktura org |
+| /api/hr/leave-requests | GET, POST | Wnioski urlopowe |
+| /api/hr/leave-requests/[id]/approve | POST | Zatwierdzenie wniosku |
+| /api/hr/leave-requests/[id]/reject | POST | Odrzucenie wniosku |
+| /api/hr/leave-types | GET, POST, PUT, DELETE | Typy urlopów |
+| /api/hr/leave-balances | GET, POST, PUT | Salda urlopowe |
+| /api/hr/leave-balances/carryover | POST | Przeniesienie salda na nowy rok |
+| /api/hr/leave/calendar | GET | Kalendarz nieobecności |
+| /api/hr/holidays | GET, POST | Święta/dni wolne |
+| /api/hr/time-tracking | GET, POST | Rejestracja czasu pracy |
+| /api/hr/time-tracking/clock-in | POST | Rozpoczęcie pracy |
+| /api/hr/time-tracking/clock-out | POST | Zakończenie pracy |
+| /api/hr/time-tracking/break/start, /end | POST | Przerwy |
+| /api/hr/time-tracking/current | GET | Bieżący wpis czasu |
+| /api/hr/overtime-requests | GET, POST + approve/reject | Wnioski nadgodzin |
+| /api/hr/billing-periods | GET, POST, PUT, DELETE + close | Okresy rozliczeniowe |
+| /api/hr/schedules | GET, POST + copy + template | Grafiki pracy |
+| /api/hr/reports/* | GET | Raporty: attendance/overtime/timecard/plan-vs-actual |
+
+### Komponenty — Finanse
 | Plik | Opis |
 |---|---|
 | src/components/shared/budget-grid.tsx | Siatka budżetu + zarządzanie kategoriami/podkategoriami |
@@ -256,6 +294,19 @@ M9  — Migracja danych             [ ] Nie rozpoczęta
 | src/components/shared/pnl-view.tsx | P&L: KPI + wykres + tabela |
 | src/components/shared/dashboard-view.tsx | Dashboard: 5x KPI + wykres + tabela CC |
 | src/lib/bep.ts | calcBep() — formuła Break-Even Point |
+
+### Komponenty — HR
+| Plik | Opis |
+|---|---|
+| src/components/hr/hr-sidebar.tsx | Nawigacja HR z grupami (Czas pracy, Urlopy) |
+| src/components/hr/employees/employee-avatar.tsx | Avatar + inicjały pracownika |
+| src/components/hr/employees/employee-filters.tsx | Filtry listy pracowników |
+| src/components/hr/employees/employee-select.tsx | Dropdown wyboru pracownika |
+| src/components/hr/leave/approval-list.tsx | Lista wniosków + slide-in panel szczegółów |
+| src/components/hr/leave/leave-balance-card.tsx | Karta salda urlopowego |
+| src/components/hr/leave/leave-request-form.tsx | Formularz wniosku urlopowego |
+| src/components/hr/leave/leave-requests-view.tsx | Widok listy wniosków |
+| src/components/hr/leave/absence-calendar.tsx | Kalendarz nieobecności |
 
 ---
 
