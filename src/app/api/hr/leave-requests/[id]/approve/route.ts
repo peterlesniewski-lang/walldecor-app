@@ -115,5 +115,24 @@ export async function PATCH(
     })
   }
 
+  // 7. Fire-and-forget webhook to n8n for Google Calendar sync
+  if (process.env.N8N_WEBHOOK_URL) {
+    void fetch(process.env.N8N_WEBHOOK_URL, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        leaveRequestId: id,
+        employeeFirstName: updated.employee.firstName,
+        employeeLastName: updated.employee.lastName,
+        leaveTypeName: updated.leaveType.name,
+        leaveTypeColor: updated.leaveType.color,
+        startDate: updated.startDate.toISOString().split('T')[0],
+        endDate: updated.endDate.toISOString().split('T')[0],
+        days: leaveRequest.days,
+        divisionName: updated.employee.division?.name ?? null,
+      }),
+    }).catch(() => {}) // fire-and-forget, don't fail approval if webhook fails
+  }
+
   return NextResponse.json(updated)
 }
