@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { Download, BarChart2, Users, Clock, FolderKanban, TrendingUp } from 'lucide-react'
+import { Download, BarChart2, Users, Clock, FolderKanban, TrendingUp, FileText } from 'lucide-react'
 import { EmployeeSelect } from '@/components/hr/employees/employee-select'
 import { formatDuration } from '@/lib/hr/utils'
 
@@ -79,6 +79,12 @@ interface PlanVsActualRow {
   actualMinutes: number
   diffMinutes: number
   percentage: number
+}
+
+interface EmployeeListItem {
+  id: string
+  firstName: string
+  lastName: string
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -805,6 +811,129 @@ function PlanVsActualTab({ divisions }: { divisions: Division[] }) {
   )
 }
 
+// ─── Tab: Raport PDF ──────────────────────────────────────────────────────────
+
+function PdfTab() {
+  const [month, setMonth] = useState(currentMonthStr())
+  const [employeeId, setEmployeeId] = useState('all')
+  const [employees, setEmployees] = useState<EmployeeListItem[]>([])
+  const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  useEffect(() => {
+    fetch('/api/hr/employees')
+      .then((r) => r.json())
+      .then((data) => {
+        const list = Array.isArray(data) ? data : (data.employees ?? [])
+        setEmployees(list)
+      })
+      .catch(() => {})
+  }, [])
+
+  async function handleDownload() {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch(`/api/hr/reports/monthly-pdf?month=${month}&employeeId=${employeeId}`)
+      if (!res.ok) {
+        const json = await res.json().catch(() => ({}))
+        setError((json as { error?: string }).error ?? 'Błąd generowania PDF')
+        return
+      }
+      const blob = await res.blob()
+      const url = URL.createObjectURL(blob)
+      const a = document.createElement('a')
+      a.href = url
+      a.download = `raport-${month}.pdf`
+      a.click()
+      URL.revokeObjectURL(url)
+    } catch {
+      setError('Błąd sieci')
+    } finally {
+      setLoading(false)
+    }
+  }
+
+  return (
+    <div>
+      <FilterPanel>
+        <FilterField label="Miesiąc">
+          <MonthSelect value={month} onChange={setMonth} />
+        </FilterField>
+        <FilterField label="Pracownik">
+          <select
+            value={employeeId}
+            onChange={(e) => setEmployeeId(e.target.value)}
+            className="px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-white text-[var(--wd-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--wd-dark)]/20 min-w-[200px]"
+          >
+            <option value="all">Wszyscy pracownicy</option>
+            {employees.map((emp) => (
+              <option key={emp.id} value={emp.id}>
+                {emp.firstName} {emp.lastName}
+              </option>
+            ))}
+          </select>
+        </FilterField>
+        <div className="flex items-end">
+          <button
+            onClick={handleDownload}
+            disabled={loading}
+            className="inline-flex items-center gap-1.5 px-4 py-2 text-sm rounded-lg transition-colors font-medium disabled:opacity-50 disabled:cursor-not-allowed"
+            style={{
+              background: 'var(--wd-dark)',
+              color: 'var(--wd-white)',
+              border: '1px solid var(--wd-dark)',
+            }}
+          >
+            <FileText size={14} />
+            <span>{loading ? 'Generowanie…' : 'Generuj i pobierz PDF'}</span>
+          </button>
+        </div>
+      </FilterPanel>
+
+      {error && (
+        <div className="py-4 px-4 rounded-xl text-sm text-red-700 bg-red-50 border border-red-200">
+          {error}
+        </div>
+      )}
+
+      {!error && !loading && (
+        <div
+          className="py-12 text-center rounded-xl border border-dashed"
+          style={{ borderColor: 'var(--wd-border)', background: 'var(--wd-surface-2)' }}
+        >
+          <div
+            className="w-12 h-12 rounded-xl mx-auto mb-3 flex items-center justify-center"
+            style={{ background: 'var(--wd-white)', border: '1px solid var(--wd-border)' }}
+          >
+            <FileText size={22} style={{ color: 'var(--wd-text-muted)' }} />
+          </div>
+          <p className="text-sm font-medium" style={{ color: 'var(--wd-text-primary)' }}>
+            Raport miesięczny ewidencji czasu pracy
+          </p>
+          <p className="text-xs mt-1" style={{ color: 'var(--wd-text-muted)' }}>
+            Wybierz miesiąc i pracownika, następnie kliknij „Generuj i pobierz PDF"
+          </p>
+          <p className="text-xs mt-0.5" style={{ color: 'var(--wd-text-muted)' }}>
+            PDF zawiera dzień po dniu: wejścia, wyjścia, godziny, urlopy, sobotnie nadgodziny
+          </p>
+        </div>
+      )}
+
+      {loading && (
+        <div className="py-12 text-center">
+          <div
+            className="w-8 h-8 rounded-full border-2 border-[var(--wd-dark)] border-t-transparent animate-spin mx-auto mb-3"
+          />
+          <p className="text-sm" style={{ color: 'var(--wd-text-muted)' }}>
+            Generowanie raportu PDF…
+          </p>
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ─── Main Dashboard ────────────────────────────────────────────────────────────
 
 const TABS = [
@@ -813,6 +942,7 @@ const TABS = [
   { id: 'overtime', label: 'Nadgodziny', icon: BarChart2 },
   { id: 'projects', label: 'Projektowy', icon: FolderKanban },
   { id: 'plan-vs-actual', label: 'Plan vs Wykonanie', icon: TrendingUp },
+  { id: 'pdf-report', label: 'Raport PDF', icon: FileText },
 ] as const
 
 type TabId = (typeof TABS)[number]['id']
@@ -823,6 +953,7 @@ interface ReportsDashboardProps {
 
 export function ReportsDashboard({ divisions }: ReportsDashboardProps) {
   const [activeTab, setActiveTab] = useState<TabId>('timecard')
+
 
   return (
     <div>
@@ -858,6 +989,7 @@ export function ReportsDashboard({ divisions }: ReportsDashboardProps) {
         {activeTab === 'overtime' && <OvertimeTab divisions={divisions} />}
         {activeTab === 'projects' && <ProjectsTab />}
         {activeTab === 'plan-vs-actual' && <PlanVsActualTab divisions={divisions} />}
+        {activeTab === 'pdf-report' && <PdfTab />}
       </div>
     </div>
   )
