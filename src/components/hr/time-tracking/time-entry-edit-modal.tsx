@@ -90,7 +90,7 @@ export function TimeEntryEditModal({
         return
       }
 
-      const body: Record<string, unknown> = { notes: notes || null }
+      const body: Record<string, unknown> = { notes: notes || undefined }
 
       // Build full datetime from date + time strings
       const clockInDt = new Date(`${date}T${clockIn}:00`)
