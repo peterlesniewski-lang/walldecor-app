@@ -4,10 +4,12 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { timeEntryBulkCreateSchema } from '@/lib/hr/schemas'
 
-function parseTimeToDate(dateBase: Date, timeStr: string): Date {
+// tzOffsetMinutes = (UTC - local) in minutes, e.g. -120 for UTC+2
+// UTC = local + tzOffset  →  utcHours = localHours + tzOffsetMinutes/60
+function parseTimeToDate(dateBase: Date, timeStr: string, tzOffsetMinutes = 0): Date {
   const [hours, minutes] = timeStr.split(':').map(Number)
   const d = new Date(dateBase)
-  d.setHours(hours, minutes, 0, 0)
+  d.setUTCHours(hours + tzOffsetMinutes / 60, minutes, 0, 0)
   return d
 }
 
@@ -29,7 +31,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid input', details: parsed.error.flatten() }, { status: 400 })
   }
 
-  const { employeeIds, startDate, endDate, clockIn: clockInStr, clockOut: clockOutStr, skipWeekends, projectId } = parsed.data
+  const { employeeIds, startDate, endDate, clockIn: clockInStr, clockOut: clockOutStr, skipWeekends, projectId, tzOffsetMinutes } = parsed.data
 
   // Validate employees exist
   const employees = await prisma.employee.findMany({
@@ -58,8 +60,8 @@ export async function POST(req: NextRequest) {
     const dayDate = new Date(cur)
     dayDate.setHours(0, 0, 0, 0)
 
-    const clockInDt = parseTimeToDate(cur, clockInStr)
-    const clockOutDt = parseTimeToDate(cur, clockOutStr)
+    const clockInDt = parseTimeToDate(cur, clockInStr, tzOffsetMinutes)
+    const clockOutDt = parseTimeToDate(cur, clockOutStr, tzOffsetMinutes)
 
     let totalMinutes = Math.round((clockOutDt.getTime() - clockInDt.getTime()) / 60000)
     if (totalMinutes < 0) totalMinutes = 0

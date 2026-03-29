@@ -50,6 +50,8 @@ export const timeEntryBulkCreateSchema = z.object({
   clockOut: z.string().regex(/^\d{2}:\d{2}$/),
   skipWeekends: z.boolean().default(true),
   projectId: z.string().optional(),
+  // Browser timezone offset in minutes: (UTC - local), e.g. -120 for UTC+2
+  tzOffsetMinutes: z.number().int().optional().default(0),
 })
 
 export const breakSchema = z.object({

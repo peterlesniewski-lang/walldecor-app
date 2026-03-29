@@ -36,7 +36,6 @@ export function BulkAddModal({ weekStart, weekEnd, employees, onClose, onCreated
   const [skipWeekends, setSkipWeekends] = useState(true)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [result, setResult] = useState<{ created: number; skipped: number } | null>(null)
 
   const previewMinutes = (() => {
     if (!clockIn || !clockOut) return null
@@ -76,7 +75,6 @@ export function BulkAddModal({ weekStart, weekEnd, employees, onClose, onCreated
 
     setLoading(true)
     setError(null)
-    setResult(null)
 
     try {
       const res = await fetch('/api/hr/time-tracking/bulk', {
@@ -89,6 +87,9 @@ export function BulkAddModal({ weekStart, weekEnd, employees, onClose, onCreated
           clockIn,
           clockOut,
           skipWeekends,
+          // Send browser timezone offset so server can convert local time → UTC correctly
+          // getTimezoneOffset() returns (UTC - local) in minutes, e.g. -120 for UTC+2
+          tzOffsetMinutes: new Date().getTimezoneOffset(),
         }),
       })
 
@@ -98,11 +99,10 @@ export function BulkAddModal({ weekStart, weekEnd, employees, onClose, onCreated
         return
       }
 
-      setResult({ created: data.created ?? 0, skipped: data.skipped ?? 0 })
       onCreated()
+      onClose()
     } catch {
       setError('Błąd połączenia')
-    } finally {
       setLoading(false)
     }
   }
@@ -301,19 +301,6 @@ export function BulkAddModal({ weekStart, weekEnd, employees, onClose, onCreated
             </div>
           )}
 
-          {/* Success result */}
-          {result && (
-            <div
-              className="px-4 py-3 rounded-xl text-sm"
-              style={{ background: '#F0FDF4', border: '1px solid #BBF7D0' }}
-            >
-              <p className="font-semibold text-emerald-700">Gotowe!</p>
-              <p className="text-emerald-600 mt-0.5">
-                Utworzono: <span className="font-semibold">{result.created}</span> wpisów
-                {result.skipped > 0 && <span className="ml-2 text-amber-600">· Pominięto: {result.skipped} (już istniały)</span>}
-              </p>
-            </div>
-          )}
         </div>
 
         {/* Footer */}
@@ -326,19 +313,17 @@ export function BulkAddModal({ weekStart, weekEnd, employees, onClose, onCreated
             className="px-4 py-2 rounded-lg text-sm font-medium border transition-colors hover:bg-[var(--wd-surface-2)]"
             style={{ borderColor: 'var(--wd-border)', color: 'var(--wd-text-muted)' }}
           >
-            {result ? 'Zamknij' : 'Anuluj'}
+            Anuluj
           </button>
-          {!result && (
-            <button
-              onClick={() => void handleSubmit()}
-              disabled={loading || selectedEmployeeIds.length === 0}
-              className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
-              style={{ background: 'var(--wd-dark)', color: '#fff' }}
-            >
-              <Zap className="w-3.5 h-3.5" />
-              {loading ? 'Tworzę...' : `Utwórz wpisy (${selectedEmployeeIds.length} os.)`}
-            </button>
-          )}
+          <button
+            onClick={() => void handleSubmit()}
+            disabled={loading || selectedEmployeeIds.length === 0}
+            className="flex items-center gap-2 px-5 py-2 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
+            style={{ background: 'var(--wd-dark)', color: '#fff' }}
+          >
+            <Zap className="w-3.5 h-3.5" />
+            {loading ? 'Tworzę...' : `Utwórz wpisy (${selectedEmployeeIds.length} os.)`}
+          </button>
         </div>
       </div>
     </div>
