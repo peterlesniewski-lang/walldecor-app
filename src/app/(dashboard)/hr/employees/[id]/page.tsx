@@ -7,6 +7,7 @@ import { EmployeeAvatar } from '@/components/hr/employees/employee-avatar'
 import { EmployeeTabs } from './employee-tabs'
 import { EmployeeActions } from './employee-actions'
 import { getWeekRange } from '@/lib/hr/utils'
+import { LeaveTabClient } from '@/components/hr/employees/leave-tab-client'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -232,113 +233,6 @@ function WorkTimeTab({ entries }: { entries: TimeEntryWithProject[] }) {
   )
 }
 
-function LeaveTab({ employee }: { employee: NonNullable<EmployeeWithRelations> }) {
-  const balances = employee.leaveBalancesNew
-  const requests = employee.leaveRequestsNew
-
-  if (balances.length === 0 && requests.length === 0) {
-    return (
-      <div className="flex flex-col items-center justify-center py-16 text-center">
-        <div
-          className="w-12 h-12 rounded-xl flex items-center justify-center mb-4"
-          style={{ background: 'var(--wd-surface-2)' }}
-        >
-          <svg className="w-6 h-6" style={{ color: 'var(--wd-text-muted)' }} fill="none" stroke="currentColor" viewBox="0 0 24 24">
-            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z" />
-          </svg>
-        </div>
-        <p className="font-medium text-[var(--wd-text-primary)] mb-1">Brak danych urlopowych</p>
-        <p className="text-sm" style={{ color: 'var(--wd-text-muted)' }}>
-          Nie przypisano jeszcze salda urlopowego.
-        </p>
-      </div>
-    )
-  }
-
-  const STATUS_LABELS: Record<string, string> = {
-    pending: 'Oczekujący',
-    approved: 'Zatwierdzony',
-    rejected: 'Odrzucony',
-    cancelled: 'Anulowany',
-  }
-  const STATUS_STYLES: Record<string, string> = {
-    pending: 'bg-amber-50 text-amber-700 border-amber-200',
-    approved: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    rejected: 'bg-red-50 text-red-600 border-red-200',
-    cancelled: 'bg-stone-50 text-stone-600 border-stone-200',
-  }
-
-  return (
-    <div className="space-y-8">
-      {/* Leave balances */}
-      {balances.length > 0 && (
-        <div>
-          <h3 className="text-base font-semibold text-[var(--wd-text-primary)] mb-4">Saldo urlopowe</h3>
-          <div className="space-y-3">
-            {balances.map((b) => {
-              const used = b.usedDays + b.pendingDays
-              const pct = b.totalDays > 0 ? Math.min(100, (used / b.totalDays) * 100) : 0
-              return (
-                <div key={b.id} className="p-4 rounded-lg border border-[var(--wd-border)] bg-white">
-                  <div className="flex items-center justify-between mb-2">
-                    <span className="text-sm font-medium text-[var(--wd-text-primary)]">{b.leaveType.name}</span>
-                    <span className="text-sm num" style={{ color: 'var(--wd-text-muted)' }}>
-                      {b.usedDays} / {b.totalDays} dni
-                    </span>
-                  </div>
-                  <div className="w-full h-2 rounded-full" style={{ background: 'var(--wd-surface-2)' }}>
-                    <div
-                      className="h-2 rounded-full transition-all"
-                      style={{
-                        width: `${pct}%`,
-                        background: pct > 80 ? '#EF4444' : pct > 60 ? '#F59E0B' : '#10B981',
-                      }}
-                    />
-                  </div>
-                  {b.pendingDays > 0 && (
-                    <p className="text-xs mt-1" style={{ color: 'var(--wd-text-muted)' }}>
-                      {b.pendingDays} dni oczekuje na zatwierdzenie
-                    </p>
-                  )}
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-
-      {/* Recent leave requests */}
-      {requests.length > 0 && (
-        <div>
-          <h3 className="text-base font-semibold text-[var(--wd-text-primary)] mb-4">Ostatnie wnioski</h3>
-          <div className="space-y-2">
-            {requests.slice(0, 10).map((r) => {
-              const fmt = (d: Date) => new Intl.DateTimeFormat('pl-PL', { dateStyle: 'short' }).format(new Date(d))
-              return (
-                <div
-                  key={r.id}
-                  className="flex items-center justify-between p-3 rounded-lg border border-[var(--wd-border)]"
-                >
-                  <div>
-                    <p className="text-sm font-medium text-[var(--wd-text-primary)]">{r.leaveType.name}</p>
-                    <p className="text-xs" style={{ color: 'var(--wd-text-muted)' }}>
-                      {fmt(r.startDate)} – {fmt(r.endDate)} ({r.days} {r.days === 1 ? 'dzień' : 'dni'})
-                    </p>
-                  </div>
-                  <span
-                    className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${STATUS_STYLES[r.status] ?? STATUS_STYLES.cancelled}`}
-                  >
-                    {STATUS_LABELS[r.status] ?? r.status}
-                  </span>
-                </div>
-              )
-            })}
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
 
 // ─── Data fetcher ─────────────────────────────────────────────────────────────
 
@@ -377,6 +271,7 @@ export default async function EmployeeProfilePage({ params }: Params) {
   if (!employee) notFound()
 
   const isAdmin = session.user.role === 'ADMIN'
+  const canEditLeave = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
 
   // Fetch current week time entries
   const { start, end } = getWeekRange(new Date())
@@ -403,7 +298,39 @@ export default async function EmployeeProfilePage({ params }: Params) {
     {
       id: 'leave',
       label: 'Urlopy',
-      content: <LeaveTab employee={employee} />,
+      content: (
+        <LeaveTabClient
+          employeeId={employee.id}
+          balances={employee.leaveBalancesNew.map((b) => ({
+            id: b.id,
+            year: b.year,
+            totalDays: b.totalDays,
+            usedDays: b.usedDays,
+            pendingDays: b.pendingDays,
+            carriedOver: b.carriedOver,
+            leaveType: {
+              id: b.leaveType.id,
+              name: b.leaveType.name,
+              code: b.leaveType.code,
+              color: b.leaveType.color,
+            },
+          }))}
+          requests={employee.leaveRequestsNew.map((r) => ({
+            id: r.id,
+            startDate: r.startDate.toISOString(),
+            endDate: r.endDate.toISOString(),
+            days: r.days,
+            status: r.status,
+            leaveType: {
+              id: r.leaveType.id,
+              name: r.leaveType.name,
+              code: r.leaveType.code,
+              color: r.leaveType.color,
+            },
+          }))}
+          canEdit={canEditLeave}
+        />
+      ),
     },
   ]
 

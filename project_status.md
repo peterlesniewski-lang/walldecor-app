@@ -1,6 +1,6 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-03-28 (Sesja 8 — HR Module finalization: TypeScript fixes, build fix, M6/M7/M8 complete)
+**Ostatnia aktualizacja:** 2026-03-30 (Sesja 9 — HR: ręczne zarządzanie saldem urlopowym)
 
 ---
 
@@ -199,7 +199,14 @@ M9  — Migracja danych             [ ] Nie rozpoczęta
 [x] API: /api/hr/holidays
 [x] Strony: /hr/leave, /hr/leave/requests, /hr/leave/types, /hr/leave/balances, /hr/leave/approval
 [x] Testy jednostkowe: 28 testów (__tests__/unit/hr/utils.test.ts)
+[x] Ręczne zarządzanie saldem: przycisk "Dodaj saldo" + "Edytuj saldo" (ADMIN/MANAGER) na karcie pracownika
 ```
+
+**Sesja 9 (2026-03-30) — Ręczne zarządzanie saldem urlopowym:**
+- `leave-tab-client.tsx` — nowy Client Component zastępujący statyczny `LeaveTab` na karcie pracownika
+- Modal obsługuje tryb `add` (typ urlopu + rok + dni) i `edit` (zmiana liczby dni)
+- Obsługa błędu 409 (duplikat salda)
+- Rozszerzono uprawnienia POST `/api/hr/leave-balances` i PATCH `/api/hr/leave-balances/[id]` do MANAGER
 
 ---
 
@@ -236,6 +243,7 @@ M9  — Migracja danych             [ ] Nie rozpoczęta
 ## Następna sesja: M5 — Alerty i przypomnienia
 
 > M6/M7/M8 ukończone (2026-03-28). Moduł HR kompletny: pracownicy, urlopy, czas pracy, nadgodziny.
+> Sesja 9 (2026-03-30): dodano ręczne zarządzanie saldem urlopowym dla istniejących pracowników (ADMIN/MANAGER).
 > TypeScript 0 błędów. Build: ✓ Next.js 16 Turbopack. Testy: 72/72 passing.
 > Fix: middleware.ts → proxy.ts (Next.js 16 wymaga proxy.ts zamiast middleware.ts).
 
@@ -307,6 +315,7 @@ M9  — Migracja danych             [ ] Nie rozpoczęta
 | src/components/hr/leave/leave-request-form.tsx | Formularz wniosku urlopowego |
 | src/components/hr/leave/leave-requests-view.tsx | Widok listy wniosków |
 | src/components/hr/leave/absence-calendar.tsx | Kalendarz nieobecności |
+| src/components/hr/employees/leave-tab-client.tsx | Zakładka saldo urlopowe na karcie pracownika — dodaj/edytuj saldo (ADMIN/MANAGER) |
 
 ---
 
