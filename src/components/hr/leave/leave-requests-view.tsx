@@ -188,7 +188,8 @@ export function LeaveRequestsView({ employeeId, role }: LeaveRequestsViewProps) 
 
             <div className="px-6 py-5">
               <LeaveRequestForm
-                employeeId={employeeId}
+                employeeId={employeeId || undefined}
+                isAdmin={isAdminOrManager}
                 onSuccess={() => {
                   setShowForm(false)
                   fetchRequests()
