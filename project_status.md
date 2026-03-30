@@ -1,6 +1,6 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-03-30 (Sesja 9 — HR: ręczne zarządzanie saldem urlopowym)
+**Ostatnia aktualizacja:** 2026-03-30 (Sesja 10 — HR: bugfixy, n8n/Google Calendar, timezone bulk)
 
 ---
 
@@ -241,12 +241,21 @@ M9  — Migracja danych             [ ] Nie rozpoczęta
 
 ---
 
-## Następna sesja: M5 — Alerty i przypomnienia
+## Następna sesja: M9 — Migracja danych
 
-> M6/M7/M8 ukończone (2026-03-28). Moduł HR kompletny: pracownicy, urlopy, czas pracy, nadgodziny.
-> Sesja 9 (2026-03-30): dodano ręczne zarządzanie saldem urlopowym dla istniejących pracowników (ADMIN/MANAGER).
-> TypeScript 0 błędów. Build: ✓ Next.js 16 Turbopack. Testy: 72/72 passing.
-> Fix: middleware.ts → proxy.ts (Next.js 16 wymaga proxy.ts zamiast middleware.ts).
+> Sesja 10 (2026-03-30): bugfixy HR, integracja n8n/Google Calendar, timezone w bulk time entries.
+>
+> **Co zrobiono w sesji 10:**
+> - Automatyczne salda urlopowe przy tworzeniu pracownika (`calcProportionalLeaveDays`)
+> - Integracja Google Calendar: fire-and-forget webhook do n8n po zatwierdzeniu urlopu
+>   - n8n workflow ID: `LGJp2EFskozvGzFD`, webhook: `/webhook/walldecor-leave-approved`
+>   - Env var: `N8N_WEBHOOK_URL` — dodać w Coolify, skonfigurować Google OAuth w n8n
+> - Bulk time entries timezone fix: `new Date('YYYY-MM-DDTHH:mm').toISOString()` w przeglądarce, `Date.UTC()`+`getUTCHours()` na serwerze
+> - Formularz nowego pracownika: empty strings (employmentType, endDate, FK fields) czyszczone przed POST
+> - Seed: usunięto 5 testowych pracowników — przestali wracać przy każdym deploy
+> - PDF raport uproszczony do summary card (godziny std / nadgodziny / dni urlopu)
+>
+> TypeScript 0 błędów. Ostatni commit: `11bbe48`.
 
 ```
 1. CRUD przypomnień o płatnościach (ADMIN: nazwa, kwota, dzień miesiąca, lokal)
