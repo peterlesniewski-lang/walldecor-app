@@ -207,6 +207,7 @@ M9  — Migracja danych             [ ] Nie rozpoczęta
 - Modal obsługuje tryb `add` (typ urlopu + rok + dni) i `edit` (zmiana liczby dni)
 - Obsługa błędu 409 (duplikat salda)
 - Rozszerzono uprawnienia POST `/api/hr/leave-balances` i PATCH `/api/hr/leave-balances/[id]` do MANAGER
+- **Fix:** `leave-requests-view.tsx` — przekazanie `isAdmin={isAdminOrManager}` do `LeaveRequestForm`; ADMIN bez rekordu pracownika widział pusty modal (brak formularza) — naprawiono
 
 ---
 
