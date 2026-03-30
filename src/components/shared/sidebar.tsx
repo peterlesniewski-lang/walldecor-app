@@ -3,7 +3,6 @@
 import {
   LayoutDashboard,
   TrendingUp,
-  BarChart3,
   Banknote,
   Users,
   CalendarOff,
@@ -25,8 +24,7 @@ const NAV_SECTIONS = [
     label: 'Finanse',
     items: [
       { href: '/finance/revenue', label: 'Przychody', icon: Banknote },
-      { href: '/finance', label: 'Budżet', icon: TrendingUp },
-      { href: '/finance/actuals', label: 'Wykonanie', icon: BarChart3 },
+      { href: '/finance', label: 'Koszty', icon: TrendingUp },
       { href: '/finance/alerts', label: 'Alerty', icon: ShieldAlert },
     ],
   },

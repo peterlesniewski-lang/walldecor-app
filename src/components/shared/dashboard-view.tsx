@@ -53,7 +53,6 @@ interface DashboardViewProps {
   currentMonth: number
   planIncomeByMonth: number[]
   realIncomeByMonth: number[]
-  planExpensesByMonth: number[]
   realExpensesByMonth: number[]
   fixedCostsByMonth: number[]
   variableCostsByMonth: number[]
@@ -108,7 +107,6 @@ export function DashboardView({
   currentMonth,
   planIncomeByMonth,
   realIncomeByMonth,
-  planExpensesByMonth,
   realExpensesByMonth,
   fixedCostsByMonth,
   variableCostsByMonth,
@@ -137,16 +135,13 @@ export function DashboardView({
   // Annuals
   const totalPlanIncome   = planIncomeByMonth.reduce((s, v) => s + v, 0)
   const totalRealIncome   = realIncomeByMonth.reduce((s, v) => s + v, 0)
-  const totalPlanExpenses = planExpensesByMonth.reduce((s, v) => s + v, 0)
   const totalRealExpenses = realExpensesByMonth.reduce((s, v) => s + v, 0)
   const totalRealNet      = totalRealIncome - totalRealExpenses
-  const totalPlanNet      = totalPlanIncome - totalPlanExpenses
 
   // Current month (currentMonth is 1-based)
   const cmIdx = currentMonth - 1
   const cmPlanIncome   = planIncomeByMonth[cmIdx] ?? 0
   const cmRealIncome   = realIncomeByMonth[cmIdx] ?? 0
-  const cmPlanExpenses = planExpensesByMonth[cmIdx] ?? 0
   const cmRealExpenses = realExpensesByMonth[cmIdx] ?? 0
   const cmNet          = cmRealIncome - cmRealExpenses
 
@@ -168,8 +163,7 @@ export function DashboardView({
     month: m,
     planIncome: planIncomeByMonth[i],
     realIncome: realIncomeByMonth[i],
-    planExpenses: planExpensesByMonth[i],
-    realExpenses: realExpensesByMonth[i],
+    expenses: realExpensesByMonth[i],
   }))
 
   return (
@@ -236,31 +230,18 @@ export function DashboardView({
         )})()}
 
         {/* Koszty */}
-        {(() => { const hero = pickHeroValue(totalRealExpenses, totalPlanExpenses); const h = fmtHero(hero.value); return (
+        {(() => { const h = fmtHero(totalRealExpenses); return (
         <div className="rounded-2xl bg-white p-6 flex flex-col gap-2" style={{ boxShadow: 'var(--card-shadow)' }}>
-          <div className="flex items-center gap-2">
-            <p className="data-label">Koszty {year}</p>
-            {hero.isPlan && (
-              <span className="text-xs font-semibold px-1.5 py-0.5 rounded" style={{ background: 'var(--wd-surface-2)', color: 'var(--wd-text-muted)' }}>PLAN</span>
-            )}
-          </div>
+          <p className="data-label">Koszty {year}</p>
           <div className="flex items-baseline gap-0.5">
             <span className="num" style={{ fontSize: '1.875rem', fontWeight: 700, lineHeight: 1, color: 'var(--wd-dark)' }}>{h.main}</span>
             <span className="num" style={{ fontSize: '1rem', color: 'var(--wd-text-muted)' }}>{h.decimal}</span>
           </div>
-          <div className="flex items-center gap-2">
-            <span className="text-xs" style={{ color: 'var(--wd-text-muted)' }}>
-              {hero.isPlan ? `Real: ${fmtK(totalRealExpenses)}` : `Budżet: ${fmtK(totalPlanExpenses)}`}
-            </span>
-            <span className={`text-xs font-semibold ${pctClass(pct(totalRealExpenses, totalPlanExpenses), true)}`}>
-              {fmtPct(pct(totalRealExpenses, totalPlanExpenses))}
-            </span>
-          </div>
-          {!hero.isPlan && prevYearTotalExpenses > 0 && (
+          {prevYearTotalExpenses > 0 && (
             <div className="flex items-center gap-1 pt-2 border-t" style={{ borderColor: 'var(--wd-border)' }}>
               <span className="text-xs" style={{ color: 'var(--wd-text-muted)' }}>vs {year - 1}: {fmtK(prevYearTotalExpenses)}</span>
-              <span className={`text-xs font-semibold ${netClass(prevYearTotalExpenses - hero.value)}`}>
-                {hero.value <= prevYearTotalExpenses ? '+' : ''}{fmtK(prevYearTotalExpenses - hero.value)}
+              <span className={`text-xs font-semibold ${netClass(prevYearTotalExpenses - totalRealExpenses)}`}>
+                {totalRealExpenses <= prevYearTotalExpenses ? '+' : ''}{fmtK(prevYearTotalExpenses - totalRealExpenses)}
               </span>
             </div>
           )}
@@ -270,7 +251,7 @@ export function DashboardView({
         {/* Zysk netto */}
         {(() => {
           const noActuals = totalRealIncome === 0 && totalPlanIncome > 0
-          const netValue = noActuals ? totalPlanNet : totalRealNet
+          const netValue = noActuals ? (totalPlanIncome - totalRealExpenses) : totalRealNet
           const h = fmtHero(netValue)
           return (
           <div className="rounded-2xl bg-white p-6 flex flex-col gap-2" style={{ boxShadow: 'var(--card-shadow)' }}>
@@ -284,9 +265,6 @@ export function DashboardView({
               <span className={`num ${netClass(netValue)}`} style={{ fontSize: '1.875rem', fontWeight: 700, lineHeight: 1 }}>{h.main}</span>
               <span className="num" style={{ fontSize: '1rem', color: 'var(--wd-text-muted)' }}>{h.decimal}</span>
             </div>
-            <span className="text-xs" style={{ color: 'var(--wd-text-muted)' }}>
-              {noActuals ? `Real: ${fmtK(totalRealNet)}` : `Plan: ${fmtK(totalPlanNet)}`}
-            </span>
           </div>
         )})()}
 
@@ -363,9 +341,8 @@ export function DashboardView({
               formatter={(value: number, name: string) => {
                 const labels: Record<string, string> = {
                   planIncome: 'Plan przychody',
-                  realIncome: 'Real przychody',
-                  planExpenses: 'Plan koszty',
-                  realExpenses: 'Real koszty',
+                  realIncome: 'Przychody',
+                  expenses: 'Koszty',
                 }
                 return [value.toLocaleString('pl-PL') + ' zł', labels[name] ?? name]
               }}
@@ -377,17 +354,15 @@ export function DashboardView({
               formatter={(v) => {
                 const labels: Record<string, string> = {
                   planIncome: 'Plan przychody',
-                  realIncome: 'Real przychody',
-                  planExpenses: 'Plan koszty',
-                  realExpenses: 'Real koszty',
+                  realIncome: 'Przychody',
+                  expenses: 'Koszty',
                 }
                 return labels[v] ?? v
               }}
             />
-            <Bar dataKey="planIncome"   fill="#DDD9D3" radius={[3, 3, 0, 0]} name="planIncome" />
-            <Bar dataKey="realIncome"   fill="#2A7D4F" radius={[3, 3, 0, 0]} name="realIncome" />
-            <Bar dataKey="planExpenses" fill="#E8E4E0" radius={[3, 3, 0, 0]} name="planExpenses" />
-            <Bar dataKey="realExpenses" fill="#B54A20" radius={[3, 3, 0, 0]} name="realExpenses" />
+            <Bar dataKey="planIncome" fill="#DDD9D3" radius={[3, 3, 0, 0]} name="planIncome" />
+            <Bar dataKey="realIncome" fill="#2A7D4F" radius={[3, 3, 0, 0]} name="realIncome" />
+            <Bar dataKey="expenses"   fill="#B54A20" radius={[3, 3, 0, 0]} name="expenses" />
           </BarChart>
         </ResponsiveContainer>
       </div>
@@ -424,15 +399,14 @@ export function DashboardView({
             <tr className="border-b" style={{ background: 'var(--wd-surface-2)', borderColor: 'var(--wd-border)' }}>
               <th className="text-left px-5 py-2.5 data-label">Lokal</th>
               <th className="text-right px-4 py-2.5 data-label">Plan przych.</th>
-              <th className="text-right px-4 py-2.5 data-label">Real przych.</th>
+              <th className="text-right px-4 py-2.5 data-label">Przychody</th>
               <th className="text-right px-4 py-2.5 data-label">%</th>
-              <th className="text-right px-4 py-2.5 data-label">Plan koszty</th>
-              <th className="text-right px-4 py-2.5 data-label">Real koszty</th>
+              <th className="text-right px-4 py-2.5 data-label">Koszty</th>
               <th className="text-right px-5 py-2.5 data-label">Netto</th>
             </tr>
           </thead>
           <tbody>
-            {ccBreakdown.map(({ cc, planIncome, realIncome, planExpenses, realExpenses }) => {
+            {ccBreakdown.map(({ cc, planIncome, realIncome, realExpenses }) => {
               const net = realIncome - realExpenses
               const exec = pct(realIncome, planIncome)
               return (
@@ -446,9 +420,6 @@ export function DashboardView({
                   </td>
                   <td className={`text-right px-4 py-2.5 num text-xs font-semibold ${pctClass(exec)}`}>
                     {fmtPct(exec)}
-                  </td>
-                  <td className="text-right px-4 py-2.5 num text-xs" style={{ color: 'var(--wd-text-muted)' }}>
-                    {fmtK(planExpenses)}
                   </td>
                   <td className="text-right px-4 py-2.5 num text-xs font-medium" style={{ color: 'var(--wd-dark)' }}>
                     {fmtK(realExpenses)}

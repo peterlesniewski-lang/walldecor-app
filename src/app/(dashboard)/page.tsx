@@ -17,13 +17,12 @@ export default async function DashboardPage() {
 
   const prevYear = year - 1
 
-  const [revenuePlans, revenueActuals, budgets, actualsWithSubcat,
-         prevRevenuePlans, prevRevenueActuals, prevBudgets, prevActuals,
+  const [revenuePlans, revenueActuals, budgets,
+         prevRevenuePlans, prevRevenueActuals, prevBudgets,
          cashAccounts, receivables, latestLiability, appSettings] = await Promise.all([
     prisma.revenueBudget.findMany({ where: { year } }),
     prisma.revenue.findMany({ where: { year } }),
-    prisma.budgetEntry.findMany({ where: { year } }),
-    prisma.actualEntry.findMany({
+    prisma.budgetEntry.findMany({
       where: { year },
       include: { subCategory: { select: { isFixed: true } } },
     }),
@@ -31,7 +30,6 @@ export default async function DashboardPage() {
     prisma.revenueBudget.findMany({ where: { year: prevYear } }),
     prisma.revenue.findMany({ where: { year: prevYear } }),
     prisma.budgetEntry.findMany({ where: { year: prevYear } }),
-    prisma.actualEntry.findMany({ where: { year: prevYear } }),
     prisma.cashAccount.findMany({ where: { isActive: true }, orderBy: { order: 'asc' } }),
     prisma.receivableEntry.findMany({ orderBy: { dueDate: 'asc' } }),
     prisma.cashLiabilitySnapshot.findFirst({ orderBy: { date: 'desc' } }),
@@ -131,9 +129,7 @@ export default async function DashboardPage() {
   const prevYearTotalIncome = prevRevenueActuals.length > 0
     ? prevRevenueActuals.reduce((s, r) => s + r.amount, 0)
     : prevRevenuePlans.reduce((s, r) => s + r.amount, 0)
-  const prevYearTotalExpenses = prevActuals.length > 0
-    ? prevActuals.reduce((s, e) => s + e.amount, 0)
-    : prevBudgets.reduce((s, e) => s + e.amount, 0)
+  const prevYearTotalExpenses = prevBudgets.reduce((s, e) => s + e.amount, 0)
 
   // Aggregate by month across all cost centers (or per CC for breakdown)
   const planIncomeByMonth = new Array(12).fill(0) as number[]
@@ -142,12 +138,9 @@ export default async function DashboardPage() {
   const realIncomeByMonth = new Array(12).fill(0) as number[]
   for (const r of revenueActuals) realIncomeByMonth[r.month - 1] += r.amount
 
-  const planExpensesByMonth = new Array(12).fill(0) as number[]
-  for (const e of budgets) planExpensesByMonth[e.month - 1] += e.amount
-
   const fixedCostsByMonth = new Array(12).fill(0) as number[]
   const variableCostsByMonth = new Array(12).fill(0) as number[]
-  for (const e of actualsWithSubcat) {
+  for (const e of budgets) {
     if (e.subCategory.isFixed) fixedCostsByMonth[e.month - 1] += e.amount
     else variableCostsByMonth[e.month - 1] += e.amount
   }
@@ -157,9 +150,8 @@ export default async function DashboardPage() {
   const ccBreakdown = costCenters.map((cc) => {
     const planIncome = revenuePlans.filter((r) => r.costCenterId === cc).reduce((s, r) => s + r.amount, 0)
     const realIncome = revenueActuals.filter((r) => r.costCenterId === cc).reduce((s, r) => s + r.amount, 0)
-    const planExpenses = budgets.filter((e) => e.costCenterId === cc).reduce((s, e) => s + e.amount, 0)
-    const realExpenses = actualsWithSubcat.filter((e) => e.costCenterId === cc).reduce((s, e) => s + e.amount, 0)
-    return { cc, planIncome, realIncome, planExpenses, realExpenses }
+    const realExpenses = budgets.filter((e) => e.costCenterId === cc).reduce((s, e) => s + e.amount, 0)
+    return { cc, planIncome, realIncome, planExpenses: 0, realExpenses }
   })
 
   return (
@@ -168,7 +160,6 @@ export default async function DashboardPage() {
       currentMonth={currentMonth}
       planIncomeByMonth={planIncomeByMonth}
       realIncomeByMonth={realIncomeByMonth}
-      planExpensesByMonth={planExpensesByMonth}
       realExpensesByMonth={realExpensesByMonth}
       fixedCostsByMonth={fixedCostsByMonth}
       variableCostsByMonth={variableCostsByMonth}
