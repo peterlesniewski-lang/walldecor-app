@@ -77,19 +77,21 @@ export function BulkAddModal({ weekStart, weekEnd, employees, onClose, onCreated
     setError(null)
 
     try {
+      // Browser computes local→UTC conversion: new Date('2026-03-30T11:00') parsed as LOCAL
+      // then .toISOString() gives correct UTC (e.g. 09:00Z for Warsaw UTC+2)
+      const clockInUtc = new Date(`${startDate}T${clockIn}`).toISOString()
+      const clockOutUtc = new Date(`${startDate}T${clockOut}`).toISOString()
+
       const res = await fetch('/api/hr/time-tracking/bulk', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           employeeIds: selectedEmployeeIds,
-          startDate: new Date(`${startDate}T00:00:00`).toISOString(),
-          endDate: new Date(`${endDate}T00:00:00`).toISOString(),
-          clockIn,
-          clockOut,
+          startDate,   // "YYYY-MM-DD" plain string — server uses Date.UTC to avoid offset issues
+          endDate,
+          clockInUtc,  // ISO UTC computed by browser from local time
+          clockOutUtc,
           skipWeekends,
-          // Send browser timezone offset so server can convert local time → UTC correctly
-          // getTimezoneOffset() returns (UTC - local) in minutes, e.g. -120 for UTC+2
-          tzOffsetMinutes: new Date().getTimezoneOffset(),
         }),
       })
 

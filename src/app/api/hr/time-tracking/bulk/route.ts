@@ -4,20 +4,6 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { timeEntryBulkCreateSchema } from '@/lib/hr/schemas'
 
-// tzOffsetMinutes = (UTC - local) in minutes, e.g. -120 for UTC+2
-// UTC = local + tzOffset  →  utcHours = localHours + tzOffsetMinutes/60
-function parseTimeToDate(dateBase: Date, timeStr: string, tzOffsetMinutes = 0): Date {
-  const [hours, minutes] = timeStr.split(':').map(Number)
-  const d = new Date(dateBase)
-  d.setUTCHours(hours + tzOffsetMinutes / 60, minutes, 0, 0)
-  return d
-}
-
-function isWeekend(d: Date): boolean {
-  const dow = d.getDay()
-  return dow === 0 || dow === 6
-}
-
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -31,7 +17,22 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid input', details: parsed.error.flatten() }, { status: 400 })
   }
 
-  const { employeeIds, startDate, endDate, clockIn: clockInStr, clockOut: clockOutStr, skipWeekends, projectId, tzOffsetMinutes } = parsed.data
+  const { employeeIds, startDate, endDate, clockInUtc, clockOutUtc, skipWeekends, projectId } = parsed.data
+
+  // Extract UTC hours/minutes from browser-computed ISO strings.
+  // Browser constructed these via new Date('YYYY-MM-DDThh:mm') (local) → .toISOString() (UTC).
+  // Using getUTCHours/getUTCMinutes ensures server timezone never affects the result.
+  const refIn = new Date(clockInUtc)
+  const refOut = new Date(clockOutUtc)
+  const inUtcH = refIn.getUTCHours()
+  const inUtcM = refIn.getUTCMinutes()
+  const outUtcH = refOut.getUTCHours()
+  const outUtcM = refOut.getUTCMinutes()
+
+  const totalMinutesPerDay = (outUtcH * 60 + outUtcM) - (inUtcH * 60 + inUtcM)
+  if (totalMinutesPerDay <= 0) {
+    return NextResponse.json({ error: 'clockOut must be after clockIn' }, { status: 400 })
+  }
 
   // Validate employees exist
   const employees = await prisma.employee.findMany({
@@ -45,35 +46,32 @@ export async function POST(req: NextRequest) {
   const created: string[] = []
   const skipped: string[] = []
 
-  // Iterate each day in range
-  const cur = new Date(startDate)
-  cur.setHours(0, 0, 0, 0)
-  const end = new Date(endDate)
-  end.setHours(23, 59, 59, 999)
+  // Parse dates using Date.UTC to avoid any server timezone influence
+  const [sy, sm, sd] = startDate.split('-').map(Number)
+  const [ey, em, ed] = endDate.split('-').map(Number)
+  const cur = new Date(Date.UTC(sy, sm - 1, sd))
+  const end = new Date(Date.UTC(ey, em - 1, ed))
 
   while (cur <= end) {
-    if (skipWeekends && isWeekend(cur)) {
-      cur.setDate(cur.getDate() + 1)
+    const dow = cur.getUTCDay()  // 0=Sun, 6=Sat — use UTC to avoid DST shifts
+    if (skipWeekends && (dow === 0 || dow === 6)) {
+      cur.setUTCDate(cur.getUTCDate() + 1)
       continue
     }
 
-    const dayDate = new Date(cur)
-    dayDate.setHours(0, 0, 0, 0)
+    // UTC midnight for the day — used as the `date` field
+    const dayDate = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth(), cur.getUTCDate()))
 
-    const clockInDt = parseTimeToDate(cur, clockInStr, tzOffsetMinutes)
-    const clockOutDt = parseTimeToDate(cur, clockOutStr, tzOffsetMinutes)
-
-    let totalMinutes = Math.round((clockOutDt.getTime() - clockInDt.getTime()) / 60000)
-    if (totalMinutes < 0) totalMinutes = 0
+    // Apply the same UTC time to this specific day
+    const clockInDt = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth(), cur.getUTCDate(), inUtcH, inUtcM))
+    const clockOutDt = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth(), cur.getUTCDate(), outUtcH, outUtcM))
 
     for (const employeeId of employeeIds) {
-      // Check for existing entry (@@unique [employeeId, date])
       const existing = await prisma.timeEntry.findFirst({
         where: { employeeId, date: dayDate },
       })
-
       if (existing) {
-        skipped.push(`${employeeId}:${dayDate.toISOString().slice(0, 10)}`)
+        skipped.push(`${employeeId}:${startDate}`)
         continue
       }
 
@@ -84,7 +82,7 @@ export async function POST(req: NextRequest) {
             date: dayDate,
             clockIn: clockInDt,
             clockOut: clockOutDt,
-            totalMinutes,
+            totalMinutes: totalMinutesPerDay,
             source: 'bulk',
             projectId: projectId ?? null,
             status: 'pending',
@@ -92,12 +90,11 @@ export async function POST(req: NextRequest) {
         })
         created.push(entry.id)
       } catch {
-        // Unique constraint violation — skip
         skipped.push(`${employeeId}:${dayDate.toISOString().slice(0, 10)}`)
       }
     }
 
-    cur.setDate(cur.getDate() + 1)
+    cur.setUTCDate(cur.getUTCDate() + 1)
   }
 
   return NextResponse.json({ created: created.length, skipped: skipped.length }, { status: 201 })

@@ -44,14 +44,12 @@ export const timeEntryCreateSchema = z.object({
 
 export const timeEntryBulkCreateSchema = z.object({
   employeeIds: z.array(z.string()).min(1),
-  startDate: z.coerce.date(),
-  endDate: z.coerce.date(),
-  clockIn: z.string().regex(/^\d{2}:\d{2}$/), // "08:00"
-  clockOut: z.string().regex(/^\d{2}:\d{2}$/),
+  startDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),   // "YYYY-MM-DD" plain string
+  endDate: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
+  clockInUtc: z.string(),   // ISO UTC datetime from browser (local time → UTC)
+  clockOutUtc: z.string(),
   skipWeekends: z.boolean().default(true),
   projectId: z.string().optional(),
-  // Browser timezone offset in minutes: (UTC - local), e.g. -120 for UTC+2
-  tzOffsetMinutes: z.number().int().optional().default(0),
 })
 
 export const breakSchema = z.object({
