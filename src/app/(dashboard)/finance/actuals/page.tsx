@@ -2,7 +2,7 @@ import { getServerSession } from 'next-auth'
 import { redirect } from 'next/navigation'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { PnlView } from '@/components/shared/pnl-view'
+import { ActualsGrid } from '@/components/shared/actuals-grid'
 
 interface PageProps {
   searchParams: Promise<{ year?: string; costCenterId?: string }>
@@ -18,32 +18,39 @@ export default async function ActualsPage({ searchParams }: PageProps) {
   const isGlobal = costCenterId === 'GLOBAL'
   const where = isGlobal ? { year } : { year, costCenterId }
 
-  const [rawRevenuePlan, rawRevenueReal, rawBudget] = await Promise.all([
-    prisma.revenueBudget.findMany({ where }),
-    prisma.revenue.findMany({ where }),
+  const categories = await prisma.accountCategory.findMany({
+    orderBy: { order: 'asc' },
+    include: { subCategories: { orderBy: { order: 'asc' } } },
+  })
+
+  const [rawBudget, rawActuals] = await Promise.all([
     prisma.budgetEntry.findMany({ where }),
+    prisma.actualEntry.findMany({ where }),
   ])
 
-  const planIncomeByMonth = new Array(12).fill(0) as number[]
-  for (const r of rawRevenuePlan) planIncomeByMonth[r.month - 1] += r.amount
+  const budgetEntries: Record<string, number> = {}
+  for (const e of rawBudget) {
+    const key = `${e.subCategoryId}_${e.month}`
+    budgetEntries[key] = (budgetEntries[key] ?? 0) + e.amount
+  }
 
-  const realIncomeByMonth = new Array(12).fill(0) as number[]
-  for (const r of rawRevenueReal) realIncomeByMonth[r.month - 1] += r.amount
+  const initialActuals: Record<string, number> = {}
+  for (const e of rawActuals) {
+    const key = `${e.subCategoryId}_${e.month}`
+    initialActuals[key] = (initialActuals[key] ?? 0) + e.amount
+  }
 
-  const planExpensesByMonth = new Array(12).fill(0) as number[]
-  for (const e of rawBudget) planExpensesByMonth[e.month - 1] += e.amount
-
-  const realExpensesByMonth = new Array(12).fill(0) as number[]
-  for (const e of rawBudget) realExpensesByMonth[e.month - 1] += e.amount
+  const editable = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
 
   return (
-    <PnlView
-      planIncomeByMonth={planIncomeByMonth}
-      realIncomeByMonth={realIncomeByMonth}
-      planExpensesByMonth={planExpensesByMonth}
-      realExpensesByMonth={realExpensesByMonth}
+    <ActualsGrid
+      key={`actuals-${year}-${costCenterId}`}
+      categories={categories}
+      budgetEntries={budgetEntries}
+      initialActuals={initialActuals}
       year={year}
       costCenterId={costCenterId}
+      editable={editable}
     />
   )
 }
