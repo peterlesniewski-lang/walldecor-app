@@ -532,3 +532,27 @@ model Notification {
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
 }
+
+// ─── Business Wikipedia ───────────────────────────────────────────────────────
+
+model Article {
+  id         String   @id @default(cuid())
+  title      String
+  slug       String   @unique
+  content    String
+  category   String   // management|finance|sales|marketing|processes|psychology|strategy|company
+  visibility String   @default("manager") // "manager" | "public"
+  type       String   @default("knowledge") // "knowledge" | "procedure" | "note"
+  tags       String   @default("[]") // JSON array string: '["tag1","tag2"]'
+  authorNote String?
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+}
+
+model AiChatMessage {
+  id        String   @id @default(cuid())
+  sessionId String
+  role      String   // "user" | "assistant"
+  content   String
+  createdAt DateTime @default(now())
+}

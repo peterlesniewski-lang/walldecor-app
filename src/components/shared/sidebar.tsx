@@ -9,6 +9,7 @@ import {
   Clock,
   Settings,
   ShieldAlert,
+  BookOpen,
 } from 'lucide-react'
 import { NavItem } from './nav-item'
 import { Separator } from '@/components/ui/separator'
@@ -34,6 +35,12 @@ const NAV_SECTIONS = [
       { href: '/hr/employees', label: 'Pracownicy', icon: Users },
       { href: '/hr/leave', label: 'Urlopy', icon: CalendarOff },
       { href: '/hr/time-tracking', label: 'Czas pracy', icon: Clock },
+    ],
+  },
+  {
+    label: 'Wiedza',
+    items: [
+      { href: '/knowledge', label: 'Encyklopedia', icon: BookOpen },
     ],
   },
   {
