@@ -53,6 +53,9 @@ COPY --from=builder /app/public ./.next/standalone/public
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/src/generated ./src/generated
 
+# Copy knowledge base for Wikipedia seed
+COPY --from=builder /app/ceo-module ./ceo-module
+
 # Copy entire node_modules from builder (includes all devDeps needed for seed: tsx, esbuild, etc.)
 COPY --from=builder /app/node_modules ./node_modules
 

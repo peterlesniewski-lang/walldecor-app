@@ -1,7 +1,75 @@
 import { PrismaClient } from '../src/generated/prisma'
 import bcrypt from 'bcryptjs'
+import * as fs from 'fs'
+import * as path from 'path'
 
 const prisma = new PrismaClient()
+
+// ─── Wikipedia seed helpers ───────────────────────────────────────────────────
+
+const WIKI_CATEGORY_MAP: Record<string, string> = {
+  'ZARZĄDZANIE I PRZYWÓDZTWO': 'management',
+  'FINANSE I PŁYNNOŚĆ': 'finance',
+  'SPRZEDAŻ I NEGOCJACJE': 'sales',
+  'MARKETING I BRANDING': 'marketing',
+  'PROCESY I AUTOMATYZACJA': 'processes',
+  'PSYCHOLOGIA WŁAŚCICIELA': 'psychology',
+  'STRATEGIA I ROZWÓJ FIRMY': 'strategy',
+  'STRATEGIA I ROZWÓJ': 'strategy',
+}
+
+function wikiSlug(text: string): string {
+  return text
+    .toLowerCase()
+    .replace(/ą/g, 'a').replace(/ć/g, 'c').replace(/ę/g, 'e').replace(/ł/g, 'l')
+    .replace(/ń/g, 'n').replace(/ó/g, 'o').replace(/ś/g, 's').replace(/ź/g, 'z').replace(/ż/g, 'z')
+    .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+}
+
+function parseKnowledgeBase(): Array<{ title: string; slug: string; content: string; category: string }> {
+  const mdPath = path.join(__dirname, '../ceo-module/KNOWLEDGE_BUSINESS.md')
+  if (!fs.existsSync(mdPath)) {
+    console.warn('KNOWLEDGE_BUSINESS.md not found, skipping Wikipedia seed')
+    return []
+  }
+
+  const lines = fs.readFileSync(mdPath, 'utf-8').split('\n')
+  const articles: Array<{ title: string; slug: string; content: string; category: string }> = []
+  let currentCategory = 'management'
+  let currentTitle: string | null = null
+  let currentSlug: string | null = null
+  let contentLines: string[] = []
+
+  function flush() {
+    if (currentTitle && contentLines.join('').trim().length > 50) {
+      articles.push({ title: currentTitle, slug: currentSlug!, content: contentLines.join('\n').trim(), category: currentCategory })
+    }
+    currentTitle = null; currentSlug = null; contentLines = []
+  }
+
+  for (const line of lines) {
+    const sectionMatch = line.match(/^# \d+\.\s+(.+)$/)
+    if (sectionMatch) {
+      flush()
+      const name = sectionMatch[1].trim().toUpperCase()
+      for (const [key, val] of Object.entries(WIKI_CATEGORY_MAP)) {
+        if (name.includes(key) || key.includes(name)) { currentCategory = val; break }
+      }
+      continue
+    }
+    const articleMatch = line.match(/^## (\d+\.\d+)\s+(.+)$/)
+    if (articleMatch) {
+      flush()
+      currentTitle = `${articleMatch[1]} ${articleMatch[2].trim()}`
+      currentSlug = wikiSlug(`${articleMatch[1]}-${articleMatch[2].trim()}`)
+      contentLines = [`## ${articleMatch[2].trim()}\n`]
+      continue
+    }
+    if (currentTitle) contentLines.push(line)
+  }
+  flush()
+  return articles
+}
 
 const COST_CENTERS = [
   { id: 'JAG', name: 'Salon Jagiellońska', description: 'Salon stacjonarny przy ul. Jagiellońskiej' },
@@ -421,6 +489,29 @@ async function main() {
     },
   })
   console.log('TimeTrackingRules seeded (2)')
+
+  // 13. Wikipedia articles (idempotent — upsert by slug)
+  const wikiArticles = parseKnowledgeBase()
+  if (wikiArticles.length > 0) {
+    let wikiCreated = 0
+    for (const article of wikiArticles) {
+      await prisma.article.upsert({
+        where: { slug: article.slug },
+        update: { title: article.title, content: article.content, category: article.category },
+        create: {
+          title: article.title,
+          slug: article.slug,
+          content: article.content,
+          category: article.category,
+          visibility: 'manager',
+          type: 'knowledge',
+          tags: '[]',
+        },
+      })
+      wikiCreated++
+    }
+    console.log(`Wikipedia articles seeded (${wikiCreated})`)
+  }
 
   console.log('Seeding complete!')
 }
