@@ -49,3 +49,6 @@ next-env.d.ts
 *.db-journal
 *.db-shm
 *.db-wal
+
+# Superpowers visual brainstorming scratch files
+.superpowers/

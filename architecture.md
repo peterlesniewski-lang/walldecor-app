@@ -29,6 +29,18 @@ Employee ───────────────────────�
 User ──── Employee (1:1, opcjonalne)
 ```
 
+### Operacje / Playbook
+
+```
+OperationArea ── OperationModule ── ChecklistTemplate ── ChecklistTemplateItem
+                                            │
+                                            └── ChecklistRun ── ChecklistRunItem
+
+Article(type="procedure") ── linked by procedureId ── ChecklistTemplateItem / ChecklistRunItem
+```
+
+Operacje używają istniejącego modelu `Article` jako źródła instrukcji how-to (`type = "procedure"`). Szablony i wykonania mają własne tabele, bo są danymi operacyjnymi, a nie treścią wiki.
+
 ---
 
 ## Tabele (Prisma schema)
@@ -117,6 +129,75 @@ model BudgetEntry {
   @@unique([year, month, costCenterId, subCategoryId])
 }
 ```
+
+---
+
+### Operations Playbook
+
+```prisma
+model OperationArea {
+  id          String  @id @default(cuid())
+  name        String
+  slug        String  @unique
+  description String?
+  order       Int     @default(0)
+}
+
+model OperationModule {
+  id          String @id @default(cuid())
+  areaId      String
+  name        String
+  slug        String @unique
+  description String?
+  order       Int    @default(0)
+}
+
+model ChecklistTemplate {
+  id          String  @id @default(cuid())
+  moduleId    String
+  name        String
+  description String?
+  active      Boolean @default(true)
+}
+
+model ChecklistTemplateItem {
+  id             String @id @default(cuid())
+  templateId     String
+  title          String
+  description    String?
+  order          Int
+  procedureId    String? // Article.id, aplikacja wymusza Article.type="procedure"
+  defaultOwnerId String?
+  dueDayOffset   Int?
+}
+
+model ChecklistRun {
+  id          String @id @default(cuid())
+  templateId  String
+  name        String
+  periodYear  Int
+  periodMonth Int?
+  status      String @default("open") // open | closed | archived
+  createdById String
+}
+
+model ChecklistRunItem {
+  id             String @id @default(cuid())
+  runId          String
+  templateItemId String?
+  title          String
+  description    String?
+  order          Int
+  procedureId    String?
+  ownerId        String?
+  status         String @default("todo") // todo | in_progress | blocked | done
+  note           String?
+  completedAt    DateTime?
+  completedById  String?
+}
+```
+
+Pierwszy seed: `Finanse -> Koniec miesiąca -> Księgowość - koniec miesiąca`, 13 zadań i kilka procedur how-to jako `Article.type = "procedure"`.
 
 ---
 

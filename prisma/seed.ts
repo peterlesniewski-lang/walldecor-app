@@ -250,6 +250,97 @@ const LEAVE_TYPES = [
   { code: 'ZOW', name: 'Zwolnienie z pracy',        color: '#94A3B8', isPaid: true,  requiresApproval: true,  maxDaysPerYear: null, parentCode: null },
 ]
 
+const MONTH_END_PROCEDURES = [
+  {
+    title: 'Raport miesięczny z kasy fiskalnej',
+    slug: 'procedura-raport-miesieczny-z-kasy-fiskalnej',
+    content: `## Raport miesięczny z kasy fiskalnej
+
+Cel: pobrać i zapisać miesięczne raporty z kas fiskalnych dla lokalizacji Jagiellońska i Puławska.
+
+### Kroki
+1. Zaloguj się do systemu kasy fiskalnej dla danego punktu.
+2. Wybierz raport miesięczny za zamykany miesiąc.
+3. Zapisz raport jako PDF lub skan.
+4. Umieść plik w folderze księgowym Google Drive dla danego miesiąca.
+5. Oznacz zadanie jako gotowe w Operacjach.`,
+  },
+  {
+    title: 'Rejestr VAT sprzedaży',
+    slug: 'procedura-rejestr-vat-sprzedazy',
+    content: `## Rejestr VAT sprzedaży
+
+Cel: wyeksportować rejestr sprzedaży VAT dla faktur i paragonów.
+
+### Kroki
+1. Wejdź w Subiekt GT: Widok -> Zestawienia -> Rejestr sprzedaży VAT.
+2. Wybierz właściwy okres.
+3. Ustaw typ dokumentu: wszystkie ze słowem faktura i przelicz F5.
+4. Wyeksportuj plik.
+5. Ustaw typ dokumentu: wszystkie ze słowem paragon i przelicz F5.
+6. Wyeksportuj plik.
+7. Zapisz pliki w Google Drive w folderze księgowym danego miesiąca.`,
+  },
+  {
+    title: 'Faktury kosztowe z Google Drive do Saldeo',
+    slug: 'procedura-faktury-kosztowe-z-google-drive-do-saldeo',
+    content: `## Faktury kosztowe z Google Drive do Saldeo
+
+Cel: przekazać komplet faktur kosztowych do Saldeo.
+
+### Kroki
+1. Otwórz folder kosztów w Google Drive dla zamykanego miesiąca.
+2. Sprawdź, czy są skany faktur papierowych i pliki PDF od dostawców.
+3. Pobierz lub prześlij dokumenty do Saldeo.
+4. Upewnij się, że dokumenty są przypisane do właściwego miesiąca.
+5. Oznacz zadanie jako gotowe.`,
+  },
+  {
+    title: 'Eksport FV sprzedaż',
+    slug: 'procedura-eksport-fv-sprzedaz',
+    content: `## Eksport FV sprzedaż
+
+Cel: przygotować eksport faktur sprzedażowych dla biura księgowego.
+
+### Kroki
+1. Otwórz Subiekt GT.
+2. Wybierz raport dokumentów sprzedaży dla zamykanego okresu.
+3. Uwzględnij faktury sprzedaży i korekty, jeśli są wymagane.
+4. Wyeksportuj plik.
+5. Zapisz eksport w folderze księgowym danego miesiąca.`,
+  },
+  {
+    title: 'Parkometry i FLOWBIRD',
+    slug: 'procedura-parkometry-flowbird',
+    content: `## Parkometry i FLOWBIRD
+
+Cel: zebrać dowody opłat parkingowych do księgowości.
+
+### Kroki
+1. Otwórz aplikację FLOWBIRD.
+2. Wykonaj screeny lub pobierz potwierdzenia opłat z danego miesiąca.
+3. Dodaj papierowe bilety parkingowe, jeśli istnieją.
+4. Zapisz komplet w folderze kosztów danego miesiąca.
+5. Oznacz zadanie jako gotowe.`,
+  },
+]
+
+const MONTH_END_TEMPLATE_ITEMS = [
+  { title: 'Raport miesięczny z kasy fiskalnej', description: 'Jagiellońska i Puławska - skan na Saldeo.', procedureSlug: 'procedura-raport-miesieczny-z-kasy-fiskalnej' },
+  { title: 'Raport kasowy Subiekt GT dla obu magazynów', description: 'Jagiellońska i Puławska, magazyny bez noty rozchodu.', procedureSlug: null },
+  { title: 'Saldo rachunków bankowych', description: 'NestBank EUR/VAT/PLN oraz mBank PLN.', procedureSlug: null },
+  { title: 'Rejestr VAT sprzedaży', description: 'Eksport faktur i paragonów za zamykany miesiąc.', procedureSlug: 'procedura-rejestr-vat-sprzedazy' },
+  { title: 'Skan faktur papierowych do Google Drive', description: 'Dodaj skany do folderu koszty lub zakup.', procedureSlug: null },
+  { title: 'Faktury kosztowe z Google Drive do Saldeo', description: 'Dokumenty kosztowe za zamykany miesiąc.', procedureSlug: 'procedura-faktury-kosztowe-z-google-drive-do-saldeo' },
+  { title: 'Faktury zakupowe z Google Drive do Saldeo', description: 'Dokumenty zakupowe za zamykany miesiąc.', procedureSlug: 'procedura-faktury-kosztowe-z-google-drive-do-saldeo' },
+  { title: 'JPK VAT sprzedaż dla biura księgowego', description: 'Przygotuj i przekaż plik/link dla biura.', procedureSlug: 'procedura-rejestr-vat-sprzedazy' },
+  { title: 'Zestawienie WZ/PZ dla każdego punktu', description: 'Oddzielnie WZ i PZ dla obu magazynów.', procedureSlug: null },
+  { title: 'Eksport FV sprzedaż', description: 'Eksport faktur sprzedażowych z systemu.', procedureSlug: 'procedura-eksport-fv-sprzedaz' },
+  { title: 'Korekty faktur', description: 'Sprawdź korekty dla obu magazynów.', procedureSlug: null },
+  { title: 'Parkometry / FLOWBIRD', description: 'Screeny z aplikacji i papierowe bilety parkingowe.', procedureSlug: 'procedura-parkometry-flowbird' },
+  { title: 'Faktury kosztowe do ściągnięcia', description: 'Google Ads, Google GSuite, Meta, Microsoft, leasing BMW, Allegro/Amazon.', procedureSlug: null },
+]
+
 async function main() {
   console.log('Seeding database...')
 
@@ -512,6 +603,100 @@ async function main() {
     }
     console.log(`Wikipedia articles seeded (${wikiCreated})`)
   }
+
+  // 14. Operations: month-end accounting
+  const operationsArea = await prisma.operationArea.upsert({
+    where: { id: 'operation-area-finance' },
+    update: {
+      name: 'Finanse',
+      slug: 'finanse',
+      description: 'Procedury finansowe i księgowe.',
+      order: 1,
+    },
+    create: {
+      id: 'operation-area-finance',
+      name: 'Finanse',
+      slug: 'finanse',
+      description: 'Procedury finansowe i księgowe.',
+      order: 1,
+    },
+  })
+
+  const monthEndModule = await prisma.operationModule.upsert({
+    where: { id: 'operation-module-month-end' },
+    update: {
+      areaId: operationsArea.id,
+      name: 'Koniec miesiąca',
+      slug: 'koniec-miesiaca',
+      description: 'Zamykanie miesiąca i komplet dokumentów dla księgowości.',
+      order: 1,
+    },
+    create: {
+      id: 'operation-module-month-end',
+      areaId: operationsArea.id,
+      name: 'Koniec miesiąca',
+      slug: 'koniec-miesiaca',
+      description: 'Zamykanie miesiąca i komplet dokumentów dla księgowości.',
+      order: 1,
+    },
+  })
+
+  const procedureIdBySlug = new Map<string, string>()
+  for (const procedure of MONTH_END_PROCEDURES) {
+    const article = await prisma.article.upsert({
+      where: { slug: procedure.slug },
+      update: {
+        title: procedure.title,
+        content: procedure.content,
+        category: 'company',
+        visibility: 'manager',
+        type: 'procedure',
+        tags: JSON.stringify(['operations', 'finance', 'month-end']),
+      },
+      create: {
+        title: procedure.title,
+        slug: procedure.slug,
+        content: procedure.content,
+        category: 'company',
+        visibility: 'manager',
+        type: 'procedure',
+        tags: JSON.stringify(['operations', 'finance', 'month-end']),
+      },
+    })
+    procedureIdBySlug.set(procedure.slug, article.id)
+  }
+
+  const monthEndTemplate = await prisma.checklistTemplate.upsert({
+    where: { id: 'checklist-template-month-end-accounting' },
+    update: {
+      moduleId: monthEndModule.id,
+      name: 'Księgowość - koniec miesiąca',
+      description: 'Lista zadań do zamknięcia miesiąca księgowego.',
+      active: true,
+    },
+    create: {
+      id: 'checklist-template-month-end-accounting',
+      moduleId: monthEndModule.id,
+      name: 'Księgowość - koniec miesiąca',
+      description: 'Lista zadań do zamknięcia miesiąca księgowego.',
+      active: true,
+    },
+  })
+
+  await prisma.checklistTemplateItem.deleteMany({ where: { templateId: monthEndTemplate.id } })
+  for (const [index, item] of MONTH_END_TEMPLATE_ITEMS.entries()) {
+    await prisma.checklistTemplateItem.create({
+      data: {
+        templateId: monthEndTemplate.id,
+        title: item.title,
+        description: item.description,
+        order: index + 1,
+        procedureId: item.procedureSlug ? procedureIdBySlug.get(item.procedureSlug) ?? null : null,
+        defaultOwnerId: null,
+      },
+    })
+  }
+  console.log(`Operations month-end template seeded (${MONTH_END_TEMPLATE_ITEMS.length} items)`)
 
   console.log('Seeding complete!')
 }

@@ -556,3 +556,97 @@ model AiChatMessage {
   content   String
   createdAt DateTime @default(now())
 }
+
+// ─── Operations Playbook ─────────────────────────────────────────────────────
+
+model OperationArea {
+  id          String            @id @default(cuid())
+  name        String
+  slug        String            @unique
+  description String?
+  order       Int               @default(0)
+  modules     OperationModule[]
+  createdAt   DateTime          @default(now())
+  updatedAt   DateTime          @updatedAt
+}
+
+model OperationModule {
+  id          String              @id @default(cuid())
+  areaId      String
+  area        OperationArea       @relation(fields: [areaId], references: [id], onDelete: Cascade)
+  name        String
+  slug        String              @unique
+  description String?
+  order       Int                 @default(0)
+  templates   ChecklistTemplate[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+}
+
+model ChecklistTemplate {
+  id          String                  @id @default(cuid())
+  moduleId    String
+  module      OperationModule         @relation(fields: [moduleId], references: [id], onDelete: Cascade)
+  name        String
+  description String?
+  active      Boolean                 @default(true)
+  items       ChecklistTemplateItem[]
+  runs        ChecklistRun[]
+  createdAt   DateTime                @default(now())
+  updatedAt   DateTime                @updatedAt
+}
+
+model ChecklistTemplateItem {
+  id             String            @id @default(cuid())
+  templateId     String
+  template       ChecklistTemplate @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  title          String
+  description    String?
+  order          Int
+  procedureId    String?
+  defaultOwnerId String?
+  dueDayOffset   Int?
+  runItems       ChecklistRunItem[]
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@unique([templateId, order])
+}
+
+model ChecklistRun {
+  id          String             @id @default(cuid())
+  templateId  String
+  template    ChecklistTemplate  @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  name        String
+  periodYear  Int
+  periodMonth Int?
+  status      String             @default("open") // open | closed | archived
+  createdById String
+  items       ChecklistRunItem[]
+  createdAt   DateTime           @default(now())
+  updatedAt   DateTime           @updatedAt
+
+  @@index([periodYear, periodMonth])
+}
+
+model ChecklistRunItem {
+  id             String                 @id @default(cuid())
+  runId          String
+  run            ChecklistRun           @relation(fields: [runId], references: [id], onDelete: Cascade)
+  templateItemId String?
+  templateItem   ChecklistTemplateItem? @relation(fields: [templateItemId], references: [id], onDelete: SetNull)
+  title          String
+  description    String?
+  order          Int
+  procedureId    String?
+  ownerId        String?
+  status         String                 @default("todo") // todo | in_progress | blocked | done
+  note           String?
+  completedAt    DateTime?
+  completedById  String?
+  createdAt      DateTime               @default(now())
+  updatedAt      DateTime               @updatedAt
+
+  @@unique([runId, order])
+  @@index([ownerId])
+}

@@ -10,6 +10,7 @@ import {
   Settings,
   ShieldAlert,
   BookOpen,
+  ListChecks,
 } from 'lucide-react'
 import { NavItem } from './nav-item'
 import { Separator } from '@/components/ui/separator'
@@ -35,6 +36,14 @@ const NAV_SECTIONS = [
       { href: '/hr/employees', label: 'Pracownicy', icon: Users },
       { href: '/hr/leave', label: 'Urlopy', icon: CalendarOff },
       { href: '/hr/time-tracking', label: 'Czas pracy', icon: Clock },
+    ],
+  },
+  {
+    label: 'Operacje',
+    items: [
+      { href: '/operations', label: 'Centrum', icon: ListChecks },
+      { href: '/operations/procedures', label: 'Procedury', icon: BookOpen },
+      { href: '/operations/runs', label: 'Wykonania', icon: ListChecks },
     ],
   },
   {

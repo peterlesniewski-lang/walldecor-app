@@ -1,6 +1,6 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-03-30 (Sesja 10 — HR: bugfixy, n8n/Google Calendar, timezone bulk)
+**Ostatnia aktualizacja:** 2026-05-18 (Sesja 11 — Operacje: procedury i checklisty wykonania)
 
 ---
 
@@ -16,6 +16,7 @@ M6  — HR: Pracownicy              [x] Ukończone (2026-03-28)
 M7  — HR: Urlopy i nieobecności   [x] Ukończone (2026-03-28)
 M8  — HR: Czas pracy              [x] Ukończone (2026-03-28)
 M9  — Migracja danych             [ ] Nie rozpoczęta
+M10 — Operacje / Playbook         [x] MVP start (2026-05-18)
 ```
 
 ---
@@ -241,21 +242,36 @@ M9  — Migracja danych             [ ] Nie rozpoczęta
 
 ---
 
-## Następna sesja: M9 — Migracja danych
+### M10 — Operacje / Playbook ✅ MVP START
+**Cel:** Delegowalne procedury i checklisty wykonania dla powtarzalnych procesów firmy. Pierwszy moduł: Finanse → Koniec miesiąca.
+```
+[x] Nowy dział sidebar: Operacje
+[x] Strony: /operations, /operations/procedures, /operations/templates, /operations/runs
+[x] Szczegół wykonania: /operations/runs/[id] — checklist + how-to split view
+[x] API: GET/POST /api/operations/runs
+[x] API: GET /api/operations/runs/[id]
+[x] API: PATCH /api/operations/runs/[id]/items/[itemId]
+[x] API: GET /api/operations/templates i /api/operations/templates/[id]
+[x] Prisma: OperationArea, OperationModule, ChecklistTemplate, ChecklistTemplateItem, ChecklistRun, ChecklistRunItem
+[x] Seed: Finanse → Koniec miesiąca → Księgowość - koniec miesiąca (13 zadań)
+[x] Reuse Encyklopedii: Article.type=procedure + ArticleViewer dla instrukcji how-to
+[x] Testy unit: operations/run-factory.test.ts
+```
+**Decyzja produktowa:** Encyklopedia (`/knowledge`) zostaje ogólną bazą wiedzy. Operacje są osobnym działem do wykonywalnych procedur: szablonów i konkretnych wykonań miesięcznych/procesowych.
 
-> Sesja 10 (2026-03-30): bugfixy HR, integracja n8n/Google Calendar, timezone w bulk time entries.
+---
+
+## Następna sesja: Operacje — edytor szablonów
+
+> Sesja 11 (2026-05-18): dodano MVP działu Operacje / Playbook.
 >
-> **Co zrobiono w sesji 10:**
-> - Automatyczne salda urlopowe przy tworzeniu pracownika (`calcProportionalLeaveDays`)
-> - Integracja Google Calendar: fire-and-forget webhook do n8n po zatwierdzeniu urlopu
->   - n8n workflow ID: `LGJp2EFskozvGzFD`, webhook: `/webhook/walldecor-leave-approved`
->   - Env var: `N8N_WEBHOOK_URL` — dodać w Coolify, skonfigurować Google OAuth w n8n
-> - Bulk time entries timezone fix: `new Date('YYYY-MM-DDTHH:mm').toISOString()` w przeglądarce, `Date.UTC()`+`getUTCHours()` na serwerze
-> - Formularz nowego pracownika: empty strings (employmentType, endDate, FK fields) czyszczone przed POST
-> - Seed: usunięto 5 testowych pracowników — przestali wracać przy każdym deploy
-> - PDF raport uproszczony do summary card (godziny std / nadgodziny / dni urlopu)
+> **Co jest następne:**
+> - Edytor szablonów checklist w UI.
+> - Dodawanie/edycja zadań i podpinanie procedur z Encyklopedii.
+> - Przypisywanie domyślnych właścicieli zadań.
+> - Filtry wykonania po module/statusie/miesiącu.
 >
-> TypeScript 0 błędów. Ostatni commit: `11bbe48`.
+> Testy: `npm test` → 83 passed. Build: `npm run build` → OK.
 
 ```
 1. CRUD przypomnień o płatnościach (ADMIN: nazwa, kwota, dzień miesiąca, lokal)
@@ -302,6 +318,15 @@ M9  — Migracja danych             [ ] Nie rozpoczęta
 | /api/hr/schedules | GET, POST + copy + template | Grafiki pracy |
 | /api/hr/reports/* | GET | Raporty: attendance/overtime/timecard/plan-vs-actual |
 
+### API — Operacje
+| Endpoint | Metoda | Opis | Role |
+|---|---|---|---|
+| /api/operations/templates | GET | Lista szablonów checklist | zalogowani |
+| /api/operations/templates/[id] | GET | Szczegóły szablonu | zalogowani |
+| /api/operations/runs | GET, POST | Lista wykonań / uruchomienie wykonania z szablonu | GET: zalogowani; POST: ADMIN, MANAGER |
+| /api/operations/runs/[id] | GET | Szczegóły wykonania | ADMIN/MANAGER: całość; EMPLOYEE: własne zadania |
+| /api/operations/runs/[id]/items/[itemId] | PATCH | Zmiana statusu/notatki zadania | ADMIN/MANAGER lub właściciel zadania |
+
 ### Komponenty — Finanse
 | Plik | Opis |
 |---|---|
@@ -326,6 +351,16 @@ M9  — Migracja danych             [ ] Nie rozpoczęta
 | src/components/hr/leave/leave-requests-view.tsx | Widok listy wniosków |
 | src/components/hr/leave/absence-calendar.tsx | Kalendarz nieobecności |
 | src/components/hr/employees/leave-tab-client.tsx | Zakładka saldo urlopowe na karcie pracownika — dodaj/edytuj saldo (ADMIN/MANAGER) |
+
+### Komponenty — Operacje
+| Plik | Opis |
+|---|---|
+| src/components/operations/run-detail-client.tsx | Split view wykonania: checklist + instrukcja how-to |
+| src/components/operations/runs-list.tsx | Lista wykonań z postępem i blokerami |
+| src/components/operations/templates-list.tsx | Lista szablonów checklist |
+| src/components/operations/start-run-button.tsx | Uruchamia wykonanie bieżącego miesiąca z szablonu |
+| src/lib/operations/run-factory.ts | Tworzenie pozycji wykonania z szablonu + liczenie postępu |
+| src/lib/operations/queries.ts | Query helpery dla modułów, szablonów i wykonań |
 
 ---
 
