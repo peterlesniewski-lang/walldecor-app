@@ -1,11 +1,19 @@
 import { getServerSession } from 'next-auth'
 import { notFound, redirect } from 'next/navigation'
-import { ClipboardList } from 'lucide-react'
+import Link from 'next/link'
+import { ClipboardList, Pencil } from 'lucide-react'
 import { authOptions } from '@/lib/auth'
-import { getTemplate } from '@/lib/operations/queries'
+import { getTemplate, getTemplateEditorOptions } from '@/lib/operations/queries'
 import { StartRunButton } from '@/components/operations/start-run-button'
+import { TemplateForm } from '@/components/operations/template-form'
 
-export default async function OperationTemplatePage({ params }: { params: Promise<{ id: string }> }) {
+export default async function OperationTemplatePage({
+  params,
+  searchParams,
+}: {
+  params: Promise<{ id: string }>
+  searchParams: Promise<{ edit?: string }>
+}) {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
 
@@ -14,6 +22,12 @@ export default async function OperationTemplatePage({ params }: { params: Promis
   if (!template) notFound()
 
   const canStart = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
+  const { edit } = await searchParams
+
+  if (canStart && edit === '1') {
+    const options = await getTemplateEditorOptions()
+    return <TemplateForm mode="edit" template={template} {...options} />
+  }
 
   return (
     <div className="mx-auto max-w-5xl p-6">
@@ -30,7 +44,18 @@ export default async function OperationTemplatePage({ params }: { params: Promis
             {template.description && <p className="mt-1 text-sm text-gray-500">{template.description}</p>}
           </div>
         </div>
-        {canStart && <StartRunButton templateId={template.id} />}
+        {canStart && (
+          <div className="flex gap-2">
+            <Link
+              href={`/operations/templates/${template.id}?edit=1`}
+              className="inline-flex items-center gap-2 rounded-lg border px-4 py-2.5 text-sm font-medium hover:bg-gray-50"
+            >
+              <Pencil className="h-4 w-4" />
+              Edytuj
+            </Link>
+            <StartRunButton templateId={template.id} />
+          </div>
+        )}
       </div>
 
       <div className="rounded-xl border bg-white">

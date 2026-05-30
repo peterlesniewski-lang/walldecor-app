@@ -23,14 +23,29 @@ interface Article {
 interface ArticleListProps {
   initialArticles: Article[]
   isManager: boolean
+  basePath?: string
+  newPath?: string
+  newLabel?: string
+  fixedType?: string
+  showTypeFilter?: boolean
+  emptyLabel?: string
 }
 
-export function ArticleList({ initialArticles, isManager }: ArticleListProps) {
+export function ArticleList({
+  initialArticles,
+  isManager,
+  basePath = '/knowledge',
+  newPath = '/knowledge/new',
+  newLabel = 'Nowy artykuł',
+  fixedType,
+  showTypeFilter = true,
+  emptyLabel = 'Brak artykułów',
+}: ArticleListProps) {
   const router = useRouter()
   const [articles, setArticles] = useState<Article[]>(initialArticles)
   const [query, setQuery] = useState('')
   const [category, setCategory] = useState('all')
-  const [type, setType] = useState('all')
+  const [type, setType] = useState(fixedType ?? 'all')
   const [loading, setLoading] = useState(false)
 
   const fetchArticles = useCallback(async () => {
@@ -39,13 +54,13 @@ export function ArticleList({ initialArticles, isManager }: ArticleListProps) {
       const params = new URLSearchParams()
       if (query) params.set('q', query)
       if (category !== 'all') params.set('category', category)
-      if (type !== 'all') params.set('type', type)
+      if ((fixedType ?? type) !== 'all') params.set('type', fixedType ?? type)
       const res = await fetch(`/api/knowledge?${params}`)
       if (res.ok) setArticles(await res.json())
     } finally {
       setLoading(false)
     }
-  }, [query, category, type])
+  }, [query, category, type, fixedType])
 
   useEffect(() => {
     const timer = setTimeout(fetchArticles, query ? 300 : 0)
@@ -62,31 +77,33 @@ export function ArticleList({ initialArticles, isManager }: ArticleListProps) {
           </div>
           {isManager && (
             <button
-              onClick={() => router.push('/knowledge/new')}
+              onClick={() => router.push(newPath)}
               className="flex items-center gap-2 px-4 py-2.5 rounded-lg text-sm font-medium text-white transition-colors shrink-0"
               style={{ background: 'var(--wd-accent, #1A1410)' }}
             >
               <Plus className="w-4 h-4" />
-              Nowy artykuł
+              {newLabel}
             </button>
           )}
         </div>
 
         <CategoryFilter active={category} onChange={(c) => { setCategory(c); setQuery('') }} />
 
-        <div className="flex gap-2">
-          {TYPE_LABELS.map((t) => (
-            <button
-              key={t.id}
-              onClick={() => setType(t.id)}
-              className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
-                type === t.id ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
-              }`}
-            >
-              {t.label}
-            </button>
-          ))}
-        </div>
+        {showTypeFilter && (
+          <div className="flex gap-2">
+            {TYPE_LABELS.map((t) => (
+              <button
+                key={t.id}
+                onClick={() => setType(t.id)}
+                className={`px-3 py-1 rounded-md text-xs font-medium transition-colors ${
+                  type === t.id ? 'bg-gray-800 text-white' : 'bg-gray-100 text-gray-600 hover:bg-gray-200'
+                }`}
+              >
+                {t.label}
+              </button>
+            ))}
+          </div>
+        )}
       </div>
 
       {/* Results */}
@@ -99,12 +116,12 @@ export function ArticleList({ initialArticles, isManager }: ArticleListProps) {
       ) : articles.length === 0 ? (
         <div className="flex flex-col items-center justify-center py-20 text-gray-400">
           <BookOpen className="w-12 h-12 mb-3 opacity-30" />
-          <p className="text-sm">Brak artykułów{query ? ` dla "${query}"` : ''}</p>
+          <p className="text-sm">{emptyLabel}{query ? ` dla "${query}"` : ''}</p>
         </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {articles.map((article) => (
-            <ArticleCard key={article.id} article={article} isManager={isManager} />
+            <ArticleCard key={article.id} article={article} isManager={isManager} basePath={basePath} />
           ))}
         </div>
       )}

@@ -25,7 +25,16 @@ export default async function OperationProceduresPage() {
         </div>
       </div>
 
-      <ArticleList initialArticles={procedures} isManager={isManager} />
+      <ArticleList
+        initialArticles={procedures}
+        isManager={isManager}
+        basePath="/operations/procedures"
+        newPath="/operations/procedures/new"
+        newLabel="Nowa procedura"
+        fixedType="procedure"
+        showTypeFilter={false}
+        emptyLabel="Brak procedur"
+      />
     </div>
   )
 }

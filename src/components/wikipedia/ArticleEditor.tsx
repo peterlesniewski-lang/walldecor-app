@@ -12,6 +12,10 @@ const MDEditor = dynamic(() => import('@uiw/react-md-editor'), { ssr: false })
 interface ArticleEditorProps {
   articleId?: string
   slug?: string
+  heading?: string
+  backHref?: string
+  successHref?: string
+  lockType?: boolean
   initialData?: {
     title: string
     content: string
@@ -25,7 +29,15 @@ interface ArticleEditorProps {
 
 const DRAFT_KEY = (slug: string) => `wiki-draft-${slug}`
 
-export function ArticleEditor({ articleId, slug, initialData }: ArticleEditorProps) {
+export function ArticleEditor({
+  articleId,
+  slug,
+  heading,
+  backHref,
+  successHref,
+  lockType = false,
+  initialData,
+}: ArticleEditorProps) {
   const router = useRouter()
   const isEdit = Boolean(articleId)
 
@@ -121,7 +133,7 @@ export function ArticleEditor({ articleId, slug, initialData }: ArticleEditorPro
 
       const data = await res.json()
       localStorage.removeItem(draftKey)
-      router.push(`/knowledge/${data.slug ?? slug}`)
+      router.push(successHref ?? `/knowledge/${data.slug ?? slug}`)
       router.refresh()
     } catch (e: unknown) {
       setError(e instanceof Error ? e.message : 'Błąd')
@@ -137,13 +149,13 @@ export function ArticleEditor({ articleId, slug, initialData }: ArticleEditorPro
         <div className="flex items-center gap-3">
           <button
             type="button"
-            onClick={() => router.back()}
+            onClick={() => (backHref ? router.push(backHref) : router.back())}
             className="p-2 rounded-lg border border-gray-200 hover:bg-gray-50"
           >
             <ArrowLeft className="w-4 h-4 text-gray-500" />
           </button>
           <h1 className="text-xl font-bold text-gray-900">
-            {isEdit ? 'Edytuj artykuł' : 'Nowy artykuł'}
+            {heading ?? (isEdit ? 'Edytuj artykuł' : 'Nowy artykuł')}
           </h1>
         </div>
         <div className="flex items-center gap-3">
@@ -237,18 +249,20 @@ export function ArticleEditor({ articleId, slug, initialData }: ArticleEditorPro
             </div>
           </div>
 
-          <div>
-            <label className="block text-xs font-medium text-gray-600 mb-1.5">Typ</label>
-            <select
-              value={type}
-              onChange={(e) => setType(e.target.value)}
-              className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
-            >
-              {TYPE_LABELS.filter(t => t.id !== 'all').map((t) => (
-                <option key={t.id} value={t.id}>{t.label}</option>
-              ))}
-            </select>
-          </div>
+          {!lockType && (
+            <div>
+              <label className="block text-xs font-medium text-gray-600 mb-1.5">Typ</label>
+              <select
+                value={type}
+                onChange={(e) => setType(e.target.value)}
+                className="w-full px-3 py-2 border border-gray-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+              >
+                {TYPE_LABELS.filter(t => t.id !== 'all').map((t) => (
+                  <option key={t.id} value={t.id}>{t.label}</option>
+                ))}
+              </select>
+            </div>
+          )}
 
           <div>
             <label className="block text-xs font-medium text-gray-600 mb-1.5">Tagi</label>

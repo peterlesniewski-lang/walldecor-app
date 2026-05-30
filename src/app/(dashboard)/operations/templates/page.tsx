@@ -10,6 +10,7 @@ export default async function OperationTemplatesPage() {
   if (!session) redirect('/login')
 
   const templates = await getTemplates()
+  const canCreate = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
 
   return (
     <div className="mx-auto max-w-6xl p-6">
@@ -22,7 +23,7 @@ export default async function OperationTemplatesPage() {
           <p className="text-sm text-gray-500">Powtarzalne listy zadań uruchamiane jako wykonania.</p>
         </div>
       </div>
-      <TemplatesList templates={templates} />
+      <TemplatesList templates={templates} canCreate={canCreate} />
     </div>
   )
 }

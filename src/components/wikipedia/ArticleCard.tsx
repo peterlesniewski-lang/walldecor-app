@@ -17,9 +17,10 @@ interface ArticleCardProps {
     content: string
   }
   isManager: boolean
+  basePath?: string
 }
 
-export function ArticleCard({ article, isManager }: ArticleCardProps) {
+export function ArticleCard({ article, isManager, basePath = '/knowledge' }: ArticleCardProps) {
   const cat = CATEGORY_LABELS.find((c) => c.id === article.category)
   const color = CATEGORY_COLORS[article.category] ?? '#64748b'
   const tags = parseTags(article.tags)
@@ -28,7 +29,7 @@ export function ArticleCard({ article, isManager }: ArticleCardProps) {
 
   return (
     <Link
-      href={`/knowledge/${article.slug}`}
+      href={`${basePath}/${article.slug}`}
       className="block group bg-white border border-gray-200 rounded-xl p-5 hover:border-gray-300 hover:shadow-md transition-all"
     >
       <div className="flex items-start justify-between gap-3 mb-3">

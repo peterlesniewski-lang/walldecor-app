@@ -39,6 +39,32 @@ export async function getTemplate(id: string) {
   })
 }
 
+export async function getTemplateEditorOptions() {
+  const [areas, procedures, users] = await Promise.all([
+    prisma.operationArea.findMany({
+      orderBy: [{ order: 'asc' }, { name: 'asc' }],
+      include: {
+        modules: {
+          orderBy: [{ order: 'asc' }, { name: 'asc' }],
+          select: { id: true, name: true, slug: true },
+        },
+      },
+    }),
+    prisma.article.findMany({
+      where: { type: 'procedure' },
+      orderBy: [{ category: 'asc' }, { title: 'asc' }],
+      select: { id: true, title: true, category: true },
+    }),
+    prisma.user.findMany({
+      where: { isActive: true },
+      orderBy: { name: 'asc' },
+      select: { id: true, name: true, email: true, role: true },
+    }),
+  ])
+
+  return { areas, procedures, users }
+}
+
 export async function getRuns() {
   const runs = await prisma.checklistRun.findMany({
     orderBy: [{ periodYear: 'desc' }, { periodMonth: 'desc' }, { createdAt: 'desc' }],

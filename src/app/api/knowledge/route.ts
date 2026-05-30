@@ -23,7 +23,11 @@ export async function GET(req: NextRequest) {
 
   if (q.length >= 2) {
     const results = await searchArticles(q, role)
-    return NextResponse.json(results)
+    return NextResponse.json(results.filter((article) => {
+      if (parsed.data.category && parsed.data.category !== 'all' && article.category !== parsed.data.category) return false
+      if (parsed.data.type && parsed.data.type !== 'all' && article.type !== parsed.data.type) return false
+      return true
+    }))
   }
 
   const articles = await getArticles(parsed.data, role)
