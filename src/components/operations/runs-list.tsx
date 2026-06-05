@@ -2,6 +2,7 @@ import Link from 'next/link'
 import { CalendarCheck, CircleAlert } from 'lucide-react'
 import { ProgressBar } from './progress-bar'
 import { StatusBadge } from './status-badge'
+import { formatClosingPeriod } from '@/lib/operations/run-factory'
 
 interface RunListItem {
   id: string
@@ -49,6 +50,9 @@ export function RunsList({ runs }: { runs: RunListItem[] }) {
               </div>
               <p className="mt-1 text-xs text-gray-500">
                 {run.template.module.area.name} / {run.template.module.name}
+              </p>
+              <p className="mt-1 text-xs font-medium text-gray-600">
+                Zamykany okres: {formatClosingPeriod(run.periodYear, run.periodMonth)}
               </p>
             </div>
             {run.progress.blocked > 0 && (

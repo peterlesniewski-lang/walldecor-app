@@ -16,6 +16,13 @@ export const UpdateChecklistRunItemSchema = z.object({
   ownerId: z.string().min(1).optional().nullable(),
 })
 
+export const UpdateChecklistRunSchema = z.object({
+  name: z.string().min(3).max(200).trim().optional(),
+  periodYear: z.number().int().min(2020).max(2100).optional(),
+  periodMonth: z.number().int().min(1).max(12).optional().nullable(),
+  status: z.enum(RUN_STATUSES).optional(),
+})
+
 export const ChecklistTemplateItemSchema = z.object({
   id: z.string().optional(),
   title: z.string().min(3).max(200).trim(),
@@ -39,6 +46,7 @@ export const UpdateChecklistTemplateSchema = CreateChecklistTemplateSchema.parti
 })
 
 export type CreateChecklistRunInput = z.infer<typeof CreateChecklistRunSchema>
+export type UpdateChecklistRunInput = z.infer<typeof UpdateChecklistRunSchema>
 export type UpdateChecklistRunItemInput = z.infer<typeof UpdateChecklistRunItemSchema>
 export type CreateChecklistTemplateInput = z.infer<typeof CreateChecklistTemplateSchema>
 export type UpdateChecklistTemplateInput = z.infer<typeof UpdateChecklistTemplateSchema>

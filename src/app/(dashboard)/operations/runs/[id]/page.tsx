@@ -14,6 +14,7 @@ export default async function OperationRunPage({ params }: { params: Promise<{ i
 
   const visibleItems =
     session.user.role === 'EMPLOYEE' ? run.items.filter((item) => item.ownerId === session.user.id) : run.items
+  const canEditPeriod = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
 
   return (
     <div className="mx-auto max-w-7xl p-6">
@@ -24,6 +25,7 @@ export default async function OperationRunPage({ params }: { params: Promise<{ i
           status: run.status,
           periodYear: run.periodYear,
           periodMonth: run.periodMonth,
+          canEditPeriod,
           template: run.template,
           progress: run.progress,
           items: visibleItems.map((item) => ({

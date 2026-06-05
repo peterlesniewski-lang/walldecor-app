@@ -2,24 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { createRunItemInputs } from '@/lib/operations/run-factory'
+import { createRunItemInputs, createRunName } from '@/lib/operations/run-factory'
 import { getRuns } from '@/lib/operations/queries'
 import { CreateChecklistRunSchema } from '@/lib/validations/operations'
-
-const MONTHS = [
-  'styczeń',
-  'luty',
-  'marzec',
-  'kwiecień',
-  'maj',
-  'czerwiec',
-  'lipiec',
-  'sierpień',
-  'wrzesień',
-  'październik',
-  'listopad',
-  'grudzień',
-]
 
 export async function GET() {
   const session = await getServerSession(authOptions)
@@ -58,10 +43,7 @@ export async function POST(req: NextRequest) {
     throw error
   }
 
-  const monthLabel = parsed.data.periodMonth ? MONTHS[parsed.data.periodMonth - 1] : null
-  const name =
-    parsed.data.name ??
-    `${template.name}${monthLabel ? ` - ${monthLabel} ${parsed.data.periodYear}` : ` - ${parsed.data.periodYear}`}`
+  const name = parsed.data.name ?? createRunName(template.name, parsed.data.periodYear, parsed.data.periodMonth ?? null)
 
   const run = await prisma.checklistRun.create({
     data: {

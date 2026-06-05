@@ -3,6 +3,8 @@ import {
   assertTemplateHasItems,
   calculateRunProgress,
   createRunItemInputs,
+  createRunName,
+  getPreviousMonthPeriod,
 } from '@/lib/operations/run-factory'
 
 describe('operations run factory', () => {
@@ -71,5 +73,25 @@ describe('operations run factory', () => {
       todo: 1,
       percent: 40,
     })
+  })
+
+  it('defaults a month-end run to the previous month', () => {
+    expect(getPreviousMonthPeriod(new Date('2026-06-05T12:00:00Z'))).toEqual({
+      periodYear: 2026,
+      periodMonth: 5,
+    })
+  })
+
+  it('defaults January month-end work to December of the previous year', () => {
+    expect(getPreviousMonthPeriod(new Date('2026-01-05T12:00:00Z'))).toEqual({
+      periodYear: 2025,
+      periodMonth: 12,
+    })
+  })
+
+  it('creates a run name from the closing period', () => {
+    expect(createRunName('Księgowość - koniec miesiąca', 2026, 5)).toBe(
+      'Księgowość - koniec miesiąca - maj 2026'
+    )
   })
 })

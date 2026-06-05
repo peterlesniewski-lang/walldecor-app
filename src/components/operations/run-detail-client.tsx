@@ -5,6 +5,7 @@ import { Check, Circle, CircleAlert, Loader2, Play } from 'lucide-react'
 import { ArticleViewer } from '@/components/wikipedia/ArticleViewer'
 import { ProgressBar } from './progress-bar'
 import { StatusBadge } from './status-badge'
+import { formatClosingPeriod, MONTHS } from '@/lib/operations/run-factory'
 
 interface RunItem {
   id: string
@@ -29,6 +30,7 @@ interface RunDetail {
   status: string
   periodYear: number
   periodMonth: number | null
+  canEditPeriod: boolean
   template: {
     module: {
       name: string
@@ -65,9 +67,13 @@ function recalculateProgress(items: RunItem[]) {
 }
 
 export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
+  const [runName, setRunName] = useState(initialRun.name)
+  const [periodYear, setPeriodYear] = useState(initialRun.periodYear)
+  const [periodMonth, setPeriodMonth] = useState(initialRun.periodMonth ?? 1)
   const [items, setItems] = useState(initialRun.items)
   const [selectedId, setSelectedId] = useState(initialRun.items[0]?.id ?? '')
   const [note, setNote] = useState(initialRun.items[0]?.note ?? '')
+  const [periodSaving, setPeriodSaving] = useState(false)
   const [isPending, startTransition] = useTransition()
 
   const selectedItem = items.find((item) => item.id === selectedId) ?? items[0]
@@ -99,18 +105,80 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
     })
   }
 
+  async function updatePeriod() {
+    setPeriodSaving(true)
+    const res = await fetch(`/api/operations/runs/${initialRun.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ periodYear, periodMonth }),
+    })
+    setPeriodSaving(false)
+    if (!res.ok) return
+    const updated = (await res.json()) as { name: string; periodYear: number; periodMonth: number | null }
+    setRunName(updated.name)
+    setPeriodYear(updated.periodYear)
+    setPeriodMonth(updated.periodMonth ?? 1)
+  }
+
   return (
     <div>
       <div className="mb-6 rounded-xl border bg-white p-5">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-bold text-gray-900">{initialRun.name}</h1>
+              <h1 className="text-xl font-bold text-gray-900">{runName}</h1>
               <StatusBadge status={initialRun.status} />
             </div>
             <p className="mt-1 text-sm text-gray-500">
               {initialRun.template.module.area.name} / {initialRun.template.module.name}
             </p>
+            <div className="mt-3">
+              {initialRun.canEditPeriod ? (
+                <div className="flex flex-wrap items-end gap-2">
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Zamykany miesiąc
+                    </label>
+                    <select
+                      value={periodMonth}
+                      onChange={(event) => setPeriodMonth(Number(event.target.value))}
+                      className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                    >
+                      {MONTHS.map((month, index) => (
+                        <option key={month} value={index + 1}>
+                          {month}
+                        </option>
+                      ))}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="mb-1 block text-xs font-semibold uppercase tracking-wide text-gray-500">
+                      Rok
+                    </label>
+                    <input
+                      type="number"
+                      min={2020}
+                      max={2100}
+                      value={periodYear}
+                      onChange={(event) => setPeriodYear(Number(event.target.value))}
+                      className="w-24 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
+                    />
+                  </div>
+                  <button
+                    type="button"
+                    onClick={updatePeriod}
+                    disabled={periodSaving}
+                    className="rounded-lg border px-3 py-2 text-sm font-medium hover:bg-gray-50 disabled:opacity-50"
+                  >
+                    {periodSaving ? 'Zapisuję...' : 'Zapisz okres'}
+                  </button>
+                </div>
+              ) : (
+                <p className="text-sm font-medium text-gray-700">
+                  Zamykany okres: {formatClosingPeriod(periodYear, periodMonth)}
+                </p>
+              )}
+            </div>
           </div>
           <div className="min-w-52">
             <div className="mb-2 flex justify-between text-xs font-medium text-gray-500">

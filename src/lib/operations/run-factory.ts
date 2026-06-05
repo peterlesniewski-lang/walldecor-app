@@ -34,6 +34,43 @@ export interface RunProgress {
   percent: number
 }
 
+export const MONTHS = [
+  'styczeń',
+  'luty',
+  'marzec',
+  'kwiecień',
+  'maj',
+  'czerwiec',
+  'lipiec',
+  'sierpień',
+  'wrzesień',
+  'październik',
+  'listopad',
+  'grudzień',
+] as const
+
+export interface ClosingPeriod {
+  periodYear: number
+  periodMonth: number
+}
+
+export function getPreviousMonthPeriod(date = new Date()): ClosingPeriod {
+  const month = date.getMonth() + 1
+  if (month === 1) {
+    return { periodYear: date.getFullYear() - 1, periodMonth: 12 }
+  }
+  return { periodYear: date.getFullYear(), periodMonth: month - 1 }
+}
+
+export function formatClosingPeriod(periodYear: number, periodMonth: number | null) {
+  if (!periodMonth) return `${periodYear}`
+  return `${MONTHS[periodMonth - 1]} ${periodYear}`
+}
+
+export function createRunName(templateName: string, periodYear: number, periodMonth: number | null) {
+  return `${templateName} - ${formatClosingPeriod(periodYear, periodMonth)}`
+}
+
 export function assertTemplateHasItems(items: TemplateItemForRun[]) {
   if (items.length === 0) {
     throw new Error('EMPTY_TEMPLATE')
