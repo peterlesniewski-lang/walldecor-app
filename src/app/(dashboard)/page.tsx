@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { DashboardView } from '@/components/shared/dashboard-view'
 import type { AlertNotification, PaymentReminderWithDays } from '@/components/alerts/alerts-widget'
+import { buildRealizedCostSummary, costEventYearDateRange } from '@/lib/finance/realized-costs'
 
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions)
@@ -13,23 +14,57 @@ export default async function DashboardPage() {
   const currentMonth = new Date().getMonth() + 1 // 1-12
 
   // Fetch all cost centers in parallel
-  const costCenters = ['JAG', 'PUL', 'GLOBAL']
+  const costCenters = ['JAG', 'PUL', 'GLOBAL'] as const
 
   const prevYear = year - 1
+  const costEventVisibilityFilter = session.user.role !== 'ADMIN' ? { isConfidential: false } : {}
 
-  const [revenuePlans, revenueActuals, budgets,
-         prevRevenuePlans, prevRevenueActuals, prevBudgets,
+  const [revenuePlans, revenueActuals, actualCosts, costEvents,
+         prevRevenuePlans, prevRevenueActuals, prevActualCosts, prevCostEvents,
          cashAccounts, receivables, latestLiability, appSettings] = await Promise.all([
     prisma.revenueBudget.findMany({ where: { year } }),
     prisma.revenue.findMany({ where: { year } }),
-    prisma.budgetEntry.findMany({
+    prisma.actualEntry.findMany({
       where: { year },
       include: { subCategory: { select: { isFixed: true } } },
+    }),
+    prisma.costEvent.findMany({
+      where: {
+        status: 'APPROVED',
+        eventDate: costEventYearDateRange(year),
+        ...costEventVisibilityFilter,
+      },
+      include: {
+        parts: {
+          include: {
+            tags: { include: { tag: true } },
+            allocations: true,
+          },
+        },
+      },
     }),
     // Previous year data for YoY comparison
     prisma.revenueBudget.findMany({ where: { year: prevYear } }),
     prisma.revenue.findMany({ where: { year: prevYear } }),
-    prisma.budgetEntry.findMany({ where: { year: prevYear } }),
+    prisma.actualEntry.findMany({
+      where: { year: prevYear },
+      include: { subCategory: { select: { isFixed: true } } },
+    }),
+    prisma.costEvent.findMany({
+      where: {
+        status: 'APPROVED',
+        eventDate: costEventYearDateRange(prevYear),
+        ...costEventVisibilityFilter,
+      },
+      include: {
+        parts: {
+          include: {
+            tags: { include: { tag: true } },
+            allocations: true,
+          },
+        },
+      },
+    }),
     prisma.cashAccount.findMany({ where: { isActive: true }, orderBy: { order: 'asc' } }),
     prisma.receivableEntry.findMany({ orderBy: { dueDate: 'asc' } }),
     prisma.cashLiabilitySnapshot.findFirst({ orderBy: { date: 'desc' } }),
@@ -129,7 +164,13 @@ export default async function DashboardPage() {
   const prevYearTotalIncome = prevRevenueActuals.length > 0
     ? prevRevenueActuals.reduce((s, r) => s + r.amount, 0)
     : prevRevenuePlans.reduce((s, r) => s + r.amount, 0)
-  const prevYearTotalExpenses = prevBudgets.reduce((s, e) => s + e.amount, 0)
+  const realizedCosts = buildRealizedCostSummary({ year, actualEntries: actualCosts, costEvents })
+  const prevRealizedCosts = buildRealizedCostSummary({
+    year: prevYear,
+    actualEntries: prevActualCosts,
+    costEvents: prevCostEvents,
+  })
+  const prevYearTotalExpenses = prevRealizedCosts.totalCostsByMonth.reduce((s, e) => s + e, 0)
 
   // Aggregate by month across all cost centers (or per CC for breakdown)
   const planIncomeByMonth = new Array(12).fill(0) as number[]
@@ -138,19 +179,15 @@ export default async function DashboardPage() {
   const realIncomeByMonth = new Array(12).fill(0) as number[]
   for (const r of revenueActuals) realIncomeByMonth[r.month - 1] += r.amount
 
-  const fixedCostsByMonth = new Array(12).fill(0) as number[]
-  const variableCostsByMonth = new Array(12).fill(0) as number[]
-  for (const e of budgets) {
-    if (e.subCategory.isFixed) fixedCostsByMonth[e.month - 1] += e.amount
-    else variableCostsByMonth[e.month - 1] += e.amount
-  }
-  const realExpensesByMonth = fixedCostsByMonth.map((f, i) => f + variableCostsByMonth[i])
+  const fixedCostsByMonth = realizedCosts.fixedCostsByMonth
+  const variableCostsByMonth = realizedCosts.variableCostsByMonth
+  const realExpensesByMonth = realizedCosts.totalCostsByMonth
 
   // Per cost center totals (for breakdown)
   const ccBreakdown = costCenters.map((cc) => {
     const planIncome = revenuePlans.filter((r) => r.costCenterId === cc).reduce((s, r) => s + r.amount, 0)
     const realIncome = revenueActuals.filter((r) => r.costCenterId === cc).reduce((s, r) => s + r.amount, 0)
-    const realExpenses = budgets.filter((e) => e.costCenterId === cc).reduce((s, e) => s + e.amount, 0)
+    const realExpenses = realizedCosts.costCenterTotals[cc]
     return { cc, planIncome, realIncome, planExpenses: 0, realExpenses }
   })
 

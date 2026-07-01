@@ -2,7 +2,14 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireFinanceReportAccess } from '@/lib/finance/finance-access'
 import { prisma } from '@/lib/prisma'
 import { buildBreakEvenReport, buildCostWarningTotal } from '@/lib/finance/cost-reporting'
-import { roundMoney } from '@/lib/finance/ksef-inbox'
+import { buildRealizedCostSummary } from '@/lib/finance/realized-costs'
+
+function costEventMonthDateRange(year: number, month: number) {
+  return {
+    gte: new Date(Date.UTC(year, month - 1, 1)),
+    lt: new Date(Date.UTC(year, month, 1)),
+  }
+}
 
 export async function GET(req: NextRequest) {
   const auth = await requireFinanceReportAccess()
@@ -12,10 +19,15 @@ export async function GET(req: NextRequest) {
   const year = Number(req.nextUrl.searchParams.get('year') ?? now.getFullYear())
   const month = Number(req.nextUrl.searchParams.get('month') ?? now.getMonth() + 1)
 
-  const [events, revenue, margins, warningInvoices] = await Promise.all([
+  const [actualCosts, costEvents, revenue, margins, warningInvoices] = await Promise.all([
+    prisma.actualEntry.findMany({
+      where: { year, month },
+      include: { subCategory: { select: { isFixed: true } } },
+    }),
     prisma.costEvent.findMany({
       where: {
         status: 'APPROVED',
+        eventDate: costEventMonthDateRange(year, month),
         ...(auth.session.user.role !== 'ADMIN' ? { isConfidential: false } : {}),
       },
       include: {
@@ -38,18 +50,11 @@ export async function GET(req: NextRequest) {
     }),
   ])
 
-  const costRows = new Map<string, { costCenterId: string; fixedCosts: number; variableCosts: number; cogs: number }>()
-  for (const event of events) {
-    for (const part of event.parts) {
-      const tagSlugs = part.tags.map((item) => item.tag.slug.toLowerCase())
-      const bucket = tagSlugs.includes('cogs') ? 'cogs' : tagSlugs.includes('variable') ? 'variableCosts' : 'fixedCosts'
-      for (const allocation of part.allocations) {
-        const current = costRows.get(allocation.costCenterId) ?? { costCenterId: allocation.costCenterId, fixedCosts: 0, variableCosts: 0, cogs: 0 }
-        current[bucket] = roundMoney(current[bucket] + part.grossAmount * allocation.percent / 100)
-        costRows.set(allocation.costCenterId, current)
-      }
-    }
-  }
+  const realizedCosts = buildRealizedCostSummary({
+    year,
+    actualEntries: actualCosts,
+    costEvents,
+  })
 
   const contributionMargins: Record<string, number> = {}
   for (const setting of margins) {
@@ -60,7 +65,7 @@ export async function GET(req: NextRequest) {
 
   const report = buildBreakEvenReport({
     revenue: revenue.map((row) => ({ costCenterId: row.costCenterId, amount: row.amount })),
-    allocatedCosts: [...costRows.values()],
+    allocatedCosts: realizedCosts.breakEvenCostRows,
     contributionMargins,
     warningAmount: buildCostWarningTotal(warningInvoices),
   })

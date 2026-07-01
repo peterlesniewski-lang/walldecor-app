@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { CompanyHealthView } from '@/components/shared/company-health-view'
 import { buildCompanyHealth, type FinanceCostCenterId } from '@/lib/finance/company-health'
 import { buildCostWarningTotal } from '@/lib/finance/cost-reporting'
+import { buildRealizedCostSummary, costEventYearDateRange } from '@/lib/finance/realized-costs'
 import { roundMoney } from '@/lib/finance/ksef-inbox'
 
 interface PageProps {
@@ -22,9 +23,27 @@ export default async function FinancePage({ searchParams }: PageProps) {
   const year = yearParam ? parseInt(yearParam, 10) : new Date().getFullYear()
   const currentMonth = year === new Date().getFullYear() ? new Date().getMonth() + 1 : 12
 
-  const [revenueActuals, actualCosts, cashAccounts, ksefInboxCount, unpaidInvoices, warningInvoices] = await Promise.all([
+  const [revenueActuals, actualCosts, costEvents, cashAccounts, ksefInboxCount, unpaidInvoices, warningInvoices] = await Promise.all([
     prisma.revenue.findMany({ where: { year } }),
-    prisma.actualEntry.findMany({ where: { year } }),
+    prisma.actualEntry.findMany({
+      where: { year },
+      include: { subCategory: { select: { isFixed: true } } },
+    }),
+    prisma.costEvent.findMany({
+      where: {
+        status: 'APPROVED',
+        eventDate: costEventYearDateRange(year),
+        ...(!isAdmin ? { isConfidential: false } : {}),
+      },
+      include: {
+        parts: {
+          include: {
+            tags: { include: { tag: true } },
+            allocations: true,
+          },
+        },
+      },
+    }),
     prisma.cashAccount.findMany({ where: { isActive: true }, orderBy: { order: 'asc' } }),
     isAdmin
       ? prisma.ksefInvoice.count({ where: { status: { in: ['NEW', 'MAPPED'] } } })
@@ -48,6 +67,12 @@ export default async function FinancePage({ searchParams }: PageProps) {
       : Promise.resolve([]),
   ])
 
+  const realizedCosts = buildRealizedCostSummary({
+    year,
+    actualEntries: actualCosts,
+    costEvents,
+  })
+
   const health = buildCompanyHealth({
     year,
     currentMonth,
@@ -56,11 +81,7 @@ export default async function FinancePage({ searchParams }: PageProps) {
       month: entry.month,
       amount: entry.amount,
     })),
-    expenses: actualCosts.map((entry) => ({
-      costCenterId: entry.costCenterId as FinanceCostCenterId,
-      month: entry.month,
-      amount: entry.amount,
-    })),
+    expenses: realizedCosts.monthlyRows,
   })
 
   const cashByCurrency = Object.values(
