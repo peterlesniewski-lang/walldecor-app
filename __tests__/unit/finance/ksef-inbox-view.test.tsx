@@ -386,4 +386,73 @@ describe('KsefInboxView', () => {
       tagIds: ['tag-goods'],
     })
   })
+
+  it('allows an approved invoice to be removed from costs', async () => {
+    const user = userEvent.setup()
+    const approvedInvoice = {
+      ...invoices[0],
+      status: 'APPROVED' as const,
+      parts: [
+        {
+          tags: [{ tagId: 'tag-goods', tag: costTagGroups[0].tags[0] }],
+          allocations: [{ costCenterId: 'GLOBAL', percent: 100 }],
+        },
+      ],
+    }
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input).includes('/api/finance/ksef/invoices/invoice-1/approve')) {
+        expect(init?.method).toBe('DELETE')
+        return new Response(JSON.stringify({
+          invoice: {
+            ...approvedInvoice,
+            status: 'MAPPED',
+          },
+          voidedCostEvents: 1,
+        }))
+      }
+
+      return new Response(JSON.stringify({
+        invoices: [{ ...approvedInvoice, status: 'MAPPED' }],
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        grossAmountTotal: 123,
+        unpaidAmountTotal: 123,
+        paymentAging: {
+          OVERDUE: { count: 0, grossAmount: 0 },
+          DUE_0_7: { count: 0, grossAmount: 0 },
+          DUE_8_14: { count: 0, grossAmount: 0 },
+          DUE_15_30: { count: 0, grossAmount: 0 },
+          LATER: { count: 0, grossAmount: 0 },
+          MISSING_DUE_DATE: { count: 1, grossAmount: 123 },
+        },
+        counts: { NEW: 0, MAPPED: 1, APPROVED: 0, IGNORED: 0 },
+      }))
+    })
+
+    render(
+      <KsefInboxView
+        initialInvoices={[approvedInvoice]}
+        initialTotal={1}
+        initialPage={1}
+        initialPageSize={50}
+        initialTotalPages={1}
+        initialGrossAmountTotal={123}
+        initialCounts={{ NEW: 0, MAPPED: 0, APPROVED: 1, IGNORED: 0 }}
+        initialRules={[]}
+        costCenters={costCenters}
+        subCategories={subCategories}
+        costTagGroups={costTagGroups}
+      />
+    )
+
+    await user.click(screen.getByTitle('Cofnij z kosztów'))
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/finance/ksef/invoices/invoice-1/approve', {
+      method: 'DELETE',
+    })
+    expect(await screen.findByText('Faktura cofnięta z kosztów. Możesz poprawić klasyfikację i zatwierdzić ją ponownie.')).toBeTruthy()
+    expect(screen.getAllByText('Zmapowana').length).toBeGreaterThan(0)
+  })
 })

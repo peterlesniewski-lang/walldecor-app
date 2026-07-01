@@ -513,6 +513,24 @@ export function KsefInboxView({
     }
   }
 
+  async function unapproveInvoice(invoiceId: string) {
+    setError(null)
+    setSyncMessage(null)
+    setSaving(`unapprove-${invoiceId}`)
+    try {
+      const result = await readJson(await fetch(`/api/finance/ksef/invoices/${invoiceId}/approve`, {
+        method: 'DELETE',
+      }))
+      replaceInvoice(result.invoice)
+      setSyncMessage('Faktura cofnięta z kosztów. Możesz poprawić klasyfikację i zatwierdzić ją ponownie.')
+      await refreshInvoices()
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nie udało się cofnąć faktury z kosztów')
+    } finally {
+      setSaving(null)
+    }
+  }
+
   async function updatePaymentStatus(invoice: KsefInvoiceRow) {
     setError(null)
     setSyncMessage(null)
@@ -1052,9 +1070,21 @@ export function KsefInboxView({
                         <button type="button" disabled={approved} onClick={() => setPartsEditorInvoice(invoice)} className="rounded border border-[var(--wd-border)] p-2 hover:bg-gray-50 disabled:opacity-40" title="Rozbij fakturę">
                           <Settings2 size={15} />
                         </button>
-                        <button type="button" disabled={approved || saving === `approve-${invoice.id}`} onClick={() => approveInvoice(invoice.id)} className="rounded bg-green-700 p-2 text-white disabled:opacity-40" title="Zatwierdź do kosztów">
-                          <CheckCircle2 size={15} />
-                        </button>
+                        {approved ? (
+                          <button
+                            type="button"
+                            disabled={saving === `unapprove-${invoice.id}`}
+                            onClick={() => unapproveInvoice(invoice.id)}
+                            className="rounded border border-amber-200 bg-amber-50 p-2 text-amber-700 hover:bg-amber-100 disabled:opacity-40"
+                            title="Cofnij z kosztów"
+                          >
+                            <RefreshCcw size={15} />
+                          </button>
+                        ) : (
+                          <button type="button" disabled={saving === `approve-${invoice.id}`} onClick={() => approveInvoice(invoice.id)} className="rounded bg-green-700 p-2 text-white disabled:opacity-40" title="Zatwierdź do kosztów">
+                            <CheckCircle2 size={15} />
+                          </button>
+                        )}
                         <button
                           type="button"
                           disabled={saving === `payment-${invoice.id}`}

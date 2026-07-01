@@ -117,3 +117,64 @@ export async function POST(
 
   return NextResponse.json(result)
 }
+
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const auth = await requireFinanceAdmin()
+  if (auth.error) return auth.error
+
+  const { id } = await params
+  const invoice = await prisma.ksefInvoice.findUnique({
+    where: { id },
+    include: {
+      costEvent: {
+        select: { id: true, status: true },
+      },
+    },
+  })
+
+  if (!invoice) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
+  if (invoice.status !== 'APPROVED') {
+    return NextResponse.json({ error: 'Tylko zatwierdzoną fakturę można cofnąć z kosztów.' }, { status: 409 })
+  }
+
+  const result = await prisma.$transaction(async (tx) => {
+    const voidedCostEvents = await tx.costEvent.updateMany({
+      where: { sourceInvoiceId: id, status: 'APPROVED' },
+      data: { status: 'VOID', sourceInvoiceId: null },
+    })
+
+    const updatedInvoice = await tx.ksefInvoice.update({
+      where: { id },
+      data: {
+        status: 'MAPPED',
+        auditLogs: {
+          create: {
+            action: 'invoice.unapprove',
+            actorId: auth.session.user.id,
+            beforeJson: JSON.stringify({ status: 'APPROVED', costEventId: invoice.costEvent?.id ?? null }),
+            afterJson: JSON.stringify({ status: 'MAPPED', costEventStatus: 'VOID' }),
+          },
+        },
+      },
+      include: {
+        costCenter: true,
+        subCategory: { include: { category: true } },
+        supplierRule: true,
+        parts: {
+          include: {
+            tags: { include: { tag: true } },
+            allocations: true,
+          },
+          orderBy: { order: 'asc' },
+        },
+      },
+    })
+
+    return { invoice: updatedInvoice, voidedCostEvents: voidedCostEvents.count }
+  })
+
+  return NextResponse.json(result)
+}
