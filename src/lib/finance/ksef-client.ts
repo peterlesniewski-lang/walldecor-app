@@ -59,6 +59,7 @@ export interface KsefInvoiceMetadata {
   currency: string
   paymentDueDate?: string | null
   dueDate?: string | null
+  bankAccount?: string | null
   documentType?: string | null
   invoiceType?: string | null
   formType?: string | null
@@ -227,9 +228,12 @@ function documentStatusFromMetadata(metadata: KsefInvoiceMetadata): KsefLocalDoc
   return 'ACTIVE'
 }
 
-function dateFromMetadata(value: string | null | undefined) {
-  if (!value) return null
-  return new Date(value.includes('T') ? value : `${value}T00:00:00.000Z`)
+export function dateFromKsefDate(value: string | null | undefined) {
+  const dateValue = value?.match(/\b\d{4}-\d{2}-\d{2}\b/)?.[0]
+  if (!dateValue) return null
+
+  const date = new Date(`${dateValue}T00:00:00.000Z`)
+  return Number.isNaN(date.getTime()) ? null : date
 }
 
 export function mapKsefMetadataToInvoice(metadata: KsefInvoiceMetadata) {
@@ -255,7 +259,8 @@ export function mapKsefMetadataToInvoice(metadata: KsefInvoiceMetadata) {
     originalNetAmount: isForeignCurrency ? roundMoney(metadata.netAmount) : null,
     originalVatAmount: isForeignCurrency ? roundMoney(metadata.vatAmount) : null,
     documentStatus: documentStatusFromMetadata(metadata),
-    dueDate: dateFromMetadata(metadata.paymentDueDate ?? metadata.dueDate),
+    dueDate: dateFromKsefDate(metadata.paymentDueDate ?? metadata.dueDate),
+    bankAccount: metadata.bankAccount ?? null,
     correctedKsefNumber:
       metadata.correctedKsefNumber ??
       metadata.correction?.correctedKsefNumber ??

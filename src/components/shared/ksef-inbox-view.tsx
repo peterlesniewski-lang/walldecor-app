@@ -56,6 +56,7 @@ interface KsefInvoiceRow {
   paymentStatus?: KsefPaymentStatus
   paidAt?: string | null
   dueDate?: string | null
+  bankAccount?: string | null
   documentStatus?: string
   ruleMatchStatus?: string
   notes: string | null
@@ -170,6 +171,10 @@ function money(value: number, currency = 'PLN') {
 
 function isoDate(value: string) {
   return value.slice(0, 10)
+}
+
+function formatBankAccount(value: string) {
+  return value.replace(/\s+/g, '').replace(/(.{4})/g, '$1 ').trim()
 }
 
 async function readJson(response: Response) {
@@ -887,6 +892,11 @@ export function KsefInboxView({
                     <td className="px-4 py-3">
                       <p className="font-medium">{invoice.supplierName}</p>
                       <p className="text-xs" style={{ color: 'var(--wd-text-muted)' }}>{invoice.supplierNip || 'brak NIP'}</p>
+                      {invoice.bankAccount && (
+                        <p className="mt-1 text-xs num" style={{ color: 'var(--wd-text-muted)' }}>
+                          Konto: {formatBankAccount(invoice.bankAccount)}
+                        </p>
+                      )}
                     </td>
                     <td className="px-4 py-3 text-right">
                       <p className="num font-semibold">{money(invoice.grossAmount, invoice.currency)}</p>
@@ -1070,6 +1080,20 @@ export function KsefInboxView({
                   <div>
                     <p className="data-label">Format</p>
                     <p className="font-semibold">{contentPreview.preview.formCode ?? '-'}</p>
+                  </div>
+                  <div>
+                    <p className="data-label">Termin płatności</p>
+                    <p className="font-semibold">{contentPreview.preview.paymentDueDate ?? (contentPreview.invoice.dueDate ? isoDate(contentPreview.invoice.dueDate) : '-')}</p>
+                  </div>
+                  <div>
+                    <p className="data-label">Rachunek</p>
+                    <p className="num font-semibold">
+                      {contentPreview.preview.bankAccounts[0]
+                        ? formatBankAccount(contentPreview.preview.bankAccounts[0])
+                        : contentPreview.invoice.bankAccount
+                          ? formatBankAccount(contentPreview.invoice.bankAccount)
+                          : '-'}
+                    </p>
                   </div>
                 </div>
                 <div className="rounded border border-[var(--wd-border)] p-3 text-sm">

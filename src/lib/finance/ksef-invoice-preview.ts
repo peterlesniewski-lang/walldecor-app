@@ -1,3 +1,5 @@
+import { parseKsefInvoiceXmlDetails } from '@/lib/finance/ksef-xml-details'
+
 export interface KsefInvoicePreviewParty {
   name: string | null
   nip: string | null
@@ -18,6 +20,7 @@ export interface KsefInvoiceXmlPreview {
   issueDate: string | null
   saleDate: string | null
   paymentDueDate: string | null
+  bankAccounts: string[]
   formCode: string | null
   seller: KsefInvoicePreviewParty
   buyer: KsefInvoicePreviewParty
@@ -50,33 +53,6 @@ function party(root: Document, localName: 'Podmiot1' | 'Podmiot2'): KsefInvoiceP
   }
 }
 
-const PAYMENT_DUE_DATE_FIELDS = [
-  'TerminPlatnosci',
-  'TerminPlatnosciData',
-  'DataPlatnosci',
-  'DataZaplaty',
-  'P_6Z',
-] as const
-
-function paymentDueDate(invoice: Element | null) {
-  if (!invoice) return null
-
-  for (const containerName of ['Platnosc', 'WarunkiPlatnosci']) {
-    const container = firstByLocalName(invoice, containerName)
-    for (const fieldName of PAYMENT_DUE_DATE_FIELDS) {
-      const value = text(container, fieldName)
-      if (value) return value
-    }
-  }
-
-  for (const fieldName of PAYMENT_DUE_DATE_FIELDS) {
-    const value = text(invoice, fieldName)
-    if (value) return value
-  }
-
-  return null
-}
-
 export function parseKsefInvoiceXmlPreview(xml: string): KsefInvoiceXmlPreview {
   const document = new DOMParser().parseFromString(xml, 'application/xml')
   const parserError = firstByLocalName(document, 'parsererror')
@@ -84,12 +60,14 @@ export function parseKsefInvoiceXmlPreview(xml: string): KsefInvoiceXmlPreview {
 
   const header = firstByLocalName(document, 'Naglowek')
   const invoice = firstByLocalName(document, 'Fa')
+  const details = parseKsefInvoiceXmlDetails(xml)
 
   return {
     invoiceNumber: text(invoice, 'P_2'),
     issueDate: text(invoice, 'P_1'),
     saleDate: text(invoice, 'P_6'),
-    paymentDueDate: paymentDueDate(invoice),
+    paymentDueDate: details.paymentDueDate,
+    bankAccounts: details.bankAccounts,
     formCode: text(header, 'KodFormularza'),
     seller: party(document, 'Podmiot1'),
     buyer: party(document, 'Podmiot2'),

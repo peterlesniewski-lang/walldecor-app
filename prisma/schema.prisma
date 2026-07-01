@@ -193,6 +193,7 @@ model KsefInvoice {
   paymentStatus String   @default("UNPAID")
   paidAt        DateTime?
   dueDate       DateTime?
+  bankAccount   String?
   documentStatus String  @default("ACTIVE")
   ruleMatchStatus String @default("NO_RULE")
   correctsInvoiceId String?
@@ -220,6 +221,7 @@ model KsefInvoice {
   @@index([ruleMatchStatus])
   @@index([correctsInvoiceId])
   @@index([dueDate])
+  @@index([bankAccount])
   @@index([issueDate])
   @@index([supplierNip])
   @@unique([supplierNip, invoiceNumber, issueDate])

@@ -4,6 +4,7 @@ import { requireFinanceAdmin } from '@/lib/finance/finance-access'
 import {
   KsefApiError,
   KsefApiClient,
+  dateFromKsefDate,
   describeKsefApiError,
   mapKsefMetadataToInvoice,
   type KsefEnvironment,
@@ -11,6 +12,7 @@ import {
 import { resolveSupplierRuleMatch } from '@/lib/finance/ksef-inbox'
 import { applySupplierRulesToNewInvoices } from '@/lib/finance/ksef-rule-application'
 import { buildKsefSyncDateRanges } from '@/lib/finance/ksef-sync-ranges'
+import { parseKsefInvoiceXmlDetails } from '@/lib/finance/ksef-xml-details'
 
 const KSEF_SETTINGS = [
   'ksef_enabled',
@@ -22,6 +24,7 @@ const KSEF_SETTINGS = [
 
 type MappedKsefInvoice = ReturnType<typeof mapKsefMetadataToInvoice>
 type PersistableKsefInvoice = Omit<MappedKsefInvoice, 'correctedKsefNumber' | 'correctedInvoiceNumber'>
+type ExistingInvoiceDetails = { dueDate: Date | null; bankAccount: string | null } | null
 
 function splitMappedInvoice(invoice: MappedKsefInvoice) {
   const { correctedKsefNumber, correctedInvoiceNumber, ...data } = invoice
@@ -33,6 +36,28 @@ function blocksAutomaticClassification(invoice: PersistableKsefInvoice) {
     invoice.documentStatus !== 'ACTIVE' ||
     (invoice.currency !== 'PLN' && invoice.reportingGrossAmount == null)
   )
+}
+
+function needsInvoiceXmlDetails(invoice: PersistableKsefInvoice, existing: ExistingInvoiceDetails) {
+  return !invoice.dueDate || !invoice.bankAccount || !existing?.bankAccount
+}
+
+async function downloadInvoiceXmlDetails({
+  client,
+  accessToken,
+  ksefNumber,
+}: {
+  client: KsefApiClient
+  accessToken: string
+  ksefNumber: string
+}) {
+  const xml = await client.downloadInvoiceXml({ accessToken, ksefNumber })
+  const details = parseKsefInvoiceXmlDetails(xml)
+
+  return {
+    dueDate: dateFromKsefDate(details.paymentDueDate),
+    bankAccount: details.bankAccounts[0] ?? null,
+  }
 }
 
 async function findCorrectedInvoiceId({
@@ -101,6 +126,8 @@ export async function POST() {
     let fetched = 0
     let truncated = false
     let mappedByRules = 0
+    let xmlDetailsFetched = 0
+    let xmlDetailsFailed = 0
     const ranges = buildKsefSyncDateRanges(syncFrom)
 
     for (const range of ranges) {
@@ -130,6 +157,20 @@ export async function POST() {
           const existing = await prisma.ksefInvoice.findUnique({
             where: { externalId: invoiceData.externalId },
           })
+          if (needsInvoiceXmlDetails(invoiceData, existing)) {
+            try {
+              const details = await downloadInvoiceXmlDetails({
+                client,
+                accessToken: authTokens.accessToken.token,
+                ksefNumber: invoiceData.externalId,
+              })
+              invoiceData.dueDate = details.dueDate ?? invoiceData.dueDate
+              invoiceData.bankAccount = details.bankAccount ?? invoiceData.bankAccount
+              xmlDetailsFetched += 1
+            } catch {
+              xmlDetailsFailed += 1
+            }
+          }
           const correctsInvoiceId = await findCorrectedInvoiceId({
             correctedKsefNumber,
             correctedInvoiceNumber,
@@ -157,7 +198,8 @@ export async function POST() {
                 originalGrossAmount: invoiceData.originalGrossAmount,
                 originalNetAmount: invoiceData.originalNetAmount,
                 originalVatAmount: invoiceData.originalVatAmount,
-                dueDate: invoiceData.dueDate,
+                dueDate: invoiceData.dueDate ?? existing.dueDate,
+                bankAccount: invoiceData.bankAccount ?? existing.bankAccount,
                 documentStatus: invoiceData.documentStatus,
                 correctsInvoiceId: invoiceData.documentStatus === 'CORRECTION' ? correctsInvoiceId : null,
                 ...(shouldBlockClassification && existing.status !== 'APPROVED'
@@ -210,6 +252,8 @@ export async function POST() {
       imported,
       updated,
       mappedByRules,
+      xmlDetailsFetched,
+      xmlDetailsFailed,
       ranges: ranges.length,
       truncated,
     })

@@ -120,6 +120,7 @@ describe('mapKsefMetadataToInvoice', () => {
       originalVatAmount: null,
       documentStatus: 'ACTIVE',
       dueDate: null,
+      bankAccount: null,
       correctedKsefNumber: null,
       correctedInvoiceNumber: null,
     })

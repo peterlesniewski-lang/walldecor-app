@@ -27,7 +27,13 @@ const xml = `<?xml version="1.0" encoding="UTF-8"?>
     <P_14_1>23.00</P_14_1>
     <P_15>123.00</P_15>
     <Platnosc>
-      <TerminPlatnosci>2026-07-14</TerminPlatnosci>
+      <TerminPlatnosci>
+        <Termin>2026-07-14</Termin>
+      </TerminPlatnosci>
+      <RachunekBankowy>
+        <NrRB>12 3456 7890 1234 5678 9012 3456</NrRB>
+        <NazwaBanku>Bank Testowy</NazwaBanku>
+      </RachunekBankowy>
     </Platnosc>
     <Adnotacje>
       <P_16>2</P_16>
@@ -51,6 +57,7 @@ describe('parseKsefInvoiceXmlPreview', () => {
       issueDate: '2026-06-30',
       saleDate: '2026-06-30',
       paymentDueDate: '2026-07-14',
+      bankAccounts: ['12345678901234567890123456'],
       formCode: 'FA',
       seller: { name: 'Sprzedawca Testowy sp. z o.o.', nip: '1234567890' },
       buyer: { name: 'Wall Decor sp. z o.o.', nip: '9876543210' },
@@ -67,5 +74,27 @@ describe('parseKsefInvoiceXmlPreview', () => {
         },
       ],
     })
+  })
+
+  it('skips descriptive payment term entries and uses the first explicit payment deadline', () => {
+    const parsed = parseKsefInvoiceXmlPreview(`<?xml version="1.0" encoding="UTF-8"?>
+<Faktura xmlns="http://crd.gov.pl/wzor/2025/06/25/13775/">
+  <Fa>
+    <Platnosc>
+      <TerminPlatnosci>
+        <TerminOpis>
+          <Ilosc>14</Ilosc>
+          <Jednostka>dni</Jednostka>
+          <ZdarzeniePoczatkowe>od daty wystawienia</ZdarzeniePoczatkowe>
+        </TerminOpis>
+      </TerminPlatnosci>
+      <TerminPlatnosci>
+        <Termin>2026-07-21</Termin>
+      </TerminPlatnosci>
+    </Platnosc>
+  </Fa>
+</Faktura>`)
+
+    expect(parsed.paymentDueDate).toBe('2026-07-21')
   })
 })
