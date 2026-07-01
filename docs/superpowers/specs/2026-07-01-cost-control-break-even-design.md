@@ -108,7 +108,7 @@ Reports should use PLN reporting amounts only. If KSeF imports an invoice in ano
 
 KSeF imports must be idempotent by source and external KSeF identifier. Duplicate imports update the existing invoice record rather than creating another cost event.
 
-Correcting invoices should be stored as separate cost events linked to the original invoice when KSeF provides enough reference data. A negative correction reduces cost; a positive correction increases cost. If the original invoice is already classified, the correction should inherit tags and allocation by default, but remain visible as a correction event with its own audit trail. If the app cannot match the correction to an original invoice confidently, the correction imports as `needs_decision`.
+Correcting invoices should be stored as separate cost events linked to the original invoice when KSeF provides enough reference data. A negative correction reduces cost; a positive correction increases cost. If the original invoice is already classified, the correction should inherit tags and allocation by default, but remain visible as a correction event with its own audit trail. If the original invoice was manually split into parts, the correction imports as `needs_decision` with suggested parts based on the original split proportions; the user must confirm or adjust the split before approval. If the app cannot match the correction to an original invoice confidently, the correction imports as `needs_decision`.
 
 Cancelled KSeF documents should not be deleted. They should be marked `cancelled`, excluded from normal reporting, and shown in filters/audit so the user can see why they disappeared from totals.
 
@@ -213,6 +213,8 @@ V1 should support two contribution-margin modes per salon:
 - Historical: calculated from the last three fully closed months using revenue, approved COGS, and approved variable costs. One-off costs are excluded.
 - Manual override: ADMIN enters a contribution margin percentage with an effective date and note.
 
+A month is fully closed only when the finance month-end operations run for that year/month is closed. Calendar month-end alone is not enough. Until the operations close flow is wired into finance reporting, ADMIN can mark a finance period as closed manually, and that manual close event must be auditable.
+
 The default mode should be historical. If there are not enough closed months to compute a useful margin, the report should fall back to the manual override. If neither exists, break-even should show fixed costs and revenue but not calculate a break-even turnover; the UI should show `missing contribution margin` rather than inventing a number.
 
 Contribution-margin settings are ADMIN-managed. Managers can view the resulting break-even numbers they are allowed to see, but cannot change assumptions.
@@ -233,7 +235,7 @@ Core filters:
 - Source: KSeF or manual.
 - Tags: multi-select by tag group.
 - Allocation: Jagiellońska, Puławska, GLOBAL, shared, revenue-based, manual, fallback used.
-- Rule source: auto-classified, manually edited, no rule.
+- Rule source: auto-classified, manually edited, no rule, rule conflict.
 
 Fast use cases:
 
@@ -307,7 +309,7 @@ Access must be enforced in API routes, not only hidden in UI.
 V1 role policy:
 
 - ADMIN: full access to KSeF inbox, cost events, supplier rules, reporting rules, payment status, manual cost events, payroll/confidential events, contribution-margin settings, and audit history.
-- MANAGER: read access to approved non-confidential cost events and break-even views. Can view operational KSeF classification queues only for non-confidential data if the existing finance permission model allows it. Cannot edit payment status, supplier rules, reporting rules, contribution-margin assumptions, payroll/confidential events, or audit history.
+- MANAGER: read access to approved non-confidential cost events and break-even views. No access to KSeF inbox, unpaid invoice lists, payment status, supplier rules, reporting rules, contribution-margin assumptions, payroll/confidential events, or audit history in v1.
 - EMPLOYEE: no access to KSeF inbox, supplier rules, payment status, or full cost control. A future simplified own-salon view may be added, excluding payroll, liabilities, and confidential costs.
 
 Manual cost events tagged payroll or confidential are ADMIN-only. Manager-visible reports must exclude those line items or show only already-approved aggregate figures that do not reveal payroll details.
@@ -367,8 +369,10 @@ Unit tests should cover:
 - Payment aging boundary rules, including due today.
 - Foreign-currency approval blocking.
 - Correction invoice linking and negative-value reporting.
+- Correction handling for invoices that were manually split into parts.
 - Supplier rule conflict resolution.
 - GLOBAL allocation exclusion from salon break-even.
+- Closed-month eligibility for historical contribution margin.
 - Filtering logic.
 
 Integration tests should cover:
@@ -380,12 +384,13 @@ Integration tests should cover:
 - Payment aging buckets based on due date.
 - Importing a correction document and preserving link/audit behavior.
 - Showing unclassified warning totals on reports.
-- Enforcing ADMIN-only access for payroll/confidential cost events and financial settings.
+- Enforcing ADMIN-only access for KSeF inbox, unpaid invoice lists, payroll/confidential cost events, and financial settings.
 
 UI tests should cover:
 
 - Filtering by supplier name and NIP.
 - Filtering unpaid invoices.
+- Filtering rule conflicts.
 - Editing classification.
 - Splitting an invoice.
 - Bottom summary totals in KSeF.
