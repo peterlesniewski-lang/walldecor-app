@@ -29,9 +29,8 @@ export default async function AreaProfitabilityPage({ searchParams }: PageProps)
       where: { slug: 'area' },
       include: {
         tags: {
-          where: { active: true },
           orderBy: { name: 'asc' },
-          select: { id: true, name: true, slug: true },
+          select: { id: true, name: true, slug: true, active: true },
         },
       },
     }),
@@ -68,11 +67,11 @@ export default async function AreaProfitabilityPage({ searchParams }: PageProps)
   ])
 
   const sortedAreaGroups = areaGroup
-    ? sortCostTagGroupsForDisplay([areaGroup]) as Array<{ tags: Array<{ id: string; slug: string; name: string }> }>
+    ? sortCostTagGroupsForDisplay([areaGroup]) as Array<{ tags: Array<{ id: string; slug: string; name: string; active: boolean }> }>
     : []
   const areaTags = sortedAreaGroups
     .flatMap((group) => group.tags)
-    .map((tag) => ({ id: tag.id, slug: tag.slug, name: tag.name }))
+    .map((tag) => ({ id: tag.id, slug: tag.slug, name: tag.name, active: tag.active }))
   const report = buildAreaProfitabilityReport({
     year,
     costCenterId: selectedCostCenterId,

@@ -1,3 +1,5 @@
+import slugify from 'slugify'
+
 export const DEFAULT_COST_TAG_GROUPS = [
   {
     group: { slug: 'behavior', name: 'Charakter kosztu', order: 10 },
@@ -65,6 +67,10 @@ export function applyDefaultCostTagLabels(slug: string) {
   return tagBySlug.get(slug)?.name ?? slug
 }
 
+function costTagDisplayName(slug: string, fallback: string) {
+  return tagBySlug.get(slug)?.name ?? fallback
+}
+
 export function applyDefaultCostTagGroupLabel(slug: string, fallback: string) {
   return groupBySlug.get(slug)?.name ?? fallback
 }
@@ -86,7 +92,7 @@ export function sortCostTagGroupsForDisplay<
       ...group,
       name: applyDefaultCostTagGroupLabel(group.slug, group.name),
       tags: [...group.tags]
-        .map((tag) => ({ ...tag, name: applyDefaultCostTagLabels(tag.slug) }))
+        .map((tag) => ({ ...tag, name: costTagDisplayName(tag.slug, tag.name) }))
         .sort((a, b) => defaultCostTagOrder(a.slug) - defaultCostTagOrder(b.slug) || a.name.localeCompare(b.name, 'pl')),
     }))
     .sort((a, b) => defaultCostTagGroupOrder(a.slug) - defaultCostTagGroupOrder(b.slug) || a.name.localeCompare(b.name, 'pl'))
@@ -97,4 +103,14 @@ export function defaultCostTagSeedRows() {
     group: group.group,
     tags: group.tags,
   }))
+}
+
+export function buildUniqueAreaTagSlug(name: string, existingSlugs: string[]) {
+  const existing = new Set(existingSlugs)
+  const base = slugify(name.trim(), { lower: true, strict: true, locale: 'pl' }) || 'obszar'
+  if (!existing.has(base)) return base
+
+  let suffix = 2
+  while (existing.has(`${base}-${suffix}`)) suffix += 1
+  return `${base}-${suffix}`
 }

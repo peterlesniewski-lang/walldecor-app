@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useRouter } from 'next/navigation'
 import { useMemo, useState, useTransition } from 'react'
-import { Save } from 'lucide-react'
+import { Plus, Save } from 'lucide-react'
 import type { AreaProfitabilityReport } from '@/lib/finance/area-profitability'
 
 const MONTHS = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru']
@@ -12,6 +12,7 @@ interface AreaTagOption {
   id: string
   slug: string
   name: string
+  active: boolean
 }
 
 interface AreaRevenueEntry {
@@ -65,8 +66,12 @@ export function AreaProfitabilityView({
 }: AreaProfitabilityViewProps) {
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
+  const isAdmin = role === 'ADMIN'
   const canEdit = ['ADMIN', 'MANAGER'].includes(role) && selectedCostCenterId !== 'COMPANY'
   const [pendingKey, setPendingKey] = useState<string | null>(null)
+  const [newAreaName, setNewAreaName] = useState('')
+  const [managedAreas, setManagedAreas] = useState(areaTags)
+  const [areaSavingId, setAreaSavingId] = useState<string | null>(null)
   const [entries, setEntries] = useState(() => {
     const values: Record<string, string> = {}
     for (const entry of revenueEntries) {
@@ -99,6 +104,43 @@ export function AreaProfitabilityView({
     }
   }
 
+  async function addArea(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    const name = newAreaName.trim()
+    if (!name) return
+
+    setAreaSavingId('new')
+    const response = await fetch('/api/finance/area-tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ name }),
+    })
+    setAreaSavingId(null)
+    if (!response.ok) return
+
+    const data = await response.json() as { tag?: AreaTagOption }
+    if (data.tag) setManagedAreas((current) => [...current, data.tag!])
+    setNewAreaName('')
+    startTransition(() => router.refresh())
+  }
+
+  async function updateArea(area: AreaTagOption, data: Partial<Pick<AreaTagOption, 'name' | 'active'>>) {
+    setAreaSavingId(area.id)
+    const response = await fetch(`/api/finance/area-tags/${area.id}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    })
+    setAreaSavingId(null)
+    if (!response.ok) return
+
+    const result = await response.json() as { tag?: AreaTagOption }
+    if (result.tag) {
+      setManagedAreas((current) => current.map((item) => item.id === result.tag!.id ? result.tag! : item))
+    }
+    startTransition(() => router.refresh())
+  }
+
   return (
     <div className="space-y-5">
       <header className="flex flex-wrap items-start justify-between gap-4">
@@ -129,6 +171,71 @@ export function AreaProfitabilityView({
           </Link>
         ))}
       </nav>
+
+      {isAdmin && (
+        <section className="rounded-lg border border-[var(--wd-border)] bg-white">
+          <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--wd-border)] px-4 py-3">
+            <div>
+              <p className="data-label">Zarządzanie obszarami</p>
+              <p className="text-sm font-semibold" style={{ color: 'var(--wd-dark)' }}>Tagi osi Obszar</p>
+            </div>
+            <form onSubmit={addArea} className="flex min-w-[280px] items-center gap-2">
+              <input
+                className="min-w-0 flex-1 rounded border border-[var(--wd-border)] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#D7C8B5]"
+                placeholder="Nowy obszar"
+                value={newAreaName}
+                onChange={(event) => setNewAreaName(event.target.value)}
+                disabled={areaSavingId === 'new'}
+              />
+              <button
+                type="submit"
+                className="inline-flex items-center gap-2 rounded bg-[var(--wd-dark)] px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
+                disabled={areaSavingId === 'new' || !newAreaName.trim()}
+              >
+                <Plus size={15} />
+                Dodaj obszar
+              </button>
+            </form>
+          </div>
+          <div className="divide-y divide-[var(--wd-border)]">
+            {managedAreas.map((area) => (
+              <div key={area.id} className="grid gap-3 px-4 py-3 md:grid-cols-[1fr_92px_120px_120px] md:items-center">
+                <input
+                  className="rounded border border-[var(--wd-border)] px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-[#D7C8B5]"
+                  value={area.name}
+                  disabled={areaSavingId === area.id}
+                  onChange={(event) => {
+                    const name = event.target.value
+                    setManagedAreas((current) => current.map((item) => item.id === area.id ? { ...item, name } : item))
+                  }}
+                />
+                <button
+                  type="button"
+                  className="rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60"
+                  disabled={areaSavingId === area.id}
+                  onClick={() => {
+                    const name = managedAreas.find((item) => item.id === area.id)?.name.trim()
+                    if (name) void updateArea(area, { name })
+                  }}
+                >
+                  Zapisz
+                </button>
+                <span className={`rounded-full border px-2 py-1 text-center text-xs font-semibold ${area.active ? 'border-green-100 bg-green-50 text-green-700' : 'border-gray-200 bg-gray-50 text-gray-500'}`}>
+                  {area.active ? 'Aktywny' : 'Ukryty'}
+                </span>
+                <button
+                  type="button"
+                  className="rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60"
+                  disabled={areaSavingId === area.id}
+                  onClick={() => { void updateArea(area, { active: !area.active }) }}
+                >
+                  {area.active ? 'Ukryj' : 'Aktywuj'}
+                </button>
+              </div>
+            ))}
+          </div>
+        </section>
+      )}
 
       <section className="grid gap-3 md:grid-cols-4">
         <div className="rounded-lg border border-[var(--wd-border)] bg-white p-4">
@@ -208,7 +315,7 @@ export function AreaProfitabilityView({
                 </tr>
               </thead>
               <tbody className="divide-y divide-[var(--wd-border)]">
-                {areaTags.map((tag) => (
+                {areaTags.filter((tag) => tag.active).map((tag) => (
                   <tr key={tag.id}>
                     <td className="px-4 py-3 font-semibold">{tag.name}</td>
                     {MONTHS.map((_, index) => {

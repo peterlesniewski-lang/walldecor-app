@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_COST_TAG_GROUPS,
   applyDefaultCostTagLabels,
+  buildUniqueAreaTagSlug,
   sortCostTagGroupsForDisplay,
 } from '@/lib/finance/cost-tags'
 
@@ -59,6 +60,7 @@ describe('cost tag taxonomy', () => {
           { id: 'payroll', slug: 'payroll', name: 'payroll' },
           { id: 'goods', slug: 'goods', name: 'goods' },
           { id: 'contractors', slug: 'contractors', name: 'contractors' },
+          { id: 'custom-fabrics', slug: 'fabrics', name: 'Tkaniny' },
         ],
       },
       {
@@ -78,11 +80,18 @@ describe('cost tag taxonomy', () => {
       'Wykonawcy',
       'Zakup towarów i materiałów',
       'Wynagrodzenia',
+      'Tkaniny',
     ])
   })
 
   it('prepares seed rows from the same taxonomy used by the UI', () => {
     expect(applyDefaultCostTagLabels('strategic-supplier')).toBe('Stały dostawca')
     expect(applyDefaultCostTagLabels('unknown-custom-tag')).toBe('unknown-custom-tag')
+  })
+
+  it('builds stable unique slugs for user-managed area tags', () => {
+    expect(buildUniqueAreaTagSlug('Żaluzje i rolety', [])).toBe('zaluzje-i-rolety')
+    expect(buildUniqueAreaTagSlug('Tapety', ['tapety'])).toBe('tapety-2')
+    expect(buildUniqueAreaTagSlug('Tapety', ['tapety', 'tapety-2'])).toBe('tapety-3')
   })
 })
