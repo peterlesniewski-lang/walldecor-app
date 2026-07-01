@@ -53,15 +53,18 @@ model SubCategory {
 
 // Role: ADMIN | MANAGER | EMPLOYEE
 model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  name         String
-  role         String    @default("EMPLOYEE")
-  passwordHash String
-  isActive     Boolean   @default(true)
-  employeeId   String?   @unique
-  employee     Employee? @relation(fields: [employeeId], references: [id])
-  createdAt    DateTime  @default(now())
+  id                 String    @id @default(cuid())
+  username           String?   @unique
+  email              String    @unique
+  name               String
+  role               String    @default("EMPLOYEE")
+  passwordHash       String
+  mustChangePassword Boolean   @default(false)
+  passwordChangedAt  DateTime?
+  isActive           Boolean   @default(true)
+  employeeId         String?   @unique
+  employee           Employee? @relation(fields: [employeeId], references: [id])
+  createdAt          DateTime  @default(now())
 }
 
 // ─── Finance Models ───────────────────────────────────────────────────────────

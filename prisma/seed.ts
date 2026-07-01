@@ -27,6 +27,30 @@ function wikiSlug(text: string): string {
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
 }
 
+function normalizeSeedUsername(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ł/g, 'l')
+    .replace(/[^a-z0-9]/g, '')
+}
+
+async function uniqueSeedUsername(base: string, excludeUserId?: string): Promise<string> {
+  const fallback = 'user'
+  const normalized = normalizeSeedUsername(base) || fallback
+  let candidate = normalized
+  let suffix = 2
+
+  while (true) {
+    const existing = await prisma.user.findUnique({ where: { username: candidate } })
+    if (!existing || existing.id === excludeUserId) return candidate
+    candidate = `${normalized}${suffix}`
+    suffix++
+  }
+}
+
 function parseKnowledgeBase(): Array<{ title: string; slug: string; content: string; category: string }> {
   const mdPath = path.join(__dirname, '../ceo-module/KNOWLEDGE_BUSINESS.md')
   if (!fs.existsSync(mdPath)) {
@@ -405,24 +429,54 @@ async function main() {
   }
   console.log(`Account categories seeded (9 categories, ${totalSubCategories} subcategories)`)
 
-  // 3. Admin User
+  // 4. Admin User
   const adminEmail = process.env.ADMIN_EMAIL ?? 'admin@walldecor.pl'
+  const existingAdmin = await prisma.user.findUnique({
+    where: { email: adminEmail },
+    select: { id: true },
+  })
+  const adminUsername = await uniqueSeedUsername(process.env.ADMIN_USERNAME ?? 'admin', existingAdmin?.id)
   const adminPassword = process.env.ADMIN_PASSWORD ?? 'ChangeMe123!'
   const passwordHash = bcrypt.hashSync(adminPassword, 12)
 
   await prisma.user.upsert({
     where: { email: adminEmail },
-    update: { passwordHash },
+    update: {
+      username: adminUsername,
+      passwordHash,
+      mustChangePassword: false,
+      passwordChangedAt: new Date(),
+    },
     create: {
+      username: adminUsername,
       email: adminEmail,
       name: 'Administrator WallDecor',
       role: 'ADMIN',
       passwordHash,
+      mustChangePassword: false,
+      passwordChangedAt: new Date(),
     },
   })
-  console.log(`Admin user seeded (${adminEmail})`)
+  console.log(`Admin user seeded (${adminUsername})`)
 
-  // 4. Cash accounts
+  const usersWithoutUsername = await prisma.user.findMany({
+    where: { username: null },
+    select: { id: true, email: true, name: true },
+  })
+
+  for (const user of usersWithoutUsername) {
+    const localPart = user.email.split('@')[0] ?? user.name
+    const username = await uniqueSeedUsername(localPart || user.name, user.id)
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { username },
+    })
+  }
+  if (usersWithoutUsername.length > 0) {
+    console.log(`Usernames backfilled (${usersWithoutUsername.length})`)
+  }
+
+  // 5. Cash accounts
   const cashAccountCount = await prisma.cashAccount.count()
   if (cashAccountCount === 0) {
     await prisma.cashAccount.createMany({
@@ -436,7 +490,7 @@ async function main() {
     })
   }
 
-  // 5. App settings (cash thresholds)
+  // 6. App settings (cash thresholds)
   const settingKeys = ['cashThresholdVeryGood', 'cashThresholdGood', 'cashThresholdBad']
   for (const key of settingKeys) {
     const existing = await prisma.appSetting.findUnique({ where: { key } })
@@ -450,7 +504,7 @@ async function main() {
 
   // ─── HR Seed ──────────────────────────────────────────────────────────────
 
-  // 6. Divisions
+  // 7. Divisions
   const divJAG = await prisma.division.upsert({
     where: { id: 'div-jag' },
     update: { name: 'Oddział Jagiellońska', costCenterId: 'JAG' },
@@ -463,7 +517,7 @@ async function main() {
   })
   console.log('Divisions seeded (2)')
 
-  // 7. Departments (2 per division)
+  // 8. Departments (2 per division)
   await prisma.department.upsert({
     where: { id: 'dept-jag-sales' },
     update: { name: 'Sprzedaż' },
@@ -486,7 +540,7 @@ async function main() {
   })
   console.log('Departments seeded (4)')
 
-  // 8. Positions
+  // 9. Positions
   const positionNames = ['Sprzedawca', 'Kierownik salonu', 'Konsultant', 'CEO', 'Office Manager']
   for (const name of positionNames) {
     const existing = await prisma.position.findFirst({ where: { name } })

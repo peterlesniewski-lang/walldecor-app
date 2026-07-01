@@ -226,11 +226,11 @@ export function BudgetGrid({
   }
 
   const handleYearChange = (newYear: number) => {
-    router.push(`/finance?year=${newYear}&costCenterId=${costCenterId}`)
+    router.push(`/finance/assumptions?year=${newYear}&costCenterId=${costCenterId}`)
   }
 
   const handleCostCenterChange = (newCostCenter: string) => {
-    router.push(`/finance?year=${year}&costCenterId=${newCostCenter}`)
+    router.push(`/finance/assumptions?year=${year}&costCenterId=${newCostCenter}`)
   }
 
   const sensors = useSensors(
@@ -269,7 +269,7 @@ export function BudgetGrid({
     const prevY = month === 1 ? year - 1 : year
     const prevLabel = MONTH_NAMES[prevM - 1]
 
-    if (!window.confirm(`Skopiować budżet z ${prevLabel} ${prevY} do miesiąca ${month}/${year} dla ${costCenterId}?`)) return
+    if (!window.confirm(`Skopiować założenia z ${prevLabel} ${prevY} do miesiąca ${month}/${year} dla ${costCenterId}?`)) return
 
     setCopyingMonth(true)
     try {
@@ -291,7 +291,7 @@ export function BudgetGrid({
       {/* Header */}
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
-          <h1 className="text-2xl font-semibold" style={{ color: 'var(--wd-dark)' }}>Budżet</h1>
+          <h1 className="text-2xl font-semibold" style={{ color: 'var(--wd-dark)' }}>Założenia kosztowe</h1>
           <div className="flex items-center gap-1">
             <button onClick={() => handleYearChange(year - 1)} className="p-1 hover:bg-gray-100 rounded">‹</button>
             <span className="font-medium px-2">{year}</span>
@@ -301,7 +301,7 @@ export function BudgetGrid({
             <button
               onClick={handleCopyPrevMonth}
               disabled={copyingMonth}
-              title="Skopiuj budżet z poprzedniego miesiąca"
+              title="Skopiuj założenia z poprzedniego miesiąca"
               className="flex items-center gap-1 px-2.5 py-1 rounded text-xs font-medium border border-gray-200 text-gray-500 hover:border-gray-300 hover:text-gray-700 disabled:opacity-50 transition-colors"
             >
               {copyingMonth ? (
@@ -571,13 +571,13 @@ export function BudgetGrid({
 
               return (
                 <>
-                  {/* Wiersz: Zysk */}
+                  {/* Wiersz: Wynik przy założeniach */}
                   <tr className="border-t-2" style={{ borderColor: 'var(--wd-border)' }}>
                     <td
                       className="px-3 py-2 text-sm font-semibold"
                       style={{ color: 'var(--wd-dark)' }}
                     >
-                      Zysk
+                      Wynik wg założeń
                     </td>
                     {profitByMonth.map((p, i) => (
                       <td
@@ -601,13 +601,13 @@ export function BudgetGrid({
                     </td>
                   </tr>
 
-                  {/* Wiersz: Zysk narastająco */}
+                  {/* Wiersz: Wynik narastająco przy założeniach */}
                   <tr style={{ background: 'var(--wd-off-white, #f9f7f5)' }}>
                     <td
                       className="px-3 py-2 text-sm font-semibold"
                       style={{ color: 'var(--wd-dark)', opacity: 0.75 }}
                     >
-                      Zysk narastająco
+                      Wynik wg założeń narastająco
                     </td>
                     {cumulativeProfit.map((cp, i) => (
                       <td

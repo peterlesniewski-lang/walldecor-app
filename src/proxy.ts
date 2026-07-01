@@ -28,6 +28,23 @@ export default withAuth(
     const { pathname } = req.nextUrl
     const token = req.nextauth.token
 
+    if (
+      token?.mustChangePassword &&
+      pathname !== '/change-password' &&
+      pathname !== '/api/account/change-password'
+    ) {
+      if (pathname.startsWith('/api/')) {
+        return NextResponse.json(
+          { error: 'Password change required' },
+          { status: 403 }
+        )
+      }
+
+      const url = req.nextUrl.clone()
+      url.pathname = '/change-password'
+      return NextResponse.redirect(url)
+    }
+
     // All /hr/* routes require authentication (handled by withAuth authorizeCallback below).
     // Here we only enforce role-level restrictions on top.
     const requiredRoles = getRequiredRoles(pathname)
@@ -56,11 +73,6 @@ export default withAuth(
 
 export const config = {
   matcher: [
-    '/dashboard/:path*',
-    '/finance/:path*',
-    '/hr/:path*',
-    '/settings/:path*',
-    // Protect all /api/* except /auth/* and /health
-    '/api/((?!auth|health).+)',
+    '/((?!login|change-password|api/auth|api/health|_next/static|_next/image|favicon.ico|.*\\..*).*)',
   ],
 }

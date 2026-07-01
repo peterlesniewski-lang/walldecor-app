@@ -16,6 +16,10 @@ export default async function DashboardLayout({
     redirect('/login')
   }
 
+  if (session.user.mustChangePassword) {
+    redirect('/change-password')
+  }
+
   const canUseAi = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
 
   return (

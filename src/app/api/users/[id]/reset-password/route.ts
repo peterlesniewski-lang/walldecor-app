@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
+import { generateTemporaryPassword } from '@/lib/accounts/security'
 
 export async function POST(
   _req: NextRequest,
@@ -17,12 +18,16 @@ export async function POST(
   const existing = await prisma.user.findUnique({ where: { id } })
   if (!existing) return NextResponse.json({ error: 'User not found' }, { status: 404 })
 
-  const temporaryPassword = Math.random().toString(36).slice(-8)
+  const temporaryPassword = generateTemporaryPassword()
   const passwordHash = await bcrypt.hash(temporaryPassword, 12)
 
   await prisma.user.update({
     where: { id },
-    data: { passwordHash },
+    data: {
+      passwordHash,
+      mustChangePassword: true,
+      passwordChangedAt: null,
+    },
   })
 
   return NextResponse.json({ temporaryPassword })

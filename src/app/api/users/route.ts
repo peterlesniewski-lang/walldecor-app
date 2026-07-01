@@ -4,6 +4,28 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
+import { generateTemporaryPassword, normalizeUsername } from '@/lib/accounts/security'
+
+const userSelect = {
+  id: true,
+  username: true,
+  email: true,
+  name: true,
+  role: true,
+  isActive: true,
+  mustChangePassword: true,
+  passwordChangedAt: true,
+  employeeId: true,
+  createdAt: true,
+  employee: {
+    select: {
+      firstName: true,
+      lastName: true,
+      position: true,
+      divisionId: true,
+    },
+  },
+}
 
 export async function GET() {
   const session = await getServerSession(authOptions)
@@ -11,16 +33,7 @@ export async function GET() {
   if (session.user.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const users = await prisma.user.findMany({
-    include: {
-      employee: {
-        select: {
-          firstName: true,
-          lastName: true,
-          position: true,
-          divisionId: true,
-        },
-      },
-    },
+    select: userSelect,
     orderBy: { name: 'asc' },
   })
 
@@ -28,6 +41,7 @@ export async function GET() {
 }
 
 const createUserSchema = z.object({
+  username: z.string().min(2),
   email: z.string().email(),
   name: z.string().min(1),
   role: z.enum(['ADMIN', 'MANAGER', 'EMPLOYEE']).default('EMPLOYEE'),
@@ -45,14 +59,21 @@ export async function POST(req: NextRequest) {
   }
 
   const { email, name, role, employeeId } = parsed.data
+  const username = normalizeUsername(parsed.data.username)
+  if (username.length < 2) {
+    return NextResponse.json({ error: 'Login musi mieć co najmniej 2 znaki.' }, { status: 400 })
+  }
 
-  // Check email uniqueness
+  const existingUsername = await prisma.user.findUnique({ where: { username } })
+  if (existingUsername) {
+    return NextResponse.json({ error: 'Login już istnieje w systemie.' }, { status: 409 })
+  }
+
   const existing = await prisma.user.findUnique({ where: { email } })
   if (existing) {
     return NextResponse.json({ error: 'Email już istnieje w systemie.' }, { status: 409 })
   }
 
-  // Check employeeId uniqueness if provided
   if (employeeId) {
     const empUser = await prisma.user.findUnique({ where: { employeeId } })
     if (empUser) {
@@ -60,26 +81,22 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  const temporaryPassword = Math.random().toString(36).slice(-8)
+  const temporaryPassword = generateTemporaryPassword()
   const passwordHash = await bcrypt.hash(temporaryPassword, 12)
 
   const user = await prisma.user.create({
     data: {
+      username,
       email,
       name,
       role,
       passwordHash,
+      mustChangePassword: true,
+      passwordChangedAt: null,
       isActive: true,
       ...(employeeId ? { employeeId } : {}),
     },
-    select: {
-      id: true,
-      email: true,
-      name: true,
-      role: true,
-      isActive: true,
-      createdAt: true,
-    },
+    select: userSelect,
   })
 
   return NextResponse.json({ ...user, temporaryPassword }, { status: 201 })
