@@ -11,6 +11,18 @@ const subCategories = [
   { id: 'sub-goods', name: 'Zakup towarów handlowych', category: { name: 'Cost of Goods/COGS' } },
 ]
 
+const costTagGroups = [
+  {
+    id: 'group-role',
+    name: 'Rola',
+    slug: 'role',
+    tags: [
+      { id: 'tag-goods', name: 'goods', slug: 'goods' },
+      { id: 'tag-contractors', name: 'contractors', slug: 'contractors' },
+    ],
+  },
+]
+
 const invoices = [
   {
     id: 'invoice-1',
@@ -159,5 +171,29 @@ describe('KsefInboxView', () => {
     expect(screen.getAllByText('Po terminie').length).toBeGreaterThan(0)
     expect(screen.getAllByText('0-7 dni').length).toBeGreaterThan(0)
     expect(screen.getByText('4321,99 PLN')).toBeTruthy()
+  })
+
+  it('opens invoice parts editor from an invoice row', async () => {
+    const user = userEvent.setup()
+    render(
+      <KsefInboxView
+        initialInvoices={invoices}
+        initialTotal={1}
+        initialPage={1}
+        initialPageSize={50}
+        initialTotalPages={1}
+        initialGrossAmountTotal={123}
+        initialCounts={{ NEW: 1, MAPPED: 0, APPROVED: 0, IGNORED: 0 }}
+        initialRules={[]}
+        costCenters={costCenters}
+        subCategories={subCategories}
+        costTagGroups={costTagGroups}
+      />
+    )
+
+    await user.click(screen.getByTitle('Rozbij fakturę'))
+
+    expect(screen.getByText('Części faktury')).toBeTruthy()
+    expect(screen.getByText('Suma części')).toBeTruthy()
   })
 })

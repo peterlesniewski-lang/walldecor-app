@@ -15,7 +15,7 @@ export default async function KsefInboxPage() {
   if (!session) redirect('/login')
   if (session.user.role !== 'ADMIN') redirect('/finance')
 
-  const [invoices, total, amountRows, statusCounts, rules, costCenters, subCategories] = await Promise.all([
+  const [invoices, total, amountRows, statusCounts, rules, costCenters, subCategories, costTagGroups] = await Promise.all([
     prisma.ksefInvoice.findMany({
       include: {
         costCenter: true,
@@ -49,6 +49,16 @@ export default async function KsefInboxPage() {
     prisma.subCategory.findMany({
       include: { category: true },
       orderBy: [{ category: { order: 'asc' } }, { order: 'asc' }],
+    }),
+    prisma.costTagGroup.findMany({
+      orderBy: [{ order: 'asc' }, { name: 'asc' }],
+      include: {
+        tags: {
+          where: { active: true },
+          orderBy: { name: 'asc' },
+          select: { id: true, name: true, slug: true },
+        },
+      },
     }),
   ])
   const counts: Record<KsefStatus, number> = { NEW: 0, MAPPED: 0, APPROVED: 0, IGNORED: 0 }
@@ -99,6 +109,12 @@ export default async function KsefInboxPage() {
       }))}
       costCenters={costCenters}
       subCategories={subCategories}
+      costTagGroups={costTagGroups.map((group) => ({
+        id: group.id,
+        name: group.name,
+        slug: group.slug,
+        tags: group.tags,
+      }))}
     />
   )
 }

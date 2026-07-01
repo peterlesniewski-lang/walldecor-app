@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { CheckCircle2, ChevronLeft, ChevronRight, CloudDownload, Eye, FilePlus2, RefreshCcw, Save, Search, Settings2, X } from 'lucide-react'
 import { parseKsefInvoiceXmlPreview, type KsefInvoiceXmlPreview } from '@/lib/finance/ksef-invoice-preview'
+import { KsefInvoicePartsEditor } from '@/components/shared/ksef-invoice-parts-editor'
 import { KsefPaymentSummary } from '@/components/shared/ksef-payment-summary'
 
 export type KsefStatus = 'NEW' | 'MAPPED' | 'APPROVED' | 'IGNORED'
@@ -21,6 +22,13 @@ interface SubCategoryOption {
   id: string
   name: string
   category: { name: string }
+}
+
+interface CostTagGroupOption {
+  id: string
+  name: string
+  slug: string
+  tags: Array<{ id: string; name: string; slug: string }>
 }
 
 interface KsefInvoiceRow {
@@ -108,6 +116,7 @@ interface KsefInboxViewProps {
   initialRules: KsefSupplierRuleRow[]
   costCenters: CostCenterOption[]
   subCategories: SubCategoryOption[]
+  costTagGroups?: CostTagGroupOption[]
 }
 
 const STATUS_LABELS: Record<KsefStatus, string> = {
@@ -210,6 +219,7 @@ export function KsefInboxView({
   initialRules,
   costCenters,
   subCategories,
+  costTagGroups = [],
 }: KsefInboxViewProps) {
   const [invoices, setInvoices] = useState(initialInvoices)
   const [rules, setRules] = useState(initialRules)
@@ -228,6 +238,7 @@ export function KsefInboxView({
   const [error, setError] = useState<string | null>(null)
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
   const [contentPreview, setContentPreview] = useState<KsefInvoiceContentPreview | null>(null)
+  const [partsEditorInvoice, setPartsEditorInvoice] = useState<KsefInvoiceRow | null>(null)
   const [conversionForm, setConversionForm] = useState<{
     invoiceId: string
     reportingGrossAmount: string
@@ -926,6 +937,9 @@ export function KsefInboxView({
                         <button type="button" disabled={saving === `content-${invoice.id}`} onClick={() => loadInvoiceContent(invoice)} className="rounded border border-[var(--wd-border)] p-2 hover:bg-gray-50 disabled:opacity-40" title="Podgląd faktury">
                           <Eye size={15} />
                         </button>
+                        <button type="button" disabled={approved} onClick={() => setPartsEditorInvoice(invoice)} className="rounded border border-[var(--wd-border)] p-2 hover:bg-gray-50 disabled:opacity-40" title="Rozbij fakturę">
+                          <Settings2 size={15} />
+                        </button>
                         <button type="button" disabled={approved || saving === `approve-${invoice.id}`} onClick={() => approveInvoice(invoice.id)} className="rounded bg-green-700 p-2 text-white disabled:opacity-40" title="Zatwierdź do kosztów">
                           <CheckCircle2 size={15} />
                         </button>
@@ -1111,6 +1125,21 @@ export function KsefInboxView({
             </div>
           </div>
         </div>
+      )}
+
+      {partsEditorInvoice && (
+        <KsefInvoicePartsEditor
+          invoice={partsEditorInvoice}
+          costCenters={costCenters}
+          tagGroups={costTagGroups}
+          formatMoney={money}
+          onClose={() => setPartsEditorInvoice(null)}
+          onSaved={(invoice) => {
+            if (invoice) replaceInvoice(invoice as KsefInvoiceRow)
+            setPartsEditorInvoice(null)
+            void refreshInvoices()
+          }}
+        />
       )}
 
       <section className="rounded-lg border border-[var(--wd-border)] bg-white p-4">
