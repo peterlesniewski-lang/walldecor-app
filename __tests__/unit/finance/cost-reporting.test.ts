@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildCostWarningTotal, filterConfidentialCostEvents, sumAllocatedCostsByCenter, summarizeSupplierSpend } from '@/lib/finance/cost-reporting'
+import { buildBreakEvenReport, buildCostWarningTotal, filterConfidentialCostEvents, sumAllocatedCostsByCenter, summarizeSupplierSpend } from '@/lib/finance/cost-reporting'
 
 describe('summarizeSupplierSpend', () => {
   it('groups approved cost events by supplier NIP when available', () => {
@@ -50,5 +50,32 @@ describe('sumAllocatedCostsByCenter', () => {
         ],
       },
     ])).toEqual({ JAG: 600, PUL: 400, GLOBAL: 0 })
+  })
+})
+
+describe('buildBreakEvenReport', () => {
+  it('shows missing contribution margin instead of inventing break-even turnover', () => {
+    const report = buildBreakEvenReport({
+      revenue: [{ costCenterId: 'JAG', amount: 10000 }],
+      allocatedCosts: [{ costCenterId: 'JAG', fixedCosts: 5000, variableCosts: 1000, cogs: 2000 }],
+      contributionMargins: {},
+      warningAmount: 0,
+    })
+
+    expect(report.byCostCenter.JAG.breakEvenTurnover).toBeNull()
+    expect(report.byCostCenter.JAG.warning).toBe('missing contribution margin')
+  })
+
+  it('calculates break-even turnover from fixed costs and contribution margin', () => {
+    const report = buildBreakEvenReport({
+      revenue: [{ costCenterId: 'JAG', amount: 15000 }],
+      allocatedCosts: [{ costCenterId: 'JAG', fixedCosts: 6000, variableCosts: 1000, cogs: 2000 }],
+      contributionMargins: { JAG: 0.5 },
+      warningAmount: 100,
+    })
+
+    expect(report.byCostCenter.JAG.breakEvenTurnover).toBe(12000)
+    expect(report.byCostCenter.JAG.delta).toBe(3000)
+    expect(report.warningAmount).toBe(100)
   })
 })

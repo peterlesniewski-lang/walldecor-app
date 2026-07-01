@@ -72,3 +72,55 @@ export function sumAllocatedCostsByCenter(events: AllocatedCostEventInput[]) {
 
   return totals
 }
+
+export interface BreakEvenReportInput {
+  revenue: Array<{ costCenterId: string; amount: number }>
+  allocatedCosts: Array<{ costCenterId: string; fixedCosts: number; variableCosts: number; cogs: number }>
+  contributionMargins: Record<string, number>
+  warningAmount: number
+}
+
+export function buildBreakEvenReport(input: BreakEvenReportInput) {
+  const centers = ['JAG', 'PUL', 'GLOBAL'] as const
+  const byCostCenter = Object.fromEntries(centers.map((center) => {
+    const revenue = roundMoney(input.revenue.filter((row) => row.costCenterId === center).reduce((sum, row) => sum + row.amount, 0))
+    const costs = input.allocatedCosts
+      .filter((row) => row.costCenterId === center)
+      .reduce((sum, row) => ({
+        fixedCosts: roundMoney(sum.fixedCosts + row.fixedCosts),
+        variableCosts: roundMoney(sum.variableCosts + row.variableCosts),
+        cogs: roundMoney(sum.cogs + row.cogs),
+      }), { fixedCosts: 0, variableCosts: 0, cogs: 0 })
+    const margin = input.contributionMargins[center]
+    const breakEvenTurnover = margin ? roundMoney(costs.fixedCosts / margin) : null
+
+    return [center, {
+      revenue,
+      ...costs,
+      contributionMargin: margin ?? null,
+      breakEvenTurnover,
+      delta: breakEvenTurnover == null ? null : roundMoney(revenue - breakEvenTurnover),
+      warning: margin ? null : 'missing contribution margin',
+    }]
+  }))
+
+  return {
+    byCostCenter,
+    warningAmount: input.warningAmount,
+  }
+}
+
+export function selectClosedMonthsForHistoricalMargin(
+  periodCloses: Array<{ year: number; month: number }>,
+  currentYear: number,
+  currentMonth: number
+) {
+  return periodCloses
+    .filter((period) => period.year < currentYear || (period.year === currentYear && period.month < currentMonth))
+    .sort((a, b) => (b.year - a.year) || (b.month - a.month))
+    .slice(0, 3)
+}
+
+export function resolveContributionMargin(input: { historical: number | null; manualOverride?: number | null }) {
+  return input.manualOverride ?? input.historical
+}
