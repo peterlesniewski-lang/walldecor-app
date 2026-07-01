@@ -1,9 +1,9 @@
 'use client'
 
 import { useState } from 'react'
-import { CheckCircle2, ChevronLeft, ChevronRight, CloudDownload, Eye, FilePlus2, RefreshCcw, Save, Search, Settings2, X } from 'lucide-react'
+import { CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, CloudDownload, Eye, FilePlus2, RefreshCcw, Save, Search, Settings2, X } from 'lucide-react'
 import { parseKsefInvoiceXmlPreview, type KsefInvoiceXmlPreview } from '@/lib/finance/ksef-invoice-preview'
-import { selectedOptionValues } from '@/lib/forms/select-options'
+import { TagChips } from '@/components/shared/tag-chips'
 import { KsefInvoicePartsEditor } from '@/components/shared/ksef-invoice-parts-editor'
 import { KsefPaymentSummary } from '@/components/shared/ksef-payment-summary'
 
@@ -629,6 +629,50 @@ export function KsefInboxView({
     }
   }
 
+  async function backfillDueDates() {
+    setError(null)
+    setSyncMessage(null)
+    setSaving('backfill')
+    try {
+      let before: string | null = null
+      let totalUpdated = 0
+      let totalPaid = 0
+      let totalScanned = 0
+      let totalFailed = 0
+
+      // Walk the whole backlog of due-date-less KSeF invoices in throttled,
+      // keyset-paginated passes. The endpoint caps each batch; we loop until it
+      // reports done. The pass cap is a safety net against an unbounded loop.
+      for (let pass = 0; pass < 500; pass++) {
+        const result = await readJson(
+          await fetch('/api/finance/ksef/invoices/backfill-details', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(before ? { before } : {}),
+          })
+        )
+        totalUpdated += result.updated ?? 0
+        totalPaid += result.markedPaid ?? 0
+        totalScanned += result.scanned ?? 0
+        totalFailed += result.failed ?? 0
+        setSyncMessage(
+          `Uzupełnianie terminów… sprawdzono ${totalScanned}, terminy ${totalUpdated}, opłacone ${totalPaid}${totalFailed ? `, błędy ${totalFailed}` : ''}.`
+        )
+        if (result.done || !result.nextBefore) break
+        before = result.nextBefore
+      }
+
+      await refreshInvoices({ page: 1 })
+      setSyncMessage(
+        `Gotowe. Uzupełniono terminy dla ${totalUpdated} faktur, ${totalPaid} bez terminu oznaczono jako opłacone (sprawdzono ${totalScanned}${totalFailed ? `, nie udało się ${totalFailed}` : ''}).`
+      )
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nie udało się uzupełnić terminów płatności')
+    } finally {
+      setSaving(null)
+    }
+  }
+
   async function loadInvoiceContent(invoice: KsefInvoiceRow) {
     setError(null)
     setSyncMessage(null)
@@ -725,11 +769,21 @@ export function KsefInboxView({
           <button
             type="button"
             onClick={syncKsef}
-            disabled={saving === 'sync'}
+            disabled={saving === 'sync' || saving === 'backfill'}
             className="inline-flex w-full items-center justify-center gap-2 rounded bg-[var(--wd-dark)] px-3 py-2 text-sm font-semibold text-white disabled:opacity-60"
           >
             <CloudDownload size={16} />
             {saving === 'sync' ? 'Synchronizuję...' : 'Synchronizuj z KSeF'}
+          </button>
+          <button
+            type="button"
+            onClick={backfillDueDates}
+            disabled={saving === 'backfill' || saving === 'sync'}
+            className="inline-flex w-full items-center justify-center gap-2 rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-semibold disabled:opacity-60"
+            title="Ponownie pobiera XML faktur bez terminu. Uzupełnia termin, jeśli KSeF go zawiera; jeśli faktura nie ma terminu (zwykle już opłacona) — oznacza ją jako opłaconą."
+          >
+            <CalendarClock size={16} />
+            {saving === 'backfill' ? 'Uzupełniam terminy...' : 'Uzupełnij terminy płatności'}
           </button>
         </div>
       </header>
@@ -778,26 +832,20 @@ export function KsefInboxView({
             <select className="rounded border border-[var(--wd-border)] px-3 py-2 text-sm" value={ruleForm.costCenterId} onChange={(e) => setRuleForm({ ...ruleForm, costCenterId: e.target.value })}>
               {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
             </select>
-            <select
-              multiple
-              disabled={!hasCostTags}
-              className="h-24 rounded border border-[var(--wd-border)] px-3 py-2 text-sm disabled:bg-gray-50"
-              value={ruleForm.tagIds}
-              onChange={(event) => {
-                const tagIds = selectedOptionValues(event.currentTarget)
-                setRuleForm({ ...ruleForm, tagIds })
-              }}
-            >
-              {!hasCostTags ? (
-                <option value="">Brak tagów kosztowych</option>
-              ) : (
-                costTagGroups.map((group) => (
-                  <optgroup key={group.id} label={group.name}>
-                    {group.tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
-                  </optgroup>
-                ))
-              )}
-            </select>
+            {hasCostTags ? (
+              <div className="col-span-2 max-h-48 overflow-y-auto rounded border border-[var(--wd-border)] p-2">
+                <TagChips
+                  groups={costTagGroups}
+                  value={ruleForm.tagIds}
+                  size="sm"
+                  onChange={(tagIds) => setRuleForm({ ...ruleForm, tagIds })}
+                />
+              </div>
+            ) : (
+              <div className="col-span-2 rounded border border-dashed border-[var(--wd-border)] bg-gray-50 px-3 py-2 text-sm font-medium" style={{ color: 'var(--wd-text-muted)' }}>
+                Brak tagów kosztowych
+              </div>
+            )}
             <button type="submit" disabled={saving === 'rule'} className="col-span-2 inline-flex items-center justify-center gap-2 rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60">
               <Save size={16} />
               {saving === 'rule' ? 'Zapisuję...' : 'Zapisz regułę'}
@@ -973,29 +1021,20 @@ export function KsefInboxView({
                     </td>
                     <td className="px-4 py-3">
                       {hasCostTags ? (
-                        <select
-                          aria-label={`Tagi ${invoice.invoiceNumber}`}
-                          multiple
-                          disabled={approved}
-                          className="h-24 min-w-48 w-full rounded border border-[var(--wd-border)] px-2 py-1 text-xs disabled:bg-gray-50"
-                          value={rowClassification.tagIds}
-                          onChange={(e) => {
-                            const tagIds = selectedOptionValues(e.currentTarget)
-                            setClassification((current) => ({
-                              ...current,
-                              [invoice.id]: {
-                                ...rowClassification,
-                                tagIds,
-                              },
-                            }))
-                          }}
-                        >
-                          {costTagGroups.map((group) => (
-                            <optgroup key={group.id} label={group.name}>
-                              {group.tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
-                            </optgroup>
-                          ))}
-                        </select>
+                        <div className="max-h-44 min-w-56 overflow-y-auto pr-1">
+                          <TagChips
+                            groups={costTagGroups}
+                            value={rowClassification.tagIds}
+                            disabled={approved}
+                            size="sm"
+                            onChange={(tagIds) =>
+                              setClassification((current) => ({
+                                ...current,
+                                [invoice.id]: { ...rowClassification, tagIds },
+                              }))
+                            }
+                          />
+                        </div>
                       ) : (
                         <div className="min-w-48 rounded border border-dashed border-[var(--wd-border)] bg-gray-50 px-2 py-2 text-xs font-medium" style={{ color: 'var(--wd-text-muted)' }}>
                           Brak tagów kosztowych

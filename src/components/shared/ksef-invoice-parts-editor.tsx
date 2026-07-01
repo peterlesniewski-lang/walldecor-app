@@ -2,7 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { Plus, Trash2, X } from 'lucide-react'
-import { selectedOptionValues } from '@/lib/forms/select-options'
+import { TagChips } from '@/components/shared/tag-chips'
 
 interface CostCenterOption {
   id: string
@@ -167,24 +167,14 @@ export function KsefInvoicePartsEditor({
                 />
               </div>
 
-              <label className="mt-3 block text-xs font-semibold" style={{ color: 'var(--wd-text-muted)' }}>
-                Tagi
-                <select
-                  multiple
-                  className="mt-1 h-24 w-full rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-normal text-[var(--wd-dark)]"
+              <div className="mt-3">
+                <p className="mb-1 text-xs font-semibold" style={{ color: 'var(--wd-text-muted)' }}>Tagi</p>
+                <TagChips
+                  groups={tagGroups}
                   value={part.tagIds}
-                  onChange={(event) => {
-                    const tagIds = selectedOptionValues(event.currentTarget)
-                    updatePart(index, { ...part, tagIds })
-                  }}
-                >
-                  {tagGroups.map((group) => (
-                    <optgroup key={group.id} label={group.name}>
-                      {group.tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
-                    </optgroup>
-                  ))}
-                </select>
-              </label>
+                  onChange={(tagIds) => updatePart(index, { ...part, tagIds })}
+                />
+              </div>
 
               <div className="mt-3 grid gap-2 md:grid-cols-3">
                 {costCenters.map((costCenter) => {
