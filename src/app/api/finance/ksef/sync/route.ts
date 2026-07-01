@@ -20,6 +20,55 @@ const KSEF_SETTINGS = [
   'ksef_sync_from',
 ] as const
 
+type MappedKsefInvoice = ReturnType<typeof mapKsefMetadataToInvoice>
+type PersistableKsefInvoice = Omit<MappedKsefInvoice, 'correctedKsefNumber' | 'correctedInvoiceNumber'>
+
+function splitMappedInvoice(invoice: MappedKsefInvoice) {
+  const { correctedKsefNumber, correctedInvoiceNumber, ...data } = invoice
+  return { data, correctedKsefNumber, correctedInvoiceNumber }
+}
+
+function blocksAutomaticClassification(invoice: PersistableKsefInvoice) {
+  return (
+    invoice.documentStatus !== 'ACTIVE' ||
+    (invoice.currency !== 'PLN' && invoice.reportingGrossAmount == null)
+  )
+}
+
+async function findCorrectedInvoiceId({
+  correctedKsefNumber,
+  correctedInvoiceNumber,
+  supplierNip,
+  excludeId,
+}: {
+  correctedKsefNumber: string | null
+  correctedInvoiceNumber: string | null
+  supplierNip: string | null
+  excludeId?: string
+}) {
+  if (correctedKsefNumber) {
+    const original = await prisma.ksefInvoice.findUnique({
+      where: { externalId: correctedKsefNumber },
+      select: { id: true },
+    })
+    if (original && original.id !== excludeId) return original.id
+  }
+
+  if (!correctedInvoiceNumber) return null
+
+  const original = await prisma.ksefInvoice.findFirst({
+    where: {
+      invoiceNumber: correctedInvoiceNumber,
+      ...(supplierNip ? { supplierNip } : {}),
+      ...(excludeId ? { id: { not: excludeId } } : {}),
+    },
+    select: { id: true },
+    orderBy: { issueDate: 'desc' },
+  })
+
+  return original?.id ?? null
+}
+
 export async function POST() {
   const auth = await requireFinanceAdmin()
   if (auth.error) return auth.error
@@ -72,10 +121,22 @@ export async function POST() {
         hasMore = response.hasMore
 
         for (const metadata of response.invoices) {
-          const invoiceData = mapKsefMetadataToInvoice(metadata)
+          const mappedInvoice = mapKsefMetadataToInvoice(metadata)
+          const {
+            data: invoiceData,
+            correctedKsefNumber,
+            correctedInvoiceNumber,
+          } = splitMappedInvoice(mappedInvoice)
           const existing = await prisma.ksefInvoice.findUnique({
             where: { externalId: invoiceData.externalId },
           })
+          const correctsInvoiceId = await findCorrectedInvoiceId({
+            correctedKsefNumber,
+            correctedInvoiceNumber,
+            supplierNip: invoiceData.supplierNip,
+            excludeId: existing?.id,
+          })
+          const shouldBlockClassification = blocksAutomaticClassification(invoiceData)
 
           if (existing) {
             await prisma.ksefInvoice.update({
@@ -89,21 +150,43 @@ export async function POST() {
                 netAmount: invoiceData.netAmount,
                 vatAmount: invoiceData.vatAmount,
                 currency: invoiceData.currency,
+                reportingGrossAmount: invoiceData.currency === 'PLN' ? null : existing.reportingGrossAmount,
+                reportingNetAmount: invoiceData.currency === 'PLN' ? null : existing.reportingNetAmount,
+                reportingVatAmount: invoiceData.currency === 'PLN' ? null : existing.reportingVatAmount,
+                originalCurrency: invoiceData.originalCurrency,
+                originalGrossAmount: invoiceData.originalGrossAmount,
+                originalNetAmount: invoiceData.originalNetAmount,
+                originalVatAmount: invoiceData.originalVatAmount,
+                dueDate: invoiceData.dueDate,
+                documentStatus: invoiceData.documentStatus,
+                correctsInvoiceId: invoiceData.documentStatus === 'CORRECTION' ? correctsInvoiceId : null,
+                ...(shouldBlockClassification && existing.status !== 'APPROVED'
+                  ? {
+                      status: 'NEW',
+                      ruleMatchStatus: 'NO_RULE',
+                      costCenterId: null,
+                      subCategoryId: null,
+                      supplierRuleId: null,
+                    }
+                  : {}),
               },
             })
             updated += 1
             continue
           }
 
-          const ruleDecision = resolveSupplierRuleMatch(
-            { supplierName: invoiceData.supplierName, supplierNip: invoiceData.supplierNip },
-            rules
-          )
+          const ruleDecision = shouldBlockClassification
+            ? { status: 'NO_RULE' as const }
+            : resolveSupplierRuleMatch(
+                { supplierName: invoiceData.supplierName, supplierNip: invoiceData.supplierNip },
+                rules
+              )
           const match = ruleDecision.status === 'MATCHED' ? ruleDecision.rule : null
 
           await prisma.ksefInvoice.create({
             data: {
               ...invoiceData,
+              correctsInvoiceId: invoiceData.documentStatus === 'CORRECTION' ? correctsInvoiceId : null,
               status: match ? 'MAPPED' : 'NEW',
               ruleMatchStatus: ruleDecision.status === 'CONFLICT' ? 'CONFLICT' : match ? 'MATCHED' : 'NO_RULE',
               costCenterId: match?.costCenterId ?? null,

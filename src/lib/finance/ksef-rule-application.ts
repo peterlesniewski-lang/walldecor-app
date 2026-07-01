@@ -11,6 +11,15 @@ interface RuleApplicationInvoice {
   id: string
   supplierName: string
   supplierNip: string | null
+  currency?: string | null
+  reportingGrossAmount?: number | null
+  documentStatus?: string | null
+}
+
+function canAutoApplySupplierRule(invoice: RuleApplicationInvoice) {
+  const documentStatus = invoice.documentStatus ?? 'ACTIVE'
+  const currency = invoice.currency ?? 'PLN'
+  return documentStatus === 'ACTIVE' && (currency === 'PLN' || invoice.reportingGrossAmount != null)
 }
 
 export async function applySupplierRuleToNewInvoices(db: DbClient, rule: SupplierRuleInput) {
@@ -18,9 +27,17 @@ export async function applySupplierRuleToNewInvoices(db: DbClient, rule: Supplie
 
   const candidates = await db.ksefInvoice.findMany({
     where: { status: 'NEW' },
-    select: { id: true, supplierName: true, supplierNip: true },
+    select: {
+      id: true,
+      supplierName: true,
+      supplierNip: true,
+      currency: true,
+      reportingGrossAmount: true,
+      documentStatus: true,
+    },
   })
   const ids = candidates
+    .filter((invoice: RuleApplicationInvoice) => canAutoApplySupplierRule(invoice))
     .filter((invoice: RuleApplicationInvoice) => supplierMatchesRule(invoice, rule))
     .map((invoice: RuleApplicationInvoice) => invoice.id)
 
@@ -46,11 +63,20 @@ export async function applySupplierRulesToNewInvoices(db: DbClient, rules: Suppl
 
   const candidates = await db.ksefInvoice.findMany({
     where: { status: 'NEW' },
-    select: { id: true, supplierName: true, supplierNip: true },
+    select: {
+      id: true,
+      supplierName: true,
+      supplierNip: true,
+      currency: true,
+      reportingGrossAmount: true,
+      documentStatus: true,
+    },
   })
   let applied = 0
 
   for (const invoice of candidates) {
+    if (!canAutoApplySupplierRule(invoice)) continue
+
     const decision = resolveSupplierRuleMatch(invoice, activeRules)
 
     if (decision.status === 'MATCHED') {

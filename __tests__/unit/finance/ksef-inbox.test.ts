@@ -214,6 +214,31 @@ describe('resolveSupplierRuleMatch', () => {
 })
 
 describe('applySupplierRulesToNewInvoices', () => {
+  it('does not auto-map foreign-currency invoices before PLN conversion', async () => {
+    const update = vi.fn()
+    const db = {
+      ksefInvoice: {
+        findMany: vi.fn().mockResolvedValue([
+          {
+            id: 'inv-eur',
+            supplierName: 'AWS EMEA SARL',
+            supplierNip: 'IE6388047V',
+            currency: 'EUR',
+            reportingGrossAmount: null,
+          },
+        ]),
+        update,
+      },
+    }
+
+    const applied = await applySupplierRulesToNewInvoices(db as never, [
+      { id: 'aws', supplierNamePattern: 'aws', supplierNip: null, costCenterId: 'GLOBAL', subCategoryId: 'sub-saas', active: true },
+    ])
+
+    expect(applied).toBe(0)
+    expect(update).not.toHaveBeenCalled()
+  })
+
   it('marks rule conflicts without assigning supplier rule or classification', async () => {
     const update = vi.fn()
     const db = {
