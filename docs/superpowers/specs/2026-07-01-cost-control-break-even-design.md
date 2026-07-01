@@ -383,6 +383,7 @@ Integration tests should cover:
 - Marking invoices as paid and verifying unpaid totals.
 - Payment aging buckets based on due date.
 - Importing a correction document and preserving link/audit behavior.
+- Bulk reclassification preview for approved invoices generates a correct diff and audit trail without modifying data until ADMIN confirms.
 - Showing unclassified warning totals on reports.
 - Enforcing ADMIN-only access for KSeF inbox, unpaid invoice lists, payroll/confidential cost events, and financial settings.
 
