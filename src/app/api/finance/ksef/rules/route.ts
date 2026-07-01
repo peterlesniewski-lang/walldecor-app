@@ -13,7 +13,7 @@ export async function GET() {
       costCenter: true,
       subCategory: { include: { category: true } },
     },
-    orderBy: [{ active: 'desc' }, { updatedAt: 'desc' }],
+    orderBy: [{ active: 'desc' }, { priority: 'asc' }, { updatedAt: 'desc' }],
   })
 
   return NextResponse.json(rules)
@@ -36,6 +36,7 @@ export async function POST(req: NextRequest) {
         supplierNip: data.supplierNip || null,
         costCenterId: data.costCenterId,
         subCategoryId: data.subCategoryId,
+        priority: data.priority ?? 100,
         active: data.active ?? true,
       },
       include: {

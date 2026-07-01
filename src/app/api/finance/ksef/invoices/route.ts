@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { calculatePaymentAgingBucket, type PaymentAgingBucket } from '@/lib/finance/cost-control'
-import { findMatchingSupplierRule, normalizeSupplierNip, roundMoney } from '@/lib/finance/ksef-inbox'
+import { normalizeSupplierNip, resolveSupplierRuleMatch, roundMoney } from '@/lib/finance/ksef-inbox'
 import { requireFinanceAdmin } from '@/lib/finance/finance-access'
 import { KsefInvoiceCreateSchema, KsefInvoiceQuerySchema } from '@/lib/validations/ksef-inbox'
 import type { Prisma } from '@/generated/prisma'
@@ -154,10 +154,11 @@ export async function POST(req: NextRequest) {
 
   const data = parsed.data
   const rules = await prisma.ksefSupplierRule.findMany({ where: { active: true } })
-  const match = findMatchingSupplierRule(
+  const ruleDecision = resolveSupplierRuleMatch(
     { supplierName: data.supplierName, supplierNip: data.supplierNip },
     rules
   )
+  const match = ruleDecision.status === 'MATCHED' ? ruleDecision.rule : null
 
   const invoice = await prisma.ksefInvoice.create({
     data: {
@@ -172,6 +173,7 @@ export async function POST(req: NextRequest) {
       currency: data.currency,
       notes: data.notes || null,
       status: match ? 'MAPPED' : 'NEW',
+      ruleMatchStatus: ruleDecision.status === 'CONFLICT' ? 'CONFLICT' : match ? 'MATCHED' : 'NO_RULE',
       costCenterId: match?.costCenterId ?? null,
       subCategoryId: match?.subCategoryId ?? null,
       supplierRuleId: match?.id ?? null,

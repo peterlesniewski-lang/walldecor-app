@@ -1,10 +1,12 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   buildActualEntryFromKsefInvoice,
   findMatchingSupplierRule,
   normalizeSupplierNip,
+  resolveSupplierRuleMatch,
   supplierMatchesRule,
 } from '@/lib/finance/ksef-inbox'
+import { applySupplierRulesToNewInvoices } from '@/lib/finance/ksef-rule-application'
 import {
   KsefInvoiceCreateSchema,
   KsefInvoiceCurrencyConversionSchema,
@@ -167,6 +169,78 @@ describe('findMatchingSupplierRule', () => {
         active: true,
       }
     )).toBe(true)
+  })
+})
+
+describe('resolveSupplierRuleMatch', () => {
+  it('prefers exact NIP over supplier name rules', () => {
+    const decision = resolveSupplierRuleMatch(
+      { supplierName: 'Google Ireland Ltd', supplierNip: '525-000-71-33' },
+      [
+        { id: 'name', supplierNamePattern: 'google', supplierNip: null, costCenterId: 'GLOBAL', subCategoryId: 'sub-name', active: true, priority: 10 },
+        { id: 'nip', supplierNamePattern: null, supplierNip: '5250007133', costCenterId: 'JAG', subCategoryId: 'sub-nip', active: true, priority: 100 },
+      ]
+    )
+
+    expect(decision.status).toBe('MATCHED')
+    expect(decision.status === 'MATCHED' ? decision.rule.id : null).toBe('nip')
+  })
+
+  it('prefers exact normalized supplier name over a partial name rule', () => {
+    const decision = resolveSupplierRuleMatch(
+      { supplierName: 'ACME Sp. z o.o.', supplierNip: null },
+      [
+        { id: 'partial', supplierNamePattern: 'acme', supplierNip: null, costCenterId: 'GLOBAL', subCategoryId: 'sub-partial', active: true, priority: 100 },
+        { id: 'exact', supplierNamePattern: 'acme sp. z o.o.', supplierNip: null, costCenterId: 'PUL', subCategoryId: 'sub-exact', active: true, priority: 100 },
+      ]
+    )
+
+    expect(decision.status).toBe('MATCHED')
+    expect(decision.status === 'MATCHED' ? decision.rule.id : null).toBe('exact')
+  })
+
+  it('returns conflict for equally specific rules with equal priority', () => {
+    const decision = resolveSupplierRuleMatch(
+      { supplierName: 'REMI Spółka Jawna', supplierNip: null },
+      [
+        { id: 'a', supplierNamePattern: 'remi', supplierNip: null, costCenterId: 'GLOBAL', subCategoryId: 'sub-a', active: true, priority: 100 },
+        { id: 'b', supplierNamePattern: 'remi spółka', supplierNip: null, costCenterId: 'JAG', subCategoryId: 'sub-b', active: true, priority: 100 },
+      ]
+    )
+
+    expect(decision.status).toBe('CONFLICT')
+    expect(decision.status === 'CONFLICT' ? decision.rules.map((rule) => rule.id) : []).toEqual(['a', 'b'])
+  })
+})
+
+describe('applySupplierRulesToNewInvoices', () => {
+  it('marks rule conflicts without assigning supplier rule or classification', async () => {
+    const update = vi.fn()
+    const db = {
+      ksefInvoice: {
+        findMany: vi.fn().mockResolvedValue([
+          { id: 'inv-1', supplierName: 'REMI Spółka Jawna', supplierNip: null },
+        ]),
+        update,
+      },
+    }
+
+    const applied = await applySupplierRulesToNewInvoices(db as never, [
+      { id: 'a', supplierNamePattern: 'remi', supplierNip: null, costCenterId: 'GLOBAL', subCategoryId: 'sub-a', active: true, priority: 100 },
+      { id: 'b', supplierNamePattern: 'remi spółka', supplierNip: null, costCenterId: 'JAG', subCategoryId: 'sub-b', active: true, priority: 100 },
+    ])
+
+    expect(applied).toBe(0)
+    expect(update).toHaveBeenCalledWith({
+      where: { id: 'inv-1' },
+      data: {
+        status: 'NEW',
+        costCenterId: null,
+        subCategoryId: null,
+        supplierRuleId: null,
+        ruleMatchStatus: 'CONFLICT',
+      },
+    })
   })
 })
 

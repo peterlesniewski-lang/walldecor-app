@@ -105,6 +105,9 @@ export function resolveSupplierRuleDecision(
     const pattern = rule.supplierNamePattern?.trim().toLowerCase()
     return pattern ? supplierName.includes(pattern) : false
   })
+  const exactNameMatches = nameMatches.filter((rule) => rule.supplierNamePattern?.trim().toLowerCase() === supplierName)
+  if (exactNameMatches.length > 0) return bestRuleDecision(exactNameMatches)
+
   return bestRuleDecision(nameMatches)
 }
 

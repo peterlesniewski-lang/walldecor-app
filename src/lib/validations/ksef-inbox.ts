@@ -91,6 +91,7 @@ export const KsefSupplierRuleCreateSchema = z
       .transform((value) => normalizeSupplierNip(value)),
     costCenterId: z.enum(VALID_COST_CENTERS),
     subCategoryId: z.string().trim().min(1),
+    priority: z.coerce.number().int().positive().optional(),
     active: z.boolean().optional(),
   })
   .refine((data) => Boolean(data.supplierNamePattern || data.supplierNip), {

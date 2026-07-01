@@ -8,7 +8,7 @@ import {
   mapKsefMetadataToInvoice,
   type KsefEnvironment,
 } from '@/lib/finance/ksef-client'
-import { findMatchingSupplierRule } from '@/lib/finance/ksef-inbox'
+import { resolveSupplierRuleMatch } from '@/lib/finance/ksef-inbox'
 import { applySupplierRulesToNewInvoices } from '@/lib/finance/ksef-rule-application'
 import { buildKsefSyncDateRanges } from '@/lib/finance/ksef-sync-ranges'
 
@@ -95,15 +95,17 @@ export async function POST() {
             continue
           }
 
-          const match = findMatchingSupplierRule(
+          const ruleDecision = resolveSupplierRuleMatch(
             { supplierName: invoiceData.supplierName, supplierNip: invoiceData.supplierNip },
             rules
           )
+          const match = ruleDecision.status === 'MATCHED' ? ruleDecision.rule : null
 
           await prisma.ksefInvoice.create({
             data: {
               ...invoiceData,
               status: match ? 'MAPPED' : 'NEW',
+              ruleMatchStatus: ruleDecision.status === 'CONFLICT' ? 'CONFLICT' : match ? 'MATCHED' : 'NO_RULE',
               costCenterId: match?.costCenterId ?? null,
               subCategoryId: match?.subCategoryId ?? null,
               supplierRuleId: match?.id ?? null,
