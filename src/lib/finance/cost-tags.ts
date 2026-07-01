@@ -39,6 +39,15 @@ export const DEFAULT_COST_TAG_GROUPS = [
   },
 ] as const
 
+// Axes where the tags are mutually exclusive — a cost is either fixed or
+// variable, and a supplier is either recurring or new. The tagging UI enforces
+// single selection for these so the user cannot pick contradictory tags.
+export const SINGLE_CHOICE_TAG_GROUP_SLUGS: ReadonlySet<string> = new Set(['behavior', 'supplier-group'])
+
+export function isSingleChoiceTagGroup(slug: string) {
+  return SINGLE_CHOICE_TAG_GROUP_SLUGS.has(slug)
+}
+
 const groupBySlug: ReadonlyMap<string, { name: string; order: number }> = new Map(
   DEFAULT_COST_TAG_GROUPS.map((group) => [group.group.slug, group.group])
 )

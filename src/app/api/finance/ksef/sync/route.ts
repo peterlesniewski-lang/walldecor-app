@@ -4,7 +4,6 @@ import { requireFinanceAdmin } from '@/lib/finance/finance-access'
 import {
   KsefApiError,
   KsefApiClient,
-  dateFromKsefDate,
   describeKsefApiError,
   mapKsefMetadataToInvoice,
   type KsefEnvironment,
@@ -12,7 +11,11 @@ import {
 import { resolveSupplierRuleMatch } from '@/lib/finance/ksef-inbox'
 import { applySupplierRulesToNewInvoices } from '@/lib/finance/ksef-rule-application'
 import { buildKsefSyncDateRanges } from '@/lib/finance/ksef-sync-ranges'
-import { parseKsefInvoiceXmlDetails } from '@/lib/finance/ksef-xml-details'
+import {
+  fetchKsefInvoiceDetailWithRetry,
+  wait,
+  XML_DETAILS_THROTTLE_MS,
+} from '@/lib/finance/ksef-detail-fetch'
 
 const KSEF_SETTINGS = [
   'ksef_enabled',
@@ -25,8 +28,6 @@ const KSEF_SETTINGS = [
 type MappedKsefInvoice = ReturnType<typeof mapKsefMetadataToInvoice>
 type PersistableKsefInvoice = Omit<MappedKsefInvoice, 'correctedKsefNumber' | 'correctedInvoiceNumber'>
 type ExistingInvoiceDetails = { dueDate: Date | null; bankAccount: string | null } | null
-const XML_DETAILS_MAX_ATTEMPTS = 3
-const RETRYABLE_XML_DETAIL_STATUSES = new Set([408, 429, 500, 502, 503, 504])
 
 function splitMappedInvoice(invoice: MappedKsefInvoice) {
   const { correctedKsefNumber, correctedInvoiceNumber, ...data } = invoice
@@ -42,51 +43,6 @@ function blocksAutomaticClassification(invoice: PersistableKsefInvoice) {
 
 function needsInvoiceXmlDetails(invoice: PersistableKsefInvoice, existing: ExistingInvoiceDetails) {
   return !invoice.dueDate || !invoice.bankAccount || !existing?.bankAccount
-}
-
-async function downloadInvoiceXmlDetails({
-  client,
-  accessToken,
-  ksefNumber,
-}: {
-  client: KsefApiClient
-  accessToken: string
-  ksefNumber: string
-}) {
-  const xml = await client.downloadInvoiceXml({ accessToken, ksefNumber })
-  const details = parseKsefInvoiceXmlDetails(xml)
-
-  return {
-    dueDate: dateFromKsefDate(details.paymentDueDate),
-    bankAccount: details.bankAccounts[0] ?? null,
-  }
-}
-
-function xmlDetailsRetryDelayMs(attempt: number) {
-  if (process.env.NODE_ENV === 'test') return 0
-  return attempt * 750
-}
-
-async function wait(ms: number) {
-  if (ms <= 0) return
-  await new Promise((resolve) => setTimeout(resolve, ms))
-}
-
-async function downloadInvoiceXmlDetailsWithRetry(args: Parameters<typeof downloadInvoiceXmlDetails>[0]) {
-  let lastError: unknown
-
-  for (let attempt = 1; attempt <= XML_DETAILS_MAX_ATTEMPTS; attempt++) {
-    try {
-      return await downloadInvoiceXmlDetails(args)
-    } catch (err) {
-      lastError = err
-      const canRetry = err instanceof KsefApiError && RETRYABLE_XML_DETAIL_STATUSES.has(err.status)
-      if (!canRetry || attempt === XML_DETAILS_MAX_ATTEMPTS) throw err
-      await wait(xmlDetailsRetryDelayMs(attempt))
-    }
-  }
-
-  throw lastError
 }
 
 async function findCorrectedInvoiceId({
@@ -191,7 +147,7 @@ export async function POST() {
           })
           if (needsInvoiceXmlDetails(invoiceData, existing)) {
             try {
-              const details = await downloadInvoiceXmlDetailsWithRetry({
+              const details = await fetchKsefInvoiceDetailWithRetry({
                 client,
                 accessToken: authTokens.accessToken.token,
                 ksefNumber: invoiceData.externalId,
@@ -202,6 +158,9 @@ export async function POST() {
             } catch {
               xmlDetailsFailed += 1
             }
+            // Throttle between full-XML downloads so a large backlog does not
+            // trip KSeF rate limiting and silently drop payment due dates.
+            await wait(XML_DETAILS_THROTTLE_MS)
           }
           const correctsInvoiceId = await findCorrectedInvoiceId({
             correctedKsefNumber,

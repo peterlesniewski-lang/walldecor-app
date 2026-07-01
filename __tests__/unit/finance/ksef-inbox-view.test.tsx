@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { KsefInboxView } from '@/components/shared/ksef-inbox-view'
@@ -374,7 +374,9 @@ describe('KsefInboxView', () => {
     expect(screen.queryByText('Podkategoria')).toBeNull()
     expect(screen.getByText('Tagi')).toBeTruthy()
 
-    await user.selectOptions(screen.getByLabelText('Tagi FV/1/2026'), ['tag-goods'])
+    // Inline tagging is now grouped toggle chips instead of a native <select multiple>.
+    const table = screen.getByRole('table')
+    await user.click(within(table).getByRole('button', { name: 'goods' }))
     await user.click(screen.getByTitle('Zapisz klasyfikację'))
 
     const patchCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/finance/ksef/invoices/invoice-1'))
