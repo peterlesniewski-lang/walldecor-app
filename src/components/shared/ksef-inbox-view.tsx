@@ -3,6 +3,7 @@
 import { useState } from 'react'
 import { CheckCircle2, ChevronLeft, ChevronRight, CloudDownload, Eye, FilePlus2, RefreshCcw, Save, Search, Settings2, X } from 'lucide-react'
 import { parseKsefInvoiceXmlPreview, type KsefInvoiceXmlPreview } from '@/lib/finance/ksef-invoice-preview'
+import { selectedOptionValues } from '@/lib/forms/select-options'
 import { KsefInvoicePartsEditor } from '@/components/shared/ksef-invoice-parts-editor'
 import { KsefPaymentSummary } from '@/components/shared/ksef-payment-summary'
 
@@ -782,10 +783,10 @@ export function KsefInboxView({
               disabled={!hasCostTags}
               className="h-24 rounded border border-[var(--wd-border)] px-3 py-2 text-sm disabled:bg-gray-50"
               value={ruleForm.tagIds}
-              onChange={(event) => setRuleForm({
-                ...ruleForm,
-                tagIds: Array.from(event.currentTarget.selectedOptions).map((option) => option.value),
-              })}
+              onChange={(event) => {
+                const tagIds = selectedOptionValues(event.currentTarget)
+                setRuleForm({ ...ruleForm, tagIds })
+              }}
             >
               {!hasCostTags ? (
                 <option value="">Brak tagów kosztowych</option>
@@ -978,13 +979,16 @@ export function KsefInboxView({
                           disabled={approved}
                           className="h-24 min-w-48 w-full rounded border border-[var(--wd-border)] px-2 py-1 text-xs disabled:bg-gray-50"
                           value={rowClassification.tagIds}
-                          onChange={(e) => setClassification((current) => ({
-                            ...current,
-                            [invoice.id]: {
-                              ...rowClassification,
-                              tagIds: Array.from(e.currentTarget.selectedOptions).map((option) => option.value),
-                            },
-                          }))}
+                          onChange={(e) => {
+                            const tagIds = selectedOptionValues(e.currentTarget)
+                            setClassification((current) => ({
+                              ...current,
+                              [invoice.id]: {
+                                ...rowClassification,
+                                tagIds,
+                              },
+                            }))
+                          }}
                         >
                           {costTagGroups.map((group) => (
                             <optgroup key={group.id} label={group.name}>

@@ -2,6 +2,7 @@
 
 import { useMemo, useState } from 'react'
 import { Plus, Trash2, X } from 'lucide-react'
+import { selectedOptionValues } from '@/lib/forms/select-options'
 
 interface CostCenterOption {
   id: string
@@ -172,10 +173,10 @@ export function KsefInvoicePartsEditor({
                   multiple
                   className="mt-1 h-24 w-full rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-normal text-[var(--wd-dark)]"
                   value={part.tagIds}
-                  onChange={(event) => updatePart(index, {
-                    ...part,
-                    tagIds: Array.from(event.currentTarget.selectedOptions).map((option) => option.value),
-                  })}
+                  onChange={(event) => {
+                    const tagIds = selectedOptionValues(event.currentTarget)
+                    updatePart(index, { ...part, tagIds })
+                  }}
                 >
                   {tagGroups.map((group) => (
                     <optgroup key={group.id} label={group.name}>
