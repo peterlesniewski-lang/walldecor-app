@@ -24,9 +24,18 @@ export const RevenueEntrySchema = z.object({
   amount: z.number().min(0, 'Kwota nie może być ujemna'),
 })
 
+export const AreaRevenueEntrySchema = z.object({
+  year: z.number().int().min(2020).max(2100),
+  month: z.number().int().min(1).max(12),
+  costCenterId: z.enum(['JAG', 'PUL']),
+  areaTagId: z.string().min(1),
+  amount: z.number().min(0, 'Kwota nie może być ujemna'),
+})
+
 export const RevenueQuerySchema = z.object({
   year: z.coerce.number().int().min(2020).max(2100),
   costCenterId: z.string().min(1),
 })
 
 export type RevenueEntryInput = z.infer<typeof RevenueEntrySchema>
+export type AreaRevenueEntryInput = z.infer<typeof AreaRevenueEntrySchema>

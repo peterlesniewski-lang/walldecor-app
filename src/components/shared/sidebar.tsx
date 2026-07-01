@@ -14,6 +14,7 @@ import {
   ListChecks,
   ReceiptText,
   Target,
+  ChartPie,
   type LucideIcon,
 } from 'lucide-react'
 import { NavItem } from './nav-item'
@@ -43,6 +44,7 @@ const NAV_SECTIONS: Array<{ label: string | null; items: NavSectionItem[] }> = [
       { href: '/finance/ksef', label: 'KSeF Inbox', icon: FileCheck2, roles: ['ADMIN'] },
       { href: '/finance/cost-events', label: 'Zdarzenia kosztowe', icon: ReceiptText, roles: ['ADMIN', 'MANAGER'] },
       { href: '/finance/break-even', label: 'Break-even', icon: Target, roles: ['ADMIN', 'MANAGER'] },
+      { href: '/finance/areas', label: 'Marża obszarów', icon: ChartPie, roles: ['ADMIN', 'MANAGER'] },
       { href: '/finance/revenue', label: 'Przychody', icon: Banknote },
       { href: '/finance/alerts', label: 'Alerty', icon: ShieldAlert },
     ],

@@ -19,6 +19,7 @@ model CostCenter {
   actualEntries    ActualEntry[]
   revenues         Revenue[]
   revenueBudgets   RevenueBudget[]
+  areaRevenues     AreaRevenue[]
   employees        Employee[]
   paymentReminders PaymentReminder[]
   budgetThresholds BudgetThreshold[]
@@ -119,6 +120,24 @@ model Revenue {
   channel      String
 
   @@unique([year, month, costCenterId, channel])
+}
+
+model AreaRevenue {
+  id           String     @id @default(cuid())
+  year         Int
+  month        Int
+  amount       Float
+  costCenterId String
+  costCenter   CostCenter @relation(fields: [costCenterId], references: [id])
+  areaTagId    String
+  areaTag      CostTag    @relation(fields: [areaTagId], references: [id])
+  createdAt    DateTime   @default(now())
+  updatedAt    DateTime   @updatedAt
+
+  @@unique([year, month, costCenterId, areaTagId])
+  @@index([year, month])
+  @@index([costCenterId])
+  @@index([areaTagId])
 }
 
 model CashAccount {
@@ -274,6 +293,7 @@ model CostTag {
   invoiceParts  KsefInvoicePartTag[]
   eventParts    CostEventPartTag[]
   supplierRules KsefSupplierRuleTag[]
+  areaRevenues  AreaRevenue[]
 }
 
 model KsefSupplierRuleTag {
