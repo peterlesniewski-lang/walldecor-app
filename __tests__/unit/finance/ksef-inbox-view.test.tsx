@@ -267,6 +267,62 @@ describe('KsefInboxView', () => {
     expect(screen.getByText('Konto: 1234 5678 9012 3456 7890 1234 56')).toBeTruthy()
   })
 
+  it('shows XML detail fetch counts after KSeF sync', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input).includes('/api/finance/ksef/sync')) {
+        expect(init?.method).toBe('POST')
+        return new Response(JSON.stringify({
+          fetched: 565,
+          imported: 3,
+          updated: 562,
+          mappedByRules: 0,
+          xmlDetailsFetched: 14,
+          xmlDetailsFailed: 551,
+        }))
+      }
+
+      return new Response(JSON.stringify({
+        invoices,
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        grossAmountTotal: 123,
+        unpaidAmountTotal: 123,
+        paymentAging: {
+          OVERDUE: { count: 0, grossAmount: 0 },
+          DUE_0_7: { count: 0, grossAmount: 0 },
+          DUE_8_14: { count: 0, grossAmount: 0 },
+          DUE_15_30: { count: 0, grossAmount: 0 },
+          LATER: { count: 0, grossAmount: 0 },
+          MISSING_DUE_DATE: { count: 1, grossAmount: 123 },
+        },
+        counts: { NEW: 1, MAPPED: 0, APPROVED: 0, IGNORED: 0 },
+      }))
+    })
+
+    render(
+      <KsefInboxView
+        initialInvoices={invoices}
+        initialTotal={1}
+        initialPage={1}
+        initialPageSize={50}
+        initialTotalPages={1}
+        initialGrossAmountTotal={123}
+        initialCounts={{ NEW: 1, MAPPED: 0, APPROVED: 0, IGNORED: 0 }}
+        initialRules={[]}
+        costCenters={costCenters}
+        subCategories={subCategories}
+        costTagGroups={costTagGroups}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Synchronizuj z KSeF' }))
+
+    expect(await screen.findByText('KSeF: pobrano 565, dodano 3, zaktualizowano 562, zmapowano regułami 0. XML faktur: pobrano 14, błędy 551.')).toBeTruthy()
+  })
+
   it('uses tags instead of legacy subcategory for inline classification', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {

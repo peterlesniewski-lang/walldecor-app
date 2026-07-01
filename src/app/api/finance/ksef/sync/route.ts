@@ -25,6 +25,8 @@ const KSEF_SETTINGS = [
 type MappedKsefInvoice = ReturnType<typeof mapKsefMetadataToInvoice>
 type PersistableKsefInvoice = Omit<MappedKsefInvoice, 'correctedKsefNumber' | 'correctedInvoiceNumber'>
 type ExistingInvoiceDetails = { dueDate: Date | null; bankAccount: string | null } | null
+const XML_DETAILS_MAX_ATTEMPTS = 3
+const RETRYABLE_XML_DETAIL_STATUSES = new Set([408, 429, 500, 502, 503, 504])
 
 function splitMappedInvoice(invoice: MappedKsefInvoice) {
   const { correctedKsefNumber, correctedInvoiceNumber, ...data } = invoice
@@ -58,6 +60,33 @@ async function downloadInvoiceXmlDetails({
     dueDate: dateFromKsefDate(details.paymentDueDate),
     bankAccount: details.bankAccounts[0] ?? null,
   }
+}
+
+function xmlDetailsRetryDelayMs(attempt: number) {
+  if (process.env.NODE_ENV === 'test') return 0
+  return attempt * 750
+}
+
+async function wait(ms: number) {
+  if (ms <= 0) return
+  await new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+async function downloadInvoiceXmlDetailsWithRetry(args: Parameters<typeof downloadInvoiceXmlDetails>[0]) {
+  let lastError: unknown
+
+  for (let attempt = 1; attempt <= XML_DETAILS_MAX_ATTEMPTS; attempt++) {
+    try {
+      return await downloadInvoiceXmlDetails(args)
+    } catch (err) {
+      lastError = err
+      const canRetry = err instanceof KsefApiError && RETRYABLE_XML_DETAIL_STATUSES.has(err.status)
+      if (!canRetry || attempt === XML_DETAILS_MAX_ATTEMPTS) throw err
+      await wait(xmlDetailsRetryDelayMs(attempt))
+    }
+  }
+
+  throw lastError
 }
 
 async function findCorrectedInvoiceId({
@@ -162,7 +191,7 @@ export async function POST() {
           })
           if (needsInvoiceXmlDetails(invoiceData, existing)) {
             try {
-              const details = await downloadInvoiceXmlDetails({
+              const details = await downloadInvoiceXmlDetailsWithRetry({
                 client,
                 accessToken: authTokens.accessToken.token,
                 ksefNumber: invoiceData.externalId,

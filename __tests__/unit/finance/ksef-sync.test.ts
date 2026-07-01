@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { POST } from '@/app/api/finance/ksef/sync/route'
+import { KsefApiError } from '@/lib/finance/ksef-client'
 
 const prismaMock = vi.hoisted(() => ({
   appSetting: {
@@ -108,6 +109,54 @@ describe('POST /api/finance/ksef/sync', () => {
       data: expect.objectContaining({
         externalId: 'KSEF-XML-1',
         dueDate: new Date('2026-07-21T00:00:00.000Z'),
+        bankAccount: '12345678901234567890123456',
+      }),
+    })
+  })
+
+  it('retries transient XML detail failures before importing the invoice', async () => {
+    ksefClientMock.queryPurchaseInvoiceMetadata.mockResolvedValue({
+      hasMore: false,
+      isTruncated: false,
+      invoices: [
+        {
+          ksefNumber: 'KSEF-XML-RETRY',
+          invoiceNumber: 'FV/8/2026',
+          issueDate: '2026-07-02',
+          seller: { nip: '5250007133', name: 'Dostawca Testowy' },
+          grossAmount: 246,
+          netAmount: 200,
+          vatAmount: 46,
+          currency: 'PLN',
+        },
+      ],
+    })
+    ksefClientMock.downloadInvoiceXml
+      .mockRejectedValueOnce(new KsefApiError(429, '{"detail":"Too Many Requests"}'))
+      .mockResolvedValueOnce(`<?xml version="1.0" encoding="UTF-8"?>
+<Faktura xmlns="http://crd.gov.pl/wzor/2025/06/25/13775/">
+  <Fa>
+    <Platnosc>
+      <TerminPlatnosci>
+        <Termin>2026-07-22</Termin>
+      </TerminPlatnosci>
+      <RachunekBankowy>
+        <NrRB>12 3456 7890 1234 5678 9012 3456</NrRB>
+      </RachunekBankowy>
+    </Platnosc>
+  </Fa>
+</Faktura>`)
+
+    const response = await POST()
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toMatchObject({ imported: 1, xmlDetailsFetched: 1, xmlDetailsFailed: 0 })
+    expect(ksefClientMock.downloadInvoiceXml).toHaveBeenCalledTimes(2)
+    expect(prismaMock.ksefInvoice.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        externalId: 'KSEF-XML-RETRY',
+        dueDate: new Date('2026-07-22T00:00:00.000Z'),
         bankAccount: '12345678901234567890123456',
       }),
     })

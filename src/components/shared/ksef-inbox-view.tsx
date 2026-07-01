@@ -619,7 +619,7 @@ export function KsefInboxView({
       setActiveFilters(EMPTY_INVOICE_FILTERS)
       await refreshInvoices({ page: 1, statusFilter: 'ALL', filters: EMPTY_INVOICE_FILTERS })
       setSyncMessage(
-        `KSeF: pobrano ${result.fetched}, dodano ${result.imported}, zaktualizowano ${result.updated}, zmapowano regułami ${result.mappedByRules ?? 0}.`
+        `KSeF: pobrano ${result.fetched}, dodano ${result.imported}, zaktualizowano ${result.updated}, zmapowano regułami ${result.mappedByRules ?? 0}. XML faktur: pobrano ${result.xmlDetailsFetched ?? 0}, błędy ${result.xmlDetailsFailed ?? 0}.`
       )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nie udało się zsynchronizować KSeF')
