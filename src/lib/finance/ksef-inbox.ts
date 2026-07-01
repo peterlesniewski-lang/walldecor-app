@@ -15,6 +15,7 @@ export interface SupplierRuleInput {
   subCategoryId: string
   active: boolean
   priority?: number | null
+  tags?: Array<{ tagId: string }>
 }
 
 export type SupplierRuleMatchDecision =

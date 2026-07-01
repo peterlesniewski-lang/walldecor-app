@@ -4,7 +4,6 @@ import {
   LayoutDashboard,
   TrendingUp,
   Banknote,
-  Building2,
   FileCheck2,
   Users,
   CalendarOff,
@@ -41,7 +40,6 @@ const NAV_SECTIONS: Array<{ label: string | null; items: NavSectionItem[] }> = [
     items: [
       { href: '/finance', label: 'Wynik teraz', icon: LayoutDashboard, exact: true },
       { href: '/finance/actuals', label: 'Koszty', icon: TrendingUp },
-      { href: '/finance/assumptions', label: 'Założenia kosztowe', icon: Building2 },
       { href: '/finance/ksef', label: 'KSeF Inbox', icon: FileCheck2, roles: ['ADMIN'] },
       { href: '/finance/cost-events', label: 'Zdarzenia kosztowe', icon: ReceiptText, roles: ['ADMIN', 'MANAGER'] },
       { href: '/finance/break-even', label: 'Break-even', icon: Target, roles: ['ADMIN', 'MANAGER'] },

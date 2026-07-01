@@ -64,6 +64,10 @@ interface KsefInvoiceRow {
   subCategoryId: string | null
   costCenter: CostCenterOption | null
   subCategory: SubCategoryOption | null
+  parts?: Array<{
+    tags: Array<{ tagId?: string; tag?: { id: string; name: string; slug: string } }>
+    allocations: Array<{ costCenterId: string; percent: number }>
+  }>
 }
 
 interface KsefInvoiceContentPreview {
@@ -82,6 +86,7 @@ interface KsefSupplierRuleRow {
   active: boolean
   costCenter: CostCenterOption
   subCategory: SubCategoryOption
+  tags?: Array<{ tagId?: string; tag?: { id: string; name: string; slug: string } }>
 }
 
 interface KsefInvoiceListResponse {
@@ -177,6 +182,17 @@ function formatBankAccount(value: string) {
   return value.replace(/\s+/g, '').replace(/(.{4})/g, '$1 ').trim()
 }
 
+function invoiceTagIds(invoice: KsefInvoiceRow) {
+  return Array.from(new Set(
+    invoice.parts?.flatMap((part) => part.tags.map((entry) => entry.tagId ?? entry.tag?.id).filter(Boolean) as string[]) ?? []
+  ))
+}
+
+function invoiceAllocationCostCenterId(invoice: KsefInvoiceRow) {
+  const wholeAllocation = invoice.parts?.[0]?.allocations.find((allocation) => allocation.percent === 100)
+  return wholeAllocation?.costCenterId ?? invoice.costCenterId
+}
+
 async function readJson(response: Response) {
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
@@ -187,15 +203,14 @@ async function readJson(response: Response) {
 
 function buildClassificationState(
   invoices: KsefInvoiceRow[],
-  costCenters: CostCenterOption[],
-  subCategories: SubCategoryOption[]
+  costCenters: CostCenterOption[]
 ) {
   return Object.fromEntries(
     invoices.map((invoice) => [
       invoice.id,
       {
-        costCenterId: invoice.costCenterId ?? costCenters[0]?.id ?? 'GLOBAL',
-        subCategoryId: invoice.subCategoryId ?? subCategories[0]?.id ?? '',
+        costCenterId: invoiceAllocationCostCenterId(invoice) ?? costCenters[0]?.id ?? 'GLOBAL',
+        tagIds: invoiceTagIds(invoice),
       },
     ])
   )
@@ -267,9 +282,10 @@ export function KsefInboxView({
     supplierNip: '',
     costCenterId: costCenters[0]?.id ?? 'GLOBAL',
     subCategoryId: subCategories[0]?.id ?? '',
+    tagIds: [] as string[],
   })
-  const [classification, setClassification] = useState<Record<string, { costCenterId: string; subCategoryId: string }>>(
-    buildClassificationState(initialInvoices, costCenters, subCategories)
+  const [classification, setClassification] = useState<Record<string, { costCenterId: string; tagIds: string[] }>>(
+    buildClassificationState(initialInvoices, costCenters)
   )
   const firstItem = total === 0 ? 0 : (page - 1) * pageSize + 1
   const lastItem = total === 0 ? 0 : Math.min(total, (page - 1) * pageSize + invoices.length)
@@ -283,8 +299,8 @@ export function KsefInboxView({
     setClassification((current) => ({
       ...current,
       [updated.id]: {
-        costCenterId: updated.costCenterId ?? current[updated.id]?.costCenterId ?? costCenters[0]?.id ?? 'GLOBAL',
-        subCategoryId: updated.subCategoryId ?? current[updated.id]?.subCategoryId ?? subCategories[0]?.id ?? '',
+        costCenterId: invoiceAllocationCostCenterId(updated) ?? current[updated.id]?.costCenterId ?? costCenters[0]?.id ?? 'GLOBAL',
+        tagIds: invoiceTagIds(updated).length > 0 ? invoiceTagIds(updated) : current[updated.id]?.tagIds ?? [],
       },
     }))
   }
@@ -299,7 +315,7 @@ export function KsefInboxView({
     setPaymentAging(response.paymentAging ?? EMPTY_PAYMENT_AGING)
     setTotalPages(response.totalPages)
     setCounts(response.counts)
-    setClassification(buildClassificationState(response.invoices, costCenters, subCategories))
+    setClassification(buildClassificationState(response.invoices, costCenters))
     return response.invoices
   }
 
@@ -753,8 +769,20 @@ export function KsefInboxView({
             <select className="rounded border border-[var(--wd-border)] px-3 py-2 text-sm" value={ruleForm.costCenterId} onChange={(e) => setRuleForm({ ...ruleForm, costCenterId: e.target.value })}>
               {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
             </select>
-            <select className="rounded border border-[var(--wd-border)] px-3 py-2 text-sm" value={ruleForm.subCategoryId} onChange={(e) => setRuleForm({ ...ruleForm, subCategoryId: e.target.value })}>
-              {subCategories.map((sc) => <option key={sc.id} value={sc.id}>{sc.category.name} / {sc.name}</option>)}
+            <select
+              multiple
+              className="h-24 rounded border border-[var(--wd-border)] px-3 py-2 text-sm"
+              value={ruleForm.tagIds}
+              onChange={(event) => setRuleForm({
+                ...ruleForm,
+                tagIds: Array.from(event.currentTarget.selectedOptions).map((option) => option.value),
+              })}
+            >
+              {costTagGroups.map((group) => (
+                <optgroup key={group.id} label={group.name}>
+                  {group.tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+                </optgroup>
+              ))}
             </select>
             <button type="submit" disabled={saving === 'rule'} className="col-span-2 inline-flex items-center justify-center gap-2 rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60">
               <Save size={16} />
@@ -860,7 +888,7 @@ export function KsefInboxView({
                 <th className="px-4 py-3 text-right">Kwota</th>
                 <th className="px-4 py-3">Status</th>
                 <th className="px-4 py-3">Centrum</th>
-                <th className="px-4 py-3">Podkategoria</th>
+                <th className="px-4 py-3">Tagi</th>
                 <th className="px-4 py-3 text-right">Akcje</th>
               </tr>
             </thead>
@@ -873,8 +901,8 @@ export function KsefInboxView({
                 </tr>
               ) : invoices.map((invoice, index) => {
                 const rowClassification = classification[invoice.id] ?? {
-                  costCenterId: invoice.costCenterId ?? costCenters[0]?.id ?? 'GLOBAL',
-                  subCategoryId: invoice.subCategoryId ?? subCategories[0]?.id ?? '',
+                  costCenterId: invoiceAllocationCostCenterId(invoice) ?? costCenters[0]?.id ?? 'GLOBAL',
+                  tagIds: invoiceTagIds(invoice),
                 }
                 const approved = invoice.status === 'APPROVED'
                 const paymentStatus = invoice.paymentStatus ?? 'UNPAID'
@@ -931,12 +959,24 @@ export function KsefInboxView({
                     </td>
                     <td className="px-4 py-3">
                       <select
+                        aria-label={`Tagi ${invoice.invoiceNumber}`}
+                        multiple
                         disabled={approved}
-                        className="w-full rounded border border-[var(--wd-border)] px-2 py-1 text-xs disabled:bg-gray-50"
-                        value={rowClassification.subCategoryId}
-                        onChange={(e) => setClassification((current) => ({ ...current, [invoice.id]: { ...rowClassification, subCategoryId: e.target.value } }))}
+                        className="h-24 w-full rounded border border-[var(--wd-border)] px-2 py-1 text-xs disabled:bg-gray-50"
+                        value={rowClassification.tagIds}
+                        onChange={(e) => setClassification((current) => ({
+                          ...current,
+                          [invoice.id]: {
+                            ...rowClassification,
+                            tagIds: Array.from(e.currentTarget.selectedOptions).map((option) => option.value),
+                          },
+                        }))}
                       >
-                        {subCategories.map((sc) => <option key={sc.id} value={sc.id}>{sc.category.name} / {sc.name}</option>)}
+                        {costTagGroups.map((group) => (
+                          <optgroup key={group.id} label={group.name}>
+                            {group.tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+                          </optgroup>
+                        ))}
                       </select>
                     </td>
                     <td className="px-4 py-3">
@@ -1175,7 +1215,7 @@ export function KsefInboxView({
             <div key={rule.id} className="rounded border border-[var(--wd-border)] p-3 text-sm">
               <p className="font-semibold">{rule.supplierNip || rule.supplierNamePattern}</p>
               <p className="mt-1 text-xs" style={{ color: 'var(--wd-text-muted)' }}>
-                {rule.costCenter.name} → {rule.subCategory.category.name} / {rule.subCategory.name}
+                {rule.costCenter.name} → {(rule.tags ?? []).map((entry) => entry.tag?.name).filter(Boolean).join(', ') || `${rule.subCategory.category.name} / ${rule.subCategory.name}`}
               </p>
             </div>
           ))}

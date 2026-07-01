@@ -44,6 +44,7 @@ export const KsefInvoiceUpdateSchema = z.object({
   status: z.enum(VALID_KSEF_STATUSES).optional(),
   costCenterId: z.enum(VALID_COST_CENTERS).optional(),
   subCategoryId: z.string().trim().min(1).optional(),
+  tagIds: z.array(z.string().trim().min(1)).optional(),
   notes: z.string().trim().optional(),
 })
 
@@ -91,6 +92,7 @@ export const KsefSupplierRuleCreateSchema = z
       .transform((value) => normalizeSupplierNip(value)),
     costCenterId: z.enum(VALID_COST_CENTERS),
     subCategoryId: z.string().trim().min(1),
+    tagIds: z.array(z.string().trim().min(1)).optional(),
     priority: z.coerce.number().int().positive().optional(),
     active: z.boolean().optional(),
   })

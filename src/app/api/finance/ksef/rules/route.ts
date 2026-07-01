@@ -12,6 +12,7 @@ export async function GET() {
     include: {
       costCenter: true,
       subCategory: { include: { category: true } },
+      tags: { include: { tag: true } },
     },
     orderBy: [{ active: 'desc' }, { priority: 'asc' }, { updatedAt: 'desc' }],
   })
@@ -38,10 +39,14 @@ export async function POST(req: NextRequest) {
         subCategoryId: data.subCategoryId,
         priority: data.priority ?? 100,
         active: data.active ?? true,
+        tags: data.tagIds && data.tagIds.length > 0
+          ? { create: data.tagIds.map((tagId) => ({ tagId })) }
+          : undefined,
       },
       include: {
         costCenter: true,
         subCategory: { include: { category: true } },
+        tags: { include: { tag: true } },
       },
     })
     const appliedCount = await applySupplierRuleToNewInvoices(tx, rule)

@@ -141,7 +141,7 @@ export function CompanyHealthView({
             Wynik teraz
           </h1>
           <p className="text-sm mt-1" style={{ color: 'var(--wd-text-muted)' }}>
-            Break-even, koszty i przychody dla firmy oraz punktów. Założenia kosztowe są tylko punktem odniesienia.
+            Break-even, koszty i przychody dla firmy oraz punktów na bazie realnych zdarzeń kosztowych.
           </p>
         </div>
         <div className="flex items-center gap-1">
@@ -230,13 +230,6 @@ export function CompanyHealthView({
             <ArrowUpRight size={16} />
           </div>
           <p className="mt-1 text-xs" style={{ color: 'var(--wd-text-muted)' }}>Wykonanie, różnice i źródła kosztów.</p>
-        </Link>
-        <Link href="/finance/assumptions" className="rounded-lg border border-[var(--wd-border)] bg-white p-4 hover:border-[#D7C8B5]">
-          <div className="flex items-center justify-between">
-            <p className="font-semibold">Założenia kosztowe</p>
-            <ArrowUpRight size={16} />
-          </div>
-          <p className="mt-1 text-xs" style={{ color: 'var(--wd-text-muted)' }}>Plan kosztów jako benchmark.</p>
         </Link>
         {canViewCostReports && (
           <Link href="/finance/cost-events" className="rounded-lg border border-[var(--wd-border)] bg-white p-4 hover:border-[#D7C8B5]">

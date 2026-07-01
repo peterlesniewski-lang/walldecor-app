@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@/generated/prisma'
 import {
+  roundMoney,
   resolveSupplierRuleMatch,
   supplierMatchesRule,
   type SupplierRuleInput,
@@ -9,10 +10,12 @@ type DbClient = PrismaClient | Prisma.TransactionClient
 
 interface RuleApplicationInvoice {
   id: string
+  invoiceNumber?: string
+  grossAmount?: number
+  reportingGrossAmount?: number | null
   supplierName: string
   supplierNip: string | null
   currency?: string | null
-  reportingGrossAmount?: number | null
   documentStatus?: string | null
 }
 
@@ -22,6 +25,47 @@ function canAutoApplySupplierRule(invoice: RuleApplicationInvoice) {
   return documentStatus === 'ACTIVE' && (currency === 'PLN' || invoice.reportingGrossAmount != null)
 }
 
+async function replaceInvoicePartFromRule(
+  db: DbClient,
+  invoice: RuleApplicationInvoice,
+  rule: SupplierRuleInput
+) {
+  const tagIds = rule.tags?.map((tag) => tag.tagId).filter(Boolean) ?? []
+  if (tagIds.length === 0 || !invoice.invoiceNumber || invoice.grossAmount == null) return
+
+  const existingParts = await db.ksefInvoicePart.findMany({
+    where: { invoiceId: invoice.id },
+    select: { id: true },
+  })
+  const partIds = existingParts.map((part) => part.id)
+
+  if (partIds.length > 0) {
+    await db.ksefInvoicePartTag.deleteMany({ where: { partId: { in: partIds } } })
+    await db.ksefInvoicePartAllocation.deleteMany({ where: { partId: { in: partIds } } })
+    await db.ksefInvoicePart.deleteMany({ where: { id: { in: partIds } } })
+  }
+
+  const part = await db.ksefInvoicePart.create({
+    data: {
+      invoiceId: invoice.id,
+      label: invoice.invoiceNumber,
+      grossAmount: roundMoney(invoice.reportingGrossAmount ?? invoice.grossAmount),
+      order: 0,
+    },
+  })
+
+  await db.ksefInvoicePartTag.createMany({
+    data: tagIds.map((tagId) => ({ partId: part.id, tagId })),
+  })
+  await db.ksefInvoicePartAllocation.create({
+    data: {
+      partId: part.id,
+      costCenterId: rule.costCenterId,
+      percent: 100,
+    },
+  })
+}
+
 export async function applySupplierRuleToNewInvoices(db: DbClient, rule: SupplierRuleInput) {
   if (!rule.active) return 0
 
@@ -29,6 +73,8 @@ export async function applySupplierRuleToNewInvoices(db: DbClient, rule: Supplie
     where: { status: 'NEW' },
     select: {
       id: true,
+      invoiceNumber: true,
+      grossAmount: true,
       supplierName: true,
       supplierNip: true,
       currency: true,
@@ -42,6 +88,26 @@ export async function applySupplierRuleToNewInvoices(db: DbClient, rule: Supplie
     .map((invoice: RuleApplicationInvoice) => invoice.id)
 
   if (ids.length === 0) return 0
+
+  const tagIds = rule.tags?.map((tag) => tag.tagId).filter(Boolean) ?? []
+  if (tagIds.length > 0) {
+    let applied = 0
+    for (const invoice of candidates.filter((candidate) => ids.includes(candidate.id))) {
+      await db.ksefInvoice.update({
+        where: { id: invoice.id },
+        data: {
+          status: 'MAPPED',
+          costCenterId: rule.costCenterId,
+          subCategoryId: rule.subCategoryId,
+          supplierRuleId: rule.id,
+          ruleMatchStatus: 'MATCHED',
+        },
+      })
+      await replaceInvoicePartFromRule(db, invoice, rule)
+      applied += 1
+    }
+    return applied
+  }
 
   const result = await db.ksefInvoice.updateMany({
     where: { id: { in: ids }, status: 'NEW' },
@@ -65,6 +131,8 @@ export async function applySupplierRulesToNewInvoices(db: DbClient, rules: Suppl
     where: { status: 'NEW' },
     select: {
       id: true,
+      invoiceNumber: true,
+      grossAmount: true,
       supplierName: true,
       supplierNip: true,
       currency: true,
@@ -90,6 +158,7 @@ export async function applySupplierRulesToNewInvoices(db: DbClient, rules: Suppl
           ruleMatchStatus: 'MATCHED',
         },
       })
+      await replaceInvoicePartFromRule(db, invoice, decision.rule)
       applied += 1
       continue
     }

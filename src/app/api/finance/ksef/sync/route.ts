@@ -119,7 +119,10 @@ export async function POST() {
   try {
     const client = new KsefApiClient({ environment })
     const authTokens = await client.authenticateWithToken({ companyNip, token })
-    const rules = await prisma.ksefSupplierRule.findMany({ where: { active: true } })
+    const rules = await prisma.ksefSupplierRule.findMany({
+      where: { active: true },
+      include: { tags: true },
+    })
 
     let imported = 0
     let updated = 0
@@ -234,6 +237,19 @@ export async function POST() {
               costCenterId: match?.costCenterId ?? null,
               subCategoryId: match?.subCategoryId ?? null,
               supplierRuleId: match?.id ?? null,
+              ...(match?.tags && match.tags.length > 0
+                ? {
+                    parts: {
+                      create: {
+                        label: invoiceData.invoiceNumber,
+                        grossAmount: invoiceData.reportingGrossAmount ?? invoiceData.grossAmount,
+                        order: 0,
+                        tags: { create: match.tags.map((tag) => ({ tagId: tag.tagId })) },
+                        allocations: { create: { costCenterId: match.costCenterId, percent: 100 } },
+                      },
+                    },
+                  }
+                : {}),
             },
           })
           imported += 1

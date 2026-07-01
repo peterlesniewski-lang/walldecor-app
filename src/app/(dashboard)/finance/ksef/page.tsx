@@ -20,6 +20,13 @@ export default async function KsefInboxPage() {
       include: {
         costCenter: true,
         subCategory: { include: { category: true } },
+        parts: {
+          include: {
+            tags: { include: { tag: true } },
+            allocations: true,
+          },
+          orderBy: { order: 'asc' },
+        },
       },
       orderBy: [{ status: 'asc' }, { issueDate: 'desc' }, { invoiceNumber: 'asc' }],
       skip: (INITIAL_PAGE - 1) * INITIAL_PAGE_SIZE,
@@ -39,6 +46,7 @@ export default async function KsefInboxPage() {
       include: {
         costCenter: true,
         subCategory: { include: { category: true } },
+        tags: { include: { tag: true } },
       },
       orderBy: [{ active: 'desc' }, { updatedAt: 'desc' }],
     }),

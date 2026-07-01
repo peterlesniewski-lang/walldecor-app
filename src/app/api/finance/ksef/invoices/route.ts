@@ -95,6 +95,13 @@ export async function GET(req: NextRequest) {
         costCenter: true,
         subCategory: { include: { category: true } },
         supplierRule: true,
+        parts: {
+          include: {
+            tags: { include: { tag: true } },
+            allocations: true,
+          },
+          orderBy: { order: 'asc' },
+        },
       },
       orderBy: [{ status: 'asc' }, { issueDate: 'desc' }, { invoiceNumber: 'asc' }],
       skip,
@@ -153,7 +160,10 @@ export async function POST(req: NextRequest) {
   }
 
   const data = parsed.data
-  const rules = await prisma.ksefSupplierRule.findMany({ where: { active: true } })
+  const rules = await prisma.ksefSupplierRule.findMany({
+    where: { active: true },
+    include: { tags: true },
+  })
   const ruleDecision = resolveSupplierRuleMatch(
     { supplierName: data.supplierName, supplierNip: data.supplierNip },
     rules
@@ -177,11 +187,31 @@ export async function POST(req: NextRequest) {
       costCenterId: match?.costCenterId ?? null,
       subCategoryId: match?.subCategoryId ?? null,
       supplierRuleId: match?.id ?? null,
+      ...(match?.tags && match.tags.length > 0
+        ? {
+            parts: {
+              create: {
+                label: data.invoiceNumber,
+                grossAmount: roundMoney(data.grossAmount),
+                order: 0,
+                tags: { create: match.tags.map((tag) => ({ tagId: tag.tagId })) },
+                allocations: { create: { costCenterId: match.costCenterId, percent: 100 } },
+              },
+            },
+          }
+        : {}),
     },
     include: {
       costCenter: true,
       subCategory: { include: { category: true } },
       supplierRule: true,
+      parts: {
+        include: {
+          tags: { include: { tag: true } },
+          allocations: true,
+        },
+        orderBy: { order: 'asc' },
+      },
     },
   })
 
