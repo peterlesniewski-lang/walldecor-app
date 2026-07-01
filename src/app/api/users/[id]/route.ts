@@ -51,6 +51,15 @@ export async function PATCH(
   const existing = await prisma.user.findUnique({ where: { id } })
   if (!existing) return NextResponse.json({ error: 'User not found' }, { status: 404 })
 
+  // Prevent an admin from locking themselves out via self-edit
+  const isSelf = session.user.id === id
+  if (isSelf && parsed.data.isActive === false) {
+    return NextResponse.json({ error: 'Nie możesz zablokować własnego konta.' }, { status: 400 })
+  }
+  if (isSelf && parsed.data.role && parsed.data.role !== 'ADMIN') {
+    return NextResponse.json({ error: 'Nie możesz odebrać sobie roli administratora.' }, { status: 400 })
+  }
+
   const data = { ...parsed.data }
   if (data.username) {
     data.username = normalizeUsername(data.username)
