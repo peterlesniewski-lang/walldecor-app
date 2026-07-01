@@ -21,8 +21,11 @@ This plan implements the first working vertical slice of the approved design:
 - Approved cost events as the new reporting source.
 - Basic approved-cost ledger and break-even views.
 - Contribution-margin inputs and finance period closing.
+- Foreign-currency invoices can be manually converted to PLN by ADMIN and then approved.
+- Correcting invoices are linked to their original KSeF invoice when the original can be identified.
 
 This plan does not remove legacy `BudgetEntry` or `ActualEntry`. Existing budget/actual pages can continue to work while the new cost-control views become the preferred source.
+Production migration of legacy categories/subcategories into tags is intentionally deferred to a separate migration task after this vertical slice is validated. This plan seeds the new tag structure and preserves old data, but does not bulk-convert production classifications.
 
 ## File Structure
 
@@ -42,6 +45,7 @@ This plan does not remove legacy `BudgetEntry` or `ActualEntry`. Existing budget
 - Modify: `src/app/api/finance/ksef/invoices/[id]/route.ts` - ADMIN-only classification update with audit logging.
 - Modify: `src/app/api/finance/ksef/invoices/[id]/approve/route.ts` - approve into `CostEvent` instead of treating `ActualEntry` as the source of truth.
 - Create: `src/app/api/finance/ksef/invoices/[id]/payment/route.ts` - paid/unpaid and due-date updates.
+- Create: `src/app/api/finance/ksef/invoices/[id]/currency-conversion/route.ts` - ADMIN enters PLN reporting amounts for foreign-currency invoices.
 - Create: `src/app/api/finance/ksef/invoices/[id]/parts/route.ts` - create/update invoice split parts and allocations.
 - Modify: `src/app/api/finance/ksef/rules/route.ts` - ADMIN-only rules with priority and rule conflict handling.
 - Create: `src/app/api/finance/ksef/rules/reclassification-preview/route.ts` - ADMIN-only diff preview for approved invoice reclassification.
@@ -56,7 +60,7 @@ This plan does not remove legacy `BudgetEntry` or `ActualEntry`. Existing budget
 - Modify: `src/components/shared/ksef-inbox-view.tsx` - wire new filters, payment summary, paid toggle, rule conflicts, parts modal, and ADMIN-only operational UI.
 - Create: `src/components/shared/ksef-payment-summary.tsx` - invoice total, unpaid total, and aging bucket summary.
 - Create: `src/components/shared/ksef-invoice-parts-editor.tsx` - invoice split and allocation editor.
-- Create: `src/components/shared/cost-events-view.tsx` - approved ledger UI.
+- Create: `src/components/shared/cost-events-view.tsx` - approved ledger UI with manual cost event form.
 - Create: `src/components/shared/break-even-view.tsx` - salon break-even UI.
 - Create: `__tests__/unit/finance/cost-control.test.ts` - pure domain tests.
 - Modify: `__tests__/unit/finance/ksef-inbox.test.ts` - rule decision, schema, and query tests.
@@ -368,12 +372,25 @@ model KsefInvoice {
   netAmount     Float?
   vatAmount     Float?
   currency      String   @default("PLN")
+  reportingGrossAmount Float?
+  reportingNetAmount   Float?
+  reportingVatAmount   Float?
+  originalCurrency     String?
+  originalGrossAmount  Float?
+  originalNetAmount    Float?
+  originalVatAmount    Float?
+  currencyConversionNote String?
+  convertedById String?
+  convertedAt   DateTime?
   status        String   @default("NEW")
   paymentStatus String   @default("UNPAID")
   paidAt        DateTime?
   dueDate       DateTime?
   documentStatus String  @default("ACTIVE")
   ruleMatchStatus String @default("NO_RULE")
+  correctsInvoiceId String?
+  correctsInvoice   KsefInvoice? @relation("KsefCorrection", fields: [correctsInvoiceId], references: [id])
+  corrections       KsefInvoice[] @relation("KsefCorrection")
   notes         String?
   actualEntryId String?
   createdAt     DateTime @default(now())
@@ -394,6 +411,7 @@ model KsefInvoice {
   @@index([paymentStatus])
   @@index([documentStatus])
   @@index([ruleMatchStatus])
+  @@index([correctsInvoiceId])
   @@index([dueDate])
   @@index([issueDate])
   @@index([supplierNip])
@@ -731,6 +749,7 @@ git commit -m "Restrict KSeF operations to admin"
 - Modify: `src/lib/validations/ksef-inbox.ts`
 - Modify: `src/app/api/finance/ksef/invoices/route.ts`
 - Create: `src/app/api/finance/ksef/invoices/[id]/payment/route.ts`
+- Create: `src/app/api/finance/ksef/invoices/[id]/currency-conversion/route.ts`
 - Create: `src/components/shared/ksef-payment-summary.tsx`
 - Modify: `src/components/shared/ksef-inbox-view.tsx`
 - Modify: `__tests__/unit/finance/ksef-inbox.test.ts`
@@ -776,6 +795,13 @@ export const KsefInvoicePaymentSchema = z.object({
   paymentStatus: z.enum(VALID_PAYMENT_STATUSES),
   paidAt: z.string().datetime().optional().nullable(),
   dueDate: z.string().datetime().optional().nullable(),
+})
+
+export const KsefInvoiceCurrencyConversionSchema = z.object({
+  reportingGrossAmount: z.coerce.number().positive('Kwota brutto PLN musi być większa od zera'),
+  reportingNetAmount: z.coerce.number().nonnegative('Kwota netto PLN nie może być ujemna').optional().nullable(),
+  reportingVatAmount: z.coerce.number().nonnegative('VAT PLN nie może być ujemny').optional().nullable(),
+  currencyConversionNote: z.string().trim().min(3, 'Dodaj krótką notatkę kursową'),
 })
 ```
 
@@ -868,7 +894,76 @@ export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id
 }
 ```
 
-- [ ] **Step 5: Add payment summary component**
+- [ ] **Step 5: Add foreign-currency PLN conversion endpoint**
+
+Create `src/app/api/finance/ksef/invoices/[id]/currency-conversion/route.ts`:
+
+```ts
+import { NextRequest, NextResponse } from 'next/server'
+import { requireFinanceAdmin } from '@/lib/finance/finance-access'
+import { prisma } from '@/lib/prisma'
+import { KsefInvoiceCurrencyConversionSchema } from '@/lib/validations/ksef-inbox'
+import { roundMoney } from '@/lib/finance/ksef-inbox'
+
+export async function PATCH(req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
+  const auth = await requireFinanceAdmin()
+  if (auth.error) return auth.error
+
+  const parsed = KsefInvoiceCurrencyConversionSchema.safeParse(await req.json())
+  if (!parsed.success) {
+    return NextResponse.json({ error: 'Invalid request body', details: parsed.error.flatten() }, { status: 400 })
+  }
+
+  const { id } = await params
+  const existing = await prisma.ksefInvoice.findUnique({ where: { id } })
+  if (!existing) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
+  if (existing.status === 'APPROVED') {
+    return NextResponse.json({ error: 'Zatwierdzonej faktury nie można przeliczać ponownie.' }, { status: 409 })
+  }
+  if (existing.currency === 'PLN') {
+    return NextResponse.json({ error: 'Faktura PLN nie wymaga przeliczenia waluty.' }, { status: 400 })
+  }
+
+  const data = parsed.data
+  const invoice = await prisma.ksefInvoice.update({
+    where: { id },
+    data: {
+      originalCurrency: existing.originalCurrency ?? existing.currency,
+      originalGrossAmount: existing.originalGrossAmount ?? existing.grossAmount,
+      originalNetAmount: existing.originalNetAmount ?? existing.netAmount,
+      originalVatAmount: existing.originalVatAmount ?? existing.vatAmount,
+      reportingGrossAmount: roundMoney(data.reportingGrossAmount),
+      reportingNetAmount: data.reportingNetAmount == null ? null : roundMoney(data.reportingNetAmount),
+      reportingVatAmount: data.reportingVatAmount == null ? null : roundMoney(data.reportingVatAmount),
+      currencyConversionNote: data.currencyConversionNote,
+      convertedById: auth.session.user.id,
+      convertedAt: new Date(),
+      auditLogs: {
+        create: {
+          action: 'currency.convert',
+          actorId: auth.session.user.id,
+          beforeJson: JSON.stringify({
+            currency: existing.currency,
+            grossAmount: existing.grossAmount,
+            netAmount: existing.netAmount,
+            vatAmount: existing.vatAmount,
+          }),
+          afterJson: JSON.stringify(data),
+        },
+      },
+    },
+    include: {
+      costCenter: true,
+      subCategory: { include: { category: true } },
+      supplierRule: true,
+    },
+  })
+
+  return NextResponse.json({ invoice })
+}
+```
+
+- [ ] **Step 6: Add payment summary component**
 
 Create `src/components/shared/ksef-payment-summary.tsx`:
 
@@ -916,15 +1011,17 @@ export function KsefPaymentSummary({ grossAmountTotal, unpaidAmountTotal, paymen
 }
 ```
 
-- [ ] **Step 6: Wire UI and tests**
+- [ ] **Step 7: Wire UI and tests**
 
 Modify `src/components/shared/ksef-inbox-view.tsx`:
 
 - Add filters for `paymentStatus` and `paymentDeadline`.
 - Add `paymentStatus`, `paidAt`, `dueDate`, `documentStatus`, `ruleMatchStatus` to `KsefInvoiceRow`.
+- Add `reportingGrossAmount`, `reportingNetAmount`, `reportingVatAmount`, `originalCurrency`, and `currencyConversionNote` to `KsefInvoiceRow`.
 - Add response fields `unpaidAmountTotal` and `paymentAging`.
 - Render `KsefPaymentSummary` in the bottom bar.
 - Add a paid/unpaid checkbox or button in each row.
+- For `currency !== 'PLN'` and missing `reportingGrossAmount`, show a compact "Przelicz PLN" action that opens a small form and calls `/api/finance/ksef/invoices/[id]/currency-conversion`.
 
 Add test to `__tests__/unit/finance/ksef-inbox-view.test.tsx`:
 
@@ -937,7 +1034,7 @@ it('shows unpaid total and payment aging buckets', () => {
 })
 ```
 
-- [ ] **Step 7: Verify and commit**
+- [ ] **Step 8: Verify and commit**
 
 Run:
 
@@ -1180,7 +1277,7 @@ import { describe, expect, it } from 'vitest'
 import { buildCostEventDraftFromKsefInvoice } from '@/lib/finance/cost-events'
 
 describe('buildCostEventDraftFromKsefInvoice', () => {
-  it('blocks non-PLN invoices until manual PLN approval', () => {
+  it('blocks non-PLN invoices until manual PLN conversion is provided', () => {
     expect(() => buildCostEventDraftFromKsefInvoice({
       id: 'inv-eur',
       currency: 'EUR',
@@ -1193,6 +1290,33 @@ describe('buildCostEventDraftFromKsefInvoice', () => {
       vatAmount: 0,
       parts: [],
     })).toThrow('Faktura w walucie obcej wymaga ręcznego przeliczenia na PLN przed zatwierdzeniem.')
+  })
+
+  it('uses ADMIN-entered PLN reporting amounts for foreign-currency invoices', () => {
+    const draft = buildCostEventDraftFromKsefInvoice({
+      id: 'inv-eur',
+      currency: 'EUR',
+      originalCurrency: 'EUR',
+      issueDate: new Date('2026-07-01T00:00:00.000Z'),
+      supplierName: 'SaaS Vendor',
+      supplierNip: null,
+      invoiceNumber: 'EUR/1',
+      grossAmount: 100,
+      netAmount: 100,
+      vatAmount: 0,
+      reportingGrossAmount: 430,
+      reportingNetAmount: 430,
+      reportingVatAmount: 0,
+      currencyConversionNote: 'EUR x 4.30',
+      costCenterId: 'GLOBAL',
+      subCategoryId: 'legacy-sub',
+      parts: [],
+    })
+
+    expect(draft.currency).toBe('PLN')
+    expect(draft.grossAmount).toBe(430)
+    expect(draft.originalCurrency).toBe('EUR')
+    expect(draft.originalGrossAmount).toBe(100)
   })
 
   it('uses invoice-level classification when no parts exist', () => {
@@ -1242,6 +1366,7 @@ import { roundMoney } from '@/lib/finance/ksef-inbox'
 export interface KsefInvoiceForCostEvent {
   id: string
   currency: string
+  originalCurrency?: string | null
   issueDate: Date
   supplierName: string
   supplierNip: string | null
@@ -1249,6 +1374,10 @@ export interface KsefInvoiceForCostEvent {
   grossAmount: number
   netAmount: number | null
   vatAmount: number | null
+  reportingGrossAmount?: number | null
+  reportingNetAmount?: number | null
+  reportingVatAmount?: number | null
+  currencyConversionNote?: string | null
   costCenterId?: string | null
   subCategoryId?: string | null
   parts: Array<{
@@ -1260,9 +1389,13 @@ export interface KsefInvoiceForCostEvent {
 }
 
 export function buildCostEventDraftFromKsefInvoice(invoice: KsefInvoiceForCostEvent) {
-  if (invoice.currency !== 'PLN') {
+  const isForeignCurrency = invoice.currency !== 'PLN'
+  if (isForeignCurrency && invoice.reportingGrossAmount == null) {
     throw new Error('Faktura w walucie obcej wymaga ręcznego przeliczenia na PLN przed zatwierdzeniem.')
   }
+  const reportingGrossAmount = roundMoney(invoice.reportingGrossAmount ?? invoice.grossAmount)
+  const reportingNetAmount = invoice.reportingNetAmount ?? invoice.netAmount
+  const reportingVatAmount = invoice.reportingVatAmount ?? invoice.vatAmount
 
   const parts = invoice.parts.length > 0
     ? invoice.parts.map((part) => ({
@@ -1277,7 +1410,7 @@ export function buildCostEventDraftFromKsefInvoice(invoice: KsefInvoiceForCostEv
       }))
     : [{
         label: invoice.invoiceNumber,
-        grossAmount: roundMoney(invoice.grossAmount),
+        grossAmount: reportingGrossAmount,
         tagIds: [],
         allocations: [{
           costCenterId: (invoice.costCenterId ?? 'GLOBAL') as FinanceCostCenterId,
@@ -1286,7 +1419,7 @@ export function buildCostEventDraftFromKsefInvoice(invoice: KsefInvoiceForCostEv
         }],
       }]
 
-  const validation = validateCostParts(invoice.grossAmount, parts)
+  const validation = validateCostParts(reportingGrossAmount, parts)
   if (!validation.ok) throw new Error(validation.error)
 
   return {
@@ -1296,10 +1429,13 @@ export function buildCostEventDraftFromKsefInvoice(invoice: KsefInvoiceForCostEv
     supplierName: invoice.supplierName,
     supplierNip: invoice.supplierNip,
     reference: invoice.invoiceNumber,
-    grossAmount: roundMoney(invoice.grossAmount),
-    netAmount: invoice.netAmount == null ? null : roundMoney(invoice.netAmount),
-    vatAmount: invoice.vatAmount == null ? null : roundMoney(invoice.vatAmount),
+    grossAmount: reportingGrossAmount,
+    netAmount: reportingNetAmount == null ? null : roundMoney(reportingNetAmount),
+    vatAmount: reportingVatAmount == null ? null : roundMoney(reportingVatAmount),
     currency: 'PLN',
+    originalCurrency: isForeignCurrency ? invoice.currency : null,
+    originalGrossAmount: isForeignCurrency ? roundMoney(invoice.grossAmount) : null,
+    currencyConversionNote: isForeignCurrency ? invoice.currencyConversionNote : null,
     parts,
   }
 }
@@ -1314,6 +1450,7 @@ Modify `src/app/api/finance/ksef/invoices/[id]/approve/route.ts`:
 - Reject `status === 'APPROVED'`.
 - Reject `documentStatus === 'CANCELLED'`.
 - Reject `ruleMatchStatus === 'CONFLICT'`.
+- Reject `currency !== 'PLN'` only when `reportingGrossAmount` is still missing. If PLN reporting amounts exist, approve using those PLN values and preserve original currency values on the source invoice/audit.
 - Call `buildCostEventDraftFromKsefInvoice`.
 - Create `CostEvent` and nested parts/tags/allocations in one transaction.
 - Set invoice `status = 'APPROVED'`.
@@ -1410,6 +1547,9 @@ Create `src/app/(dashboard)/finance/cost-events/page.tsx`:
 Create `src/components/shared/cost-events-view.tsx`:
 
 - Filter bar: period, supplier/NIP, tags, allocation, source.
+- ADMIN-only button `Dodaj koszt ręczny`.
+- Manual cost form fields: date, source name, reference, gross amount PLN, optional net/VAT, confidential checkbox, tag selector, allocation selector, note.
+- Form submits to `POST /api/finance/cost-events` and refreshes the active ledger filter after success.
 - Table: date, supplier/source, reference, tags, allocations, gross amount.
 - Bottom summary: total for active filter.
 - Group selector: supplier, tag, salon, month, payment status.
@@ -1552,8 +1692,9 @@ Use KSeF XML payment fields when present. If multiple candidate due-date fields 
 
 Modify `src/lib/finance/ksef-client.ts` and `src/app/api/finance/ksef/sync/route.ts` so:
 
-- `currency !== 'PLN'` imports as `status = 'NEW'`, `ruleMatchStatus = 'NO_RULE'`, and approval remains blocked by Task 7.
+- `currency !== 'PLN'` imports as `status = 'NEW'`, `ruleMatchStatus = 'NO_RULE'`, fills `originalCurrency`, `originalGrossAmount`, `originalNetAmount`, and `originalVatAmount`, and leaves `reportingGrossAmount` empty until ADMIN uses the currency-conversion endpoint from Task 4.
 - correction documents set `documentStatus = 'CORRECTION'`.
+- correction documents set `correctsInvoiceId` when the original invoice can be identified from KSeF metadata or XML references.
 - cancelled/invalidated documents set `documentStatus = 'CANCELLED'`.
 - duplicate imports update the existing invoice by `externalId`.
 
