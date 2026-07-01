@@ -22,6 +22,11 @@ model CostCenter {
   employees        Employee[]
   paymentReminders PaymentReminder[]
   budgetThresholds BudgetThreshold[]
+  ksefInvoices     KsefInvoice[]
+  ksefSupplierRules KsefSupplierRule[]
+  ksefInvoicePartAllocations KsefInvoicePartAllocation[]
+  costEventPartAllocations   CostEventPartAllocation[]
+  contributionMarginSettings ContributionMarginSetting[]
 }
 
 model AccountCategory {
@@ -42,6 +47,8 @@ model SubCategory {
   budgetEntries    BudgetEntry[]
   actualEntries    ActualEntry[]
   budgetThresholds BudgetThreshold[]
+  ksefInvoices     KsefInvoice[]
+  ksefSupplierRules KsefSupplierRule[]
 }
 
 // Role: ADMIN | MANAGER | EMPLOYEE
@@ -158,6 +165,260 @@ model AppSetting {
   key       String   @id
   value     String
   updatedAt DateTime @updatedAt
+}
+
+model KsefInvoice {
+  id            String   @id @default(cuid())
+  source        String   @default("MANUAL")
+  externalId    String?  @unique
+  supplierName  String
+  supplierNip   String?
+  invoiceNumber String
+  issueDate     DateTime
+  grossAmount   Float
+  netAmount     Float?
+  vatAmount     Float?
+  currency      String   @default("PLN")
+  reportingGrossAmount Float?
+  reportingNetAmount   Float?
+  reportingVatAmount   Float?
+  originalCurrency     String?
+  originalGrossAmount  Float?
+  originalNetAmount    Float?
+  originalVatAmount    Float?
+  currencyConversionNote String?
+  convertedById String?
+  convertedAt   DateTime?
+  status        String   @default("NEW")
+  paymentStatus String   @default("UNPAID")
+  paidAt        DateTime?
+  dueDate       DateTime?
+  documentStatus String  @default("ACTIVE")
+  ruleMatchStatus String @default("NO_RULE")
+  correctsInvoiceId String?
+  correctsInvoice   KsefInvoice? @relation("KsefCorrection", fields: [correctsInvoiceId], references: [id])
+  corrections       KsefInvoice[] @relation("KsefCorrection")
+  notes         String?
+  actualEntryId String?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  costCenterId String?
+  costCenter   CostCenter? @relation(fields: [costCenterId], references: [id])
+  subCategoryId String?
+  subCategory   SubCategory? @relation(fields: [subCategoryId], references: [id])
+  supplierRuleId String?
+  supplierRule   KsefSupplierRule? @relation(fields: [supplierRuleId], references: [id])
+
+  costEvent CostEvent?
+  parts     KsefInvoicePart[]
+  auditLogs CostAuditLog[]
+
+  @@index([status])
+  @@index([paymentStatus])
+  @@index([documentStatus])
+  @@index([ruleMatchStatus])
+  @@index([correctsInvoiceId])
+  @@index([dueDate])
+  @@index([issueDate])
+  @@index([supplierNip])
+  @@unique([supplierNip, invoiceNumber, issueDate])
+}
+
+model KsefSupplierRule {
+  id                  String   @id @default(cuid())
+  supplierNamePattern String?
+  supplierNip         String?
+  priority            Int      @default(100)
+  active              Boolean  @default(true)
+  createdAt           DateTime @default(now())
+  updatedAt           DateTime @updatedAt
+
+  costCenterId  String
+  costCenter    CostCenter  @relation(fields: [costCenterId], references: [id])
+  subCategoryId String
+  subCategory   SubCategory @relation(fields: [subCategoryId], references: [id])
+  invoices      KsefInvoice[]
+  tags          KsefSupplierRuleTag[]
+
+  @@index([active])
+  @@index([supplierNip])
+  @@index([priority])
+}
+
+model CostTagGroup {
+  id        String    @id @default(cuid())
+  name      String
+  slug      String    @unique
+  order     Int       @default(0)
+  tags      CostTag[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+}
+
+model CostTag {
+  id        String       @id @default(cuid())
+  groupId   String
+  group     CostTagGroup @relation(fields: [groupId], references: [id])
+  name      String
+  slug      String       @unique
+  active    Boolean      @default(true)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  invoiceParts  KsefInvoicePartTag[]
+  eventParts    CostEventPartTag[]
+  supplierRules KsefSupplierRuleTag[]
+}
+
+model KsefSupplierRuleTag {
+  id     String @id @default(cuid())
+  ruleId String
+  rule   KsefSupplierRule @relation(fields: [ruleId], references: [id])
+  tagId  String
+  tag    CostTag @relation(fields: [tagId], references: [id])
+
+  @@unique([ruleId, tagId])
+}
+
+model KsefInvoicePart {
+  id          String   @id @default(cuid())
+  invoiceId   String
+  invoice     KsefInvoice @relation(fields: [invoiceId], references: [id])
+  label       String
+  grossAmount Float
+  order       Int      @default(0)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  tags        KsefInvoicePartTag[]
+  allocations KsefInvoicePartAllocation[]
+}
+
+model KsefInvoicePartTag {
+  id     String @id @default(cuid())
+  partId String
+  part   KsefInvoicePart @relation(fields: [partId], references: [id])
+  tagId  String
+  tag    CostTag @relation(fields: [tagId], references: [id])
+
+  @@unique([partId, tagId])
+}
+
+model KsefInvoicePartAllocation {
+  id           String @id @default(cuid())
+  partId       String
+  part         KsefInvoicePart @relation(fields: [partId], references: [id])
+  costCenterId String
+  costCenter   CostCenter @relation(fields: [costCenterId], references: [id])
+  percent      Float
+
+  @@unique([partId, costCenterId])
+}
+
+model CostEvent {
+  id              String   @id @default(cuid())
+  source          String
+  sourceInvoiceId String?  @unique
+  sourceInvoice   KsefInvoice? @relation(fields: [sourceInvoiceId], references: [id])
+  eventDate       DateTime
+  supplierName    String?
+  supplierNip     String?
+  reference       String?
+  grossAmount     Float
+  netAmount       Float?
+  vatAmount       Float?
+  currency        String   @default("PLN")
+  status          String   @default("APPROVED")
+  documentStatus  String   @default("ACTIVE")
+  isConfidential  Boolean  @default(false)
+  createdById     String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  parts     CostEventPart[]
+  auditLogs CostAuditLog[]
+
+  @@index([eventDate])
+  @@index([status])
+  @@index([supplierNip])
+  @@index([isConfidential])
+}
+
+model CostEventPart {
+  id          String   @id @default(cuid())
+  eventId     String
+  event       CostEvent @relation(fields: [eventId], references: [id])
+  label       String
+  grossAmount Float
+  order       Int      @default(0)
+
+  tags        CostEventPartTag[]
+  allocations CostEventPartAllocation[]
+}
+
+model CostEventPartTag {
+  id     String @id @default(cuid())
+  partId String
+  part   CostEventPart @relation(fields: [partId], references: [id])
+  tagId  String
+  tag    CostTag @relation(fields: [tagId], references: [id])
+
+  @@unique([partId, tagId])
+}
+
+model CostEventPartAllocation {
+  id           String @id @default(cuid())
+  partId       String
+  part         CostEventPart @relation(fields: [partId], references: [id])
+  costCenterId String
+  costCenter   CostCenter @relation(fields: [costCenterId], references: [id])
+  percent      Float
+  fallbackUsed Boolean @default(false)
+
+  @@unique([partId, costCenterId])
+}
+
+model CostAuditLog {
+  id          String   @id @default(cuid())
+  invoiceId   String?
+  invoice     KsefInvoice? @relation(fields: [invoiceId], references: [id])
+  costEventId String?
+  costEvent   CostEvent? @relation(fields: [costEventId], references: [id])
+  action      String
+  actorId     String?
+  beforeJson  String?
+  afterJson   String?
+  createdAt   DateTime @default(now())
+
+  @@index([invoiceId])
+  @@index([costEventId])
+  @@index([createdAt])
+}
+
+model FinancePeriodClose {
+  id         String   @id @default(cuid())
+  year       Int
+  month      Int
+  source     String   @default("MANUAL")
+  closedById String?
+  closedAt   DateTime @default(now())
+  note       String?
+
+  @@unique([year, month])
+}
+
+model ContributionMarginSetting {
+  id            String   @id @default(cuid())
+  costCenterId  String
+  costCenter    CostCenter @relation(fields: [costCenterId], references: [id])
+  margin        Float
+  effectiveFrom DateTime
+  note          String?
+  createdById   String?
+  createdAt     DateTime @default(now())
+
+  @@index([costCenterId, effectiveFrom])
 }
 
 model PaymentReminder {
