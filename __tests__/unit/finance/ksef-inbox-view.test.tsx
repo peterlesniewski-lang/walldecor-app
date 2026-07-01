@@ -158,8 +158,8 @@ describe('KsefInboxView', () => {
           DUE_0_7: { count: 3, grossAmount: 900 },
           DUE_8_14: { count: 0, grossAmount: 0 },
           DUE_15_30: { count: 1, grossAmount: 2221.99 },
-          LATER: { count: 0, grossAmount: 0 },
-          MISSING_DUE_DATE: { count: 0, grossAmount: 0 },
+          LATER: { count: 4, grossAmount: 700 },
+          MISSING_DUE_DATE: { count: 5, grossAmount: 321.5 },
         }}
         initialCounts={{ NEW: 120, MAPPED: 0, APPROVED: 0, IGNORED: 0 }}
         initialRules={[]}
@@ -171,7 +171,29 @@ describe('KsefInboxView', () => {
     expect(screen.getByText('Pozostało do zapłaty')).toBeTruthy()
     expect(screen.getAllByText('Po terminie').length).toBeGreaterThan(0)
     expect(screen.getAllByText('0-7 dni').length).toBeGreaterThan(0)
+    expect(screen.getByText('4 / 700 PLN')).toBeTruthy()
+    expect(screen.getByText('5 / 321,5 PLN')).toBeTruthy()
     expect(screen.getByText('4321,99 PLN')).toBeTruthy()
+  })
+
+  it('shows a readable empty state when no cost tags exist', () => {
+    render(
+      <KsefInboxView
+        initialInvoices={invoices}
+        initialTotal={1}
+        initialPage={1}
+        initialPageSize={50}
+        initialTotalPages={1}
+        initialGrossAmountTotal={123}
+        initialCounts={{ NEW: 1, MAPPED: 0, APPROVED: 0, IGNORED: 0 }}
+        initialRules={[]}
+        costCenters={costCenters}
+        subCategories={subCategories}
+        costTagGroups={[]}
+      />
+    )
+
+    expect(screen.getAllByText('Brak tagów kosztowych').length).toBeGreaterThan(0)
   })
 
   it('opens invoice parts editor from an invoice row', async () => {
@@ -196,6 +218,53 @@ describe('KsefInboxView', () => {
 
     expect(screen.getByText('Części faktury')).toBeTruthy()
     expect(screen.getByText('Suma części')).toBeTruthy()
+  })
+
+  it('updates the invoice row with due date returned by the XML content endpoint', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      invoiceId: 'invoice-1',
+      ksefNumber: 'ksef-1',
+      invoice: {
+        id: 'invoice-1',
+        dueDate: '2026-07-21T00:00:00.000Z',
+        bankAccount: '12345678901234567890123456',
+      },
+      xml: `<?xml version="1.0" encoding="UTF-8"?>
+<Faktura xmlns="http://crd.gov.pl/wzor/2025/06/25/13775/">
+  <Fa>
+    <P_2>FV/1/2026</P_2>
+    <Platnosc>
+      <TerminPlatnosci>
+        <Termin>2026-07-21</Termin>
+      </TerminPlatnosci>
+    </Platnosc>
+  </Fa>
+</Faktura>`,
+    })))
+
+    render(
+      <KsefInboxView
+        initialInvoices={invoices}
+        initialTotal={1}
+        initialPage={1}
+        initialPageSize={50}
+        initialTotalPages={1}
+        initialGrossAmountTotal={123}
+        initialCounts={{ NEW: 1, MAPPED: 0, APPROVED: 0, IGNORED: 0 }}
+        initialRules={[]}
+        costCenters={costCenters}
+        subCategories={subCategories}
+        costTagGroups={costTagGroups}
+      />
+    )
+
+    expect(screen.getByText('Termin: brak')).toBeTruthy()
+
+    await user.click(screen.getByTitle('Podgląd faktury'))
+
+    expect(await screen.findByText('Termin: 2026-07-21')).toBeTruthy()
+    expect(screen.getByText('Konto: 1234 5678 9012 3456 7890 1234 56')).toBeTruthy()
   })
 
   it('uses tags instead of legacy subcategory for inline classification', async () => {

@@ -1,7 +1,8 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireFinanceAdmin } from '@/lib/finance/finance-access'
-import { KsefApiClient, type KsefEnvironment } from '@/lib/finance/ksef-client'
+import { KsefApiClient, dateFromKsefDate, type KsefEnvironment } from '@/lib/finance/ksef-client'
+import { parseKsefInvoiceXmlDetails } from '@/lib/finance/ksef-xml-details'
 
 const KSEF_SETTINGS = [
   'ksef_enabled',
@@ -46,11 +47,24 @@ export async function GET(
       accessToken: authTokens.accessToken.token,
       ksefNumber: invoice.externalId,
     })
+    const details = parseKsefInvoiceXmlDetails(xml)
+    const dueDate = dateFromKsefDate(details.paymentDueDate)
+    const bankAccount = details.bankAccounts[0] ?? null
+    const updatedInvoice = dueDate || bankAccount
+      ? await prisma.ksefInvoice.update({
+          where: { id: invoice.id },
+          data: {
+            dueDate: dueDate ?? invoice.dueDate,
+            bankAccount: bankAccount ?? invoice.bankAccount,
+          },
+        })
+      : invoice
 
     return NextResponse.json({
       invoiceId: invoice.id,
       ksefNumber: invoice.externalId,
       xml,
+      invoice: updatedInvoice,
     })
   } catch (err) {
     return NextResponse.json(

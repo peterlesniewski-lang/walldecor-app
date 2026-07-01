@@ -293,6 +293,7 @@ export function KsefInboxView({
     || activeFilters.paymentStatus !== 'ALL'
     || activeFilters.paymentDeadline !== 'ALL'
     || Boolean(activeFilters.search || activeFilters.amountMin || activeFilters.amountMax)
+  const hasCostTags = costTagGroups.some((group) => group.tags.length > 0)
 
   function replaceInvoice(updated: KsefInvoiceRow) {
     setInvoices((current) => current.map((invoice) => (invoice.id === updated.id ? updated : invoice)))
@@ -633,11 +634,18 @@ export function KsefInboxView({
     setSaving(`content-${invoice.id}`)
     try {
       const result = await readJson(await fetch(`/api/finance/ksef/invoices/${invoice.id}/content`))
+      const preview = parseKsefInvoiceXmlPreview(result.xml)
+      const updatedInvoice = {
+        ...invoice,
+        dueDate: result.invoice?.dueDate ?? invoice.dueDate,
+        bankAccount: result.invoice?.bankAccount ?? invoice.bankAccount,
+      }
+      replaceInvoice(updatedInvoice)
       setContentPreview({
-        invoice,
+        invoice: updatedInvoice,
         ksefNumber: result.ksefNumber,
         xml: result.xml,
-        preview: parseKsefInvoiceXmlPreview(result.xml),
+        preview,
       })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nie udało się pobrać treści faktury')
@@ -771,18 +779,23 @@ export function KsefInboxView({
             </select>
             <select
               multiple
-              className="h-24 rounded border border-[var(--wd-border)] px-3 py-2 text-sm"
+              disabled={!hasCostTags}
+              className="h-24 rounded border border-[var(--wd-border)] px-3 py-2 text-sm disabled:bg-gray-50"
               value={ruleForm.tagIds}
               onChange={(event) => setRuleForm({
                 ...ruleForm,
                 tagIds: Array.from(event.currentTarget.selectedOptions).map((option) => option.value),
               })}
             >
-              {costTagGroups.map((group) => (
-                <optgroup key={group.id} label={group.name}>
-                  {group.tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
-                </optgroup>
-              ))}
+              {!hasCostTags ? (
+                <option value="">Brak tagów kosztowych</option>
+              ) : (
+                costTagGroups.map((group) => (
+                  <optgroup key={group.id} label={group.name}>
+                    {group.tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+                  </optgroup>
+                ))
+              )}
             </select>
             <button type="submit" disabled={saving === 'rule'} className="col-span-2 inline-flex items-center justify-center gap-2 rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-semibold hover:bg-gray-50 disabled:opacity-60">
               <Save size={16} />
@@ -958,26 +971,32 @@ export function KsefInboxView({
                       </select>
                     </td>
                     <td className="px-4 py-3">
-                      <select
-                        aria-label={`Tagi ${invoice.invoiceNumber}`}
-                        multiple
-                        disabled={approved}
-                        className="h-24 w-full rounded border border-[var(--wd-border)] px-2 py-1 text-xs disabled:bg-gray-50"
-                        value={rowClassification.tagIds}
-                        onChange={(e) => setClassification((current) => ({
-                          ...current,
-                          [invoice.id]: {
-                            ...rowClassification,
-                            tagIds: Array.from(e.currentTarget.selectedOptions).map((option) => option.value),
-                          },
-                        }))}
-                      >
-                        {costTagGroups.map((group) => (
-                          <optgroup key={group.id} label={group.name}>
-                            {group.tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
-                          </optgroup>
-                        ))}
-                      </select>
+                      {hasCostTags ? (
+                        <select
+                          aria-label={`Tagi ${invoice.invoiceNumber}`}
+                          multiple
+                          disabled={approved}
+                          className="h-24 min-w-48 w-full rounded border border-[var(--wd-border)] px-2 py-1 text-xs disabled:bg-gray-50"
+                          value={rowClassification.tagIds}
+                          onChange={(e) => setClassification((current) => ({
+                            ...current,
+                            [invoice.id]: {
+                              ...rowClassification,
+                              tagIds: Array.from(e.currentTarget.selectedOptions).map((option) => option.value),
+                            },
+                          }))}
+                        >
+                          {costTagGroups.map((group) => (
+                            <optgroup key={group.id} label={group.name}>
+                              {group.tags.map((tag) => <option key={tag.id} value={tag.id}>{tag.name}</option>)}
+                            </optgroup>
+                          ))}
+                        </select>
+                      ) : (
+                        <div className="min-w-48 rounded border border-dashed border-[var(--wd-border)] bg-gray-50 px-2 py-2 text-xs font-medium" style={{ color: 'var(--wd-text-muted)' }}>
+                          Brak tagów kosztowych
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap justify-end gap-2">
