@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth'
 import { redirect } from 'next/navigation'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { sortCostTagGroupsForDisplay } from '@/lib/finance/cost-tags'
 import { roundMoney } from '@/lib/finance/ksef-inbox'
 import { CostEventsView } from '@/components/shared/cost-events-view'
 
@@ -55,7 +56,7 @@ export default async function CostEventsPage() {
       }))}
       initialTotalGrossAmount={roundMoney(events.reduce((sum, event) => sum + event.grossAmount, 0))}
       costCenters={costCenters}
-      costTagGroups={costTagGroups}
+      costTagGroups={sortCostTagGroupsForDisplay(costTagGroups)}
     />
   )
 }

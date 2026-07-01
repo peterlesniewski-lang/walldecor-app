@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { calculatePaymentAgingBucket, type PaymentAgingBucket } from '@/lib/finance/cost-control'
+import { sortCostTagGroupsForDisplay } from '@/lib/finance/cost-tags'
 import { roundMoney } from '@/lib/finance/ksef-inbox'
 import { KsefInboxView, type KsefPaymentStatus, type KsefStatus } from '@/components/shared/ksef-inbox-view'
 
@@ -117,12 +118,12 @@ export default async function KsefInboxPage() {
       }))}
       costCenters={costCenters}
       subCategories={subCategories}
-      costTagGroups={costTagGroups.map((group) => ({
+      costTagGroups={sortCostTagGroupsForDisplay(costTagGroups.map((group) => ({
         id: group.id,
         name: group.name,
         slug: group.slug,
         tags: group.tags,
-      }))}
+      })))}
     />
   )
 }

@@ -1,5 +1,6 @@
 import { NextResponse } from 'next/server'
 import { requireFinanceAdmin } from '@/lib/finance/finance-access'
+import { sortCostTagGroupsForDisplay } from '@/lib/finance/cost-tags'
 import { prisma } from '@/lib/prisma'
 
 export async function GET() {
@@ -17,12 +18,14 @@ export async function GET() {
     },
   })
 
+  const sortedGroups = sortCostTagGroupsForDisplay(groups.map((group) => ({
+    id: group.id,
+    name: group.name,
+    slug: group.slug,
+    tags: group.tags,
+  })))
+
   return NextResponse.json({
-    groups: groups.map((group) => ({
-      id: group.id,
-      name: group.name,
-      slug: group.slug,
-      tags: group.tags,
-    })),
+    groups: sortedGroups,
   })
 }

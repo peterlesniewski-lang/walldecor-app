@@ -2,6 +2,7 @@ import { PrismaClient } from '../src/generated/prisma'
 import bcrypt from 'bcryptjs'
 import * as fs from 'fs'
 import * as path from 'path'
+import { defaultCostTagSeedRows } from '../src/lib/finance/cost-tags'
 
 const prisma = new PrismaClient()
 
@@ -203,12 +204,7 @@ const ACCOUNT_CATEGORIES = [
   },
 ]
 
-const COST_TAG_GROUPS = [
-  { group: { slug: 'behavior', name: 'Charakter kosztu', order: 10 }, tags: ['fixed', 'variable', 'COGS', 'one-off'] },
-  { group: { slug: 'area', name: 'Obszar', order: 20 }, tags: ['wallpapers', 'stucco', 'rugs', 'installation', 'administration'] },
-  { group: { slug: 'role', name: 'Rola', order: 30 }, tags: ['contractors', 'goods', 'marketing', 'rent', 'transport', 'payroll', 'confidential'] },
-  { group: { slug: 'supplier-group', name: 'Grupa dostawców', order: 40 }, tags: ['strategic-supplier', 'new-supplier'] },
-]
+const COST_TAG_GROUPS = defaultCostTagSeedRows()
 
 // Polish holidays for 2025 and 2026
 const POLISH_HOLIDAYS = [
@@ -370,12 +366,11 @@ async function main() {
       create: item.group,
     })
 
-    for (const tagName of item.tags) {
-      const tagSlug = tagName.toLowerCase()
+    for (const tag of item.tags) {
       await prisma.costTag.upsert({
-        where: { slug: tagSlug },
-        update: { groupId: group.id, name: tagName, active: true },
-        create: { groupId: group.id, slug: tagSlug, name: tagName, active: true },
+        where: { slug: tag.slug },
+        update: { groupId: group.id, name: tag.name, active: true },
+        create: { groupId: group.id, slug: tag.slug, name: tag.name, active: true },
       })
       totalCostTags++
     }
