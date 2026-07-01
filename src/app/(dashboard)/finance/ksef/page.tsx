@@ -2,17 +2,20 @@ import { getServerSession } from 'next-auth'
 import { redirect } from 'next/navigation'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { KsefInboxView, type KsefStatus } from '@/components/shared/ksef-inbox-view'
+import { calculatePaymentAgingBucket, type PaymentAgingBucket } from '@/lib/finance/cost-control'
+import { roundMoney } from '@/lib/finance/ksef-inbox'
+import { KsefInboxView, type KsefPaymentStatus, type KsefStatus } from '@/components/shared/ksef-inbox-view'
 
 const INITIAL_PAGE = 1
 const INITIAL_PAGE_SIZE = 50 as const
+const PAYMENT_AGING_BUCKETS: PaymentAgingBucket[] = ['OVERDUE', 'DUE_0_7', 'DUE_8_14', 'DUE_15_30', 'LATER', 'MISSING_DUE_DATE']
 
 export default async function KsefInboxPage() {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
   if (session.user.role !== 'ADMIN') redirect('/finance')
 
-  const [invoices, total, grossAmountAggregate, statusCounts, rules, costCenters, subCategories] = await Promise.all([
+  const [invoices, total, amountRows, statusCounts, rules, costCenters, subCategories] = await Promise.all([
     prisma.ksefInvoice.findMany({
       include: {
         costCenter: true,
@@ -23,7 +26,14 @@ export default async function KsefInboxPage() {
       take: INITIAL_PAGE_SIZE,
     }),
     prisma.ksefInvoice.count(),
-    prisma.ksefInvoice.aggregate({ _sum: { grossAmount: true } }),
+    prisma.ksefInvoice.findMany({
+      select: {
+        grossAmount: true,
+        reportingGrossAmount: true,
+        paymentStatus: true,
+        dueDate: true,
+      },
+    }),
     prisma.ksefInvoice.groupBy({ by: ['status'], _count: { _all: true } }),
     prisma.ksefSupplierRule.findMany({
       include: {
@@ -45,18 +55,39 @@ export default async function KsefInboxPage() {
   for (const row of statusCounts) {
     counts[row.status as KsefStatus] = row._count._all
   }
+  const paymentAging = Object.fromEntries(
+    PAYMENT_AGING_BUCKETS.map((bucket) => [bucket, { count: 0, grossAmount: 0 }])
+  ) as Record<PaymentAgingBucket, { count: number; grossAmount: number }>
+  let grossAmountTotal = 0
+  let unpaidAmountTotal = 0
+  for (const invoice of amountRows) {
+    const amount = roundMoney(invoice.reportingGrossAmount ?? invoice.grossAmount)
+    grossAmountTotal = roundMoney(grossAmountTotal + amount)
+    if (invoice.paymentStatus !== 'PAID') {
+      unpaidAmountTotal = roundMoney(unpaidAmountTotal + amount)
+      const bucket = calculatePaymentAgingBucket(invoice.dueDate)
+      paymentAging[bucket].count += 1
+      paymentAging[bucket].grossAmount = roundMoney(paymentAging[bucket].grossAmount + amount)
+    }
+  }
 
   return (
     <KsefInboxView
       initialInvoices={invoices.map((invoice) => ({
         ...invoice,
         status: invoice.status as KsefStatus,
+        paymentStatus: invoice.paymentStatus as KsefPaymentStatus,
         issueDate: invoice.issueDate.toISOString(),
+        paidAt: invoice.paidAt?.toISOString() ?? null,
+        dueDate: invoice.dueDate?.toISOString() ?? null,
+        convertedAt: invoice.convertedAt?.toISOString() ?? null,
         createdAt: invoice.createdAt.toISOString(),
         updatedAt: invoice.updatedAt.toISOString(),
       }))}
       initialTotal={total}
-      initialGrossAmountTotal={grossAmountAggregate._sum.grossAmount ?? 0}
+      initialGrossAmountTotal={grossAmountTotal}
+      initialUnpaidAmountTotal={unpaidAmountTotal}
+      initialPaymentAging={paymentAging}
       initialPage={INITIAL_PAGE}
       initialPageSize={INITIAL_PAGE_SIZE}
       initialTotalPages={Math.max(1, Math.ceil(total / INITIAL_PAGE_SIZE))}
