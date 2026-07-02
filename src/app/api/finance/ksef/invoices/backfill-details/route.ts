@@ -91,6 +91,7 @@ export async function POST(req: NextRequest) {
             data: {
               dueDate: details.dueDate,
               bankAccount: details.bankAccount ?? invoice.bankAccount ?? undefined,
+              paymentDetailsFetchedAt: new Date(),
             },
           })
           updated += 1
@@ -104,6 +105,7 @@ export async function POST(req: NextRequest) {
               paymentStatus: 'PAID',
               paidAt: invoice.issueDate,
               bankAccount: details.bankAccount ?? invoice.bankAccount ?? undefined,
+              paymentDetailsFetchedAt: new Date(),
             },
           })
           markedPaid += 1

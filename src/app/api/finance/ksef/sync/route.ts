@@ -27,7 +27,11 @@ const KSEF_SETTINGS = [
 
 type MappedKsefInvoice = ReturnType<typeof mapKsefMetadataToInvoice>
 type PersistableKsefInvoice = Omit<MappedKsefInvoice, 'correctedKsefNumber' | 'correctedInvoiceNumber'>
-type ExistingInvoiceDetails = { dueDate: Date | null; bankAccount: string | null } | null
+type ExistingInvoiceDetails = {
+  dueDate: Date | null
+  bankAccount: string | null
+  paymentDetailsFetchedAt?: Date | null
+} | null
 
 function splitMappedInvoice(invoice: MappedKsefInvoice) {
   const { correctedKsefNumber, correctedInvoiceNumber, ...data } = invoice
@@ -42,7 +46,8 @@ function blocksAutomaticClassification(invoice: PersistableKsefInvoice) {
 }
 
 function needsInvoiceXmlDetails(invoice: PersistableKsefInvoice, existing: ExistingInvoiceDetails) {
-  return !invoice.dueDate || !invoice.bankAccount || !existing?.bankAccount
+  if (existing?.paymentDetailsFetchedAt) return false
+  return (!invoice.dueDate && !existing?.dueDate) || (!invoice.bankAccount && !existing?.bankAccount)
 }
 
 async function findCorrectedInvoiceId({
@@ -145,6 +150,7 @@ export async function POST() {
           const existing = await prisma.ksefInvoice.findUnique({
             where: { externalId: invoiceData.externalId },
           })
+          let paymentDetailsFetchedAt: Date | null = null
           if (needsInvoiceXmlDetails(invoiceData, existing)) {
             try {
               const details = await fetchKsefInvoiceDetailWithRetry({
@@ -154,6 +160,7 @@ export async function POST() {
               })
               invoiceData.dueDate = details.dueDate ?? invoiceData.dueDate
               invoiceData.bankAccount = details.bankAccount ?? invoiceData.bankAccount
+              paymentDetailsFetchedAt = new Date()
               xmlDetailsFetched += 1
             } catch {
               xmlDetailsFailed += 1
@@ -162,6 +169,7 @@ export async function POST() {
             // trip KSeF rate limiting and silently drop payment due dates.
             await wait(XML_DETAILS_THROTTLE_MS)
           }
+          const xmlConfirmsNoDueDate = Boolean(paymentDetailsFetchedAt && !invoiceData.dueDate)
           const correctsInvoiceId = await findCorrectedInvoiceId({
             correctedKsefNumber,
             correctedInvoiceNumber,
@@ -191,8 +199,12 @@ export async function POST() {
                 originalVatAmount: invoiceData.originalVatAmount,
                 dueDate: invoiceData.dueDate ?? existing.dueDate,
                 bankAccount: invoiceData.bankAccount ?? existing.bankAccount,
+                paymentDetailsFetchedAt: paymentDetailsFetchedAt ?? existing.paymentDetailsFetchedAt,
                 documentStatus: invoiceData.documentStatus,
                 correctsInvoiceId: invoiceData.documentStatus === 'CORRECTION' ? correctsInvoiceId : null,
+                ...(xmlConfirmsNoDueDate && existing.paymentStatus !== 'PAID'
+                  ? { paymentStatus: 'PAID', paidAt: existing.paidAt ?? invoiceData.issueDate }
+                  : {}),
                 ...(shouldBlockClassification && existing.status !== 'APPROVED'
                   ? {
                       status: 'NEW',
@@ -219,7 +231,9 @@ export async function POST() {
           await prisma.ksefInvoice.create({
             data: {
               ...invoiceData,
+              paymentDetailsFetchedAt,
               correctsInvoiceId: invoiceData.documentStatus === 'CORRECTION' ? correctsInvoiceId : null,
+              ...(xmlConfirmsNoDueDate ? { paymentStatus: 'PAID', paidAt: invoiceData.issueDate } : {}),
               status: match ? 'MAPPED' : 'NEW',
               ruleMatchStatus: ruleDecision.status === 'CONFLICT' ? 'CONFLICT' : match ? 'MATCHED' : 'NO_RULE',
               costCenterId: match?.costCenterId ?? null,

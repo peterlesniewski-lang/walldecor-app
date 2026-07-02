@@ -12,7 +12,7 @@ export interface SupplierRuleInput {
   supplierNamePattern?: string | null
   supplierNip?: string | null
   costCenterId: string
-  subCategoryId: string
+  subCategoryId?: string | null
   active: boolean
   priority?: number | null
   tags?: Array<{ tagId: string }>

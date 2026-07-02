@@ -216,6 +216,7 @@ model KsefInvoice {
   paidAt        DateTime?
   dueDate       DateTime?
   bankAccount   String?
+  paymentDetailsFetchedAt DateTime?
   documentStatus String  @default("ACTIVE")
   ruleMatchStatus String @default("NO_RULE")
   correctsInvoiceId String?
@@ -260,8 +261,8 @@ model KsefSupplierRule {
 
   costCenterId  String
   costCenter    CostCenter  @relation(fields: [costCenterId], references: [id])
-  subCategoryId String
-  subCategory   SubCategory @relation(fields: [subCategoryId], references: [id])
+  subCategoryId String?
+  subCategory   SubCategory? @relation(fields: [subCategoryId], references: [id])
   invoices      KsefInvoice[]
   tags          KsefSupplierRuleTag[]
 

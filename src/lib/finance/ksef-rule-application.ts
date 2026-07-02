@@ -98,7 +98,7 @@ export async function applySupplierRuleToNewInvoices(db: DbClient, rule: Supplie
         data: {
           status: 'MAPPED',
           costCenterId: rule.costCenterId,
-          subCategoryId: rule.subCategoryId,
+          subCategoryId: rule.subCategoryId ?? null,
           supplierRuleId: rule.id,
           ruleMatchStatus: 'MATCHED',
         },
@@ -114,7 +114,7 @@ export async function applySupplierRuleToNewInvoices(db: DbClient, rule: Supplie
     data: {
       status: 'MAPPED',
       costCenterId: rule.costCenterId,
-      subCategoryId: rule.subCategoryId,
+      subCategoryId: rule.subCategoryId ?? null,
       supplierRuleId: rule.id,
       ruleMatchStatus: 'MATCHED',
     },
@@ -153,7 +153,7 @@ export async function applySupplierRulesToNewInvoices(db: DbClient, rules: Suppl
         data: {
           status: 'MAPPED',
           costCenterId: decision.rule.costCenterId,
-          subCategoryId: decision.rule.subCategoryId,
+          subCategoryId: decision.rule.subCategoryId ?? null,
           supplierRuleId: decision.rule.id,
           ruleMatchStatus: 'MATCHED',
         },

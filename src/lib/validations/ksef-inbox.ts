@@ -91,7 +91,7 @@ export const KsefSupplierRuleCreateSchema = z
       .optional()
       .transform((value) => normalizeSupplierNip(value)),
     costCenterId: z.enum(VALID_COST_CENTERS),
-    subCategoryId: z.string().trim().min(1),
+    subCategoryId: z.string().trim().min(1).optional(),
     tagIds: z.array(z.string().trim().min(1)).optional(),
     priority: z.coerce.number().int().positive().optional(),
     active: z.boolean().optional(),

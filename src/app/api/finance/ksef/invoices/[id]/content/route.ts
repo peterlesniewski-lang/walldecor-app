@@ -50,15 +50,17 @@ export async function GET(
     const details = parseKsefInvoiceXmlDetails(xml)
     const dueDate = dateFromKsefDate(details.paymentDueDate)
     const bankAccount = details.bankAccounts[0] ?? null
-    const updatedInvoice = dueDate || bankAccount
-      ? await prisma.ksefInvoice.update({
-          where: { id: invoice.id },
-          data: {
-            dueDate: dueDate ?? invoice.dueDate,
-            bankAccount: bankAccount ?? invoice.bankAccount,
-          },
-        })
-      : invoice
+    const updatedInvoice = await prisma.ksefInvoice.update({
+      where: { id: invoice.id },
+      data: {
+        dueDate: dueDate ?? invoice.dueDate,
+        bankAccount: bankAccount ?? invoice.bankAccount,
+        paymentDetailsFetchedAt: new Date(),
+        ...(!dueDate && !invoice.dueDate && invoice.paymentStatus !== 'PAID'
+          ? { paymentStatus: 'PAID', paidAt: invoice.paidAt ?? invoice.issueDate }
+          : {}),
+      },
+    })
 
     return NextResponse.json({
       invoiceId: invoice.id,

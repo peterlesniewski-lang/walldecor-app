@@ -110,6 +110,7 @@ describe('POST /api/finance/ksef/sync', () => {
         externalId: 'KSEF-XML-1',
         dueDate: new Date('2026-07-21T00:00:00.000Z'),
         bankAccount: '12345678901234567890123456',
+        paymentDetailsFetchedAt: expect.any(Date),
       }),
     })
   })
@@ -158,6 +159,126 @@ describe('POST /api/finance/ksef/sync', () => {
         externalId: 'KSEF-XML-RETRY',
         dueDate: new Date('2026-07-22T00:00:00.000Z'),
         bankAccount: '12345678901234567890123456',
+        paymentDetailsFetchedAt: expect.any(Date),
+      }),
+    })
+  })
+
+  it('does not download full XML again when existing invoice already has payment details', async () => {
+    prismaMock.ksefInvoice.findUnique.mockResolvedValue({
+      id: 'invoice-existing',
+      externalId: 'KSEF-EXISTING',
+      dueDate: new Date('2026-07-21T00:00:00.000Z'),
+      bankAccount: '12345678901234567890123456',
+      reportingGrossAmount: null,
+      reportingNetAmount: null,
+      reportingVatAmount: null,
+      status: 'MAPPED',
+    })
+    ksefClientMock.queryPurchaseInvoiceMetadata.mockResolvedValue({
+      hasMore: false,
+      isTruncated: false,
+      invoices: [
+        {
+          ksefNumber: 'KSEF-EXISTING',
+          invoiceNumber: 'FV/9/2026',
+          issueDate: '2026-07-03',
+          seller: { nip: '5250007133', name: 'Dostawca Testowy' },
+          grossAmount: 369,
+          netAmount: 300,
+          vatAmount: 69,
+          currency: 'PLN',
+        },
+      ],
+    })
+
+    const response = await POST()
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toMatchObject({ updated: 1, xmlDetailsFetched: 0, xmlDetailsFailed: 0 })
+    expect(ksefClientMock.downloadInvoiceXml).not.toHaveBeenCalled()
+    expect(prismaMock.ksefInvoice.update).toHaveBeenCalledWith({
+      where: { id: 'invoice-existing' },
+      data: expect.objectContaining({
+        dueDate: new Date('2026-07-21T00:00:00.000Z'),
+        bankAccount: '12345678901234567890123456',
+      }),
+    })
+  })
+
+  it('does not download full XML again when payment details were already checked', async () => {
+    prismaMock.ksefInvoice.findUnique.mockResolvedValue({
+      id: 'invoice-checked',
+      externalId: 'KSEF-CHECKED',
+      dueDate: new Date('2026-07-23T00:00:00.000Z'),
+      bankAccount: null,
+      paymentDetailsFetchedAt: new Date('2026-07-04T10:00:00.000Z'),
+      reportingGrossAmount: null,
+      reportingNetAmount: null,
+      reportingVatAmount: null,
+      status: 'MAPPED',
+    })
+    ksefClientMock.queryPurchaseInvoiceMetadata.mockResolvedValue({
+      hasMore: false,
+      isTruncated: false,
+      invoices: [
+        {
+          ksefNumber: 'KSEF-CHECKED',
+          invoiceNumber: 'FV/10/2026',
+          issueDate: '2026-07-04',
+          seller: { nip: '5250007133', name: 'Dostawca Testowy' },
+          grossAmount: 492,
+          netAmount: 400,
+          vatAmount: 92,
+          currency: 'PLN',
+        },
+      ],
+    })
+
+    const response = await POST()
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toMatchObject({ updated: 1, xmlDetailsFetched: 0, xmlDetailsFailed: 0 })
+    expect(ksefClientMock.downloadInvoiceXml).not.toHaveBeenCalled()
+  })
+
+  it('marks imported invoice as paid when fetched XML confirms missing payment due date', async () => {
+    ksefClientMock.queryPurchaseInvoiceMetadata.mockResolvedValue({
+      hasMore: false,
+      isTruncated: false,
+      invoices: [
+        {
+          ksefNumber: 'KSEF-NO-DUE',
+          invoiceNumber: 'FV/11/2026',
+          issueDate: '2026-07-05',
+          seller: { nip: '5250007133', name: 'Dostawca Testowy' },
+          grossAmount: 615,
+          netAmount: 500,
+          vatAmount: 115,
+          currency: 'PLN',
+        },
+      ],
+    })
+    ksefClientMock.downloadInvoiceXml.mockResolvedValue(`<?xml version="1.0" encoding="UTF-8"?>
+<Faktura xmlns="http://crd.gov.pl/wzor/2025/06/25/13775/">
+  <Fa>
+    <Platnosc />
+  </Fa>
+</Faktura>`)
+
+    const response = await POST()
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toMatchObject({ imported: 1, xmlDetailsFetched: 1, xmlDetailsFailed: 0 })
+    expect(prismaMock.ksefInvoice.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        externalId: 'KSEF-NO-DUE',
+        paymentStatus: 'PAID',
+        paidAt: new Date('2026-07-05T00:00:00.000Z'),
+        paymentDetailsFetchedAt: expect.any(Date),
       }),
     })
   })

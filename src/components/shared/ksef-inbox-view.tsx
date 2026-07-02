@@ -83,10 +83,10 @@ interface KsefSupplierRuleRow {
   supplierNamePattern: string | null
   supplierNip: string | null
   costCenterId: string
-  subCategoryId: string
+  subCategoryId: string | null
   active: boolean
   costCenter: CostCenterOption
-  subCategory: SubCategoryOption
+  subCategory: SubCategoryOption | null
   tags?: Array<{ tagId?: string; tag?: { id: string; name: string; slug: string } }>
 }
 
@@ -318,7 +318,6 @@ export function KsefInboxView({
     supplierNamePattern: '',
     supplierNip: '',
     costCenterId: costCenters[0]?.id ?? 'GLOBAL',
-    subCategoryId: subCategories[0]?.id ?? '',
     tagIds: [] as string[],
   })
   const [classification, setClassification] = useState<Record<string, { costCenterId: string; tagIds: string[] }>>(
@@ -1341,7 +1340,7 @@ export function KsefInboxView({
             <div key={rule.id} className="rounded border border-[var(--wd-border)] p-3 text-sm">
               <p className="font-semibold">{rule.supplierNip || rule.supplierNamePattern}</p>
               <p className="mt-1 text-xs" style={{ color: 'var(--wd-text-muted)' }}>
-                {rule.costCenter.name} → {(rule.tags ?? []).map((entry) => entry.tag?.name).filter(Boolean).join(', ') || `${rule.subCategory.category.name} / ${rule.subCategory.name}`}
+                {rule.costCenter.name} → {(rule.tags ?? []).map((entry) => entry.tag?.name).filter(Boolean).join(', ') || (rule.subCategory ? `${rule.subCategory.category.name} / ${rule.subCategory.name}` : 'Brak tagów')}
               </p>
             </div>
           ))}

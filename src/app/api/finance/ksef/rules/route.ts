@@ -36,7 +36,7 @@ export async function POST(req: NextRequest) {
         supplierNamePattern: data.supplierNamePattern || null,
         supplierNip: data.supplierNip || null,
         costCenterId: data.costCenterId,
-        subCategoryId: data.subCategoryId,
+        subCategoryId: data.subCategoryId ?? null,
         priority: data.priority ?? 100,
         active: data.active ?? true,
         tags: data.tagIds && data.tagIds.length > 0

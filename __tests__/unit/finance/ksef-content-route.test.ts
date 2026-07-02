@@ -40,8 +40,11 @@ describe('GET /api/finance/ksef/invoices/[id]/content', () => {
     prismaMock.ksefInvoice.findUnique.mockResolvedValue({
       id: 'invoice-1',
       externalId: 'KSEF-1',
+      issueDate: new Date('2026-07-01T00:00:00.000Z'),
       dueDate: null,
       bankAccount: null,
+      paymentStatus: 'UNPAID',
+      paidAt: null,
     })
     prismaMock.ksefInvoice.update.mockResolvedValue({
       id: 'invoice-1',
@@ -85,12 +88,43 @@ describe('GET /api/finance/ksef/invoices/[id]/content', () => {
       data: {
         dueDate: new Date('2026-07-21T00:00:00.000Z'),
         bankAccount: '12345678901234567890123456',
+        paymentDetailsFetchedAt: expect.any(Date),
       },
     })
     expect(body.invoice).toMatchObject({
       id: 'invoice-1',
       dueDate: '2026-07-21T00:00:00.000Z',
       bankAccount: '12345678901234567890123456',
+    })
+  })
+
+  it('marks invoice as paid when fetched XML has no payment due date', async () => {
+    ksefClientMock.downloadInvoiceXml.mockResolvedValue(
+      '<?xml version="1.0"?><Faktura xmlns="http://crd.gov.pl/wzor/2025/06/25/13775/"><Fa><Platnosc /></Fa></Faktura>'
+    )
+    prismaMock.ksefInvoice.update.mockResolvedValue({
+      id: 'invoice-1',
+      externalId: 'KSEF-1',
+      dueDate: null,
+      bankAccount: null,
+      paymentStatus: 'PAID',
+      paidAt: new Date('2026-07-01T00:00:00.000Z'),
+    })
+
+    const response = await GET(new Request('http://localhost'), {
+      params: Promise.resolve({ id: 'invoice-1' }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(prismaMock.ksefInvoice.update).toHaveBeenCalledWith({
+      where: { id: 'invoice-1' },
+      data: expect.objectContaining({
+        dueDate: null,
+        bankAccount: null,
+        paymentStatus: 'PAID',
+        paidAt: new Date('2026-07-01T00:00:00.000Z'),
+        paymentDetailsFetchedAt: expect.any(Date),
+      }),
     })
   })
 })

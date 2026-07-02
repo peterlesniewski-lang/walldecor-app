@@ -88,7 +88,7 @@ export async function PATCH(
       data: {
         status,
         costCenterId: data.costCenterId,
-        subCategoryId: data.subCategoryId ?? existing.subCategoryId,
+        subCategoryId: data.subCategoryId ?? (hasTagClassification ? null : existing.subCategoryId),
         notes: data.notes,
       },
       include: {
@@ -115,7 +115,7 @@ export async function PATCH(
       })
     }
 
-    if (!hasClassification || !invoice.supplierNip || !data.costCenterId || !data.subCategoryId) {
+    if (!hasClassification || !invoice.supplierNip || !data.costCenterId) {
       const updatedInvoice = hasTagClassification
         ? await tx.ksefInvoice.findUnique({
             where: { id },
@@ -146,7 +146,7 @@ export async function PATCH(
             where: { id: existingRule.id },
             data: {
               costCenterId: data.costCenterId,
-              subCategoryId: data.subCategoryId,
+              subCategoryId: data.subCategoryId ?? null,
               tags: {
                 deleteMany: {},
                 create: data.tagIds.map((tagId) => ({ tagId })),
@@ -159,7 +159,7 @@ export async function PATCH(
               supplierNip: invoice.supplierNip,
               supplierNamePattern: invoice.supplierName,
               costCenterId: data.costCenterId,
-              subCategoryId: data.subCategoryId,
+              subCategoryId: data.subCategoryId ?? null,
               active: true,
               tags: { create: data.tagIds.map((tagId) => ({ tagId })) },
             },
