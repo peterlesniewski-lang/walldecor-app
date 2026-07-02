@@ -4,6 +4,7 @@ import {
   LayoutDashboard,
   TrendingUp,
   Banknote,
+  FileCheck2,
   Users,
   CalendarOff,
   Clock,
@@ -11,23 +12,41 @@ import {
   ShieldAlert,
   BookOpen,
   ListChecks,
+  ReceiptText,
+  Target,
+  ChartPie,
+  type LucideIcon,
 } from 'lucide-react'
 import { NavItem } from './nav-item'
 import { Separator } from '@/components/ui/separator'
 
-const NAV_SECTIONS = [
+type SidebarRole = 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+type NavSectionItem = {
+  href: string
+  label: string
+  icon: LucideIcon
+  exact?: boolean
+  roles?: SidebarRole[]
+}
+
+const NAV_SECTIONS: Array<{ label: string | null; items: NavSectionItem[] }> = [
   {
     label: null,
     items: [
-      { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+      { href: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['ADMIN'] },
     ],
   },
   {
-    label: 'Finanse',
+    label: 'Kondycja firmy',
     items: [
-      { href: '/finance/revenue', label: 'Przychody', icon: Banknote },
-      { href: '/finance', label: 'Koszty', icon: TrendingUp },
-      { href: '/finance/alerts', label: 'Alerty', icon: ShieldAlert },
+      { href: '/finance', label: 'Wynik teraz', icon: LayoutDashboard, exact: true },
+      { href: '/finance/actuals', label: 'Koszty', icon: TrendingUp, roles: ['ADMIN'] },
+      { href: '/finance/ksef', label: 'KSeF Inbox', icon: FileCheck2, roles: ['ADMIN'] },
+      { href: '/finance/cost-events', label: 'Zdarzenia kosztowe', icon: ReceiptText, roles: ['ADMIN'] },
+      { href: '/finance/break-even', label: 'Break-even', icon: Target, roles: ['ADMIN'] },
+      { href: '/finance/areas', label: 'Marża obszarów', icon: ChartPie, roles: ['ADMIN'] },
+      { href: '/finance/revenue', label: 'Przychody', icon: Banknote, roles: ['ADMIN'] },
+      { href: '/finance/alerts', label: 'Alerty', icon: ShieldAlert, roles: ['ADMIN'] },
     ],
   },
   {
@@ -60,7 +79,7 @@ const NAV_SECTIONS = [
   },
 ]
 
-export function Sidebar() {
+export function Sidebar({ userRole = 'EMPLOYEE' }: { userRole?: SidebarRole }) {
   return (
     <aside
       className="flex flex-col h-screen w-64 shrink-0 border-r py-4"
@@ -95,7 +114,7 @@ export function Sidebar() {
               </p>
             )}
             <div className="space-y-0.5">
-              {section.items.map((item) => (
+              {section.items.filter((item) => !item.roles || item.roles.includes(userRole)).map((item) => (
                 <NavItem key={item.href} {...item} />
               ))}
             </div>

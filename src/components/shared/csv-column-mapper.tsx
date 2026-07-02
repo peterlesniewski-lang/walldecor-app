@@ -95,7 +95,7 @@ function buildInitialMapping(
 
 export function CsvColumnMapper({ userRole }: Props) {
   const isAdmin = userRole === 'ADMIN'
-  const canImport = isAdmin || userRole === 'MANAGER'
+  const canImport = isAdmin
 
   // Module + type
   const [module, setModule] = useState<DataModule>('costs')
@@ -263,7 +263,7 @@ export function CsvColumnMapper({ userRole }: Props) {
       {!canImportThisType && (
         <div className="px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm">
           Import {dataType === 'budget' || dataType === 'plan' ? 'planu' : 'wykonania'} wymaga roli{' '}
-          {dataType === 'budget' || dataType === 'plan' ? 'ADMIN' : 'ADMIN lub MANAGER'}.
+          ADMIN.
         </div>
       )}
 

@@ -1,0 +1,23 @@
+UPDATE "CostTagGroup" SET "name" = 'Charakter kosztu' WHERE "slug" = 'behavior';
+UPDATE "CostTagGroup" SET "name" = 'Obszar' WHERE "slug" = 'area';
+UPDATE "CostTagGroup" SET "name" = 'Typ wydatku' WHERE "slug" = 'role';
+UPDATE "CostTagGroup" SET "name" = 'Relacja z dostawcą' WHERE "slug" = 'supplier-group';
+
+UPDATE "CostTag" SET "name" = 'Stały' WHERE "slug" = 'fixed';
+UPDATE "CostTag" SET "name" = 'Zmienny' WHERE "slug" = 'variable';
+UPDATE "CostTag" SET "name" = 'Koszt sprzedanych towarów' WHERE "slug" = 'cogs';
+UPDATE "CostTag" SET "name" = 'Jednorazowy' WHERE "slug" = 'one-off';
+UPDATE "CostTag" SET "name" = 'Tapety' WHERE "slug" = 'wallpapers';
+UPDATE "CostTag" SET "name" = 'Sztukateria' WHERE "slug" = 'stucco';
+UPDATE "CostTag" SET "name" = 'Dywany' WHERE "slug" = 'rugs';
+UPDATE "CostTag" SET "name" = 'Montaż' WHERE "slug" = 'installation';
+UPDATE "CostTag" SET "name" = 'Administracja' WHERE "slug" = 'administration';
+UPDATE "CostTag" SET "name" = 'Wykonawcy' WHERE "slug" = 'contractors';
+UPDATE "CostTag" SET "name" = 'Zakup towarów i materiałów' WHERE "slug" = 'goods';
+UPDATE "CostTag" SET "name" = 'Marketing' WHERE "slug" = 'marketing';
+UPDATE "CostTag" SET "name" = 'Czynsz i najem' WHERE "slug" = 'rent';
+UPDATE "CostTag" SET "name" = 'Transport' WHERE "slug" = 'transport';
+UPDATE "CostTag" SET "name" = 'Wynagrodzenia' WHERE "slug" = 'payroll';
+UPDATE "CostTag" SET "name" = 'Poufne' WHERE "slug" = 'confidential';
+UPDATE "CostTag" SET "name" = 'Stały dostawca' WHERE "slug" = 'strategic-supplier';
+UPDATE "CostTag" SET "name" = 'Nowy dostawca' WHERE "slug" = 'new-supplier';

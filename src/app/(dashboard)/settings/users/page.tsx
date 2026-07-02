@@ -10,7 +10,17 @@ export default async function UsersPage() {
   if (session.user.role !== 'ADMIN') redirect('/settings')
 
   const users = await prisma.user.findMany({
-    include: {
+    select: {
+      id: true,
+      username: true,
+      email: true,
+      name: true,
+      role: true,
+      isActive: true,
+      mustChangePassword: true,
+      passwordChangedAt: true,
+      employeeId: true,
+      createdAt: true,
       employee: {
         select: {
           firstName: true,

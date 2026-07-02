@@ -4,11 +4,10 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { RevenueEntrySchema, RevenueQuerySchema } from '@/lib/validations/revenue'
 
-const CAN_EDIT = ['ADMIN', 'MANAGER']
-
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (session.user.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { searchParams } = req.nextUrl
   const parsed = RevenueQuerySchema.safeParse({
@@ -27,7 +26,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!CAN_EDIT.includes(session.user.role ?? '')) {
+  if (session.user.role !== 'ADMIN') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

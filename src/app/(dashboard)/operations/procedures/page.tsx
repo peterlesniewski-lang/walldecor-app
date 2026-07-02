@@ -11,7 +11,7 @@ export default async function OperationProceduresPage() {
 
   const role = session.user.role
   const isManager = role === 'ADMIN' || role === 'MANAGER'
-  const procedures = await getArticles({ type: 'procedure' }, role)
+  const procedures = await getArticles({ type: 'procedure' }, role, session.user.id)
 
   return (
     <div className="mx-auto max-w-6xl p-6">

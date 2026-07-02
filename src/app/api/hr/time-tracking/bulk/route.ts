@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { timeEntryBulkCreateSchema } from '@/lib/hr/schemas'
+import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -18,6 +19,7 @@ export async function POST(req: NextRequest) {
   }
 
   const { employeeIds, startDate, endDate, clockInUtc, clockOutUtc, skipWeekends, projectId } = parsed.data
+  const role = session.user.role
 
   // Extract UTC hours/minutes from browser-computed ISO strings.
   // Browser constructed these via new Date('YYYY-MM-DDThh:mm') (local) → .toISOString() (UTC).
@@ -34,13 +36,29 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'clockOut must be after clockIn' }, { status: 400 })
   }
 
-  // Validate employees exist
+  const viewerEmployee =
+    role === 'MANAGER' && session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+  const scopedWhere = getScopedEmployeeWhere(session, viewerEmployee)
+
+  if (scopedWhere.id === HR_NO_EMPLOYEE_ACCESS_ID) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  // Validate employees exist and are inside the caller's HR scope.
   const employees = await prisma.employee.findMany({
-    where: { id: { in: employeeIds } },
+    where: { ...scopedWhere, id: { in: employeeIds } },
     select: { id: true },
   })
   if (employees.length !== employeeIds.length) {
-    return NextResponse.json({ error: 'One or more employees not found' }, { status: 404 })
+    return NextResponse.json(
+      { error: role === 'MANAGER' ? 'Forbidden' : 'One or more employees not found' },
+      { status: role === 'MANAGER' ? 403 : 404 }
+    )
   }
 
   const created: string[] = []

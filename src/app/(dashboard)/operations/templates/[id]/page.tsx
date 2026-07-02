@@ -18,7 +18,7 @@ export default async function OperationTemplatePage({
   if (!session) redirect('/login')
 
   const { id } = await params
-  const template = await getTemplate(id)
+  const template = await getTemplate(id, { id: session.user.id, role: session.user.role })
   if (!template) notFound()
 
   const canStart = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'

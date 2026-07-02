@@ -7,6 +7,7 @@ import { EmployeeAvatar } from '@/components/hr/employees/employee-avatar'
 import { EmployeeFilters } from '@/components/hr/employees/employee-filters'
 import { EmployeeRowActions } from '@/components/hr/employees/employee-row-actions'
 import { Suspense } from 'react'
+import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
 
 // ─── Badges ──────────────────────────────────────────────────────────────────
 
@@ -65,6 +66,20 @@ export default async function EmployeesPage({
   const sp = await searchParams
   const isAdmin = session.user.role === 'ADMIN'
 
+  if (session.user.role === 'EMPLOYEE') {
+    if (session.user.employeeId) redirect(`/hr/employees/${session.user.employeeId}`)
+    return (
+      <div className="p-6 lg:p-8 bg-[var(--wd-off-white)] min-h-full">
+        <div className="rounded-xl border border-[var(--wd-border)] bg-white px-6 py-10 text-center">
+          <h1 className="text-xl font-semibold text-[var(--wd-text-primary)]">Brak profilu pracownika</h1>
+          <p className="mt-2 text-sm" style={{ color: 'var(--wd-text-muted)' }}>
+            Twoje konto nie jest jeszcze powiązane z kartą pracownika.
+          </p>
+        </div>
+      </div>
+    )
+  }
+
   const page = Math.max(1, parseInt(sp.page ?? '1', 10))
   const limit = 20
   const skip = (page - 1) * limit
@@ -73,6 +88,7 @@ export default async function EmployeesPage({
 
   // Build filters
   type WhereClause = {
+    id?: string
     divisionId?: string
     departmentId?: string
     employmentType?: string
@@ -80,13 +96,23 @@ export default async function EmployeesPage({
     OR?: Array<{ firstName?: { contains: string }; lastName?: { contains: string }; email?: { contains: string } }>
   }
 
-  const where: WhereClause = {}
-  if (sp.divisionId) where.divisionId = sp.divisionId
+  const viewerEmployee =
+    session.user.role === 'MANAGER' && session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+  const scopedWhere = getScopedEmployeeWhere(session, viewerEmployee) as WhereClause
+  const where: WhereClause =
+    scopedWhere.id === HR_NO_EMPLOYEE_ACCESS_ID ? { id: HR_NO_EMPLOYEE_ACCESS_ID } : { ...scopedWhere }
+
+  if (sp.divisionId && isAdmin) where.divisionId = sp.divisionId
   if (sp.departmentId) where.departmentId = sp.departmentId
   if (sp.employmentType) where.employmentType = sp.employmentType
   if (sp.status === 'active') where.active = true
-  else if (sp.status === 'inactive') where.active = false
-  else if (!showHidden) where.active = true
+  else if (sp.status === 'inactive' && isAdmin) where.active = false
+  else if (!showHidden && !('active' in where)) where.active = true
   if (sp.search) {
     where.OR = [
       { firstName: { contains: sp.search } },

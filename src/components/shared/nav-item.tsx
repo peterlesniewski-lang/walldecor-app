@@ -9,11 +9,12 @@ interface NavItemProps {
   label: string
   icon: LucideIcon
   collapsed?: boolean
+  exact?: boolean
 }
 
-export function NavItem({ href, label, icon: Icon, collapsed }: NavItemProps) {
+export function NavItem({ href, label, icon: Icon, collapsed, exact }: NavItemProps) {
   const pathname = usePathname()
-  const isActive = pathname === href || (href !== '/' && pathname.startsWith(href + '/'))
+  const isActive = exact ? pathname === href : pathname === href || (href !== '/' && pathname.startsWith(href + '/'))
 
   return (
     <Link

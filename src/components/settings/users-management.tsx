@@ -42,10 +42,13 @@ interface UserEmployee {
 
 interface UserRecord {
   id: string
+  username: string | null
   email: string
   name: string
   role: string
   isActive: boolean
+  mustChangePassword: boolean
+  passwordChangedAt: string | Date | null
   createdAt: string | Date
   employeeId: string | null
   employee: UserEmployee | null
@@ -90,6 +93,16 @@ function StatusBadge({ isActive }: { isActive: boolean }) {
   )
 }
 
+function PasswordStatusBadge({ mustChangePassword }: { mustChangePassword: boolean }) {
+  if (!mustChangePassword) return null
+
+  return (
+    <span className="inline-flex items-center px-2 py-0.5 rounded-md text-[11px] font-semibold bg-amber-100 text-amber-800">
+      Zmiana hasła
+    </span>
+  )
+}
+
 // ─── Temp Password Dialog ─────────────────────────────────────────────────────
 
 function TempPasswordDialog({
@@ -119,7 +132,7 @@ function TempPasswordDialog({
         </DialogHeader>
         <div className="space-y-4 pt-2">
           <p className="text-sm text-[var(--wd-text-muted)]">
-            Hasło tymczasowe — przekaż je użytkownikowi bezpiecznym kanałem.
+            Hasło tymczasowe. Użytkownik będzie musiał zmienić je po zalogowaniu.
           </p>
           <div className="flex items-center gap-2">
             <code className="flex-1 px-3 py-2.5 bg-[var(--wd-surface-2)] rounded-lg font-mono text-base tracking-widest text-[var(--wd-dark)] border border-[var(--wd-border)]">
@@ -225,7 +238,7 @@ function AddUserDialog({
   onClose: () => void
   onSuccess: (user: UserRecord) => void
 }) {
-  const [form, setForm] = useState({ name: '', email: '', role: 'EMPLOYEE' as Role })
+  const [form, setForm] = useState({ name: '', username: '', email: '', role: 'EMPLOYEE' as Role })
   const [employeeId, setEmployeeId] = useState<string | undefined>(undefined)
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState('')
@@ -256,7 +269,7 @@ function AddUserDialog({
   }
 
   const handleClose = () => {
-    setForm({ name: '', email: '', role: 'EMPLOYEE' })
+    setForm({ name: '', username: '', email: '', role: 'EMPLOYEE' })
     setEmployeeId(undefined)
     setError('')
     setTempPassword('')
@@ -289,6 +302,17 @@ function AddUserDialog({
               value={form.name}
               onChange={(e) => setForm((f) => ({ ...f, name: e.target.value }))}
               placeholder="Jan Kowalski"
+              required
+            />
+          </div>
+          <div className="space-y-2">
+            <Label htmlFor="u-username">Login</Label>
+            <Input
+              id="u-username"
+              value={form.username}
+              onChange={(e) => setForm((f) => ({ ...f, username: e.target.value }))}
+              placeholder="jkowalski"
+              autoComplete="username"
               required
             />
           </div>
@@ -380,6 +404,7 @@ function UserRowActions({
         const data = await res.json()
         setTempPassword(data.temporaryPassword)
         setShowTempPassword(true)
+        onUpdate({ ...user, mustChangePassword: true, passwordChangedAt: null })
       }
     } finally {
       setBusy(false)
@@ -548,7 +573,9 @@ export function UsersManagement({ users: initialUsers }: UsersManagementProps) {
                     </div>
                     <div className="min-w-0">
                       <div className="font-medium text-[var(--wd-text-primary)] truncate">{user.name}</div>
-                      <div className="text-xs text-[var(--wd-text-muted)] truncate">{user.email}</div>
+                      <div className="text-xs text-[var(--wd-text-muted)] truncate">
+                        @{user.username ?? 'brak-loginu'} · {user.email}
+                      </div>
                     </div>
                   </div>
                 </td>
@@ -578,7 +605,10 @@ export function UsersManagement({ users: initialUsers }: UsersManagementProps) {
                 </td>
                 {/* Status */}
                 <td className="px-4 py-3">
-                  <StatusBadge isActive={user.isActive} />
+                  <div className="flex flex-col gap-1">
+                    <StatusBadge isActive={user.isActive} />
+                    <PasswordStatusBadge mustChangePassword={user.mustChangePassword} />
+                  </div>
                 </td>
                 {/* Actions */}
                 <td className="px-4 py-3 text-right">

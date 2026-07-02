@@ -8,6 +8,9 @@ export async function GET() {
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
+  if (session.user.role !== 'ADMIN') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   const categories = await prisma.accountCategory.findMany({
     orderBy: { order: 'asc' },

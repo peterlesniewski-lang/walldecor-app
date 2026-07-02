@@ -30,7 +30,7 @@ function resolveAuth(session: Session | null, type: string, apiKey: string | nul
   }
   if (!session) return false
   if (type === 'budget') return session.user.role === 'ADMIN'
-  return ['ADMIN', 'MANAGER'].includes(session.user.role ?? '')
+  return session.user.role === 'ADMIN'
 }
 
 export async function POST(req: NextRequest) {

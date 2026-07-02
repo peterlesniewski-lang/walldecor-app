@@ -4,6 +4,10 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { employeeCreateSchema } from '@/lib/hr/schemas'
 import { calcProportionalLeaveDays } from '@/lib/hr/utils'
+import {
+  getScopedEmployeeWhere,
+  HR_NO_EMPLOYEE_ACCESS_ID,
+} from '@/lib/hr/access'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -20,14 +24,33 @@ export async function GET(req: NextRequest) {
   const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') ?? '20', 10)))
   const skip = (page - 1) * limit
 
-  const where: Record<string, unknown> = {}
+  const viewerEmployee =
+    session.user.role === 'MANAGER' && session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+  const scopedWhere = getScopedEmployeeWhere(session, viewerEmployee)
 
-  if (divisionId) where.divisionId = divisionId
+  if (scopedWhere.id === HR_NO_EMPLOYEE_ACCESS_ID) {
+    return NextResponse.json({ employees: [], total: 0, page, limit })
+  }
+
+  const where: Record<string, unknown> = { ...scopedWhere }
+  const isAdmin = session.user.role === 'ADMIN'
+
+  if (divisionId && isAdmin) where.divisionId = divisionId
+  if (divisionId && session.user.role === 'MANAGER' && viewerEmployee?.divisionId !== divisionId) {
+    return NextResponse.json({ employees: [], total: 0, page, limit })
+  }
   if (departmentId) where.departmentId = departmentId
   if (employmentType) where.employmentType = employmentType
   if (status === 'active') where.active = true
-  else if (status === 'inactive') where.active = false
-  else if (!showHidden || session.user.role !== 'ADMIN') where.active = true
+  else if (status === 'inactive' && isAdmin) where.active = false
+  else if (!showHidden || !isAdmin) {
+    if (!('active' in where) && session.user.role !== 'EMPLOYEE') where.active = true
+  }
   if (search) {
     // SQLite does not support mode:'insensitive' — use default (case-insensitive by default for ASCII in SQLite)
     where.OR = [

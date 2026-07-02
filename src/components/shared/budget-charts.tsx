@@ -26,7 +26,7 @@ const MONTH_LABELS = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'W
 
 const chartConfig = {
   total: {
-    label: 'Budżet',
+    label: 'Założenia',
     color: '#2A7D4F',
   },
 } satisfies ChartConfig
@@ -89,7 +89,7 @@ export function BudgetCharts({ categories, entries }: BudgetChartsProps) {
       </div>
 
       <div className="rounded-2xl bg-white p-5" style={{ boxShadow: 'var(--card-shadow)' }}>
-        <p className="data-label mb-4">Budżet per kategoria</p>
+        <p className="data-label mb-4">Założenia per kategoria</p>
         <ChartContainer config={chartConfig} className="h-48">
           <BarChart data={categoryData} layout="vertical" barCategoryGap="30%">
             <CartesianGrid strokeDasharray="3 3" stroke="var(--wd-border)" horizontal={false} />

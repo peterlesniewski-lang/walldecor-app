@@ -28,13 +28,13 @@ export function LoginForm() {
     setError(null)
 
     const result = await signIn('credentials', {
-      email: data.email,
+      username: data.username,
       password: data.password,
       redirect: false,
     })
 
     if (result?.error) {
-      setError('Nieprawidłowy email lub hasło')
+      setError('Nieprawidłowy login lub hasło')
       return
     }
 
@@ -56,16 +56,16 @@ export function LoginForm() {
           )}
 
           <div className="space-y-1.5">
-            <Label htmlFor="email">Email</Label>
+            <Label htmlFor="username">Login</Label>
             <Input
-              id="email"
-              type="email"
-              placeholder="admin@walldecor.pl"
-              autoComplete="email"
-              {...register('email')}
+              id="username"
+              type="text"
+              placeholder="abodeka"
+              autoComplete="username"
+              {...register('username')}
             />
-            {errors.email && (
-              <p className="text-xs text-red-600">{errors.email.message}</p>
+            {errors.username && (
+              <p className="text-xs text-red-600">{errors.username.message}</p>
             )}
           </div>
 

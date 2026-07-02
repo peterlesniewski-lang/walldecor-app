@@ -134,6 +134,30 @@ describe('GET /api/budget', () => {
     const res = await GET(req)
     expect(res.status).toBe(401)
   })
+
+  it('should return 403 for MANAGER role', async () => {
+    mockGetServerSession.mockResolvedValue({
+      user: { id: '2', name: 'Manager', email: 'mgr@test.com', role: 'MANAGER' },
+      expires: '',
+    })
+
+    const req = makeRequest('GET', undefined, { year: '2025', costCenterId: 'JAG' })
+    const res = await GET(req)
+    expect(res.status).toBe(403)
+    expect(mockFindMany).not.toHaveBeenCalled()
+  })
+
+  it('should return 403 for EMPLOYEE role', async () => {
+    mockGetServerSession.mockResolvedValue({
+      user: { id: '3', name: 'Employee', email: 'emp@test.com', role: 'EMPLOYEE' },
+      expires: '',
+    })
+
+    const req = makeRequest('GET', undefined, { year: '2025', costCenterId: 'JAG' })
+    const res = await GET(req)
+    expect(res.status).toBe(403)
+    expect(mockFindMany).not.toHaveBeenCalled()
+  })
 })
 
 // ---------------------------------------------------------------------------

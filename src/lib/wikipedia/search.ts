@@ -15,8 +15,12 @@ interface SearchResult {
   content: string
 }
 
-export async function searchArticles(query: string, role: Role): Promise<SearchResult[]> {
-  const visibilityCondition = role === 'EMPLOYEE' ? Prisma.sql`AND a.visibility = 'public'` : Prisma.empty
+export async function searchArticles(query: string, role: Role, viewerId?: string): Promise<SearchResult[]> {
+  const visibilityCondition = role === 'EMPLOYEE'
+    ? viewerId
+      ? Prisma.sql`AND (a.visibility = 'public' OR (a.type = 'procedure' AND a.id IN (SELECT resourceId FROM ContentVisibilityGrant WHERE resourceType = 'procedure' AND userId = ${viewerId})))`
+      : Prisma.sql`AND a.visibility = 'public'`
+    : Prisma.empty
 
   if (query.length < 2) {
     return prisma.$queryRaw<SearchResult[]>`

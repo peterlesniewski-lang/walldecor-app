@@ -15,7 +15,7 @@ export default async function OperationProcedurePage({ params }: { params: Promi
   const { slug } = await params
   const role = session.user.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
   const isManager = role === 'ADMIN' || role === 'MANAGER'
-  const article = await getArticle(slug, role)
+  const article = await getArticle(slug, role, session.user.id)
   if (!article || article.type !== 'procedure') notFound()
 
   const category = CATEGORY_LABELS.find((item) => item.id === article.category)

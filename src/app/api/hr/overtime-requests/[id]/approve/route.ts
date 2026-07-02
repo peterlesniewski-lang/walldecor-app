@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { OVERTIME_RESOLUTION } from '@/lib/hr/constants'
+import { canViewEmployeeRecord } from '@/lib/hr/access'
 
 const approveSchema = z.object({
   resolution: z.enum(OVERTIME_RESOLUTION),
@@ -23,8 +24,22 @@ export async function PATCH(
 
   const { id } = await params
 
-  const existing = await prisma.overtimeRequest.findUnique({ where: { id } })
+  const existing = await prisma.overtimeRequest.findUnique({
+    where: { id },
+    include: { employee: { select: { id: true, divisionId: true, active: true } } },
+  })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (role === 'MANAGER') {
+    const viewerEmployee = session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+    if (!canViewEmployeeRecord(session, existing.employee, viewerEmployee)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
   if (existing.status !== 'pending') {
     return NextResponse.json({ error: 'Only pending requests can be approved' }, { status: 409 })
   }

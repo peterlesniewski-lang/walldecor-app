@@ -3,11 +3,15 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { ActualEntrySchema, ActualQuerySchema } from '@/lib/validations/actuals'
+import { isActualEntryInRealizedCostScope } from '@/lib/finance/realized-costs'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  }
+  if (session.user.role !== 'ADMIN') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   const { searchParams } = req.nextUrl
@@ -39,7 +43,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   }
 
-  if (!['ADMIN', 'MANAGER'].includes(session.user.role ?? '')) {
+  if (session.user.role !== 'ADMIN') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
@@ -52,6 +56,15 @@ export async function POST(req: NextRequest) {
   }
 
   const data = parsed.data
+  if (!isActualEntryInRealizedCostScope(data.year, data.month)) {
+    return NextResponse.json(
+      {
+        error:
+          'Od kwietnia 2026 ręczne koszty rzeczywiste są zastąpione przez KSeF i zdarzenia kosztowe.',
+      },
+      { status: 409 }
+    )
+  }
 
   const entry = await prisma.actualEntry.upsert({
     where: {

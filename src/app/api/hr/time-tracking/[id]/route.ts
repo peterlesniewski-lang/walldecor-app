@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { canViewEmployeeRecord } from '@/lib/hr/access'
 import { z } from 'zod'
 
 const updateSchema = z.object({
@@ -22,6 +23,32 @@ export async function GET(
 
   const { id } = await params
 
+  const accessEntry = await prisma.timeEntry.findUnique({
+    where: { id },
+    select: {
+      employeeId: true,
+      employee: { select: { id: true, divisionId: true, active: true } },
+    },
+  })
+
+  if (!accessEntry) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  // EMPLOYEE can only see their own entries; MANAGER only entries from their division.
+  if (session.user.role === 'EMPLOYEE' && accessEntry.employeeId !== session.user.employeeId) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+  if (session.user.role === 'MANAGER') {
+    const viewerEmployee = session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+    if (!canViewEmployeeRecord(session, accessEntry.employee, viewerEmployee)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
+
   const entry = await prisma.timeEntry.findUnique({
     where: { id },
     include: {
@@ -30,16 +57,6 @@ export async function GET(
       employee: { select: { id: true, firstName: true, lastName: true, avatarUrl: true } },
     },
   })
-
-  if (!entry) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-
-  // EMPLOYEE can only see their own entries
-  if (session.user.role === 'EMPLOYEE') {
-    const employee = await prisma.employee.findFirst({ where: { userId: session.user.id } })
-    if (!employee || employee.id !== entry.employeeId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-  }
 
   return NextResponse.json(entry)
 }
@@ -56,8 +73,24 @@ export async function PATCH(
 
   const { id } = await params
 
-  const existing = await prisma.timeEntry.findUnique({ where: { id } })
+  const existing = await prisma.timeEntry.findUnique({
+    where: { id },
+    include: {
+      employee: { select: { id: true, divisionId: true, active: true } },
+    },
+  })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (session.user.role === 'MANAGER') {
+    const viewerEmployee = session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+    if (!canViewEmployeeRecord(session, existing.employee, viewerEmployee)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
 
   const parsed = updateSchema.safeParse(await req.json())
   if (!parsed.success) {

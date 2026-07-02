@@ -48,15 +48,18 @@ Operacje używają istniejącego modelu `Article` jako źródła instrukcji how-
 ### User
 ```prisma
 model User {
-  id            String    @id @default(cuid())
-  email         String    @unique
-  name          String
-  role          Role      @default(EMPLOYEE)
-  passwordHash  String
-  employee      Employee? @relation(fields: [employeeId], references: [id])
-  employeeId    String?   @unique
-  createdAt     DateTime  @default(now())
-  updatedAt     DateTime  @updatedAt
+  id                 String    @id @default(cuid())
+  username           String?   @unique  // login (backfill z e-maila przy pierwszym logowaniu)
+  email              String    @unique
+  name               String
+  role               Role      @default(EMPLOYEE)
+  passwordHash       String
+  mustChangePassword Boolean   @default(false) // wymuś zmianę hasła po utworzeniu/resecie
+  passwordChangedAt  DateTime?                  // znacznik ostatniej zmiany hasła
+  employee           Employee? @relation(fields: [employeeId], references: [id])
+  employeeId         String?   @unique
+  createdAt          DateTime  @default(now())
+  updatedAt          DateTime  @updatedAt
 
   actualEntries ActualEntry[]
 }
@@ -67,6 +70,8 @@ enum Role {
   EMPLOYEE
 }
 ```
+
+**Logowanie po loginie (username), nie e-mailu:** `LoginSchema` (`src/lib/validations/auth.ts`) przyjmuje `username` + `password`, a `src/lib/auth.ts` wyszukuje użytkownika po `username`. Fallback dla kont starszych (bez `username`) porównuje wpisany login ze znormalizowaną częścią lokalną e-maila (`normalizeEmailLocalPart` w `src/lib/accounts/policy.ts`) i uzupełnia `username` przy pierwszym udanym logowaniu. Konta tworzone/resetowane przez ADMIN dostają jednorazowe hasło tymczasowe (`generateTemporaryPassword` w `src/lib/accounts/security.ts`) i flagę `mustChangePassword: true` — middleware `src/proxy.ts` przekierowuje takich użytkowników na `/change-password` (403 dla `/api/*`).
 
 ---
 

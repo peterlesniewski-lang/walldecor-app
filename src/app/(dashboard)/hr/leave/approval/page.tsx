@@ -5,6 +5,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import ApprovalList, { type LeaveRequestItem } from '@/components/hr/leave/approval-list'
 import { ClipboardList, Loader2 } from 'lucide-react'
+import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
 
 export default async function LeaveApprovalPage() {
   const session = await getServerSession(authOptions)
@@ -16,20 +17,24 @@ export default async function LeaveApprovalPage() {
   }
 
   // ── Pobierz wnioski ──────────────────────────────────────────────────────
-  let divisionIdFilter: string | undefined
-
-  if (role === 'MANAGER' && session.user.employeeId) {
-    const managerEmployee = await prisma.employee.findUnique({
-      where: { id: session.user.employeeId },
-      select: { divisionId: true },
-    })
-    divisionIdFilter = managerEmployee?.divisionId ?? undefined
-  }
+  const viewerEmployee =
+    role === 'MANAGER' && session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+  const scopedEmployeeWhere = getScopedEmployeeWhere(session, viewerEmployee)
+  const noEmployeeScope = role === 'MANAGER' && scopedEmployeeWhere.id === HR_NO_EMPLOYEE_ACCESS_ID
 
   const [rawRequests, employees, leaveTypes] = await Promise.all([
     prisma.leaveRequestNew.findMany({
       where: {
-        ...(divisionIdFilter ? { employee: { divisionId: divisionIdFilter } } : {}),
+        ...(role === 'MANAGER'
+          ? noEmployeeScope
+            ? { employeeId: HR_NO_EMPLOYEE_ACCESS_ID }
+            : { employee: scopedEmployeeWhere }
+          : {}),
       },
       include: {
         employee: {
@@ -47,7 +52,12 @@ export default async function LeaveApprovalPage() {
       orderBy: { createdAt: 'desc' },
     }),
     prisma.employee.findMany({
-      where: { active: true },
+      where:
+        role === 'MANAGER'
+          ? noEmployeeScope
+            ? { id: HR_NO_EMPLOYEE_ACCESS_ID }
+            : scopedEmployeeWhere
+          : { active: true },
       select: { id: true, firstName: true, lastName: true },
       orderBy: { lastName: 'asc' },
     }),

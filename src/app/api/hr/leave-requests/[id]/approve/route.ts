@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { canViewEmployeeRecord } from '@/lib/hr/access'
 
 export async function PATCH(
   _req: NextRequest,
@@ -28,6 +29,8 @@ export async function PATCH(
           firstName: true,
           lastName: true,
           userId: true,
+          divisionId: true,
+          active: true,
           division: { select: { id: true, name: true } },
         },
       },
@@ -35,6 +38,17 @@ export async function PATCH(
   })
 
   if (!leaveRequest) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (role === 'MANAGER') {
+    const viewerEmployee = session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+    if (!canViewEmployeeRecord(session, leaveRequest.employee, viewerEmployee)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
   if (leaveRequest.status !== 'pending') {
     return NextResponse.json({ error: 'Only pending requests can be approved' }, { status: 409 })
   }

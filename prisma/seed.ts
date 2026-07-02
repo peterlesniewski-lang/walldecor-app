@@ -2,6 +2,8 @@ import { PrismaClient } from '../src/generated/prisma'
 import bcrypt from 'bcryptjs'
 import * as fs from 'fs'
 import * as path from 'path'
+import { defaultCostTagSeedRows } from '../src/lib/finance/cost-tags'
+import { buildAdminSeedUserUpsert } from '../src/lib/accounts/seed-admin'
 
 const prisma = new PrismaClient()
 
@@ -24,6 +26,30 @@ function wikiSlug(text: string): string {
     .replace(/ą/g, 'a').replace(/ć/g, 'c').replace(/ę/g, 'e').replace(/ł/g, 'l')
     .replace(/ń/g, 'n').replace(/ó/g, 'o').replace(/ś/g, 's').replace(/ź/g, 'z').replace(/ż/g, 'z')
     .replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '')
+}
+
+function normalizeSeedUsername(text: string): string {
+  return text
+    .trim()
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/ł/g, 'l')
+    .replace(/[^a-z0-9]/g, '')
+}
+
+async function uniqueSeedUsername(base: string, excludeUserId?: string): Promise<string> {
+  const fallback = 'user'
+  const normalized = normalizeSeedUsername(base) || fallback
+  let candidate = normalized
+  let suffix = 2
+
+  while (true) {
+    const existing = await prisma.user.findUnique({ where: { username: candidate } })
+    if (!existing || existing.id === excludeUserId) return candidate
+    candidate = `${normalized}${suffix}`
+    suffix++
+  }
 }
 
 function parseKnowledgeBase(): Array<{ title: string; slug: string; content: string; category: string }> {
@@ -203,6 +229,8 @@ const ACCOUNT_CATEGORIES = [
   },
 ]
 
+const COST_TAG_GROUPS = defaultCostTagSeedRows()
+
 // Polish holidays for 2025 and 2026
 const POLISH_HOLIDAYS = [
   // 2025
@@ -354,7 +382,27 @@ async function main() {
   }
   console.log('Cost centers seeded (3)')
 
-  // 2. Account Categories + SubCategories
+  // 2. Controlled cost tag groups
+  let totalCostTags = 0
+  for (const item of COST_TAG_GROUPS) {
+    const group = await prisma.costTagGroup.upsert({
+      where: { slug: item.group.slug },
+      update: { name: item.group.name, order: item.group.order },
+      create: item.group,
+    })
+
+    for (const tag of item.tags) {
+      await prisma.costTag.upsert({
+        where: { slug: tag.slug },
+        update: { groupId: group.id, name: tag.name, active: true },
+        create: { groupId: group.id, slug: tag.slug, name: tag.name, active: true },
+      })
+      totalCostTags++
+    }
+  }
+  console.log(`Cost tags seeded (${COST_TAG_GROUPS.length} groups, ${totalCostTags} tags)`)
+
+  // 3. Account Categories + SubCategories
   let totalSubCategories = 0
   for (const cat of ACCOUNT_CATEGORIES) {
     const { subCategories, ...categoryData } = cat
@@ -382,24 +430,46 @@ async function main() {
   }
   console.log(`Account categories seeded (9 categories, ${totalSubCategories} subcategories)`)
 
-  // 3. Admin User
+  // 4. Admin User
   const adminEmail = process.env.ADMIN_EMAIL ?? 'admin@walldecor.pl'
+  const existingAdmin = await prisma.user.findUnique({
+    where: { email: adminEmail },
+    select: { id: true },
+  })
+  const adminUsername = await uniqueSeedUsername(process.env.ADMIN_USERNAME ?? 'admin', existingAdmin?.id)
   const adminPassword = process.env.ADMIN_PASSWORD ?? 'ChangeMe123!'
   const passwordHash = bcrypt.hashSync(adminPassword, 12)
+  const resetExistingPassword = process.env.RESET_ADMIN_PASSWORD_ON_SEED === 'true'
 
   await prisma.user.upsert({
     where: { email: adminEmail },
-    update: { passwordHash },
-    create: {
-      email: adminEmail,
-      name: 'Administrator WallDecor',
-      role: 'ADMIN',
+    ...buildAdminSeedUserUpsert({
+      adminEmail,
+      adminUsername,
       passwordHash,
-    },
+      resetExistingPassword,
+    }),
   })
-  console.log(`Admin user seeded (${adminEmail})`)
+  console.log(`Admin user seeded (${adminUsername})`)
 
-  // 4. Cash accounts
+  const usersWithoutUsername = await prisma.user.findMany({
+    where: { username: null },
+    select: { id: true, email: true, name: true },
+  })
+
+  for (const user of usersWithoutUsername) {
+    const localPart = user.email.split('@')[0] ?? user.name
+    const username = await uniqueSeedUsername(localPart || user.name, user.id)
+    await prisma.user.update({
+      where: { id: user.id },
+      data: { username },
+    })
+  }
+  if (usersWithoutUsername.length > 0) {
+    console.log(`Usernames backfilled (${usersWithoutUsername.length})`)
+  }
+
+  // 5. Cash accounts
   const cashAccountCount = await prisma.cashAccount.count()
   if (cashAccountCount === 0) {
     await prisma.cashAccount.createMany({
@@ -413,7 +483,7 @@ async function main() {
     })
   }
 
-  // 5. App settings (cash thresholds)
+  // 6. App settings (cash thresholds)
   const settingKeys = ['cashThresholdVeryGood', 'cashThresholdGood', 'cashThresholdBad']
   for (const key of settingKeys) {
     const existing = await prisma.appSetting.findUnique({ where: { key } })
@@ -427,7 +497,7 @@ async function main() {
 
   // ─── HR Seed ──────────────────────────────────────────────────────────────
 
-  // 6. Divisions
+  // 7. Divisions
   const divJAG = await prisma.division.upsert({
     where: { id: 'div-jag' },
     update: { name: 'Oddział Jagiellońska', costCenterId: 'JAG' },
@@ -440,7 +510,7 @@ async function main() {
   })
   console.log('Divisions seeded (2)')
 
-  // 7. Departments (2 per division)
+  // 8. Departments (2 per division)
   await prisma.department.upsert({
     where: { id: 'dept-jag-sales' },
     update: { name: 'Sprzedaż' },
@@ -463,7 +533,7 @@ async function main() {
   })
   console.log('Departments seeded (4)')
 
-  // 8. Positions
+  // 9. Positions
   const positionNames = ['Sprzedawca', 'Kierownik salonu', 'Konsultant', 'CEO', 'Office Manager']
   for (const name of positionNames) {
     const existing = await prisma.position.findFirst({ where: { name } })

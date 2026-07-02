@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { getPolishHolidays } from '@/lib/hr/constants'
 import { ScheduleCalendar } from '@/components/hr/time-tracking/schedule-calendar'
+import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -33,10 +34,23 @@ export default async function SchedulePage() {
 
   const rangeStart = new Date(year, monthNum - 1, 1, 0, 0, 0, 0)
   const rangeEnd = new Date(year, monthNum, 0, 23, 59, 59, 999)
+  const viewerEmployee =
+    session.user.role === 'MANAGER' && session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+  const scopedEmployeeWhere: Record<string, unknown> = {
+    active: true,
+    ...getScopedEmployeeWhere(session, viewerEmployee),
+  }
+  const noEmployeeScope = scopedEmployeeWhere.id === HR_NO_EMPLOYEE_ACCESS_ID
+  const managerDivisionId = session.user.role === 'MANAGER' ? viewerEmployee?.divisionId ?? null : null
 
   // Fetch all active employees with their schedules and leaves for current month
   const employees = await prisma.employee.findMany({
-    where: { active: true },
+    where: noEmployeeScope ? { id: HR_NO_EMPLOYEE_ACCESS_ID } : scopedEmployeeWhere,
     orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     select: {
       id: true,
@@ -73,6 +87,7 @@ export default async function SchedulePage() {
 
   // Fetch divisions for filter
   const divisions = await prisma.division.findMany({
+    where: session.user.role === 'MANAGER' ? { id: managerDivisionId ?? '__hr_no_division_access__' } : {},
     orderBy: { name: 'asc' },
     select: { id: true, name: true },
   })
@@ -80,7 +95,10 @@ export default async function SchedulePage() {
   // Holidays for this month
   const polishHolidays = getPolishHolidays(year).filter(d => d.startsWith(month))
   const customHolidays = await prisma.customHoliday.findMany({
-    where: { date: { gte: rangeStart, lte: rangeEnd } },
+    where: {
+      date: { gte: rangeStart, lte: rangeEnd },
+      ...(managerDivisionId ? { OR: [{ divisionId: null }, { divisionId: managerDivisionId }] } : {}),
+    },
     select: { date: true },
   })
   const holidays = [

@@ -5,8 +5,6 @@ import Anthropic from '@anthropic-ai/sdk'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 
-const ALLOWED_ROLES = ['ADMIN', 'MANAGER']
-
 const MONTH_NAMES = ['sty', 'lut', 'mar', 'kwi', 'maj', 'cze', 'lip', 'sie', 'wrz', 'paź', 'lis', 'gru']
 
 const ChatSchema = z.object({
@@ -27,7 +25,7 @@ function anonymizeCostCenter(id: string): string {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!ALLOWED_ROLES.includes(session.user.role ?? '')) {
+  if (session.user.role !== 'ADMIN') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

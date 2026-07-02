@@ -9,7 +9,7 @@ export default async function OperationRunPage({ params }: { params: Promise<{ i
   if (!session) redirect('/login')
 
   const { id } = await params
-  const run = await getRun(id)
+  const run = await getRun(id, { id: session.user.id, role: session.user.role })
   if (!run) notFound()
 
   const visibleItems =

@@ -40,8 +40,18 @@ export default async function TimeTrackingPage({
 
   // ── ADMIN / MANAGER → weekly manager view ──────────────────────────────────
   if (role === 'ADMIN' || role === 'MANAGER') {
+    const managerDivisionId =
+      role === 'MANAGER' && session.user.employeeId
+        ? (await prisma.employee.findUnique({
+            where: { id: session.user.employeeId },
+            select: { divisionId: true },
+          }))?.divisionId ?? null
+        : null
     const [divisions, hrSettings] = await Promise.all([
-      prisma.division.findMany({ orderBy: { name: 'asc' } }),
+      prisma.division.findMany({
+        where: role === 'MANAGER' ? { id: managerDivisionId ?? '__hr_no_division_access__' } : {},
+        orderBy: { name: 'asc' },
+      }),
       getHrSettings(),
     ])
 

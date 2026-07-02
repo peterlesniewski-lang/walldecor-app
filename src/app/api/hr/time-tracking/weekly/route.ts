@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
 
 /** Parses "YYYY-Www" (e.g. "2026-W13") into Monday of that ISO week */
 function parseIsoWeek(week: string): Date | null {
@@ -39,6 +40,7 @@ export async function GET(req: NextRequest) {
   const weekParam = searchParams.get('week')
   const divisionId = searchParams.get('divisionId') || undefined
   const departmentId = searchParams.get('departmentId') || undefined
+  const role = session.user.role
 
   // Determine week range
   let weekStart: Date
@@ -67,9 +69,44 @@ export async function GET(req: NextRequest) {
     days.push(toDateStr(d))
   }
 
-  // Fetch active employees with optional division/department filter
-  const employeeWhere: Record<string, unknown> = { active: true }
-  if (divisionId) employeeWhere.divisionId = divisionId
+  const viewerEmployee =
+    role === 'MANAGER' && session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+
+  // Fetch active employees with role scope and optional filters.
+  const employeeWhere: Record<string, unknown> = {
+    active: true,
+    ...getScopedEmployeeWhere(session, viewerEmployee),
+  }
+
+  if (employeeWhere.id === HR_NO_EMPLOYEE_ACCESS_ID) {
+    const dailyTotals = Object.fromEntries(days.map((day) => [day, 0]))
+    return NextResponse.json({
+      weekStart: toDateStr(weekStart),
+      weekEnd: toDateStr(weekEnd),
+      days,
+      employees: [],
+      dailyTotals,
+    })
+  }
+
+  if (divisionId) {
+    if (role === 'MANAGER' && viewerEmployee?.divisionId !== divisionId) {
+      const dailyTotals = Object.fromEntries(days.map((day) => [day, 0]))
+      return NextResponse.json({
+        weekStart: toDateStr(weekStart),
+        weekEnd: toDateStr(weekEnd),
+        days,
+        employees: [],
+        dailyTotals,
+      })
+    }
+    employeeWhere.divisionId = divisionId
+  }
   if (departmentId) employeeWhere.departmentId = departmentId
 
   const employees = await prisma.employee.findMany({

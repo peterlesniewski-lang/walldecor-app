@@ -211,6 +211,8 @@ Ecommerce to kanał przychodów przypisany zawsze do `PUL`.
 
 6. **"Zapisz zmiany" pracownika Invalid input (puste pola enum/string)** — formularz wysyłał `employmentType: ""` i `phone: null` — Zod odrzucał puste stringi dla enum fields i `null` dla string fields. Fix: schema rozszerzona o `.nullish()` dla clearable fields; pola enum omijane gdy puste.
 
+7. **Legacy login nie działał dla e-maili z kropką (`src/lib/auth.ts`)** — fallback dla kont bez `username` używał `email.startsWith(username + '@')`, więc `jan.kowalski@...` nie pasował do znormalizowanego loginu `jankowalski` (kropka usunięta z loginu, ale nie z e-maila). Fix: porównanie ze znormalizowaną częścią lokalną e-maila (`normalizeEmailLocalPart(user.email) === username`). Regression test: `__tests__/unit/accounts/account-security.test.ts`.
+
 ---
 
 ## Reguły HR

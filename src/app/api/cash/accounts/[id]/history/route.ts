@@ -1,11 +1,10 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { requireCashAdmin } from '@/lib/cash/cash-access'
 
 export async function GET(_req: NextRequest, { params }: { params: Promise<{ id: string }> }) {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = await requireCashAdmin()
+  if ('error' in auth) return auth.error
   const { id } = await params
   const history = await prisma.cashBalanceHistory.findMany({
     where: { accountId: id },

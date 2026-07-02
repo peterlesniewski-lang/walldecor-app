@@ -9,7 +9,7 @@ export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const templates = await getTemplates()
+  const templates = await getTemplates({ id: session.user.id, role: session.user.role })
   return NextResponse.json(templates)
 }
 

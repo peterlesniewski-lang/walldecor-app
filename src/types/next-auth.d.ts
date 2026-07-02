@@ -6,13 +6,17 @@ declare module 'next-auth' {
     user: {
       id: string
       role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+      username?: string | null
       employeeId?: string | null
+      mustChangePassword?: boolean
     } & DefaultSession['user']
   }
 
   interface User extends DefaultUser {
     role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+    username?: string | null
     employeeId?: string | null
+    mustChangePassword?: boolean
   }
 }
 
@@ -20,6 +24,8 @@ declare module 'next-auth/jwt' {
   interface JWT extends DefaultJWT {
     id: string
     role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+    username?: string | null
     employeeId?: string | null
+    mustChangePassword?: boolean
   }
 }

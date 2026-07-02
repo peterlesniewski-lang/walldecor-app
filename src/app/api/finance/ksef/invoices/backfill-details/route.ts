@@ -1,0 +1,146 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { prisma } from '@/lib/prisma'
+import { requireFinanceAdmin } from '@/lib/finance/finance-access'
+import {
+  KsefApiError,
+  KsefApiClient,
+  describeKsefApiError,
+  type KsefEnvironment,
+} from '@/lib/finance/ksef-client'
+import {
+  fetchKsefInvoiceDetailWithRetry,
+  wait,
+  XML_DETAILS_THROTTLE_MS,
+} from '@/lib/finance/ksef-detail-fetch'
+
+// Re-download full invoice XML for KSeF invoices that still lack a payment due
+// date. The regular sync fetches details inline, but a KSeF 429 storm during a
+// large historical import silently leaves hundreds of invoices without a due
+// date. This endpoint recovers them in throttled, keyset-paginated batches so a
+// re-sync of everything is not required. Idempotent: it only fills nulls.
+const KSEF_SETTINGS = ['ksef_enabled', 'ksef_environment', 'ksef_company_nip', 'ksef_token'] as const
+const DEFAULT_BATCH = 50
+const MAX_BATCH = 200
+
+export async function POST(req: NextRequest) {
+  const auth = await requireFinanceAdmin()
+  if (auth.error) return auth.error
+
+  const payload = (await req.json().catch(() => ({}))) as { before?: string; limit?: number }
+  const limit = Math.min(Math.max(Math.trunc(Number(payload.limit) || DEFAULT_BATCH), 1), MAX_BATCH)
+  const before = payload.before ? new Date(payload.before) : null
+  const hasValidBefore = before !== null && !Number.isNaN(before.getTime())
+
+  const settings = await prisma.appSetting.findMany({ where: { key: { in: [...KSEF_SETTINGS] } } })
+  const map = new Map(settings.map((setting) => [setting.key, setting.value]))
+
+  if (map.get('ksef_enabled') !== 'true') {
+    return NextResponse.json({ error: 'Integracja KSeF jest wyłączona w ustawieniach.' }, { status: 400 })
+  }
+
+  const token = map.get('ksef_token') ?? ''
+  const companyNip = map.get('ksef_company_nip') ?? ''
+  const environment = (map.get('ksef_environment') ?? 'test') as KsefEnvironment
+
+  if (!token || !companyNip) {
+    return NextResponse.json({ error: 'Brakuje tokena KSeF albo NIP firmy w ustawieniach.' }, { status: 400 })
+  }
+
+  const invoices = await prisma.ksefInvoice.findMany({
+    where: {
+      source: 'KSEF',
+      dueDate: null,
+      paymentStatus: { not: 'PAID' },
+      ...(hasValidBefore ? { issueDate: { lt: before } } : {}),
+    },
+    select: { id: true, externalId: true, issueDate: true, bankAccount: true },
+    orderBy: { issueDate: 'desc' },
+    take: limit,
+  })
+
+  if (invoices.length === 0) {
+    const remaining = await prisma.ksefInvoice.count({
+      where: { source: 'KSEF', dueDate: null, paymentStatus: { not: 'PAID' } },
+    })
+    return NextResponse.json({ ok: true, scanned: 0, updated: 0, markedPaid: 0, failed: 0, done: true, nextBefore: null, remaining })
+  }
+
+  try {
+    const client = new KsefApiClient({ environment })
+    const authTokens = await client.authenticateWithToken({ companyNip, token })
+
+    let updated = 0
+    let markedPaid = 0
+    let failed = 0
+    let nextBefore: string | null = null
+
+    for (const invoice of invoices) {
+      if (!invoice.externalId) continue
+      nextBefore = invoice.issueDate.toISOString()
+
+      try {
+        const details = await fetchKsefInvoiceDetailWithRetry({
+          client,
+          accessToken: authTokens.accessToken.token,
+          ksefNumber: invoice.externalId,
+        })
+
+        if (details.dueDate) {
+          const fetchedAt = new Date()
+          await prisma.ksefInvoice.update({
+            where: { id: invoice.id },
+            data: {
+              dueDate: details.dueDate,
+              bankAccount: details.bankAccount ?? invoice.bankAccount ?? undefined,
+              paymentDetailsFetchedAt: fetchedAt,
+              xmlContent: details.xml,
+              xmlFetchedAt: fetchedAt,
+            },
+          })
+          updated += 1
+        } else {
+          // KSeF confirms this invoice carries no payment term. In practice such
+          // invoices are already paid (cash / immediate payment), so mark them
+          // paid to clear the "no due date" bucket. Reversible per invoice.
+          const fetchedAt = new Date()
+          await prisma.ksefInvoice.update({
+            where: { id: invoice.id },
+            data: {
+              paymentStatus: 'PAID',
+              paidAt: invoice.issueDate,
+              bankAccount: details.bankAccount ?? invoice.bankAccount ?? undefined,
+              paymentDetailsFetchedAt: fetchedAt,
+              xmlContent: details.xml,
+              xmlFetchedAt: fetchedAt,
+            },
+          })
+          markedPaid += 1
+        }
+      } catch {
+        failed += 1
+      }
+
+      await wait(XML_DETAILS_THROTTLE_MS)
+    }
+
+    const remaining = await prisma.ksefInvoice.count({
+      where: { source: 'KSEF', dueDate: null, paymentStatus: { not: 'PAID' } },
+    })
+
+    return NextResponse.json({
+      ok: true,
+      scanned: invoices.length,
+      updated,
+      markedPaid,
+      failed,
+      done: invoices.length < limit,
+      nextBefore,
+      remaining,
+    })
+  } catch (err) {
+    return NextResponse.json(
+      { error: describeKsefApiError(err) },
+      { status: err instanceof KsefApiError && err.status === 429 ? 429 : 502 }
+    )
+  }
+}

@@ -9,7 +9,7 @@ export default async function OperationTemplatesPage() {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
 
-  const templates = await getTemplates()
+  const templates = await getTemplates({ id: session.user.id, role: session.user.role })
   const canCreate = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
 
   return (

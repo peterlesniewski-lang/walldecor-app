@@ -10,7 +10,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
-  const template = await getTemplate(id)
+  const template = await getTemplate(id, { id: session.user.id, role: session.user.role })
   if (!template) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   return NextResponse.json(template)

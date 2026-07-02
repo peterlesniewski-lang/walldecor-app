@@ -3,6 +3,11 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { employeeUpdateSchema } from '@/lib/hr/schemas'
+import {
+  canViewConfidentialHrData,
+  canViewEmployeeRecord,
+  stripConfidentialEmployeeRelations,
+} from '@/lib/hr/access'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -11,6 +16,14 @@ export async function GET(_req: NextRequest, { params }: Params) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
+  const includeConfidential = canViewConfidentialHrData(session)
+  const viewerEmployee =
+    session.user.role === 'MANAGER' && session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
 
   const employee = await prisma.employee.findUnique({
     where: { id },
@@ -21,14 +34,23 @@ export async function GET(_req: NextRequest, { params }: Params) {
       positionRef: true,
       costCenter: true,
       manager: { select: { id: true, firstName: true, lastName: true, email: true } },
-      contracts: { orderBy: { startDate: 'desc' } },
+      ...(includeConfidential
+        ? {
+            contracts: { orderBy: { startDate: 'desc' } },
+            additionalContracts: { orderBy: { startDate: 'desc' } },
+            salaryHistory: { orderBy: { effectiveFrom: 'desc' } },
+          }
+        : {}),
       leaveBalancesNew: { include: { leaveType: true } },
     },
   })
 
   if (!employee) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (!canViewEmployeeRecord(session, employee, viewerEmployee)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
-  return NextResponse.json(employee)
+  return NextResponse.json(includeConfidential ? employee : stripConfidentialEmployeeRelations(employee))
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {

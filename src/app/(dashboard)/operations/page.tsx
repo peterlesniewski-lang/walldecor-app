@@ -10,7 +10,8 @@ export default async function OperationsPage() {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
 
-  const [areas, runs] = await Promise.all([getOperationModules(), getRuns()])
+  const viewer = { id: session.user.id, role: session.user.role }
+  const [areas, runs] = await Promise.all([getOperationModules(viewer), getRuns(viewer)])
   const activeRuns = runs.filter((run) => run.status === 'open').slice(0, 5)
 
   return (

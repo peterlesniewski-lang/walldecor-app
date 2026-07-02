@@ -240,7 +240,7 @@ export function ActualsGrid({
       <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-2">
           <h1 className="text-2xl font-semibold" style={{ color: 'var(--wd-dark)' }}>
-            Wykonanie
+            Koszty
           </h1>
           <div className="flex items-center gap-1">
             <button onClick={() => handleYearChange(year - 1)} className="p-1 hover:bg-gray-100 rounded">
@@ -319,23 +319,23 @@ export function ActualsGrid({
                 %
               </th>
             </tr>
-            {/* Row 2: Plan / Real sub-headers */}
+            {/* Row 2: assumptions / execution sub-headers */}
             <tr className="border-b" style={{ background: 'var(--wd-surface-2)', borderColor: 'var(--wd-border)' }}>
               {MONTHS.map((m) => (
                 <React.Fragment key={m}>
                   <th className="text-center py-1 data-label border-r" style={{ background: 'color-mix(in srgb, var(--wd-surface-2) 80%, transparent)', borderColor: 'var(--wd-border)' }}>
-                    P
+                    Z
                   </th>
                   <th className="text-center py-1 data-label border-r" style={{ borderColor: 'var(--wd-border)' }}>
-                    R
+                    W
                   </th>
                 </React.Fragment>
               ))}
               <th className="text-center py-1 data-label border-r" style={{ background: 'color-mix(in srgb, var(--wd-surface-2) 80%, transparent)', borderColor: 'var(--wd-border)' }}>
-                P
+                Z
               </th>
               <th className="text-center py-1 data-label border-r" style={{ borderColor: 'var(--wd-border)' }}>
-                R
+                W
               </th>
             </tr>
           </thead>

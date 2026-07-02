@@ -3,6 +3,11 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { overtimeRequestSchema } from '@/lib/hr/schemas'
+import {
+  canViewEmployeeRecord,
+  getScopedEmployeeWhere,
+  HR_NO_EMPLOYEE_ACCESS_ID,
+} from '@/lib/hr/access'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -16,6 +21,13 @@ export async function GET(req: NextRequest) {
   const employeeIdParam = searchParams.get('employeeId')
   const statusParam = searchParams.get('status')
   const monthParam = searchParams.get('month') // "YYYY-MM"
+  const viewerEmployee =
+    role === 'MANAGER' && session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
 
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const where: Record<string, any> = {}
@@ -23,9 +35,28 @@ export async function GET(req: NextRequest) {
   if (!isAdminOrManager) {
     // Force filter to own employeeId
     if (!session.user.employeeId) {
-      return NextResponse.json({ requests: [] })
+      return NextResponse.json([])
     }
     where.employeeId = session.user.employeeId
+  } else if (role === 'MANAGER') {
+    const scopedWhere = getScopedEmployeeWhere(session, viewerEmployee)
+    if (scopedWhere.id === HR_NO_EMPLOYEE_ACCESS_ID) return NextResponse.json([])
+    if (employeeIdParam) {
+      const requestedEmployee = await prisma.employee.findUnique({
+        where: { id: employeeIdParam },
+        select: { id: true, divisionId: true, active: true },
+      })
+      if (!requestedEmployee || !canViewEmployeeRecord(session, requestedEmployee, viewerEmployee)) {
+        return NextResponse.json([])
+      }
+      where.employeeId = employeeIdParam
+    } else {
+      const scopedEmployees = await prisma.employee.findMany({
+        where: scopedWhere,
+        select: { id: true },
+      })
+      where.employeeId = { in: scopedEmployees.map((employee) => employee.id) }
+    }
   } else {
     if (employeeIdParam) where.employeeId = employeeIdParam
   }
@@ -81,6 +112,17 @@ export async function POST(req: NextRequest) {
   // Verify employee exists
   const employee = await prisma.employee.findUnique({ where: { id: employeeId } })
   if (!employee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
+  if (role === 'MANAGER') {
+    const viewerEmployee = session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+    if (!canViewEmployeeRecord(session, employee, viewerEmployee)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
 
   const request = await prisma.overtimeRequest.create({
     data: {

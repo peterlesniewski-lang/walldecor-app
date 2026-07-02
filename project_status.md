@@ -1,6 +1,6 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-05-18 (Sesja 11 — Operacje: procedury i checklisty wykonania)
+**Ostatnia aktualizacja:** 2026-07-02 (Sesja 13 — HR: domknięcie prywatności, scoping ról i raportowanie M6-M8)
 
 ---
 
@@ -218,7 +218,7 @@ M10 — Operacje / Playbook         [x] MVP start (2026-05-18)
 [x] Grafik pracy + kopiowanie szablonu grafiku
 [x] Okresy rozliczeniowe: CRUD + zamykanie okresu
 [x] Widok nadgodzin + wnioski nadgodzin (approve/reject)
-[x] Raporty: attendance, overtime, timecard, plan-vs-actual, projects
+[x] Raporty: attendance, overtime, timecard, plan-vs-actual, projects, PDF miesięczny
 [x] API: /api/hr/time-tracking (GET/POST + approve/reject + bulk + weekly)
 [x] API: /api/hr/time-tracking/clock-in, /clock-out, /break/start, /break/end, /current
 [x] API: /api/hr/overtime-requests (GET/POST + approve/reject)
@@ -229,6 +229,16 @@ M10 — Operacje / Playbook         [x] MVP start (2026-05-18)
 [x]         /hr/time-tracking/overtime, /hr/time-tracking/periods, /hr/time-tracking/reports
 [x] HR Sidebar z wszystkimi linkami (hr-sidebar.tsx)
 ```
+
+**Sesja 13 (2026-07-02) — HR privacy hardening i domknięcie M6-M8:**
+- Centralna polityka dostępu HR: `src/lib/hr/access.ts`.
+- ADMIN widzi pełne dane HR, w tym umowy, historię wynagrodzeń i relacje poufne.
+- MANAGER widzi wyłącznie pracowników, urlopy, nadgodziny, grafiki i raporty z własnego oddziału; brak podpiętego profilu pracownika nie daje fallbacku do pełnej firmy.
+- EMPLOYEE widzi tylko własny profil, własne wnioski, własny czas pracy i nie ma dostępu do danych płacowych innych osób.
+- Stare placeholdery `/hr`, `/hr/leaves`, `/hr/timesheets` przekierowują do aktywnych modułów.
+- Ręczny flow miesięczny jest domknięty: CSV dla karty czasu, obecności, nadgodzin, plan-vs-actual, projektów oraz PDF miesięczny.
+- Automatyczny cron/e-mail do kadrowej oraz sejf dokumentów pracowniczych są świadomie poza M6-M8; wymagają osobnego modelu storage, retencji i audytu dostępu.
+- Testy regresyjne HR: `__tests__/unit/hr/access.test.ts`, `employees-access-route.test.ts`, `operational-access.test.ts`, `reports-access.test.ts`, `legacy-routes.test.ts`.
 
 ---
 
@@ -261,11 +271,52 @@ M10 — Operacje / Playbook         [x] MVP start (2026-05-18)
 
 ---
 
+### Konta użytkowników — mechanika logowania i haseł ✅ (Sesja 12 — 2026-07-01)
+**Cel:** Logowanie po loginie zamiast e-maila, hasła tymczasowe przy tworzeniu/resecie konta i wymuszona zmiana hasła przy pierwszym logowaniu.
+```
+[x] Logowanie EMAIL → USERNAME: LoginSchema (username + password), lookup po username w src/lib/auth.ts
+[x] Fallback dla starych kont: dopasowanie po znormalizowanej części lokalnej e-maila + backfill username przy pierwszym logowaniu
+[x] Nowe pola User: username String? @unique, mustChangePassword Boolean @default(false), passwordChangedAt DateTime?
+[x] Hasła tymczasowe: 12-znakowe, crypto.randomInt — generateTemporaryPassword (src/lib/accounts/security.ts)
+[x] ADMIN tworząc konto lub resetując hasło dostaje jednorazowe hasło pokazane w UI; konto z mustChangePassword: true; API nigdy nie zwraca passwordHash
+[x] Wymuszona zmiana hasła: middleware src/proxy.ts przekierowuje na /change-password (403 dla /api/*) — deny-list matcher obejmuje wszystkie trasy dashboardu
+[x] (dashboard)/layout.tsx również przekierowuje przy mustChangePassword
+[x] Flow zmiany hasła: strona /change-password, formularz, API /api/account/change-password (waliduje bieżące hasło, blokuje ponowne użycie, czyści mustChangePassword, ustawia passwordChangedAt)
+[x] Zarządzanie kontami (ADMIN): tworzenie z hasłem tymczasowym + reset hasła w /settings/users
+[x] Fix: legacy login dla e-maili z kropką (jan.kowalski@… → jankowalski) — porównanie po znormalizowanej części lokalnej e-maila
+[x] Testy jednostkowe: __tests__/unit/accounts/account-security.test.ts, __tests__/unit/accounts/auth-validation.test.ts
+```
+**Nowe pliki:** `src/lib/accounts/policy.ts` (normalizeUsername, normalizeEmailLocalPart, isStrongPassword), `src/lib/accounts/security.ts` (generateTemporaryPassword).
+
+**Aktualizacje:** `src/lib/validations/auth.ts` (LoginSchema, ChangePasswordSchema), `src/lib/auth.ts`, `src/proxy.ts`, `src/app/api/users/route.ts`, `src/app/api/users/[id]/route.ts`, `src/app/api/users/[id]/reset-password/route.ts`, `src/components/settings/users-management.tsx`, `src/app/(dashboard)/settings/users/page.tsx`, `src/app/(dashboard)/layout.tsx`.
+
+**Nowe strony/komponenty:** `src/app/(auth)/change-password/page.tsx`, `src/components/shared/change-password-form.tsx`, `src/app/api/account/change-password/route.ts`.
+
+**Workspace/branche (praca równoległa):**
+- `/Users/piotr/projekty/walldecor-app` → `feature/company-health-finance` → workspace mechaniki kont (ta sesja).
+- `/Users/piotr/projekty/walldecor-app-ksef` (git worktree) → `feature/ksef-inbox` → workspace KSeF / kontrola kosztów (agent „Codex").
+- Oba branche mają wspólny commit bazowy `a66ecf2` (mieszany WIP) i rozchodzą się do przodu; scalenie później.
+
+---
+
 ## Następna sesja: Operacje — edytor szablonów
 
+> Sesja 13 (2026-07-02): domknięcie HR M6-M8 po testach prywatności i dostępów.
+>
+> **Co jest następne (HR):**
+> - Osobny moduł dokumentów pracowniczych: storage, szyfrowanie/retencja, role, audyt pobrań.
+> - Automatyzacja raportów miesięcznych do kadrowej: harmonogram, odbiorcy, retry, log wysyłek.
+> - Panel uprawnień do treści operacyjnych: widoczność procedur/szablonów/wykonań per użytkownik.
+>
+> Sesja 12 (2026-07-01): mechanika kont użytkowników (login, hasła tymczasowe, wymuszona zmiana hasła).
+>
+> **Co jest następne (konta):**
+> - Uruchomić `npm run test:e2e` na żywo dla scenariusza wymuszonej zmiany hasła (login → redirect /change-password → zmiana → dostęp do dashboardu).
+> - Później: scalić branch `feature/ksef-inbox` (workspace KSeF z worktree `walldecor-app-ksef`) do wspólnej linii.
+>
 > Sesja 11 (2026-05-18): dodano MVP działu Operacje / Playbook.
 >
-> **Co jest następne:**
+> **Co jest następne (Operacje):**
 > - Edytor szablonów checklist w UI.
 > - Dodawanie/edycja zadań i podpinanie procedur z Encyklopedii.
 > - Przypisywanie domyślnych właścicieli zadań.
@@ -326,6 +377,24 @@ M10 — Operacje / Playbook         [x] MVP start (2026-05-18)
 | /api/operations/runs | GET, POST | Lista wykonań / uruchomienie wykonania z szablonu | GET: zalogowani; POST: ADMIN, MANAGER |
 | /api/operations/runs/[id] | GET | Szczegóły wykonania | ADMIN/MANAGER: całość; EMPLOYEE: własne zadania |
 | /api/operations/runs/[id]/items/[itemId] | PATCH | Zmiana statusu/notatki zadania | ADMIN/MANAGER lub właściciel zadania |
+
+### API — Konta użytkowników
+| Endpoint | Metoda | Opis | Role |
+|---|---|---|---|
+| /api/users | GET, POST | Lista kont / tworzenie konta z hasłem tymczasowym | ADMIN |
+| /api/users/[id] | PUT, DELETE | Edycja / blokowanie konta (nigdy nie zwraca passwordHash) | ADMIN |
+| /api/users/[id]/reset-password | POST | Reset hasła → jednorazowe hasło tymczasowe + mustChangePassword | ADMIN |
+| /api/account/change-password | POST | Zmiana własnego hasła (waliduje bieżące, blokuje reuse, czyści mustChangePassword) | zalogowani |
+
+### Komponenty — Konta użytkowników
+| Plik | Opis |
+|---|---|
+| src/lib/accounts/policy.ts | normalizeUsername, normalizeEmailLocalPart, isStrongPassword |
+| src/lib/accounts/security.ts | generateTemporaryPassword (12 znaków, crypto.randomInt) |
+| src/lib/auth.ts | NextAuth: logowanie po username + fallback dla starych kont |
+| src/proxy.ts | Middleware: wymuszona zmiana hasła (redirect /change-password, 403 dla API) |
+| src/components/settings/users-management.tsx | Zarządzanie kontami: tworzenie + reset hasła (ADMIN) |
+| src/components/shared/change-password-form.tsx | Formularz zmiany hasła |
 
 ### Komponenty — Finanse
 | Plik | Opis |

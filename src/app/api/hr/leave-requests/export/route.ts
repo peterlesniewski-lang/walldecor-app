@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
 
 function escapeCSV(value: string | null | undefined): string {
   if (value === null || value === undefined) return ''
@@ -28,6 +29,31 @@ const STATUS_LABELS: Record<string, string> = {
   cancelled: 'Anulowany',
 }
 
+const HEADERS = [
+  'Pracownik',
+  'Email',
+  'Oddział',
+  'Typ urlopu',
+  'Od',
+  'Do',
+  'Dni',
+  'Status',
+  'Zatwierdzający',
+  'Data zatwierdzenia',
+  'Powód odrzucenia',
+]
+
+function csvResponse(rows: string[], filename: string) {
+  const csvContent = [HEADERS.join(','), ...rows].join('\n')
+  return new NextResponse(csvContent, {
+    status: 200,
+    headers: {
+      'Content-Type': 'text/csv; charset=utf-8',
+      'Content-Disposition': `attachment; filename="${filename}"`,
+    },
+  })
+}
+
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -41,6 +67,7 @@ export async function GET(req: NextRequest) {
   const statusFilter = searchParams.get('status') ?? undefined
   const monthFilter = searchParams.get('month') ?? undefined // format: "YYYY-MM"
   const divisionIdFilter = searchParams.get('divisionId') ?? undefined
+  const filename = monthFilter ? `wnioski-urlopowe-${monthFilter}.csv` : 'wnioski-urlopowe.csv'
 
   // Build date range from month param
   let startOfMonth: Date | undefined
@@ -55,14 +82,29 @@ export async function GET(req: NextRequest) {
     }
   }
 
-  // Determine division restriction for MANAGERs
-  let effectiveDivisionId: string | undefined = divisionIdFilter
-  if (role === 'MANAGER' && session.user.employeeId && !divisionIdFilter) {
-    const managerEmployee = await prisma.employee.findUnique({
-      where: { id: session.user.employeeId },
-      select: { divisionId: true },
+  const viewerEmployee =
+    role === 'MANAGER' && session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+
+  let scopedEmployeeIds: string[] | null = null
+  if (role === 'MANAGER') {
+    const scopedWhere = getScopedEmployeeWhere(session, viewerEmployee)
+    if (scopedWhere.id === HR_NO_EMPLOYEE_ACCESS_ID) {
+      return csvResponse([], filename)
+    }
+    if (divisionIdFilter && viewerEmployee?.divisionId !== divisionIdFilter) {
+      return csvResponse([], filename)
+    }
+
+    const scopedEmployees = await prisma.employee.findMany({
+      where: scopedWhere,
+      select: { id: true },
     })
-    effectiveDivisionId = managerEmployee?.divisionId ?? undefined
+    scopedEmployeeIds = scopedEmployees.map((employee) => employee.id)
   }
 
   const requests = await prisma.leaveRequestNew.findMany({
@@ -71,9 +113,8 @@ export async function GET(req: NextRequest) {
       ...(startOfMonth && endOfMonth
         ? { startDate: { gte: startOfMonth, lte: endOfMonth } }
         : {}),
-      ...(effectiveDivisionId
-        ? { employee: { divisionId: effectiveDivisionId } }
-        : {}),
+      ...(role === 'MANAGER' && scopedEmployeeIds ? { employeeId: { in: scopedEmployeeIds } } : {}),
+      ...(role === 'ADMIN' && divisionIdFilter ? { employee: { divisionId: divisionIdFilter } } : {}),
     },
     include: {
       employee: {
@@ -102,21 +143,6 @@ export async function GET(req: NextRequest) {
       : []
   const approverMap = new Map(approvers.map((a) => [a.id, a.name]))
 
-  // Build CSV
-  const headers = [
-    'Pracownik',
-    'Email',
-    'Oddział',
-    'Typ urlopu',
-    'Od',
-    'Do',
-    'Dni',
-    'Status',
-    'Zatwierdzający',
-    'Data zatwierdzenia',
-    'Powód odrzucenia',
-  ]
-
   const rows = requests.map((r) => {
     const approverName = r.approverId ? (approverMap.get(r.approverId) ?? '') : ''
     return [
@@ -134,14 +160,5 @@ export async function GET(req: NextRequest) {
     ].join(',')
   })
 
-  const csvContent = [headers.join(','), ...rows].join('\n')
-  const filename = monthFilter ? `wnioski-urlopowe-${monthFilter}.csv` : 'wnioski-urlopowe.csv'
-
-  return new NextResponse(csvContent, {
-    status: 200,
-    headers: {
-      'Content-Type': 'text/csv; charset=utf-8',
-      'Content-Disposition': `attachment; filename="${filename}"`,
-    },
-  })
+  return csvResponse(rows, filename)
 }
