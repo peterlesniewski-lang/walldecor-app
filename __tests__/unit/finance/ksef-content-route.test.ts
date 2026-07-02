@@ -76,6 +76,33 @@ describe('GET /api/finance/ksef/invoices/[id]/content', () => {
 </Faktura>`)
   })
 
+  it('returns cached invoice XML without calling KSeF again', async () => {
+    prismaMock.ksefInvoice.findUnique.mockResolvedValue({
+      id: 'invoice-1',
+      externalId: 'KSEF-1',
+      issueDate: new Date('2026-07-01T00:00:00.000Z'),
+      dueDate: new Date('2026-07-21T00:00:00.000Z'),
+      bankAccount: '12345678901234567890123456',
+      paymentStatus: 'UNPAID',
+      paidAt: null,
+      xmlContent: '<cached-invoice />',
+      xmlFetchedAt: new Date('2026-07-02T08:00:00.000Z'),
+    })
+
+    const response = await GET(new Request('http://localhost'), {
+      params: Promise.resolve({ id: 'invoice-1' }),
+    })
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body.xml).toBe('<cached-invoice />')
+    expect(body.invoice).toMatchObject({ id: 'invoice-1' })
+    expect(prismaMock.appSetting.findMany).not.toHaveBeenCalled()
+    expect(ksefClientMock.authenticateWithToken).not.toHaveBeenCalled()
+    expect(ksefClientMock.downloadInvoiceXml).not.toHaveBeenCalled()
+    expect(prismaMock.ksefInvoice.update).not.toHaveBeenCalled()
+  })
+
   it('persists payment due date and bank account parsed from invoice XML', async () => {
     const response = await GET(new Request('http://localhost'), {
       params: Promise.resolve({ id: 'invoice-1' }),
@@ -85,11 +112,13 @@ describe('GET /api/finance/ksef/invoices/[id]/content', () => {
     expect(response.status).toBe(200)
     expect(prismaMock.ksefInvoice.update).toHaveBeenCalledWith({
       where: { id: 'invoice-1' },
-      data: {
+      data: expect.objectContaining({
         dueDate: new Date('2026-07-21T00:00:00.000Z'),
         bankAccount: '12345678901234567890123456',
         paymentDetailsFetchedAt: expect.any(Date),
-      },
+        xmlContent: expect.stringContaining('<Faktura'),
+        xmlFetchedAt: expect.any(Date),
+      }),
     })
     expect(body.invoice).toMatchObject({
       id: 'invoice-1',

@@ -217,6 +217,8 @@ model KsefInvoice {
   dueDate       DateTime?
   bankAccount   String?
   paymentDetailsFetchedAt DateTime?
+  xmlContent    String?
+  xmlFetchedAt  DateTime?
   documentStatus String  @default("ACTIVE")
   ruleMatchStatus String @default("NO_RULE")
   correctsInvoiceId String?

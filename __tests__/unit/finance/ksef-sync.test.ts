@@ -111,6 +111,8 @@ describe('POST /api/finance/ksef/sync', () => {
         dueDate: new Date('2026-07-21T00:00:00.000Z'),
         bankAccount: '12345678901234567890123456',
         paymentDetailsFetchedAt: expect.any(Date),
+        xmlContent: expect.stringContaining('<Faktura'),
+        xmlFetchedAt: expect.any(Date),
       }),
     })
   })
@@ -160,6 +162,8 @@ describe('POST /api/finance/ksef/sync', () => {
         dueDate: new Date('2026-07-22T00:00:00.000Z'),
         bankAccount: '12345678901234567890123456',
         paymentDetailsFetchedAt: expect.any(Date),
+        xmlContent: expect.stringContaining('<Faktura'),
+        xmlFetchedAt: expect.any(Date),
       }),
     })
   })
@@ -279,6 +283,8 @@ describe('POST /api/finance/ksef/sync', () => {
         paymentStatus: 'PAID',
         paidAt: new Date('2026-07-05T00:00:00.000Z'),
         paymentDetailsFetchedAt: expect.any(Date),
+        xmlContent: expect.stringContaining('<Faktura'),
+        xmlFetchedAt: expect.any(Date),
       }),
     })
   })

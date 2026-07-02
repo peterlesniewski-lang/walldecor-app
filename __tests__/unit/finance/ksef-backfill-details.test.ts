@@ -78,7 +78,11 @@ describe('POST /api/finance/ksef/invoices/backfill-details', () => {
     expect(body).toMatchObject({ scanned: 1, updated: 1, failed: 0, done: true })
     expect(prismaMock.ksefInvoice.update).toHaveBeenCalledWith({
       where: { id: 'inv-1' },
-      data: expect.objectContaining({ dueDate: new Date('2026-07-21T00:00:00.000Z') }),
+      data: expect.objectContaining({
+        dueDate: new Date('2026-07-21T00:00:00.000Z'),
+        xmlContent: expect.stringContaining('<Faktura'),
+        xmlFetchedAt: expect.any(Date),
+      }),
     })
   })
 
@@ -98,7 +102,12 @@ describe('POST /api/finance/ksef/invoices/backfill-details', () => {
     expect(body).toMatchObject({ scanned: 1, updated: 0, markedPaid: 1, failed: 0 })
     expect(prismaMock.ksefInvoice.update).toHaveBeenCalledWith({
       where: { id: 'inv-2' },
-      data: expect.objectContaining({ paymentStatus: 'PAID', paidAt: new Date('2026-06-10T00:00:00.000Z') }),
+      data: expect.objectContaining({
+        paymentStatus: 'PAID',
+        paidAt: new Date('2026-06-10T00:00:00.000Z'),
+        xmlContent: expect.stringContaining('<Faktura'),
+        xmlFetchedAt: expect.any(Date),
+      }),
     })
   })
 

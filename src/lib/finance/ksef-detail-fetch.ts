@@ -16,6 +16,7 @@ const RETRYABLE_XML_DETAIL_STATUSES = new Set([408, 425, 429, 500, 502, 503, 504
 export interface KsefInvoiceDetailResult {
   dueDate: Date | null
   bankAccount: string | null
+  xml: string
 }
 
 export async function wait(ms: number) {
@@ -45,6 +46,7 @@ export async function fetchKsefInvoiceDetail({
   return {
     dueDate: dateFromKsefDate(details.paymentDueDate),
     bankAccount: details.bankAccounts[0] ?? null,
+    xml,
   }
 }
 

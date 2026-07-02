@@ -151,6 +151,7 @@ export async function POST() {
             where: { externalId: invoiceData.externalId },
           })
           let paymentDetailsFetchedAt: Date | null = null
+          let xmlContent: string | null = null
           if (needsInvoiceXmlDetails(invoiceData, existing)) {
             try {
               const details = await fetchKsefInvoiceDetailWithRetry({
@@ -161,6 +162,7 @@ export async function POST() {
               invoiceData.dueDate = details.dueDate ?? invoiceData.dueDate
               invoiceData.bankAccount = details.bankAccount ?? invoiceData.bankAccount
               paymentDetailsFetchedAt = new Date()
+              xmlContent = details.xml
               xmlDetailsFetched += 1
             } catch {
               xmlDetailsFailed += 1
@@ -200,6 +202,8 @@ export async function POST() {
                 dueDate: invoiceData.dueDate ?? existing.dueDate,
                 bankAccount: invoiceData.bankAccount ?? existing.bankAccount,
                 paymentDetailsFetchedAt: paymentDetailsFetchedAt ?? existing.paymentDetailsFetchedAt,
+                xmlContent: xmlContent ?? existing.xmlContent,
+                xmlFetchedAt: paymentDetailsFetchedAt ?? existing.xmlFetchedAt,
                 documentStatus: invoiceData.documentStatus,
                 correctsInvoiceId: invoiceData.documentStatus === 'CORRECTION' ? correctsInvoiceId : null,
                 ...(xmlConfirmsNoDueDate && existing.paymentStatus !== 'PAID'
@@ -232,6 +236,8 @@ export async function POST() {
             data: {
               ...invoiceData,
               paymentDetailsFetchedAt,
+              xmlContent,
+              xmlFetchedAt: paymentDetailsFetchedAt,
               correctsInvoiceId: invoiceData.documentStatus === 'CORRECTION' ? correctsInvoiceId : null,
               ...(xmlConfirmsNoDueDate ? { paymentStatus: 'PAID', paidAt: invoiceData.issueDate } : {}),
               status: match ? 'MAPPED' : 'NEW',

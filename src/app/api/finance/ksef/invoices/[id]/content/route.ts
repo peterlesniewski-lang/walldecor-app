@@ -21,6 +21,15 @@ export async function GET(
   const { id } = await params
   const invoice = await prisma.ksefInvoice.findUnique({ where: { id } })
   if (!invoice) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
+  if (invoice.xmlContent) {
+    return NextResponse.json({
+      invoiceId: invoice.id,
+      ksefNumber: invoice.externalId,
+      xml: invoice.xmlContent,
+      invoice,
+      cached: true,
+    })
+  }
   if (!invoice.externalId) {
     return NextResponse.json({ error: 'Ta faktura nie ma numeru KSeF do pobrania XML.' }, { status: 400 })
   }
@@ -50,12 +59,15 @@ export async function GET(
     const details = parseKsefInvoiceXmlDetails(xml)
     const dueDate = dateFromKsefDate(details.paymentDueDate)
     const bankAccount = details.bankAccounts[0] ?? null
+    const fetchedAt = new Date()
     const updatedInvoice = await prisma.ksefInvoice.update({
       where: { id: invoice.id },
       data: {
         dueDate: dueDate ?? invoice.dueDate,
         bankAccount: bankAccount ?? invoice.bankAccount,
-        paymentDetailsFetchedAt: new Date(),
+        paymentDetailsFetchedAt: fetchedAt,
+        xmlContent: xml,
+        xmlFetchedAt: fetchedAt,
         ...(!dueDate && !invoice.dueDate && invoice.paymentStatus !== 'PAID'
           ? { paymentStatus: 'PAID', paidAt: invoice.paidAt ?? invoice.issueDate }
           : {}),

@@ -86,12 +86,15 @@ export async function POST(req: NextRequest) {
         })
 
         if (details.dueDate) {
+          const fetchedAt = new Date()
           await prisma.ksefInvoice.update({
             where: { id: invoice.id },
             data: {
               dueDate: details.dueDate,
               bankAccount: details.bankAccount ?? invoice.bankAccount ?? undefined,
-              paymentDetailsFetchedAt: new Date(),
+              paymentDetailsFetchedAt: fetchedAt,
+              xmlContent: details.xml,
+              xmlFetchedAt: fetchedAt,
             },
           })
           updated += 1
@@ -99,13 +102,16 @@ export async function POST(req: NextRequest) {
           // KSeF confirms this invoice carries no payment term. In practice such
           // invoices are already paid (cash / immediate payment), so mark them
           // paid to clear the "no due date" bucket. Reversible per invoice.
+          const fetchedAt = new Date()
           await prisma.ksefInvoice.update({
             where: { id: invoice.id },
             data: {
               paymentStatus: 'PAID',
               paidAt: invoice.issueDate,
               bankAccount: details.bankAccount ?? invoice.bankAccount ?? undefined,
-              paymentDetailsFetchedAt: new Date(),
+              paymentDetailsFetchedAt: fetchedAt,
+              xmlContent: details.xml,
+              xmlFetchedAt: fetchedAt,
             },
           })
           markedPaid += 1
