@@ -45,11 +45,27 @@ describe('requireFinanceAdmin', () => {
 })
 
 describe('requireFinanceReportAccess', () => {
-  it('allows MANAGER users to view finance reports', async () => {
-    const session = sessionWithRole('MANAGER')
+  it('allows ADMIN users to view detailed finance reports', async () => {
+    const session = sessionWithRole('ADMIN')
     mockGetServerSession.mockResolvedValue(session)
 
     await expect(requireFinanceReportAccess()).resolves.toEqual({ session })
+  })
+
+  it('blocks MANAGER users from detailed finance reports', async () => {
+    mockGetServerSession.mockResolvedValue(sessionWithRole('MANAGER'))
+
+    const result = await requireFinanceReportAccess()
+
+    expect(result.error?.status).toBe(403)
+  })
+
+  it('blocks EMPLOYEE users from detailed finance reports', async () => {
+    mockGetServerSession.mockResolvedValue(sessionWithRole('EMPLOYEE'))
+
+    const result = await requireFinanceReportAccess()
+
+    expect(result.error?.status).toBe(403)
   })
 
   it('blocks unauthenticated users', async () => {

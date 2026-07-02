@@ -130,7 +130,7 @@ export function CompanyHealthView({
   ]
   const cm = health.company.currentMonth
   const isAdmin = role === 'ADMIN'
-  const canViewCostReports = role === 'ADMIN' || role === 'MANAGER'
+  const canViewCostReports = isAdmin
 
   return (
     <div className="space-y-6">
@@ -224,13 +224,15 @@ export function CompanyHealthView({
       </section>
 
       <section className="grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-4">
-        <Link href="/finance/actuals" className="rounded-lg border border-[var(--wd-border)] bg-white p-4 hover:border-[#D7C8B5]">
-          <div className="flex items-center justify-between">
-            <p className="font-semibold">Koszty</p>
-            <ArrowUpRight size={16} />
-          </div>
-          <p className="mt-1 text-xs" style={{ color: 'var(--wd-text-muted)' }}>Wykonanie, różnice i źródła kosztów.</p>
-        </Link>
+        {isAdmin && (
+          <Link href="/finance/actuals" className="rounded-lg border border-[var(--wd-border)] bg-white p-4 hover:border-[#D7C8B5]">
+            <div className="flex items-center justify-between">
+              <p className="font-semibold">Koszty</p>
+              <ArrowUpRight size={16} />
+            </div>
+            <p className="mt-1 text-xs" style={{ color: 'var(--wd-text-muted)' }}>Wykonanie, różnice i źródła kosztów.</p>
+          </Link>
+        )}
         {canViewCostReports && (
           <Link href="/finance/cost-events" className="rounded-lg border border-[var(--wd-border)] bg-white p-4 hover:border-[#D7C8B5]">
             <div className="flex items-center justify-between">

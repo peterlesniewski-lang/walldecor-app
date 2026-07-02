@@ -18,7 +18,7 @@ export default async function FinancePage({ searchParams }: PageProps) {
 
   const role = session.user.role ?? 'EMPLOYEE'
   const isAdmin = role === 'ADMIN'
-  const canViewCostReports = isAdmin || role === 'MANAGER'
+  const canViewCostReports = isAdmin
   const { year: yearParam } = await searchParams
   const year = yearParam ? parseInt(yearParam, 10) : new Date().getFullYear()
   const currentMonth = year === new Date().getFullYear() ? new Date().getMonth() + 1 : 12

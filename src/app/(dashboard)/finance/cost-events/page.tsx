@@ -9,7 +9,7 @@ import { CostEventsView } from '@/components/shared/cost-events-view'
 export default async function CostEventsPage() {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
-  if (!['ADMIN', 'MANAGER'].includes(session.user.role ?? '')) redirect('/finance')
+  if (session.user.role !== 'ADMIN') redirect('/finance')
 
   const [events, costCenters, costTagGroups] = await Promise.all([
     prisma.costEvent.findMany({

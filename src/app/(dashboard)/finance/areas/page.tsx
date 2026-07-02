@@ -18,7 +18,7 @@ function normalizeCostCenterId(value: string | undefined) {
 export default async function AreaProfitabilityPage({ searchParams }: PageProps) {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
-  if (!['ADMIN', 'MANAGER'].includes(session.user.role ?? '')) redirect('/finance')
+  if (session.user.role !== 'ADMIN') redirect('/finance')
 
   const { year: yearParam, costCenterId: costCenterParam } = await searchParams
   const year = yearParam ? parseInt(yearParam, 10) : new Date().getFullYear()

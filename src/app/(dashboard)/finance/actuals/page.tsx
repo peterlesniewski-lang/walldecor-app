@@ -11,6 +11,7 @@ interface PageProps {
 export default async function ActualsPage({ searchParams }: PageProps) {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
+  if (session.user.role !== 'ADMIN') redirect('/finance')
 
   const { year: yearParam, costCenterId: ccParam } = await searchParams
   const year = yearParam ? parseInt(yearParam, 10) : new Date().getFullYear()
@@ -40,7 +41,7 @@ export default async function ActualsPage({ searchParams }: PageProps) {
     initialActuals[key] = (initialActuals[key] ?? 0) + e.amount
   }
 
-  const editable = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
+  const editable = session.user.role === 'ADMIN'
 
   return (
     <ActualsGrid

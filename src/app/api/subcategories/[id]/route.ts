@@ -8,15 +8,13 @@ const RenameSchema = z.object({
   name: z.string().min(1).max(100).trim(),
 })
 
-const ALLOWED_ROLES = ['ADMIN', 'MANAGER']
-
 export async function PUT(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
 ) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!ALLOWED_ROLES.includes(session.user.role ?? '')) {
+  if (session.user.role !== 'ADMIN') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
@@ -41,7 +39,7 @@ export async function DELETE(
 ) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!ALLOWED_ROLES.includes(session.user.role ?? '')) {
+  if (session.user.role !== 'ADMIN') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

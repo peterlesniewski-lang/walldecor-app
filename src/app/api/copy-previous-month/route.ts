@@ -35,7 +35,7 @@ export async function GET(req: NextRequest) {
   if (type === 'budget' && session.user.role !== 'ADMIN') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
-  if (type === 'actuals' && !['ADMIN', 'MANAGER'].includes(session.user.role ?? '')) {
+  if (type === 'actuals' && session.user.role !== 'ADMIN') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 

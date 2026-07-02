@@ -6,7 +6,7 @@ import { BreakEvenView } from '@/components/shared/break-even-view'
 export default async function BreakEvenPage() {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
-  if (!['ADMIN', 'MANAGER'].includes(session.user.role ?? '')) redirect('/finance')
+  if (session.user.role !== 'ADMIN') redirect('/finance')
 
   return <BreakEvenView />
 }

@@ -32,7 +32,7 @@ describe('CompanyHealthView finance summaries', () => {
     expect(screen.getByText('350 PLN')).toBeTruthy()
   })
 
-  it('hides the KSeF inbox link from managers', () => {
+  it('shows only aggregate finance cards to managers', () => {
     render(
       <CompanyHealthView
         role="MANAGER"
@@ -45,8 +45,28 @@ describe('CompanyHealthView finance summaries', () => {
     )
 
     expect(screen.queryByText('KSeF Inbox')).toBeNull()
-    expect(screen.getByRole('link', { name: /Zdarzenia kosztowe/ })).toBeTruthy()
-    expect(screen.getByRole('link', { name: /Break-even/ })).toBeTruthy()
-    expect(screen.getByText('Koszty oczekujące')).toBeTruthy()
+    expect(screen.queryByRole('link', { name: /Koszty/ })).toBeNull()
+    expect(screen.queryByRole('link', { name: /Zdarzenia kosztowe/ })).toBeNull()
+    expect(screen.queryByRole('link', { name: /Break-even/ })).toBeNull()
+    expect(screen.queryByText('Koszty oczekujące')).toBeNull()
+  })
+
+  it('shows only aggregate finance cards to employees', () => {
+    render(
+      <CompanyHealthView
+        role="EMPLOYEE"
+        health={health}
+        cashByCurrency={[]}
+        ksefInboxCount={4}
+        unpaidInvoiceAmount={1250}
+        unclassifiedWarningAmount={350}
+      />
+    )
+
+    expect(screen.queryByText('KSeF Inbox')).toBeNull()
+    expect(screen.queryByRole('link', { name: /Koszty/ })).toBeNull()
+    expect(screen.queryByRole('link', { name: /Zdarzenia kosztowe/ })).toBeNull()
+    expect(screen.queryByRole('link', { name: /Break-even/ })).toBeNull()
+    expect(screen.queryByText('Koszty oczekujące')).toBeNull()
   })
 })

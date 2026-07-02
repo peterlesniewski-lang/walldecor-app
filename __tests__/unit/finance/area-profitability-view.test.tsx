@@ -45,4 +45,10 @@ describe('AreaProfitabilityView area management', () => {
     expect(screen.queryByText('Zarządzanie obszarami')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Dodaj obszar' })).toBeNull()
   })
+
+  it('does not allow managers to edit area revenue', () => {
+    render(<AreaProfitabilityView {...props} selectedCostCenterId="JAG" role="MANAGER" />)
+
+    expect((screen.getByLabelText('Tapety 1') as HTMLInputElement).disabled).toBe(true)
+  })
 })

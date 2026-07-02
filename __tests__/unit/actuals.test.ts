@@ -86,18 +86,10 @@ describe('POST /api/actuals', () => {
     expect(mockUpsert).toHaveBeenCalledOnce()
   })
 
-  it('should save actual entry as MANAGER and return 200', async () => {
+  it('should return 403 for MANAGER role', async () => {
     mockGetServerSession.mockResolvedValue({
       user: { id: '2', name: 'Manager', email: 'mgr@test.com', role: 'MANAGER' },
       expires: '',
-    })
-    mockUpsert.mockResolvedValue({
-      id: 'entry2',
-      year: 2026,
-      month: 3,
-      amount: 800,
-      costCenterId: 'JAG',
-      subCategoryId: 'clxxxxxxxxxxxxxxxxxxxxxxxxx',
     })
 
     const req = makeRequest('POST', {
@@ -108,8 +100,8 @@ describe('POST /api/actuals', () => {
       amount: 800,
     })
     const res = await POST(req)
-    expect(res.status).toBe(200)
-    expect(mockUpsert).toHaveBeenCalledOnce()
+    expect(res.status).toBe(403)
+    expect(mockUpsert).not.toHaveBeenCalled()
   })
 
   it('should return 403 for EMPLOYEE role', async () => {
@@ -160,6 +152,30 @@ describe('GET /api/actuals', () => {
     const req = makeRequest('GET', undefined, { year: '2026', costCenterId: 'JAG' })
     const res = await GET(req)
     expect(res.status).toBe(401)
+    expect(mockFindMany).not.toHaveBeenCalled()
+  })
+
+  it('should return 403 for MANAGER role', async () => {
+    mockGetServerSession.mockResolvedValue({
+      user: { id: '2', name: 'Manager', email: 'mgr@test.com', role: 'MANAGER' },
+      expires: '',
+    })
+
+    const req = makeRequest('GET', undefined, { year: '2026', costCenterId: 'JAG' })
+    const res = await GET(req)
+    expect(res.status).toBe(403)
+    expect(mockFindMany).not.toHaveBeenCalled()
+  })
+
+  it('should return 403 for EMPLOYEE role', async () => {
+    mockGetServerSession.mockResolvedValue({
+      user: { id: '3', name: 'Employee', email: 'emp@test.com', role: 'EMPLOYEE' },
+      expires: '',
+    })
+
+    const req = makeRequest('GET', undefined, { year: '2026', costCenterId: 'JAG' })
+    const res = await GET(req)
+    expect(res.status).toBe(403)
     expect(mockFindMany).not.toHaveBeenCalled()
   })
 })

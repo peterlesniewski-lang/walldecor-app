@@ -26,7 +26,7 @@ const CURRENT_YEAR = new Date().getFullYear()
 
 export function CsvRevenuePanel({ userRole }: CsvRevenuePanelProps) {
   const isAdmin = userRole === 'ADMIN'
-  const canImportActuals = isAdmin || userRole === 'MANAGER'
+  const canImportActuals = isAdmin
 
   const [dataType, setDataType] = useState<DataType>('actuals')
   const [exportYear, setExportYear] = useState<string>(String(CURRENT_YEAR))
@@ -273,7 +273,7 @@ export function CsvRevenuePanel({ userRole }: CsvRevenuePanelProps) {
           ) : (
             <p className="text-sm text-gray-400">
               Import {dataType === 'plan' ? 'planu sprzedaży' : 'wykonania przychodów'} wymaga roli{' '}
-              {dataType === 'plan' ? 'ADMIN' : 'ADMIN lub MANAGER'}.
+              ADMIN.
             </p>
           )}
         </div>

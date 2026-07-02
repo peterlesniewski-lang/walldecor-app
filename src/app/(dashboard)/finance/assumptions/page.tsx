@@ -11,6 +11,7 @@ interface PageProps {
 export default async function CostAssumptionsPage({ searchParams }: PageProps) {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
+  if (session.user.role !== 'ADMIN') redirect('/finance')
 
   const { year: yearParam, costCenterId: costCenterParam } = await searchParams
   const year = yearParam ? parseInt(yearParam, 10) : new Date().getFullYear()
@@ -23,7 +24,7 @@ export default async function CostAssumptionsPage({ searchParams }: PageProps) {
 
   const isGlobal = costCenterId === 'GLOBAL'
   const editable = session.user.role === 'ADMIN'
-  const canManage = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
+  const canManage = session.user.role === 'ADMIN'
 
   const rawEntries = await prisma.budgetEntry.findMany({
     where: isGlobal ? { year } : { year, costCenterId },

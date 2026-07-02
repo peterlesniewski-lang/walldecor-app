@@ -11,6 +11,7 @@ interface PageProps {
 export default async function RevenuePage({ searchParams }: PageProps) {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
+  if (session.user.role !== 'ADMIN') redirect('/finance')
 
   const { year: yearParam, costCenterId: ccParam, tab: tabParam } = await searchParams
   const year = yearParam ? parseInt(yearParam, 10) : new Date().getFullYear()
@@ -37,7 +38,7 @@ export default async function RevenuePage({ searchParams }: PageProps) {
   }
 
   const canEditPlan = session.user.role === 'ADMIN' && !isGlobal
-  const canEditActuals = (session.user.role === 'ADMIN' || session.user.role === 'MANAGER') && !isGlobal
+  const canEditActuals = session.user.role === 'ADMIN' && !isGlobal
 
   return (
     <RevenueTabs

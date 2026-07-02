@@ -16,7 +16,7 @@ export async function requireFinanceAdmin() {
 export async function requireFinanceReportAccess() {
   const session = await getServerSession(authOptions)
   if (!session) return { error: NextResponse.json({ error: 'Unauthorized' }, { status: 401 }) }
-  if (!['ADMIN', 'MANAGER'].includes(session.user.role ?? '')) {
+  if (session.user.role !== 'ADMIN') {
     return { error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
   }
   return { session }

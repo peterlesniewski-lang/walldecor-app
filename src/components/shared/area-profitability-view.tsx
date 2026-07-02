@@ -67,7 +67,7 @@ export function AreaProfitabilityView({
   const router = useRouter()
   const [isPending, startTransition] = useTransition()
   const isAdmin = role === 'ADMIN'
-  const canEdit = ['ADMIN', 'MANAGER'].includes(role) && selectedCostCenterId !== 'COMPANY'
+  const canEdit = isAdmin && selectedCostCenterId !== 'COMPANY'
   const [pendingKey, setPendingKey] = useState<string | null>(null)
   const [newAreaName, setNewAreaName] = useState('')
   const [managedAreas, setManagedAreas] = useState(areaTags)
