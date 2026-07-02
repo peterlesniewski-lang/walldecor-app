@@ -10,6 +10,7 @@ describe('Sidebar finance navigation', () => {
   it('shows KSeF and cost-control links to admins', () => {
     render(<Sidebar userRole="ADMIN" />)
 
+    expect(screen.getByText('Dashboard')).toBeTruthy()
     expect(screen.getByText('Koszty')).toBeTruthy()
     expect(screen.getByText('Przychody')).toBeTruthy()
     expect(screen.getByText('KSeF Inbox')).toBeTruthy()
@@ -22,6 +23,7 @@ describe('Sidebar finance navigation', () => {
     render(<Sidebar userRole="MANAGER" />)
 
     expect(screen.getByText('Wynik teraz')).toBeTruthy()
+    expect(screen.queryByText('Dashboard')).toBeNull()
     expect(screen.queryByText('Koszty')).toBeNull()
     expect(screen.queryByText('Przychody')).toBeNull()
     expect(screen.queryByText('KSeF Inbox')).toBeNull()
@@ -35,6 +37,7 @@ describe('Sidebar finance navigation', () => {
     render(<Sidebar userRole="EMPLOYEE" />)
 
     expect(screen.getByText('Wynik teraz')).toBeTruthy()
+    expect(screen.queryByText('Dashboard')).toBeNull()
     expect(screen.queryByText('Koszty')).toBeNull()
     expect(screen.queryByText('Przychody')).toBeNull()
     expect(screen.queryByText('KSeF Inbox')).toBeNull()

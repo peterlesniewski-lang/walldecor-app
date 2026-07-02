@@ -33,7 +33,7 @@ const NAV_SECTIONS: Array<{ label: string | null; items: NavSectionItem[] }> = [
   {
     label: null,
     items: [
-      { href: '/', label: 'Dashboard', icon: LayoutDashboard },
+      { href: '/', label: 'Dashboard', icon: LayoutDashboard, roles: ['ADMIN'] },
     ],
   },
   {

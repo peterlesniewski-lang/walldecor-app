@@ -9,6 +9,7 @@ import { buildRealizedCostSummary, costEventYearDateRange } from '@/lib/finance/
 export default async function DashboardPage() {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
+  if (session.user.role !== 'ADMIN') redirect('/finance')
 
   const year = new Date().getFullYear()
   const currentMonth = new Date().getMonth() + 1 // 1-12

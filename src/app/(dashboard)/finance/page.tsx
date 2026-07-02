@@ -44,7 +44,9 @@ export default async function FinancePage({ searchParams }: PageProps) {
         },
       },
     }),
-    prisma.cashAccount.findMany({ where: { isActive: true }, orderBy: { order: 'asc' } }),
+    isAdmin
+      ? prisma.cashAccount.findMany({ where: { isActive: true }, orderBy: { order: 'asc' } })
+      : Promise.resolve([]),
     isAdmin
       ? prisma.ksefInvoice.count({ where: { status: { in: ['NEW', 'MAPPED'] } } })
       : Promise.resolve(0),

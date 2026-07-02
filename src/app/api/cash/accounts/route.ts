@@ -1,12 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server'
-import { getServerSession } from 'next-auth'
 import { z } from 'zod'
-import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { requireCashAdmin } from '@/lib/cash/cash-access'
 
 export async function GET() {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  const auth = await requireCashAdmin()
+  if ('error' in auth) return auth.error
   const accounts = await prisma.cashAccount.findMany({
     where: { isActive: true },
     orderBy: { order: 'asc' },
@@ -21,9 +20,8 @@ const CreateSchema = z.object({
 })
 
 export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions)
-  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (session.user.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const auth = await requireCashAdmin()
+  if ('error' in auth) return auth.error
   const parsed = CreateSchema.safeParse(await req.json())
   if (!parsed.success) return NextResponse.json({ error: 'Invalid', details: parsed.error.flatten() }, { status: 400 })
   const maxOrder = await prisma.cashAccount.aggregate({ _max: { order: true } })

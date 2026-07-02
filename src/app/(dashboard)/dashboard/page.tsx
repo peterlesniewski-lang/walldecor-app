@@ -12,6 +12,7 @@ interface PageProps {
 export default async function DashboardPage({ searchParams }: PageProps) {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
+  if (session.user.role !== 'ADMIN') redirect('/finance')
 
   const { year: yearParam } = await searchParams
   const now = new Date()

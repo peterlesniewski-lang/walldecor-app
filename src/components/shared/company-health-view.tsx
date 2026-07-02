@@ -175,21 +175,23 @@ export function CompanyHealthView({
             {cm.breakEvenDelta >= 0 ? '0 PLN' : formatMoney(Math.abs(cm.breakEvenDelta))}
           </p>
         </div>
-        <div className="rounded-lg border border-[var(--wd-border)] bg-white p-4">
-          <div className="flex items-center gap-2">
-            <Banknote size={16} className="text-gray-700" />
-            <p className="data-label">Kasa</p>
+        {isAdmin && (
+          <div className="rounded-lg border border-[var(--wd-border)] bg-white p-4">
+            <div className="flex items-center gap-2">
+              <Banknote size={16} className="text-gray-700" />
+              <p className="data-label">Kasa</p>
+            </div>
+            <div className="mt-3 space-y-1">
+              {cashByCurrency.length === 0 ? (
+                <p className="text-sm" style={{ color: 'var(--wd-text-muted)' }}>Brak danych</p>
+              ) : cashByCurrency.map((row) => (
+                <p key={row.currency} className="num text-sm font-semibold">
+                  {Math.round(row.amount).toLocaleString('pl-PL')} {row.currency}
+                </p>
+              ))}
+            </div>
           </div>
-          <div className="mt-3 space-y-1">
-            {cashByCurrency.length === 0 ? (
-              <p className="text-sm" style={{ color: 'var(--wd-text-muted)' }}>Brak danych</p>
-            ) : cashByCurrency.map((row) => (
-              <p key={row.currency} className="num text-sm font-semibold">
-                {Math.round(row.amount).toLocaleString('pl-PL')} {row.currency}
-              </p>
-            ))}
-          </div>
-        </div>
+        )}
         {isAdmin && (
           <div className="rounded-lg border border-[var(--wd-border)] bg-white p-4">
             <div className="flex items-center gap-2">
@@ -260,13 +262,15 @@ export function CompanyHealthView({
             <p className="mt-1 text-xs" style={{ color: 'var(--wd-text-muted)' }}>Faktury do klasyfikacji i akceptacji.</p>
           </Link>
         )}
-        <Link href="/dashboard" className="rounded-lg border border-[var(--wd-border)] bg-white p-4 hover:border-[#D7C8B5]">
-          <div className="flex items-center justify-between">
-            <p className="font-semibold">Kasa i alerty</p>
-            <ArrowDownRight size={16} />
-          </div>
-          <p className="mt-1 text-xs" style={{ color: 'var(--wd-text-muted)' }}>Szczegóły cash flow w dashboardzie.</p>
-        </Link>
+        {isAdmin && (
+          <Link href="/dashboard" className="rounded-lg border border-[var(--wd-border)] bg-white p-4 hover:border-[#D7C8B5]">
+            <div className="flex items-center justify-between">
+              <p className="font-semibold">Kasa i alerty</p>
+              <ArrowDownRight size={16} />
+            </div>
+            <p className="mt-1 text-xs" style={{ color: 'var(--wd-text-muted)' }}>Szczegóły cash flow w dashboardzie.</p>
+          </Link>
+        )}
       </section>
     </div>
   )

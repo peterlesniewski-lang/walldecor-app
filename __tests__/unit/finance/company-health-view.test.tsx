@@ -16,7 +16,7 @@ describe('CompanyHealthView finance summaries', () => {
       <CompanyHealthView
         role="ADMIN"
         health={health}
-        cashByCurrency={[]}
+        cashByCurrency={[{ currency: 'PLN', amount: 123_000 }]}
         ksefInboxCount={4}
         unpaidInvoiceAmount={1250}
         unclassifiedWarningAmount={350}
@@ -28,6 +28,8 @@ describe('CompanyHealthView finance summaries', () => {
     expect(screen.getAllByText('4').length).toBeGreaterThan(0)
     expect(screen.getByText('Pozostało do zapłaty')).toBeTruthy()
     expect(screen.getByText('1250 PLN')).toBeTruthy()
+    expect(screen.getByText('Kasa')).toBeTruthy()
+    expect(screen.getByText('123 000 PLN')).toBeTruthy()
     expect(screen.getByText('Koszty oczekujące')).toBeTruthy()
     expect(screen.getByText('350 PLN')).toBeTruthy()
   })
@@ -49,6 +51,8 @@ describe('CompanyHealthView finance summaries', () => {
     expect(screen.queryByRole('link', { name: /Zdarzenia kosztowe/ })).toBeNull()
     expect(screen.queryByRole('link', { name: /Break-even/ })).toBeNull()
     expect(screen.queryByText('Koszty oczekujące')).toBeNull()
+    expect(screen.queryByText('Kasa')).toBeNull()
+    expect(screen.queryByText('Kasa i alerty')).toBeNull()
   })
 
   it('shows only aggregate finance cards to employees', () => {
@@ -68,5 +72,7 @@ describe('CompanyHealthView finance summaries', () => {
     expect(screen.queryByRole('link', { name: /Zdarzenia kosztowe/ })).toBeNull()
     expect(screen.queryByRole('link', { name: /Break-even/ })).toBeNull()
     expect(screen.queryByText('Koszty oczekujące')).toBeNull()
+    expect(screen.queryByText('Kasa')).toBeNull()
+    expect(screen.queryByText('Kasa i alerty')).toBeNull()
   })
 })
