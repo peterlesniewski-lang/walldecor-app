@@ -110,7 +110,7 @@ export function LeaveRequestsView({ employeeId, role }: LeaveRequestsViewProps) 
       const res = await fetch(`/api/hr/leave-requests?${params.toString()}`)
       if (res.ok) {
         const data = await res.json()
-        setRequests(data)
+        setRequests(Array.isArray(data) ? data : [])
       }
     } finally {
       setLoading(false)

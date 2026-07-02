@@ -553,7 +553,10 @@ export default function OvertimePage() {
       if (statusFilter) params.set('status', statusFilter)
       if (monthFilter) params.set('month', monthFilter)
       const res = await fetch(`/api/hr/overtime-requests?${params}`)
-      if (res.ok) setRequests(await res.json())
+      if (res.ok) {
+        const data = await res.json()
+        setRequests(Array.isArray(data) ? data : [])
+      }
     } finally {
       setLoading(false)
     }

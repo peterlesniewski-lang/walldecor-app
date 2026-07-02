@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
 
   if (!isAdminOrManager) {
     if (!session.user.employeeId) {
-      return NextResponse.json({ requests: [] })
+      return NextResponse.json([])
     }
     where.employeeId = session.user.employeeId
   } else {
