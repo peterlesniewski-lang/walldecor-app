@@ -22,7 +22,7 @@ export async function GET(req: NextRequest) {
   const role = session.user.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
 
   if (q.length >= 2) {
-    const results = await searchArticles(q, role)
+    const results = await searchArticles(q, role, session.user.id)
     return NextResponse.json(results.filter((article) => {
       if (parsed.data.category && parsed.data.category !== 'all' && article.category !== parsed.data.category) return false
       if (parsed.data.type && parsed.data.type !== 'all' && article.type !== parsed.data.type) return false
@@ -30,7 +30,7 @@ export async function GET(req: NextRequest) {
     }))
   }
 
-  const articles = await getArticles(parsed.data, role)
+  const articles = await getArticles(parsed.data, role, session.user.id)
   return NextResponse.json(articles)
 }
 

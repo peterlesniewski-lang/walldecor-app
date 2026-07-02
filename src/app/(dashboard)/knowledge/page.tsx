@@ -12,7 +12,7 @@ export default async function KnowledgePage() {
   const role = session.user.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
   const isManager = role === 'ADMIN' || role === 'MANAGER'
 
-  const articles = await getArticles({}, role)
+  const articles = await getArticles({}, role, session.user.id)
 
   return (
     <div className="p-6 max-w-6xl mx-auto">

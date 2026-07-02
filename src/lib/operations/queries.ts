@@ -1,15 +1,27 @@
 import { prisma } from '@/lib/prisma'
 import { calculateRunProgress } from '@/lib/operations/run-factory'
+import {
+  canBypassOperationVisibility,
+  getGrantedResourceIds,
+  hasOperationGrant,
+  type OperationViewer,
+} from '@/lib/operations/visibility'
 
-export async function getOperationModules() {
-  return prisma.operationArea.findMany({
+export async function getOperationModules(viewer: OperationViewer) {
+  const grantedTemplateIds = await getGrantedResourceIds(viewer, 'template')
+  const canBypass = canBypassOperationVisibility(viewer)
+
+  const areas = await prisma.operationArea.findMany({
     orderBy: [{ order: 'asc' }, { name: 'asc' }],
     include: {
       modules: {
         orderBy: [{ order: 'asc' }, { name: 'asc' }],
         include: {
           templates: {
-            where: { active: true },
+            where: {
+              active: true,
+              ...(grantedTemplateIds === null ? {} : { id: { in: grantedTemplateIds } }),
+            },
             orderBy: { name: 'asc' },
             include: { _count: { select: { items: true, runs: true } } },
           },
@@ -17,10 +29,22 @@ export async function getOperationModules() {
       },
     },
   })
+
+  if (canBypass) return areas
+
+  return areas
+    .map((area) => ({
+      ...area,
+      modules: area.modules.filter((module) => module.templates.length > 0),
+    }))
+    .filter((area) => area.modules.length > 0)
 }
 
-export async function getTemplates() {
+export async function getTemplates(viewer: OperationViewer) {
+  const grantedTemplateIds = await getGrantedResourceIds(viewer, 'template')
+
   return prisma.checklistTemplate.findMany({
+    where: grantedTemplateIds === null ? {} : { id: { in: grantedTemplateIds } },
     orderBy: [{ module: { area: { order: 'asc' } } }, { module: { order: 'asc' } }, { name: 'asc' }],
     include: {
       module: { include: { area: true } },
@@ -29,7 +53,12 @@ export async function getTemplates() {
   })
 }
 
-export async function getTemplate(id: string) {
+export async function getTemplate(id: string, viewer: OperationViewer) {
+  if (!canBypassOperationVisibility(viewer)) {
+    const allowed = await hasOperationGrant(viewer, 'template', id)
+    if (!allowed) return null
+  }
+
   return prisma.checklistTemplate.findUnique({
     where: { id },
     include: {
@@ -65,22 +94,39 @@ export async function getTemplateEditorOptions() {
   return { areas, procedures, users }
 }
 
-export async function getRuns() {
+export async function getRuns(viewer: OperationViewer) {
+  const grantedRunIds = await getGrantedResourceIds(viewer, 'run')
+  const canBypass = canBypassOperationVisibility(viewer)
+
   const runs = await prisma.checklistRun.findMany({
+    where: grantedRunIds === null
+      ? {}
+      : {
+          OR: [
+            { id: { in: grantedRunIds } },
+            { items: { some: { ownerId: viewer.id } } },
+          ],
+        },
     orderBy: [{ periodYear: 'desc' }, { periodMonth: 'desc' }, { createdAt: 'desc' }],
     include: {
       template: { include: { module: { include: { area: true } } } },
-      items: { select: { status: true } },
+      items: { select: { status: true, ownerId: true } },
     },
   })
 
+  const grantedSet = new Set(grantedRunIds ?? [])
+
   return runs.map((run) => ({
     ...run,
-    progress: calculateRunProgress(run.items),
+    progress: calculateRunProgress(
+      canBypass || grantedSet.has(run.id)
+        ? run.items
+        : run.items.filter((item) => item.ownerId === viewer.id)
+    ),
   }))
 }
 
-export async function getRun(id: string) {
+export async function getRun(id: string, viewer: OperationViewer) {
   const run = await prisma.checklistRun.findUnique({
     where: { id },
     include: {
@@ -90,6 +136,12 @@ export async function getRun(id: string) {
   })
 
   if (!run) return null
+
+  if (!canBypassOperationVisibility(viewer)) {
+    const hasGrant = await hasOperationGrant(viewer, 'run', id)
+    const ownsItem = run.items.some((item) => item.ownerId === viewer.id)
+    if (!hasGrant && !ownsItem) return null
+  }
 
   const procedureIds = run.items
     .map((item) => item.procedureId)

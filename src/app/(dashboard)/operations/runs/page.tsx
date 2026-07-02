@@ -9,7 +9,7 @@ export default async function OperationRunsPage() {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
 
-  const runs = await getRuns()
+  const runs = await getRuns({ id: session.user.id, role: session.user.role })
 
   return (
     <div className="mx-auto max-w-6xl p-6">

@@ -1,15 +1,32 @@
 import { prisma } from '@/lib/prisma'
 import type { ArticleCreateInput, ArticleUpdateInput, ArticleQuery } from '@/lib/validations/wikipedia'
+import { getGrantedResourceIds, hasOperationGrant } from '@/lib/operations/visibility'
 
 type Role = 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
 
-function visibilityFilter(role: Role) {
-  if (role === 'EMPLOYEE') return { visibility: 'public' }
-  return {}
+async function visibilityFilter(role: Role, viewerId?: string) {
+  if (role !== 'EMPLOYEE') return {}
+
+  const grantedProcedureIds = viewerId
+    ? await getGrantedResourceIds({ id: viewerId, role }, 'procedure')
+    : []
+
+  return {
+    OR: [
+      { visibility: 'public' },
+      { type: 'procedure', id: { in: grantedProcedureIds ?? [] } },
+    ],
+  }
 }
 
-export async function getArticles(filters: ArticleQuery, role: Role) {
-  const where: Record<string, unknown> = { ...visibilityFilter(role) }
+async function canEmployeeViewArticle(article: { id: string; visibility: string; type: string }, viewerId?: string) {
+  if (article.visibility === 'public') return true
+  if (article.type !== 'procedure' || !viewerId) return false
+  return hasOperationGrant({ id: viewerId, role: 'EMPLOYEE' }, 'procedure', article.id)
+}
+
+export async function getArticles(filters: ArticleQuery, role: Role, viewerId?: string) {
+  const where: Record<string, unknown> = { ...(await visibilityFilter(role, viewerId)) }
 
   if (filters.category && filters.category !== 'all') {
     where.category = filters.category
@@ -35,10 +52,10 @@ export async function getArticles(filters: ArticleQuery, role: Role) {
   })
 }
 
-export async function getArticle(slug: string, role: Role) {
+export async function getArticle(slug: string, role: Role, viewerId?: string) {
   const article = await prisma.article.findUnique({ where: { slug } })
   if (!article) return null
-  if (article.visibility === 'manager' && role === 'EMPLOYEE') return null
+  if (role === 'EMPLOYEE' && !(await canEmployeeViewArticle(article, viewerId))) return null
   return article
 }
 

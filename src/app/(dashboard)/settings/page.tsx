@@ -122,6 +122,13 @@ export default async function SettingsPage() {
           >
             Zarządzaj użytkownikami →
           </Link>
+          <Link
+            href="/settings/visibility"
+            className="ml-3 inline-flex items-center gap-2 rounded-lg px-5 py-2.5 text-sm font-semibold transition-opacity hover:opacity-80"
+            style={{ background: '#fff', color: 'var(--wd-dark)', border: '1px solid var(--wd-border)' }}
+          >
+            Widoczność operacyjna →
+          </Link>
         </section>
       )}
     </div>

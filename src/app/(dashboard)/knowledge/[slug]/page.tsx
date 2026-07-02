@@ -18,7 +18,7 @@ export default async function ArticlePage({ params }: { params: Promise<{ slug: 
   const role = session.user.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
   const isManager = role === 'ADMIN' || role === 'MANAGER'
 
-  const article = await getArticle(slug, role)
+  const article = await getArticle(slug, role, session.user.id)
   if (!article) notFound()
 
   const cat = CATEGORY_LABELS.find((c) => c.id === article.category)

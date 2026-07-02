@@ -11,7 +11,7 @@ export async function GET(_req: Request, { params }: { params: Promise<{ id: str
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
-  const run = await getRun(id)
+  const run = await getRun(id, { id: session.user.id, role: session.user.role })
   if (!run) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   if (session.user.role === 'EMPLOYEE') {

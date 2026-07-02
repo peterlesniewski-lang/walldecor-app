@@ -66,6 +66,9 @@ model User {
   employeeId         String?   @unique
   employee           Employee? @relation(fields: [employeeId], references: [id])
   createdAt          DateTime  @default(now())
+
+  visibilityGrants        ContentVisibilityGrant[] @relation("VisibilityGrantUser")
+  grantedVisibilityGrants ContentVisibilityGrant[] @relation("VisibilityGrantGrantedBy")
 }
 
 // ─── Finance Models ───────────────────────────────────────────────────────────
@@ -820,6 +823,24 @@ model Notification {
   link      String?
   isRead    Boolean  @default(false)
   createdAt DateTime @default(now())
+}
+
+// ─── Cross-module access grants ──────────────────────────────────────────────
+
+model ContentVisibilityGrant {
+  id           String   @id @default(cuid())
+  resourceType String   // "procedure" | "template" | "run"
+  resourceId   String
+  userId       String
+  user         User     @relation("VisibilityGrantUser", fields: [userId], references: [id], onDelete: Cascade)
+  grantedById  String?
+  grantedBy    User?    @relation("VisibilityGrantGrantedBy", fields: [grantedById], references: [id], onDelete: SetNull)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  @@unique([resourceType, resourceId, userId])
+  @@index([userId, resourceType])
+  @@index([resourceType, resourceId])
 }
 
 // ─── Business Wikipedia ───────────────────────────────────────────────────────
