@@ -5,6 +5,7 @@ import { KsefInboxView } from '@/components/shared/ksef-inbox-view'
 
 const costCenters = [
   { id: 'GLOBAL', name: 'Koszty centralne' },
+  { id: 'PUL', name: 'Puławska' },
 ]
 
 const subCategories = [
@@ -383,6 +384,71 @@ describe('KsefInboxView', () => {
     expect(patchCall).toBeTruthy()
     expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({
       costCenterId: 'GLOBAL',
+      tagIds: ['tag-goods'],
+    })
+  })
+
+  it('uses chips instead of a select for inline cost center classification', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input).includes('/api/finance/ksef/invoices/invoice-1')) {
+        return new Response(JSON.stringify({
+          invoice: {
+            ...invoices[0],
+            status: 'MAPPED',
+            costCenterId: 'PUL',
+            costCenter: costCenters[1],
+            parts: [
+              {
+                id: 'part-1',
+                label: 'FV/1/2026',
+                grossAmount: 123,
+                tags: [{ tagId: 'tag-goods', tag: costTagGroups[0].tags[0] }],
+                allocations: [{ costCenterId: 'PUL', percent: 100 }],
+              },
+            ],
+          },
+        }))
+      }
+
+      return new Response(JSON.stringify({
+        invoices,
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        grossAmountTotal: 123,
+        counts: { NEW: 0, MAPPED: 1, APPROVED: 0, IGNORED: 0 },
+      }))
+    })
+
+    render(
+      <KsefInboxView
+        initialInvoices={invoices}
+        initialTotal={1}
+        initialPage={1}
+        initialPageSize={50}
+        initialTotalPages={1}
+        initialGrossAmountTotal={123}
+        initialCounts={{ NEW: 1, MAPPED: 0, APPROVED: 0, IGNORED: 0 }}
+        initialRules={[]}
+        costCenters={costCenters}
+        subCategories={subCategories}
+        costTagGroups={costTagGroups}
+      />
+    )
+
+    const table = screen.getByRole('table')
+    expect(within(table).queryByRole('combobox')).toBeNull()
+
+    await user.click(within(table).getByRole('button', { name: 'Puławska' }))
+    await user.click(within(table).getByRole('button', { name: 'goods' }))
+    await user.click(screen.getByTitle('Zapisz klasyfikację'))
+
+    const patchCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/finance/ksef/invoices/invoice-1'))
+    expect(patchCall).toBeTruthy()
+    expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({
+      costCenterId: 'PUL',
       tagIds: ['tag-goods'],
     })
   })

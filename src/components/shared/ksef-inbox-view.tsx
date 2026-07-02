@@ -183,6 +183,42 @@ function formatBankAccount(value: string) {
   return value.replace(/\s+/g, '').replace(/(.{4})/g, '$1 ').trim()
 }
 
+function CostCenterChips({
+  options,
+  value,
+  disabled,
+  onChange,
+}: {
+  options: CostCenterOption[]
+  value: string
+  disabled?: boolean
+  onChange: (next: string) => void
+}) {
+  return (
+    <div className="flex min-w-40 flex-wrap gap-1">
+      {options.map((option) => {
+        const selected = option.id === value
+        return (
+          <button
+            key={option.id}
+            type="button"
+            disabled={disabled}
+            aria-pressed={selected}
+            onClick={() => onChange(option.id)}
+            className={`rounded-full border px-2 py-0.5 text-[11px] font-medium transition-colors disabled:opacity-40 ${
+              selected
+                ? 'border-[var(--wd-dark)] bg-[var(--wd-dark)] text-white'
+                : 'border-[var(--wd-border)] bg-white text-[var(--wd-dark)] hover:bg-gray-50'
+            }`}
+          >
+            {option.name}
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
 function invoiceTagIds(invoice: KsefInvoiceRow) {
   return Array.from(new Set(
     invoice.parts?.flatMap((part) => part.tags.map((entry) => entry.tagId ?? entry.tag?.id).filter(Boolean) as string[]) ?? []
@@ -1028,14 +1064,12 @@ export function KsefInboxView({
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <select
-                        disabled={approved}
-                        className="w-full rounded border border-[var(--wd-border)] px-2 py-1 text-xs disabled:bg-gray-50"
+                      <CostCenterChips
+                        options={costCenters}
                         value={rowClassification.costCenterId}
-                        onChange={(e) => setClassification((current) => ({ ...current, [invoice.id]: { ...rowClassification, costCenterId: e.target.value } }))}
-                      >
-                        {costCenters.map((cc) => <option key={cc.id} value={cc.id}>{cc.name}</option>)}
-                      </select>
+                        disabled={approved}
+                        onChange={(costCenterId) => setClassification((current) => ({ ...current, [invoice.id]: { ...rowClassification, costCenterId } }))}
+                      />
                     </td>
                     <td className="px-4 py-3">
                       {hasCostTags ? (
