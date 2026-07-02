@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
+import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -28,6 +29,27 @@ export async function POST(req: NextRequest) {
   }
 
   const { fromEmployeeId, toEmployeeIds, fromMonth, toMonth } = parsed.data
+  if (session.user.role === 'MANAGER') {
+    const viewerEmployee = session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+    const scopedWhere = getScopedEmployeeWhere(session, viewerEmployee)
+    if (scopedWhere.id === HR_NO_EMPLOYEE_ACCESS_ID) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+
+    const requestedEmployeeIds = [...new Set([fromEmployeeId, ...toEmployeeIds])]
+    const scopedEmployees = await prisma.employee.findMany({
+      where: { ...scopedWhere, id: { in: requestedEmployeeIds } },
+      select: { id: true },
+    })
+    if (scopedEmployees.length !== requestedEmployeeIds.length) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
 
   // Parse source month range
   const [fromYear, fromMonthNum] = fromMonth.split('-').map(Number)

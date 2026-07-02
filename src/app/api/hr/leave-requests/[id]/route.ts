@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { canViewEmployeeRecord } from '@/lib/hr/access'
 
 export async function GET(
   req: NextRequest,
@@ -23,6 +24,8 @@ export async function GET(
           lastName: true,
           email: true,
           position: true,
+          divisionId: true,
+          active: true,
         },
       },
     },
@@ -35,6 +38,17 @@ export async function GET(
 
   if (!isAdminOrManager && request.employeeId !== session.user.employeeId) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+  if (role === 'MANAGER') {
+    const viewerEmployee = session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+    if (!canViewEmployeeRecord(session, request.employee, viewerEmployee)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
   }
 
   return NextResponse.json(request)

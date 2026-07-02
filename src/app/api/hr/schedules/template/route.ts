@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
 import { getPolishHolidays } from '@/lib/hr/constants'
+import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -48,6 +49,28 @@ export async function POST(req: NextRequest) {
   }
 
   const { employeeIds, startDate, endDate, template, skipHolidays } = parsed.data
+  let managerDivisionId: string | null = null
+  if (session.user.role === 'MANAGER') {
+    const viewerEmployee = session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+    const scopedWhere = getScopedEmployeeWhere(session, viewerEmployee)
+    if (scopedWhere.id === HR_NO_EMPLOYEE_ACCESS_ID) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+    managerDivisionId = viewerEmployee?.divisionId ?? null
+
+    const scopedEmployees = await prisma.employee.findMany({
+      where: { ...scopedWhere, id: { in: employeeIds } },
+      select: { id: true },
+    })
+    if (scopedEmployees.length !== employeeIds.length) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
 
   const start = new Date(startDate + 'T12:00:00')
   const end = new Date(endDate + 'T12:00:00')
@@ -68,7 +91,10 @@ export async function POST(req: NextRequest) {
   const rangeStart = new Date(startDate + 'T00:00:00')
   const rangeEnd = new Date(endDate + 'T23:59:59')
   const customHolidays = await prisma.customHoliday.findMany({
-    where: { date: { gte: rangeStart, lte: rangeEnd } },
+    where: {
+      date: { gte: rangeStart, lte: rangeEnd },
+      ...(managerDivisionId ? { OR: [{ divisionId: null }, { divisionId: managerDivisionId }] } : {}),
+    },
     select: { date: true },
   })
   const pad = (n: number) => String(n).padStart(2, '0')

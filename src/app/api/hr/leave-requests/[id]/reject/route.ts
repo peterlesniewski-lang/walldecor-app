@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { z } from 'zod'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { canViewEmployeeRecord } from '@/lib/hr/access'
 
 const rejectSchema = z.object({
   rejectionNote: z.string().min(1, 'Powód odrzucenia jest wymagany'),
@@ -32,12 +33,25 @@ export async function PATCH(
           firstName: true,
           lastName: true,
           userId: true,
+          divisionId: true,
+          active: true,
         },
       },
     },
   })
 
   if (!leaveRequest) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (role === 'MANAGER') {
+    const viewerEmployee = session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+    if (!canViewEmployeeRecord(session, leaveRequest.employee, viewerEmployee)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
   if (leaveRequest.status !== 'pending') {
     return NextResponse.json({ error: 'Only pending requests can be rejected' }, { status: 409 })
   }

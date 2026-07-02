@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import {
+  getScopedEmployeeWhere,
+  HR_NO_EMPLOYEE_ACCESS_ID,
+  HR_NO_EMPLOYEE_ACCESS_WHERE,
+} from '@/lib/hr/access'
 
 export async function GET(_req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -12,23 +17,26 @@ export async function GET(_req: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  // MANAGER sees only employees from their own division
-  let divisionIdFilter: string | undefined
+  let scopedEmployeeWhere: Record<string, unknown> | null = null
 
   if (role === 'MANAGER' && session.user.employeeId) {
     const managerEmployee = await prisma.employee.findUnique({
       where: { id: session.user.employeeId },
-      select: { divisionId: true },
+      select: { id: true, divisionId: true, active: true },
     })
-    divisionIdFilter = managerEmployee?.divisionId ?? undefined
+    scopedEmployeeWhere = getScopedEmployeeWhere(session, managerEmployee)
+  } else if (role === 'MANAGER') {
+    scopedEmployeeWhere = HR_NO_EMPLOYEE_ACCESS_WHERE
+  }
+
+  if (scopedEmployeeWhere?.id === HR_NO_EMPLOYEE_ACCESS_ID) {
+    return NextResponse.json([])
   }
 
   const requests = await prisma.leaveRequestNew.findMany({
     where: {
       status: 'pending',
-      ...(divisionIdFilter
-        ? { employee: { divisionId: divisionIdFilter } }
-        : {}),
+      ...(scopedEmployeeWhere ? { employee: scopedEmployeeWhere } : {}),
     },
     include: {
       employee: {

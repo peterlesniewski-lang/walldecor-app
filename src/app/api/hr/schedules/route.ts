@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { workScheduleCreateSchema } from '@/lib/hr/schemas'
 import { getPolishHolidays } from '@/lib/hr/constants'
+import { canViewEmployeeRecord, getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
 
 // ─── GET /api/hr/schedules?month=2026-03&employeeId=&divisionId= ────────────
 
@@ -18,6 +19,7 @@ export async function GET(req: NextRequest) {
   const month = searchParams.get('month') // "2026-03"
   const employeeId = searchParams.get('employeeId')
   const divisionId = searchParams.get('divisionId')
+  const role = session.user.role
 
   if (!month || !/^\d{4}-\d{2}$/.test(month)) {
     return NextResponse.json({ error: 'Invalid month format. Use YYYY-MM' }, { status: 400 })
@@ -30,10 +32,43 @@ export async function GET(req: NextRequest) {
   const rangeStart = new Date(year, monthNum - 1, 1, 0, 0, 0, 0)
   const rangeEnd = new Date(year, monthNum, 0, 23, 59, 59, 999)
 
+  const viewerEmployee =
+    role === 'MANAGER' && session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+
   // Build employee filter
-  const employeeWhere: Record<string, unknown> = { active: true }
-  if (employeeId) employeeWhere.id = employeeId
-  if (divisionId) employeeWhere.divisionId = divisionId
+  const employeeWhere: Record<string, unknown> = {
+    active: true,
+    ...getScopedEmployeeWhere(session, viewerEmployee),
+  }
+
+  if (employeeWhere.id === HR_NO_EMPLOYEE_ACCESS_ID) {
+    return NextResponse.json({ employees: [], holidays: [] })
+  }
+
+  if (employeeId) {
+    const requestedEmployee = await prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: { id: true, divisionId: true, active: true },
+    })
+    if (!requestedEmployee || !canViewEmployeeRecord(session, requestedEmployee, viewerEmployee)) {
+      return NextResponse.json({ employees: [], holidays: [] })
+    }
+    employeeWhere.id = employeeId
+  }
+
+  let effectiveDivisionId = divisionId ?? undefined
+  if (role === 'MANAGER') {
+    if (divisionId && viewerEmployee?.divisionId !== divisionId) {
+      return NextResponse.json({ employees: [], holidays: [] })
+    }
+    effectiveDivisionId = viewerEmployee?.divisionId ?? undefined
+  }
+  if (effectiveDivisionId) employeeWhere.divisionId = effectiveDivisionId
 
   const employees = await prisma.employee.findMany({
     where: employeeWhere,
@@ -84,7 +119,7 @@ export async function GET(req: NextRequest) {
   const polishHolidays = getPolishHolidays(year)
   const customHolidays = await prisma.customHoliday.findMany({
     where: {
-      OR: [{ divisionId: null }, ...(divisionId ? [{ divisionId }] : [])],
+      OR: [{ divisionId: null }, ...(effectiveDivisionId ? [{ divisionId: effectiveDivisionId }] : [])],
       date: { gte: rangeStart, lte: rangeEnd },
     },
     select: { date: true, name: true },
@@ -161,6 +196,25 @@ export async function POST(req: NextRequest) {
   }
 
   const { employeeId, date, startTime, endTime, breakMinutes, type } = parsed.data
+  if (session.user.role === 'MANAGER') {
+    const [viewerEmployee, targetEmployee] = await Promise.all([
+      session.user.employeeId
+        ? prisma.employee.findUnique({
+            where: { id: session.user.employeeId },
+            select: { id: true, divisionId: true, active: true },
+          })
+        : Promise.resolve(null),
+      prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { id: true, divisionId: true, active: true },
+      }),
+    ])
+
+    if (!targetEmployee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
+    if (!canViewEmployeeRecord(session, targetEmployee, viewerEmployee)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
 
   const day = new Date(date)
   day.setHours(0, 0, 0, 0)
@@ -186,6 +240,25 @@ export async function DELETE(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const id = searchParams.get('id')
   if (!id) return NextResponse.json({ error: 'Missing id' }, { status: 400 })
+
+  const existing = await prisma.workSchedule.findUnique({
+    where: { id },
+    include: {
+      employee: { select: { id: true, divisionId: true, active: true } },
+    },
+  })
+  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (session.user.role === 'MANAGER') {
+    const viewerEmployee = session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+    if (!canViewEmployeeRecord(session, existing.employee, viewerEmployee)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
 
   await prisma.workSchedule.delete({ where: { id } })
 

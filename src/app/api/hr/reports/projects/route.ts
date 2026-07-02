@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { getMonthRange } from '@/lib/hr/utils'
+import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -29,12 +30,32 @@ export async function GET(req: NextRequest) {
   }
 
   const { start, end } = getMonthRange(year, month)
+  const viewerEmployee =
+    role === 'MANAGER' && session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+  const employeeWhere = getScopedEmployeeWhere(session, viewerEmployee)
+
+  let scopedEmployeeIds: string[] | null = null
+  if (employeeWhere.id === HR_NO_EMPLOYEE_ACCESS_ID) return NextResponse.json([])
+  if (role !== 'ADMIN') {
+    const scopedEmployees = await prisma.employee.findMany({
+      where: employeeWhere,
+      select: { id: true },
+    })
+    scopedEmployeeIds = scopedEmployees.map((employee) => employee.id)
+    if (scopedEmployeeIds.length === 0) return NextResponse.json([])
+  }
 
   const entryWhere: Record<string, unknown> = {
     date: { gte: start, lte: end },
     projectId: { not: null },
   }
   if (projectIdParam) entryWhere.projectId = projectIdParam
+  if (scopedEmployeeIds) entryWhere.employeeId = { in: scopedEmployeeIds }
 
   const entries = await prisma.timeEntry.findMany({
     where: entryWhere,

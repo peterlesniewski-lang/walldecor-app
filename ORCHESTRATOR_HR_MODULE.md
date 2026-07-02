@@ -1,6 +1,6 @@
 # WallDecor HR Module — Dokumentacja implementacji
 
-## Status: WDROŻONY (2026-03-28)
+## Status: WDROŻONY + UTWARDZONY (2026-07-02)
 
 ---
 
@@ -29,7 +29,7 @@
 | HR strony pod | `app/(dashboard)/hr/` — NIE `app/(auth)/hr/` |
 | Soft-hide pracownika | `active = false` zachowuje dane historyczne; hard delete zablokowany gdy istnieją `TimeEntry` lub `LeaveRequestNew` |
 | Middleware | `src/proxy.ts` (nie `middleware.ts`) |
-| Testy | Vitest (28 unit testów), Playwright E2E (skonfigurowany) |
+| Testy | Vitest (51 testów HR), Playwright E2E (skonfigurowany) |
 | HR Settings | Klucze `AppSetting`: `hr_saturday_workable`, `hr_standard_clock_in`, `hr_standard_clock_out`, `hr_overtime_threshold_minutes` |
 
 ---
@@ -72,6 +72,8 @@
 - Przycisk "..." dropdown w liście i profilu (ADMIN): Edytuj / Ukryj / Usuń
 - Soft-hide: `active = false` zachowuje dane historyczne
 - Hard delete zablokowany gdy istnieją `TimeEntry` lub `LeaveRequestNew`
+- Poufne relacje (`contracts`, `additionalContracts`, `salaryHistory`) są dostępne tylko dla ADMIN.
+- EMPLOYEE widzi tylko własny profil; MANAGER widzi tylko aktywnych pracowników z własnego oddziału.
 
 ---
 
@@ -92,6 +94,7 @@
 - `LeaveRequestForm` — zakres dat, live working-days calc, walidacja salda
 - Approval flow z Prisma transaction: zmiana statusu + odjęcie dni z salda atomowo
 - Admin może manualnie złożyć wniosek dla dowolnego pracownika (`EmployeeSelect` w formularzu)
+- MANAGER akceptuje, eksportuje i przegląda tylko wnioski pracowników z własnego oddziału.
 
 ---
 
@@ -103,7 +106,7 @@
 - `POST /api/hr/time-tracking/break` — przerwa
 - `POST /api/hr/time-tracking/bulk-approve` — bulk zatwierdzenie wpisów
 - `GET/POST /api/hr/time-tracking/periods` — okresy rozliczeniowe
-- `GET/POST /api/hr/time-tracking/overtime` — wnioski nadgodzinowe
+- `GET/POST /api/hr/overtime-requests` — wnioski nadgodzinowe
 
 **Strony:**
 - `/hr/time-tracking` — ClockWidget + widok bieżącego dnia
@@ -116,10 +119,27 @@
 - `WeeklyTimesheet` — widok managera, tydzień PN–ND, approve/reject per wpis
 - BULK approve: checkboxy + floating action bar "Zatwierdź/Odrzuć zaznaczone"
 - `ScheduleCalendar` — grafik miesięczny, szablony zmian
+- Endpointy weekly, bulk, schedule, approve/reject i raporty stosują scoping HR po roli.
 
 **Reguły biznesowe:**
 - Soboty klikalne gdy `hr_saturday_workable=true`, badge "OT 2×" (orange), blokada gdy święto ustawowe
 - Nadgodziny: próg konfigurowalny przez `hr_overtime_threshold_minutes`
+
+---
+
+### Granice bezpieczeństwa HR po hardeningu 2026-07-02
+
+| Rola | Zakres |
+|---|---|
+| ADMIN | Pełen HR, dane płacowe, umowy, wszystkie oddziały, wszystkie raporty |
+| MANAGER | Tylko własny oddział; bez danych płacowych i bez fallbacku do pełnej firmy przy braku podpiętego profilu |
+| EMPLOYEE | Tylko własny profil, własne wnioski i własny czas pracy |
+
+Centralny helper: `src/lib/hr/access.ts`.
+
+Stare route’y `/hr`, `/hr/leaves`, `/hr/timesheets` przekierowują do aktywnych modułów.
+
+Poza zakresem M6-M8: automatyczny cron/e-mail do kadrowej i sejf dokumentów pracowniczych. Te funkcje wymagają osobnego projektu storage, retencji i audytu dostępu.
 
 ---
 
@@ -305,7 +325,7 @@ src/
 | POST | `/api/hr/time-tracking/break` | Przerwa |
 | POST | `/api/hr/time-tracking/bulk-approve` | Bulk zatwierdzenie |
 | GET/POST | `/api/hr/time-tracking/periods` | Okresy rozliczeniowe |
-| GET/POST | `/api/hr/time-tracking/overtime` | Wnioski nadgodzinowe |
+| GET/POST | `/api/hr/overtime-requests` | Wnioski nadgodzinowe |
 
 ### HR: Urlopy
 | Method | Path | Opis |
@@ -342,8 +362,10 @@ src/
 
 - **M9 — Migracja danych:** Import pracowników i danych historycznych z Excela 2025 — nie rozpoczęty
 - **Google Calendar:** `lib/hr/google-calendar.ts` zaplanowany, nie zaimplementowany
-- **Raport PDF:** Generowany client-side przez jspdf — przy dużej ilości danych może być wolny; rozważyć przeniesienie na server-side
-- **Testy HR:** Brak unit testów dla kalkulacji nadgodzin i saldo urlopowe (wymagane wg `testing.md`)
+- **Raport PDF:** Generowany server-side przez `jspdf`/`jspdf-autotable`; przy dużej ilości danych może wymagać kolejki/asynchronicznego generowania
+- **Testy HR:** Brak unit testów dla szczegółowych kalkulacji nadgodzin i sald urlopowych (poza regresją dostępu i utils)
+- **Dokumenty pracownicze:** Brak sejfu dokumentów; wymaga osobnego modelu storage, retencji i audytu
+- **Automatyczna wysyłka do kadrowej:** Brak crona i logu wysyłek; obecnie raporty miesięczne są generowane ręcznie
 - **AbsenceCalendar** — KPI topbar (Obecni/Zdalna/Nieobecni) bazuje na `LeaveRequestNew`; nie uwzględnia wpisów `TimeEntry` z typem `remote`
 - **Company model** — zdefiniowany w schema ale bez UI — Division/Department nie są powiązane z Company w aktualnym UI
 - **Paginacja** — employees lista ma paginację serwerową, ale pozostałe listy HR (urlopy, wpisy czasu) są stronicowane client-side

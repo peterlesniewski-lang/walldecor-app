@@ -8,6 +8,7 @@ import { EmployeeTabs } from './employee-tabs'
 import { EmployeeActions } from './employee-actions'
 import { getWeekRange } from '@/lib/hr/utils'
 import { LeaveTabClient } from '@/components/hr/employees/leave-tab-client'
+import { canViewEmployeeRecord } from '@/lib/hr/access'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -236,7 +237,7 @@ function WorkTimeTab({ entries }: { entries: TimeEntryWithProject[] }) {
 
 // ─── Data fetcher ─────────────────────────────────────────────────────────────
 
-async function fetchEmployee(id: string) {
+async function fetchEmployee(id: string, includeConfidential: boolean) {
   return prisma.employee.findUnique({
     where: { id },
     include: {
@@ -246,7 +247,13 @@ async function fetchEmployee(id: string) {
       positionRef: true,
       costCenter: true,
       manager: { select: { id: true, firstName: true, lastName: true } },
-      contracts: { orderBy: { startDate: 'desc' } },
+      ...(includeConfidential
+        ? {
+            contracts: { orderBy: { startDate: 'desc' } },
+            additionalContracts: { orderBy: { startDate: 'desc' } },
+            salaryHistory: { orderBy: { effectiveFrom: 'desc' } },
+          }
+        : {}),
       leaveBalancesNew: {
         include: { leaveType: true },
         orderBy: { year: 'desc' },
@@ -267,10 +274,18 @@ export default async function EmployeeProfilePage({ params }: Params) {
   if (!session) redirect('/login')
 
   const { id } = await params
-  const employee = await fetchEmployee(id)
-  if (!employee) notFound()
-
   const isAdmin = session.user.role === 'ADMIN'
+  const viewerEmployee =
+    session.user.role === 'MANAGER' && session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+  const employee = await fetchEmployee(id, isAdmin)
+  if (!employee) notFound()
+  if (!canViewEmployeeRecord(session, employee, viewerEmployee)) notFound()
+
   const canEditLeave = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
 
   // Fetch current week time entries

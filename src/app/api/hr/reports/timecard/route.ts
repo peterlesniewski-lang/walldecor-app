@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { getMonthRange } from '@/lib/hr/utils'
+import { canViewEmployeeRecord } from '@/lib/hr/access'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -41,12 +42,22 @@ export async function GET(req: NextRequest) {
   }
 
   const { start, end } = getMonthRange(year, month)
+  const viewerEmployee =
+    role === 'MANAGER' && session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
 
   const employee = await prisma.employee.findUnique({
     where: { id: employeeId },
-    select: { id: true, firstName: true, lastName: true },
+    select: { id: true, firstName: true, lastName: true, divisionId: true, active: true },
   })
   if (!employee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
+  if (!canViewEmployeeRecord(session, employee, viewerEmployee)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
 
   const rawEntries = await prisma.timeEntry.findMany({
     where: {
@@ -91,5 +102,10 @@ export async function GET(req: NextRequest) {
     overtimeMinutes: entries.reduce((s, e) => s + e.overtimeMinutes, 0),
   }
 
-  return NextResponse.json({ employee, month: monthParam, entries, summary })
+  return NextResponse.json({
+    employee: { id: employee.id, firstName: employee.firstName, lastName: employee.lastName },
+    month: monthParam,
+    entries,
+    summary,
+  })
 }

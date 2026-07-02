@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { getMonthRange } from '@/lib/hr/utils'
 import { getPolishHolidays } from '@/lib/hr/constants'
+import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
 
 const HOLIDAY_NAMES: Record<string, string> = {
   '01-01': 'Nowy Rok',
@@ -69,6 +70,7 @@ export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url)
   const monthParam = searchParams.get('month') // e.g. "2026-03"
   const divisionId = searchParams.get('divisionId')
+  const role = session.user.role
 
   // Parse month
   const now = new Date()
@@ -83,9 +85,42 @@ export async function GET(req: NextRequest) {
   const { start, end } = getMonthRange(year, month)
   const daysInMonth = new Date(year, month, 0).getDate()
 
+  const viewerEmployee =
+    role === 'MANAGER' && session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+
   // Build employee filter
-  const employeeWhere: Record<string, unknown> = { active: true }
-  if (divisionId) employeeWhere.divisionId = divisionId
+  const employeeWhere: Record<string, unknown> = {
+    active: true,
+    ...getScopedEmployeeWhere(session, viewerEmployee),
+  }
+
+  if (employeeWhere.id === HR_NO_EMPLOYEE_ACCESS_ID) {
+    return NextResponse.json({
+      employees: [],
+      holidays: [],
+      month: `${year}-${String(month).padStart(2, '0')}`,
+      daysInMonth,
+    })
+  }
+
+  let effectiveDivisionId = divisionId ?? undefined
+  if (role === 'MANAGER') {
+    if (divisionId && viewerEmployee?.divisionId !== divisionId) {
+      return NextResponse.json({
+        employees: [],
+        holidays: [],
+        month: `${year}-${String(month).padStart(2, '0')}`,
+        daysInMonth,
+      })
+    }
+    effectiveDivisionId = viewerEmployee?.divisionId ?? undefined
+  }
+  if (effectiveDivisionId) employeeWhere.divisionId = effectiveDivisionId
 
   // Fetch active employees and their overlapping leave requests in one go
   const employees = await prisma.employee.findMany({
@@ -131,7 +166,7 @@ export async function GET(req: NextRequest) {
   const customHolidays = await prisma.customHoliday.findMany({
     where: {
       date: { gte: start, lte: end },
-      ...(divisionId ? { OR: [{ divisionId }, { divisionId: null }] } : {}),
+      ...(effectiveDivisionId ? { OR: [{ divisionId: effectiveDivisionId }, { divisionId: null }] } : {}),
     },
     select: { date: true, name: true },
   })

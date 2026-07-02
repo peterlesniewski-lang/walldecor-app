@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { timeEntryCreateSchema } from '@/lib/hr/schemas'
+import { canViewEmployeeRecord } from '@/lib/hr/access'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -17,6 +18,27 @@ export async function POST(req: NextRequest) {
   }
 
   const { employeeId, date, clockIn, clockOut, projectId, taskName, source, notes } = parsed.data
+  const role = session.user.role
+
+  if (role === 'MANAGER') {
+    const [viewerEmployee, targetEmployee] = await Promise.all([
+      session.user.employeeId
+        ? prisma.employee.findUnique({
+            where: { id: session.user.employeeId },
+            select: { id: true, divisionId: true, active: true },
+          })
+        : Promise.resolve(null),
+      prisma.employee.findUnique({
+        where: { id: employeeId },
+        select: { id: true, divisionId: true, active: true },
+      }),
+    ])
+
+    if (!targetEmployee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
+    if (!canViewEmployeeRecord(session, targetEmployee, viewerEmployee)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  }
 
   // Check for existing entry on this date
   const dayStart = new Date(date)

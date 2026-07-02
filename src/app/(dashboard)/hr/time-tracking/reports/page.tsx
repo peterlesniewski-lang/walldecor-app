@@ -13,7 +13,15 @@ export default async function ReportsPage() {
     redirect('/hr')
   }
 
+  const managerDivisionId =
+    role === 'MANAGER' && session.user.employeeId
+      ? (await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { divisionId: true },
+        }))?.divisionId ?? null
+      : null
   const divisions = await prisma.division.findMany({
+    where: role === 'MANAGER' ? { id: managerDivisionId ?? '__hr_no_division_access__' } : {},
     select: { id: true, name: true },
     orderBy: { name: 'asc' },
   })

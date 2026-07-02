@@ -6,6 +6,7 @@ import { getMonthRange } from '@/lib/hr/utils'
 import { getPolishHolidays } from '@/lib/hr/constants'
 import { AbsenceCalendar } from '@/components/hr/leave/absence-calendar'
 import { AdminLeaveButton } from '@/components/hr/leave/admin-leave-button'
+import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
 
 function pad(n: number) {
   return String(n).padStart(2, '0')
@@ -88,10 +89,22 @@ export default async function LeavePage({ searchParams }: PageProps) {
   const currentMonth = `${year}-${pad(month)}`
   const { start, end } = getMonthRange(year, month)
   const daysInMonth = new Date(year, month, 0).getDate()
+  const viewerEmployee =
+    session.user.role === 'MANAGER' && session.user.employeeId
+      ? await prisma.employee.findUnique({
+          where: { id: session.user.employeeId },
+          select: { id: true, divisionId: true, active: true },
+        })
+      : null
+  const scopedWhere = getScopedEmployeeWhere(session, viewerEmployee)
+  const employeeWhere: Record<string, unknown> =
+    scopedWhere.id === HR_NO_EMPLOYEE_ACCESS_ID
+      ? { id: HR_NO_EMPLOYEE_ACCESS_ID }
+      : { ...scopedWhere, active: true }
 
   // Fetch employees with their leaves for the month
   const employees = await prisma.employee.findMany({
-    where: { active: true },
+    where: employeeWhere,
     orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     select: {
       id: true,
@@ -155,6 +168,7 @@ export default async function LeavePage({ searchParams }: PageProps) {
       leaveType: lr.leaveType,
     })),
   }))
+  const visibleEmployeeIds = employees.map((employee) => employee.id)
 
   // Summary for today
   const today = new Date()
@@ -169,24 +183,30 @@ export default async function LeavePage({ searchParams }: PageProps) {
   nextWeekEnd.setDate(nextWeekEnd.getDate() + 7)
   nextWeekEnd.setHours(23, 59, 59, 999)
 
-  const totalEmployees = await prisma.employee.count({ where: { active: true } })
-  const approvedToday = await prisma.leaveRequestNew.findMany({
-    where: {
-      status: 'approved',
-      startDate: { lte: dayEnd },
-      endDate: { gte: dayStart },
-    },
-    select: { isRemoteWork: true },
-  })
+  const totalEmployees = employees.length
+  const approvedToday = visibleEmployeeIds.length === 0
+    ? []
+    : await prisma.leaveRequestNew.findMany({
+        where: {
+          employeeId: { in: visibleEmployeeIds },
+          status: 'approved',
+          startDate: { lte: dayEnd },
+          endDate: { gte: dayStart },
+        },
+        select: { isRemoteWork: true },
+      })
   const remote = approvedToday.filter((l) => l.isRemoteWork).length
   const absent = approvedToday.filter((l) => !l.isRemoteWork).length
   const present = Math.max(0, totalEmployees - absent)
-  const plannedNext = await prisma.leaveRequestNew.count({
-    where: {
-      status: 'approved',
-      startDate: { gte: nextWeekStart, lte: nextWeekEnd },
-    },
-  })
+  const plannedNext = visibleEmployeeIds.length === 0
+    ? 0
+    : await prisma.leaveRequestNew.count({
+        where: {
+          employeeId: { in: visibleEmployeeIds },
+          status: 'approved',
+          startDate: { gte: nextWeekStart, lte: nextWeekEnd },
+        },
+      })
 
   const initialSummary = {
     present,

@@ -1,6 +1,6 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-07-01 (Sesja 12 — Konta użytkowników: login, hasła tymczasowe, wymuszona zmiana hasła)
+**Ostatnia aktualizacja:** 2026-07-02 (Sesja 13 — HR: domknięcie prywatności, scoping ról i raportowanie M6-M8)
 
 ---
 
@@ -218,7 +218,7 @@ M10 — Operacje / Playbook         [x] MVP start (2026-05-18)
 [x] Grafik pracy + kopiowanie szablonu grafiku
 [x] Okresy rozliczeniowe: CRUD + zamykanie okresu
 [x] Widok nadgodzin + wnioski nadgodzin (approve/reject)
-[x] Raporty: attendance, overtime, timecard, plan-vs-actual, projects
+[x] Raporty: attendance, overtime, timecard, plan-vs-actual, projects, PDF miesięczny
 [x] API: /api/hr/time-tracking (GET/POST + approve/reject + bulk + weekly)
 [x] API: /api/hr/time-tracking/clock-in, /clock-out, /break/start, /break/end, /current
 [x] API: /api/hr/overtime-requests (GET/POST + approve/reject)
@@ -229,6 +229,16 @@ M10 — Operacje / Playbook         [x] MVP start (2026-05-18)
 [x]         /hr/time-tracking/overtime, /hr/time-tracking/periods, /hr/time-tracking/reports
 [x] HR Sidebar z wszystkimi linkami (hr-sidebar.tsx)
 ```
+
+**Sesja 13 (2026-07-02) — HR privacy hardening i domknięcie M6-M8:**
+- Centralna polityka dostępu HR: `src/lib/hr/access.ts`.
+- ADMIN widzi pełne dane HR, w tym umowy, historię wynagrodzeń i relacje poufne.
+- MANAGER widzi wyłącznie pracowników, urlopy, nadgodziny, grafiki i raporty z własnego oddziału; brak podpiętego profilu pracownika nie daje fallbacku do pełnej firmy.
+- EMPLOYEE widzi tylko własny profil, własne wnioski, własny czas pracy i nie ma dostępu do danych płacowych innych osób.
+- Stare placeholdery `/hr`, `/hr/leaves`, `/hr/timesheets` przekierowują do aktywnych modułów.
+- Ręczny flow miesięczny jest domknięty: CSV dla karty czasu, obecności, nadgodzin, plan-vs-actual, projektów oraz PDF miesięczny.
+- Automatyczny cron/e-mail do kadrowej oraz sejf dokumentów pracowniczych są świadomie poza M6-M8; wymagają osobnego modelu storage, retencji i audytu dostępu.
+- Testy regresyjne HR: `__tests__/unit/hr/access.test.ts`, `employees-access-route.test.ts`, `operational-access.test.ts`, `reports-access.test.ts`, `legacy-routes.test.ts`.
 
 ---
 
@@ -291,6 +301,13 @@ M10 — Operacje / Playbook         [x] MVP start (2026-05-18)
 
 ## Następna sesja: Operacje — edytor szablonów
 
+> Sesja 13 (2026-07-02): domknięcie HR M6-M8 po testach prywatności i dostępów.
+>
+> **Co jest następne (HR):**
+> - Osobny moduł dokumentów pracowniczych: storage, szyfrowanie/retencja, role, audyt pobrań.
+> - Automatyzacja raportów miesięcznych do kadrowej: harmonogram, odbiorcy, retry, log wysyłek.
+> - Panel uprawnień do treści operacyjnych: widoczność procedur/szablonów/wykonań per użytkownik.
+>
 > Sesja 12 (2026-07-01): mechanika kont użytkowników (login, hasła tymczasowe, wymuszona zmiana hasła).
 >
 > **Co jest następne (konta):**

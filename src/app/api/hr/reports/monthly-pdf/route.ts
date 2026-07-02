@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { getMonthRange } from '@/lib/hr/utils'
+import { canViewEmployeeRecord, getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
 
@@ -236,6 +237,13 @@ export async function GET(req: NextRequest) {
     const { start, end } = getMonthRange(year, month)
     const role = session.user.role
     const sessionEmployeeId = session.user.employeeId
+    const viewerEmployee =
+      role === 'MANAGER' && sessionEmployeeId
+        ? await prisma.employee.findUnique({
+            where: { id: sessionEmployeeId },
+            select: { id: true, divisionId: true, active: true },
+          })
+        : null
 
     let filterIds: string[] | undefined
     if (role === 'EMPLOYEE') {
@@ -246,6 +254,39 @@ export async function GET(req: NextRequest) {
         )
       }
       filterIds = [sessionEmployeeId]
+    } else if (role === 'MANAGER') {
+      if (employeeIdParam !== 'all') {
+        const requestedEmployee = await prisma.employee.findUnique({
+          where: { id: employeeIdParam },
+          select: { id: true, divisionId: true, active: true },
+        })
+        if (!requestedEmployee) {
+          return new Response(JSON.stringify({ error: 'No employees found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        if (!canViewEmployeeRecord(session, requestedEmployee, viewerEmployee)) {
+          return new Response(JSON.stringify({ error: 'Forbidden' }), {
+            status: 403,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        filterIds = [employeeIdParam]
+      } else {
+        const employeeWhere = getScopedEmployeeWhere(session, viewerEmployee)
+        if (employeeWhere.id === HR_NO_EMPLOYEE_ACCESS_ID) {
+          return new Response(JSON.stringify({ error: 'No employees found' }), {
+            status: 404,
+            headers: { 'Content-Type': 'application/json' },
+          })
+        }
+        const scopedEmployees = await prisma.employee.findMany({
+          where: employeeWhere,
+          select: { id: true },
+        })
+        filterIds = scopedEmployees.map((employee) => employee.id)
+      }
     } else {
       if (employeeIdParam !== 'all') filterIds = [employeeIdParam]
     }
