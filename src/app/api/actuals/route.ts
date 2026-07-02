@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { ActualEntrySchema, ActualQuerySchema } from '@/lib/validations/actuals'
+import { isActualEntryInRealizedCostScope } from '@/lib/finance/realized-costs'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -55,6 +56,15 @@ export async function POST(req: NextRequest) {
   }
 
   const data = parsed.data
+  if (!isActualEntryInRealizedCostScope(data.year, data.month)) {
+    return NextResponse.json(
+      {
+        error:
+          'Od kwietnia 2026 ręczne koszty rzeczywiste są zastąpione przez KSeF i zdarzenia kosztowe.',
+      },
+      { status: 409 }
+    )
+  }
 
   const entry = await prisma.actualEntry.upsert({
     where: {

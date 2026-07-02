@@ -139,6 +139,27 @@ describe('POST /api/actuals', () => {
     expect(res.status).toBe(400)
     expect(mockUpsert).not.toHaveBeenCalled()
   })
+
+  it('should reject manual ActualEntry writes from the KSeF cutover month onward', async () => {
+    mockGetServerSession.mockResolvedValue({
+      user: { id: '1', name: 'Admin', email: 'admin@test.com', role: 'ADMIN' },
+      expires: '',
+    })
+
+    const req = makeRequest('POST', {
+      year: 2026,
+      month: 4,
+      costCenterId: 'JAG',
+      subCategoryId: 'clxxxxxxxxxxxxxxxxxxxxxxxxx',
+      amount: 1500,
+    })
+    const res = await POST(req)
+    const body = await res.json()
+
+    expect(res.status).toBe(409)
+    expect(body.error).toContain('KSeF')
+    expect(mockUpsert).not.toHaveBeenCalled()
+  })
 })
 
 // ---------------------------------------------------------------------------

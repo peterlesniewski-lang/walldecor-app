@@ -7,6 +7,7 @@ import { CsvRevenuePanel } from '@/components/shared/csv-revenue-panel'
 import { CsvColumnMapper } from '@/components/shared/csv-column-mapper'
 import { CashThresholdsForm } from '@/components/shared/cash-thresholds-form'
 import { KsefSettingsForm } from '@/components/shared/ksef-settings-form'
+import { KsefCutoverMaintenance } from '@/components/shared/ksef-cutover-maintenance'
 
 export default async function SettingsPage() {
   const session = await getServerSession(authOptions)
@@ -68,6 +69,7 @@ export default async function SettingsPage() {
             </p>
           </div>
           <KsefSettingsForm />
+          <KsefCutoverMaintenance />
         </section>
       )}
 

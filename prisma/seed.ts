@@ -3,6 +3,7 @@ import bcrypt from 'bcryptjs'
 import * as fs from 'fs'
 import * as path from 'path'
 import { defaultCostTagSeedRows } from '../src/lib/finance/cost-tags'
+import { buildAdminSeedUserUpsert } from '../src/lib/accounts/seed-admin'
 
 const prisma = new PrismaClient()
 
@@ -438,24 +439,16 @@ async function main() {
   const adminUsername = await uniqueSeedUsername(process.env.ADMIN_USERNAME ?? 'admin', existingAdmin?.id)
   const adminPassword = process.env.ADMIN_PASSWORD ?? 'ChangeMe123!'
   const passwordHash = bcrypt.hashSync(adminPassword, 12)
+  const resetExistingPassword = process.env.RESET_ADMIN_PASSWORD_ON_SEED === 'true'
 
   await prisma.user.upsert({
     where: { email: adminEmail },
-    update: {
-      username: adminUsername,
+    ...buildAdminSeedUserUpsert({
+      adminEmail,
+      adminUsername,
       passwordHash,
-      mustChangePassword: false,
-      passwordChangedAt: new Date(),
-    },
-    create: {
-      username: adminUsername,
-      email: adminEmail,
-      name: 'Administrator WallDecor',
-      role: 'ADMIN',
-      passwordHash,
-      mustChangePassword: false,
-      passwordChangedAt: new Date(),
-    },
+      resetExistingPassword,
+    }),
   })
   console.log(`Admin user seeded (${adminUsername})`)
 
