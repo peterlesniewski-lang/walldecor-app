@@ -42,7 +42,7 @@ ENV NEXT_TELEMETRY_DISABLED=1
 
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
-RUN mkdir -p /data && chown -R nextjs:nodejs /data
+RUN mkdir -p /data /app/src/lib/finance /app/src/lib/accounts && chown -R nextjs:nodejs /data
 
 # Copy standalone build
 COPY --from=builder /app/.next/standalone ./.next/standalone
@@ -52,6 +52,8 @@ COPY --from=builder /app/public ./.next/standalone/public
 # Copy Prisma files
 COPY --from=builder /app/prisma ./prisma
 COPY --from=builder /app/src/generated ./src/generated
+COPY --from=builder /app/src/lib/finance/cost-tags.ts ./src/lib/finance/cost-tags.ts
+COPY --from=builder /app/src/lib/accounts/seed-admin.ts ./src/lib/accounts/seed-admin.ts
 
 # Copy knowledge base for Wikipedia seed
 COPY --from=builder /app/ceo-module ./ceo-module

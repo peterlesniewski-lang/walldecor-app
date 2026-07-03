@@ -15,10 +15,17 @@ if [ -n "$DATABASE_URL" ]; then
 fi
 
 echo "Running database migrations (db push)..."
-node ./node_modules/prisma/build/index.js db push
+node ./node_modules/prisma/build/index.js db push --skip-generate
 
 echo "Running database seed..."
-./node_modules/.bin/tsx prisma/seed.ts || true
+if ! ./node_modules/.bin/tsx prisma/seed.ts; then
+  if [ "$RESET_ADMIN_PASSWORD_ON_SEED" = "true" ]; then
+    echo "Database seed failed while admin password reset is requested."
+    exit 1
+  fi
+
+  echo "Database seed failed; continuing without seed."
+fi
 
 echo "Starting Next.js server..."
 exec node .next/standalone/server.js
