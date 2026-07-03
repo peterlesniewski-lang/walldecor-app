@@ -1,5 +1,6 @@
 'use client'
 
+import Link from 'next/link'
 import { useState } from 'react'
 import { useForm } from 'react-hook-form'
 import { zodResolver } from '@hookform/resolvers/zod'
@@ -90,6 +91,12 @@ export function LoginForm() {
           >
             {isSubmitting ? 'Logowanie...' : 'Zaloguj się'}
           </Button>
+
+          <div className="text-center text-sm">
+            <Link href="/forgot-password" className="underline-offset-4 hover:underline">
+              Nie pamiętasz hasła?
+            </Link>
+          </div>
         </form>
       </CardContent>
     </Card>

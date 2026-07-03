@@ -10,6 +10,10 @@ export const LoginSchema = z.object({
   password: z.string().min(1, 'Hasło jest wymagane'),
 })
 
+export const PasswordResetRequestSchema = z.object({
+  email: z.string().trim().email('Nieprawidłowy adres email').transform((value) => value.toLowerCase()),
+})
+
 export const ChangePasswordSchema = z
   .object({
     currentPassword: z.string().min(1, 'Aktualne hasło jest wymagane'),
@@ -29,4 +33,5 @@ export const ChangePasswordSchema = z
   })
 
 export type LoginInput = z.infer<typeof LoginSchema>
+export type PasswordResetRequestInput = z.infer<typeof PasswordResetRequestSchema>
 export type ChangePasswordInput = z.infer<typeof ChangePasswordSchema>
