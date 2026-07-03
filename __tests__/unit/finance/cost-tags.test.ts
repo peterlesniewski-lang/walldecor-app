@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
   DEFAULT_COST_TAG_GROUPS,
+  applyDefaultCostTagDescription,
+  applyDefaultCostTagGroupDescription,
   applyDefaultCostTagLabels,
+  buildUniqueCostTagSlug,
   buildUniqueAreaTagSlug,
+  canCreateCustomCostTagInGroup,
   sortCostTagGroupsForDisplay,
 } from '@/lib/finance/cost-tags'
 
@@ -92,9 +96,23 @@ describe('cost tag taxonomy', () => {
     expect(applyDefaultCostTagLabels('unknown-custom-tag')).toBe('unknown-custom-tag')
   })
 
+  it('exposes helper descriptions for new users', () => {
+    expect(applyDefaultCostTagGroupDescription('behavior')).toContain('break-even')
+    expect(applyDefaultCostTagDescription('fixed')).toContain('abonament')
+    expect(applyDefaultCostTagDescription('it-software')).toContain('Google Workspace')
+    expect(applyDefaultCostTagDescription('unknown-custom-tag')).toBeNull()
+  })
+
   it('builds stable unique slugs for user-managed area tags', () => {
     expect(buildUniqueAreaTagSlug('Żaluzje i rolety', [])).toBe('zaluzje-i-rolety')
     expect(buildUniqueAreaTagSlug('Tapety', ['tapety'])).toBe('tapety-2')
     expect(buildUniqueAreaTagSlug('Tapety', ['tapety', 'tapety-2'])).toBe('tapety-3')
+  })
+
+  it('allows creating custom tags only in open taxonomy groups', () => {
+    expect(canCreateCustomCostTagInGroup('area')).toBe(true)
+    expect(canCreateCustomCostTagInGroup('role')).toBe(true)
+    expect(canCreateCustomCostTagInGroup('behavior')).toBe(false)
+    expect(buildUniqueCostTagSlug('Usługi prawne', ['uslugi-prawne'])).toBe('uslugi-prawne-2')
   })
 })

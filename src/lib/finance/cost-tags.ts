@@ -1,5 +1,7 @@
 import slugify from 'slugify'
 
+export const CUSTOM_COST_TAG_GROUP_SLUGS: ReadonlySet<string> = new Set(['area', 'role'])
+
 export const DEFAULT_COST_TAG_GROUPS = [
   {
     group: { slug: 'behavior', name: 'Charakter kosztu', order: 10 },
@@ -63,6 +65,33 @@ const groupOrderBySlug: ReadonlyMap<string, number> = new Map(
 const tagOrderBySlug: ReadonlyMap<string, number> = new Map(
   DEFAULT_COST_TAG_GROUPS.flatMap((group) => group.tags.map((tag, index) => [tag.slug, index] as const))
 )
+const groupDescriptionBySlug: ReadonlyMap<string, string> = new Map([
+  ['behavior', 'Charakter kosztu mówi, jak koszt zachowuje się w raportach: czy buduje stały break-even, zmienia się ze sprzedażą, wchodzi do marży produktu, czy jest jednorazowym odchyleniem.'],
+  ['area', 'Obszar to linia produktowa lub część oferty, np. tapety, sztukateria, dywany, montaż albo administracja. Pomaga liczyć koszty i marżę per obszar.'],
+  ['role', 'Typ wydatku opisuje rodzaj kosztu. Służy do filtrowania faktur, analiz dostawców i szybkiego sprawdzania, na co firma wydaje pieniądze.'],
+  ['supplier-group', 'Relacja z dostawcą rozróżnia stałych i nowych dostawców, żeby łatwiej wyłapać nietypowe faktury lub nowe źródła kosztów.'],
+])
+const tagDescriptionBySlug: ReadonlyMap<string, string> = new Map([
+  ['fixed', 'Stały koszt powtarzalny, zwykle niezależny od bieżącej sprzedaży: czynsz, abonament, licencja, stała obsługa.'],
+  ['variable', 'Koszt zmienny, który rośnie lub maleje wraz ze sprzedażą, zleceniami albo liczbą realizacji.'],
+  ['cogs', 'Bezpośredni koszt sprzedanych towarów lub materiałów. Ten tag jest kluczowy do liczenia realnej marży.'],
+  ['one-off', 'Koszt jednorazowy lub nietypowy. Pokazuje realny wydatek, ale nie powinien zawyżać normalnego miesięcznego break-even.'],
+  ['wallpapers', 'Koszty związane z ofertą tapet: zakup, próbki, ekspozycja, materiały i obsługa tej linii.'],
+  ['stucco', 'Koszty związane ze sztukaterią: produkty, materiały, wykonanie, ekspozycja i obsługa tej linii.'],
+  ['rugs', 'Koszty związane z dywanami: zakup, ekspozycja, logistyka i obsługa tej linii.'],
+  ['installation', 'Koszty montażu i realizacji u klienta, w tym wykonawcy, materiały montażowe i dojazdy.'],
+  ['administration', 'Koszty ogólne firmy, biura i zaplecza, których nie da się uczciwie przypisać do jednej linii produktowej.'],
+  ['contractors', 'Usługi wykonawców zewnętrznych: montażyści, podwykonawcy i osoby realizujące prace dla klientów.'],
+  ['goods', 'Zakup towarów i materiałów do sprzedaży lub realizacji zamówień.'],
+  ['marketing', 'Reklama, promocja, materiały marketingowe, kampanie i działania pozyskujące klientów.'],
+  ['it-software', 'Oprogramowanie i usługi IT, np. Google Workspace, poczta firmowa, domeny, hosting, licencje i narzędzia SaaS.'],
+  ['rent', 'Czynsz, najem, opłaty za lokal, magazyn albo powierzchnie wykorzystywane przez firmę.'],
+  ['transport', 'Transport, kurierzy, dostawy, przejazdy i logistyka związana z zakupami lub realizacjami.'],
+  ['payroll', 'Wynagrodzenia, wypłaty i koszty osobowe. Tag traktuj jako wrażliwy.'],
+  ['confidential', 'Koszt poufny lub wrażliwy, którego nie powinny widzieć role bez dostępu administracyjnego.'],
+  ['strategic-supplier', 'Stały dostawca, z którym firma regularnie współpracuje i którego faktury powinny mapować się przewidywalnie.'],
+  ['new-supplier', 'Nowy lub sporadyczny dostawca wymagający świadomej klasyfikacji przed zatwierdzeniem kosztu.'],
+])
 
 export function applyDefaultCostTagLabels(slug: string) {
   return tagBySlug.get(slug)?.name ?? slug
@@ -74,6 +103,18 @@ function costTagDisplayName(slug: string, fallback: string) {
 
 export function applyDefaultCostTagGroupLabel(slug: string, fallback: string) {
   return groupBySlug.get(slug)?.name ?? fallback
+}
+
+export function applyDefaultCostTagDescription(slug: string) {
+  return tagDescriptionBySlug.get(slug) ?? null
+}
+
+export function applyDefaultCostTagGroupDescription(slug: string) {
+  return groupDescriptionBySlug.get(slug) ?? null
+}
+
+export function canCreateCustomCostTagInGroup(slug: string) {
+  return CUSTOM_COST_TAG_GROUP_SLUGS.has(slug)
 }
 
 export function defaultCostTagOrder(slug: string) {
@@ -107,8 +148,12 @@ export function defaultCostTagSeedRows() {
 }
 
 export function buildUniqueAreaTagSlug(name: string, existingSlugs: string[]) {
+  return buildUniqueCostTagSlug(name, existingSlugs, 'obszar')
+}
+
+export function buildUniqueCostTagSlug(name: string, existingSlugs: string[], fallback = 'tag') {
   const existing = new Set(existingSlugs)
-  const base = slugify(name.trim(), { lower: true, strict: true, locale: 'pl' }) || 'obszar'
+  const base = slugify(name.trim(), { lower: true, strict: true, locale: 'pl' }) || fallback
   if (!existing.has(base)) return base
 
   let suffix = 2

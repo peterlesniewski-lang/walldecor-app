@@ -15,7 +15,7 @@ const subCategories = [
 const costTagGroups = [
   {
     id: 'group-role',
-    name: 'Rola',
+    name: 'Typ wydatku',
     slug: 'role',
     tags: [
       { id: 'tag-goods', name: 'goods', slug: 'goods' },
@@ -385,6 +385,58 @@ describe('KsefInboxView', () => {
     expect(JSON.parse(String(patchCall?.[1]?.body))).toEqual({
       costCenterId: 'GLOBAL',
       tagIds: ['tag-goods'],
+    })
+  })
+
+  it('creates a custom tag from the invoice row and selects it for that invoice', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async (input, init) => {
+      if (String(input).includes('/api/finance/cost-tags')) {
+        expect(init?.method).toBe('POST')
+        return new Response(JSON.stringify({
+          tag: { id: 'tag-legal', name: 'Usługi prawne', slug: 'uslugi-prawne' },
+        }), { status: 201 })
+      }
+
+      return new Response(JSON.stringify({
+        invoices,
+        total: 1,
+        page: 1,
+        pageSize: 50,
+        totalPages: 1,
+        grossAmountTotal: 123,
+        counts: { NEW: 1, MAPPED: 0, APPROVED: 0, IGNORED: 0 },
+      }))
+    })
+
+    render(
+      <KsefInboxView
+        initialInvoices={invoices}
+        initialTotal={1}
+        initialPage={1}
+        initialPageSize={50}
+        initialTotalPages={1}
+        initialGrossAmountTotal={123}
+        initialCounts={{ NEW: 1, MAPPED: 0, APPROVED: 0, IGNORED: 0 }}
+        initialRules={[]}
+        costCenters={costCenters}
+        subCategories={subCategories}
+        costTagGroups={costTagGroups}
+      />
+    )
+
+    const table = screen.getByRole('table')
+    await user.click(within(table).getByRole('button', { name: 'Dodaj tag do Typ wydatku' }))
+    const form = within(table).getByRole('form', { name: 'Dodaj tag do Typ wydatku' })
+    await user.type(within(form).getByLabelText('Nowy tag w Typ wydatku'), 'Usługi prawne')
+    await user.click(within(form).getByRole('button', { name: 'Zapisz nowy tag' }))
+
+    const newTag = await within(table).findByRole('button', { name: 'Usługi prawne' })
+    expect(newTag.getAttribute('aria-pressed')).toBe('true')
+    const createCall = fetchMock.mock.calls.find(([url]) => String(url).includes('/api/finance/cost-tags'))
+    expect(JSON.parse(String(createCall?.[1]?.body))).toEqual({
+      groupSlug: 'role',
+      name: 'Usługi prawne',
     })
   })
 

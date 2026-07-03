@@ -2,18 +2,11 @@
 
 import { useMemo, useState } from 'react'
 import { Plus, Trash2, X } from 'lucide-react'
-import { TagChips } from '@/components/shared/tag-chips'
+import { TagChips, type TagChipsGroup, type TagChipsTag } from '@/components/shared/tag-chips'
 
 interface CostCenterOption {
   id: string
   name: string
-}
-
-interface CostTagGroupOption {
-  id: string
-  name: string
-  slug: string
-  tags: Array<{ id: string; name: string; slug: string }>
 }
 
 interface InvoicePartsEditorInvoice {
@@ -34,8 +27,9 @@ interface PartDraft {
 interface KsefInvoicePartsEditorProps {
   invoice: InvoicePartsEditorInvoice
   costCenters: CostCenterOption[]
-  tagGroups: CostTagGroupOption[]
+  tagGroups: TagChipsGroup[]
   formatMoney: (value: number, currency?: string) => string
+  onCreateTag?: (group: TagChipsGroup, name: string) => Promise<TagChipsTag>
   onClose: () => void
   onSaved: (invoice: unknown) => void
 }
@@ -58,6 +52,7 @@ export function KsefInvoicePartsEditor({
   costCenters,
   tagGroups,
   formatMoney,
+  onCreateTag,
   onClose,
   onSaved,
 }: KsefInvoicePartsEditorProps) {
@@ -172,6 +167,7 @@ export function KsefInvoicePartsEditor({
                 <TagChips
                   groups={tagGroups}
                   value={part.tagIds}
+                  onCreateTag={onCreateTag}
                   onChange={(tagIds) => updatePart(index, { ...part, tagIds })}
                 />
               </div>

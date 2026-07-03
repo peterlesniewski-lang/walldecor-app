@@ -280,6 +280,7 @@ export function KsefInboxView({
 }: KsefInboxViewProps) {
   const [invoices, setInvoices] = useState(initialInvoices)
   const [rules, setRules] = useState(initialRules)
+  const [tagGroups, setTagGroups] = useState(costTagGroups)
   const [statusFilter, setStatusFilter] = useState<KsefStatus | 'ALL'>('ALL')
   const [page, setPage] = useState(initialPage)
   const [pageSize, setPageSize] = useState<KsefPageSize>(initialPageSize)
@@ -329,7 +330,7 @@ export function KsefInboxView({
     || activeFilters.paymentStatus !== 'ALL'
     || activeFilters.paymentDeadline !== 'ALL'
     || Boolean(activeFilters.search || activeFilters.amountMin || activeFilters.amountMax)
-  const hasCostTags = costTagGroups.some((group) => group.tags.length > 0)
+  const hasCostTags = tagGroups.some((group) => group.tags.length > 0)
 
   function replaceInvoice(updated: KsefInvoiceRow) {
     setInvoices((current) => current.map((invoice) => (invoice.id === updated.id ? updated : invoice)))
@@ -383,6 +384,25 @@ export function KsefInboxView({
     }
 
     return applyInvoicePage(response)
+  }
+
+  async function createCostTag(group: CostTagGroupOption, name: string) {
+    const data = await readJson(await fetch('/api/finance/cost-tags', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ groupSlug: group.slug, name }),
+    })) as { tag: { id: string; name: string; slug: string } }
+
+    setTagGroups((current) => current.map((item) => (
+      item.slug === group.slug
+        ? {
+            ...item,
+            tags: [...item.tags, data.tag].sort((a, b) => a.name.localeCompare(b.name, 'pl')),
+          }
+        : item
+    )))
+
+    return data.tag
   }
 
   async function applyInvoiceFilters(event: React.FormEvent<HTMLFormElement>) {
@@ -888,9 +908,10 @@ export function KsefInboxView({
             {hasCostTags ? (
               <div className="col-span-2 max-h-48 overflow-y-auto rounded border border-[var(--wd-border)] p-2">
                 <TagChips
-                  groups={costTagGroups}
+                  groups={tagGroups}
                   value={ruleForm.tagIds}
                   size="sm"
+                  onCreateTag={createCostTag}
                   onChange={(tagIds) => setRuleForm({ ...ruleForm, tagIds })}
                 />
               </div>
@@ -1074,10 +1095,11 @@ export function KsefInboxView({
                       {hasCostTags ? (
                         <div className="max-h-44 min-w-56 overflow-y-auto pr-1">
                           <TagChips
-                            groups={costTagGroups}
+                            groups={tagGroups}
                             value={rowClassification.tagIds}
                             disabled={approved}
                             size="sm"
+                            onCreateTag={createCostTag}
                             onChange={(tagIds) =>
                               setClassification((current) => ({
                                 ...current,
@@ -1320,8 +1342,9 @@ export function KsefInboxView({
         <KsefInvoicePartsEditor
           invoice={partsEditorInvoice}
           costCenters={costCenters}
-          tagGroups={costTagGroups}
+          tagGroups={tagGroups}
           formatMoney={money}
+          onCreateTag={createCostTag}
           onClose={() => setPartsEditorInvoice(null)}
           onSaved={(invoice) => {
             if (invoice) replaceInvoice(invoice as KsefInvoiceRow)
