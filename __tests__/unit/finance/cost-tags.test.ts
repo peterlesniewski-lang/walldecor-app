@@ -34,6 +34,7 @@ describe('cost tag taxonomy', () => {
           { slug: 'contractors', name: 'Wykonawcy' },
           { slug: 'goods', name: 'Zakup towarów i materiałów' },
           { slug: 'marketing', name: 'Marketing' },
+          { slug: 'it-software', name: 'Oprogramowanie i usługi IT' },
           { slug: 'rent', name: 'Czynsz i najem' },
           { slug: 'transport', name: 'Transport' },
           { slug: 'payroll', name: 'Wynagrodzenia' },
@@ -60,6 +61,7 @@ describe('cost tag taxonomy', () => {
           { id: 'payroll', slug: 'payroll', name: 'payroll' },
           { id: 'goods', slug: 'goods', name: 'goods' },
           { id: 'contractors', slug: 'contractors', name: 'contractors' },
+          { id: 'it-software', slug: 'it-software', name: 'it-software' },
           { id: 'custom-fabrics', slug: 'fabrics', name: 'Tkaniny' },
         ],
       },
@@ -79,6 +81,7 @@ describe('cost tag taxonomy', () => {
     expect(groups[1].tags.map((tag) => tag.name)).toEqual([
       'Wykonawcy',
       'Zakup towarów i materiałów',
+      'Oprogramowanie i usługi IT',
       'Wynagrodzenia',
       'Tkaniny',
     ])

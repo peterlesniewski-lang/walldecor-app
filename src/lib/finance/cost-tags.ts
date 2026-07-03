@@ -26,6 +26,7 @@ export const DEFAULT_COST_TAG_GROUPS = [
       { slug: 'contractors', name: 'Wykonawcy' },
       { slug: 'goods', name: 'Zakup towarów i materiałów' },
       { slug: 'marketing', name: 'Marketing' },
+      { slug: 'it-software', name: 'Oprogramowanie i usługi IT' },
       { slug: 'rent', name: 'Czynsz i najem' },
       { slug: 'transport', name: 'Transport' },
       { slug: 'payroll', name: 'Wynagrodzenia' },
