@@ -50,6 +50,23 @@ function needsInvoiceXmlDetails(invoice: PersistableKsefInvoice, existing: Exist
   return (!invoice.dueDate && !existing?.dueDate) || (!invoice.bankAccount && !existing?.bankAccount)
 }
 
+async function findExistingInvoice(invoice: PersistableKsefInvoice) {
+  const byExternalId = await prisma.ksefInvoice.findUnique({
+    where: { externalId: invoice.externalId },
+  })
+  if (byExternalId) return byExternalId
+
+  if (!invoice.supplierNip) return null
+
+  return prisma.ksefInvoice.findFirst({
+    where: {
+      supplierNip: invoice.supplierNip,
+      invoiceNumber: invoice.invoiceNumber,
+      issueDate: invoice.issueDate,
+    },
+  })
+}
+
 async function findCorrectedInvoiceId({
   correctedKsefNumber,
   correctedInvoiceNumber,
@@ -147,9 +164,7 @@ export async function POST() {
             correctedKsefNumber,
             correctedInvoiceNumber,
           } = splitMappedInvoice(mappedInvoice)
-          const existing = await prisma.ksefInvoice.findUnique({
-            where: { externalId: invoiceData.externalId },
-          })
+          const existing = await findExistingInvoice(invoiceData)
           let paymentDetailsFetchedAt: Date | null = null
           let xmlContent: string | null = null
           if (needsInvoiceXmlDetails(invoiceData, existing)) {
@@ -187,6 +202,8 @@ export async function POST() {
                 supplierName: invoiceData.supplierName,
                 supplierNip: invoiceData.supplierNip,
                 invoiceNumber: invoiceData.invoiceNumber,
+                externalId: invoiceData.externalId,
+                source: invoiceData.source,
                 issueDate: invoiceData.issueDate,
                 grossAmount: invoiceData.grossAmount,
                 netAmount: invoiceData.netAmount,

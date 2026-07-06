@@ -288,4 +288,59 @@ describe('POST /api/finance/ksef/sync', () => {
       }),
     })
   })
+
+  it('updates an existing invoice matched by supplier, number, and issue date instead of creating a duplicate', async () => {
+    prismaMock.ksefInvoice.findUnique.mockResolvedValue(null)
+    prismaMock.ksefInvoice.findFirst.mockResolvedValue({
+      id: 'invoice-natural-match',
+      externalId: null,
+      dueDate: null,
+      bankAccount: null,
+      paymentDetailsFetchedAt: null,
+      reportingGrossAmount: null,
+      reportingNetAmount: null,
+      reportingVatAmount: null,
+      status: 'NEW',
+      paymentStatus: 'UNPAID',
+      paidAt: null,
+      xmlContent: null,
+      xmlFetchedAt: null,
+    })
+    ksefClientMock.queryPurchaseInvoiceMetadata.mockResolvedValue({
+      hasMore: false,
+      isTruncated: false,
+      invoices: [
+        {
+          ksefNumber: 'KSEF-NATURAL-MATCH',
+          invoiceNumber: '006680/F/PL/06/2026',
+          issueDate: '2026-06-30',
+          seller: { nip: '7251846123', name: 'Mardom Spółka z ograniczoną odpowiedzialnością' },
+          grossAmount: 1250.21,
+          netAmount: 1016.43,
+          vatAmount: 233.78,
+          currency: 'PLN',
+          paymentDueDate: '2026-07-30',
+        },
+      ],
+    })
+
+    const response = await POST()
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toMatchObject({ updated: 1, imported: 0 })
+    expect(prismaMock.ksefInvoice.create).not.toHaveBeenCalled()
+    expect(prismaMock.ksefInvoice.update).toHaveBeenCalledWith({
+      where: { id: 'invoice-natural-match' },
+      data: expect.objectContaining({
+        externalId: 'KSEF-NATURAL-MATCH',
+        source: 'KSEF',
+        supplierNip: '7251846123',
+        invoiceNumber: '006680/F/PL/06/2026',
+        issueDate: new Date('2026-06-30T00:00:00.000Z'),
+        grossAmount: 1250.21,
+        dueDate: new Date('2026-07-30T00:00:00.000Z'),
+      }),
+    })
+  })
 })
