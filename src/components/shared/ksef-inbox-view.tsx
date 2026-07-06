@@ -1,7 +1,7 @@
 'use client'
 
 import { useState } from 'react'
-import { CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, CloudDownload, Eye, FilePlus2, RefreshCcw, Save, Search, Settings2, X } from 'lucide-react'
+import { ArrowUpDown, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, CloudDownload, Eye, FilePlus2, RefreshCcw, Save, Search, Settings2, X } from 'lucide-react'
 import { parseKsefInvoiceXmlPreview, type KsefInvoiceXmlPreview } from '@/lib/finance/ksef-invoice-preview'
 import { TagChips } from '@/components/shared/tag-chips'
 import { KsefInvoicePartsEditor } from '@/components/shared/ksef-invoice-parts-editor'
@@ -11,6 +11,8 @@ export type KsefStatus = 'NEW' | 'MAPPED' | 'APPROVED' | 'IGNORED'
 export type KsefPaymentStatus = 'UNPAID' | 'PAID'
 type KsefPaymentDeadline = 'OVERDUE' | 'DUE_0_7' | 'DUE_8_14' | 'DUE_15_30' | 'LATER' | 'MISSING_DUE_DATE'
 type KsefPageSize = 50 | 100 | 200
+type KsefSortBy = 'issueDate' | 'invoiceNumber' | 'supplierName' | 'grossAmount' | 'status' | 'paymentStatus' | 'dueDate' | 'costCenterId'
+type KsefSortDir = 'asc' | 'desc'
 type KsefInvoiceCounts = Record<KsefStatus, number>
 type KsefPaymentAging = Record<KsefPaymentDeadline, { count: number; grossAmount: number }>
 
@@ -171,6 +173,9 @@ const PAYMENT_DEADLINE_LABELS: Record<KsefPaymentDeadline | 'ALL', string> = {
   MISSING_DUE_DATE: 'Brak terminu',
 }
 
+const DEFAULT_SORT_BY: KsefSortBy = 'issueDate'
+const DEFAULT_SORT_DIR: KsefSortDir = 'desc'
+
 function money(value: number, currency = 'PLN') {
   return `${Math.round(value * 100) / 100}`.replace('.', ',') + ` ${currency}`
 }
@@ -181,6 +186,10 @@ function isoDate(value: string) {
 
 function formatBankAccount(value: string) {
   return value.replace(/\s+/g, '').replace(/(.{4})/g, '$1 ').trim()
+}
+
+function defaultSortDirFor(sortBy: KsefSortBy): KsefSortDir {
+  return sortBy === 'issueDate' || sortBy === 'grossAmount' || sortBy === 'dueDate' ? 'desc' : 'asc'
 }
 
 function CostCenterChips({
@@ -292,6 +301,8 @@ export function KsefInboxView({
   const [counts, setCounts] = useState<KsefInvoiceCounts>(initialCounts)
   const [filterForm, setFilterForm] = useState<KsefInvoiceFilters>(EMPTY_INVOICE_FILTERS)
   const [activeFilters, setActiveFilters] = useState<KsefInvoiceFilters>(EMPTY_INVOICE_FILTERS)
+  const [sortBy, setSortBy] = useState<KsefSortBy>(DEFAULT_SORT_BY)
+  const [sortDir, setSortDir] = useState<KsefSortDir>(DEFAULT_SORT_DIR)
   const [saving, setSaving] = useState<string | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
@@ -362,14 +373,20 @@ export function KsefInboxView({
     pageSize?: KsefPageSize
     statusFilter?: KsefStatus | 'ALL'
     filters?: KsefInvoiceFilters
+    sortBy?: KsefSortBy
+    sortDir?: KsefSortDir
   } = {}) {
     const targetPage = options.page ?? page
     const targetPageSize = options.pageSize ?? pageSize
     const targetStatus = options.statusFilter ?? statusFilter
     const targetFilters = normalizeInvoiceFilters(options.filters ?? activeFilters)
+    const targetSortBy = options.sortBy ?? sortBy
+    const targetSortDir = options.sortDir ?? sortDir
     const params = new URLSearchParams({
       page: String(targetPage),
       pageSize: String(targetPageSize),
+      sortBy: targetSortBy,
+      sortDir: targetSortDir,
     })
     if (targetStatus !== 'ALL') params.set('status', targetStatus)
     if (targetFilters.search) params.set('search', targetFilters.search)
@@ -380,7 +397,14 @@ export function KsefInboxView({
 
     const response = await readJson(await fetch(`/api/finance/ksef/invoices?${params.toString()}`)) as KsefInvoiceListResponse
     if (response.invoices.length === 0 && response.total > 0 && targetPage > response.totalPages) {
-      return refreshInvoices({ page: response.totalPages, pageSize: targetPageSize, statusFilter: targetStatus, filters: targetFilters })
+      return refreshInvoices({
+        page: response.totalPages,
+        pageSize: targetPageSize,
+        statusFilter: targetStatus,
+        filters: targetFilters,
+        sortBy: targetSortBy,
+        sortDir: targetSortDir,
+      })
     }
 
     return applyInvoicePage(response)
@@ -488,6 +512,23 @@ export function KsefInboxView({
       await refreshInvoices({ page: boundedPage })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nie udało się zmienić strony')
+    }
+  }
+
+  async function changeSort(nextSortBy: KsefSortBy) {
+    const nextSortDir = sortBy === nextSortBy
+      ? (sortDir === 'asc' ? 'desc' : 'asc')
+      : defaultSortDirFor(nextSortBy)
+
+    setError(null)
+    setSyncMessage(null)
+    try {
+      setSortBy(nextSortBy)
+      setSortDir(nextSortDir)
+      setPage(1)
+      await refreshInvoices({ page: 1, sortBy: nextSortBy, sortDir: nextSortDir })
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nie udało się posortować faktur')
     }
   }
 
@@ -772,6 +813,30 @@ export function KsefInboxView({
     }
   }
 
+  function renderSortableHeader(label: string, key: KsefSortBy, align: 'left' | 'right' = 'left') {
+    const active = sortBy === key
+    const nextDirection = active && sortDir === 'asc' ? 'malejąco' : 'rosnąco'
+
+    return (
+      <button
+        type="button"
+        onClick={() => changeSort(key)}
+        aria-label={`Sortuj ${label} ${nextDirection}`}
+        className={`inline-flex w-full items-center gap-1 rounded-sm text-xs font-semibold uppercase tracking-wide transition-colors hover:text-[var(--wd-dark)] ${
+          align === 'right' ? 'justify-end text-right' : 'justify-start text-left'
+        }`}
+      >
+        <span>{label}</span>
+        <ArrowUpDown size={13} className={active ? 'opacity-100' : 'opacity-40'} />
+        {active && (
+          <span aria-hidden="true" className="text-[10px] leading-none">
+            {sortDir === 'asc' ? '↑' : '↓'}
+          </span>
+        )}
+      </button>
+    )
+  }
+
   function renderPaginationControls() {
     return (
       <div className="flex flex-wrap items-center justify-end gap-2">
@@ -1019,11 +1084,11 @@ export function KsefInboxView({
             <thead className="bg-gray-50 text-xs uppercase tracking-wide" style={{ color: 'var(--wd-text-muted)' }}>
               <tr>
                 <th className="px-4 py-3 text-right">Lp.</th>
-                <th className="px-4 py-3">Faktura</th>
-                <th className="px-4 py-3">Dostawca</th>
-                <th className="px-4 py-3 text-right">Kwota</th>
-                <th className="px-4 py-3">Status</th>
-                <th className="px-4 py-3">Centrum</th>
+                <th className="px-4 py-3">{renderSortableHeader('Faktura', 'issueDate')}</th>
+                <th className="px-4 py-3">{renderSortableHeader('Dostawca', 'supplierName')}</th>
+                <th className="px-4 py-3 text-right">{renderSortableHeader('Kwota', 'grossAmount', 'right')}</th>
+                <th className="px-4 py-3">{renderSortableHeader('Status', 'status')}</th>
+                <th className="px-4 py-3">{renderSortableHeader('Centrum', 'costCenterId')}</th>
                 <th className="px-4 py-3">Tagi</th>
                 <th className="px-4 py-3 text-right">Akcje</th>
               </tr>

@@ -3,7 +3,12 @@ import { prisma } from '@/lib/prisma'
 import { calculatePaymentAgingBucket, type PaymentAgingBucket } from '@/lib/finance/cost-control'
 import { normalizeSupplierNip, resolveSupplierRuleMatch, roundMoney } from '@/lib/finance/ksef-inbox'
 import { requireFinanceAdmin } from '@/lib/finance/finance-access'
-import { KsefInvoiceCreateSchema, KsefInvoiceQuerySchema } from '@/lib/validations/ksef-inbox'
+import {
+  KsefInvoiceCreateSchema,
+  KsefInvoiceQuerySchema,
+  type KsefInvoiceSortBy,
+  type KsefInvoiceSortDir,
+} from '@/lib/validations/ksef-inbox'
 import type { Prisma } from '@/generated/prisma'
 
 const PAYMENT_AGING_BUCKETS: PaymentAgingBucket[] = [
@@ -25,6 +30,31 @@ function reportingGrossAmount(invoice: { grossAmount: number; reportingGrossAmou
   return roundMoney(invoice.reportingGrossAmount ?? invoice.grossAmount)
 }
 
+function invoiceOrderBy(
+  sortBy: KsefInvoiceSortBy,
+  sortDir: KsefInvoiceSortDir
+): Prisma.KsefInvoiceOrderByWithRelationInput[] {
+  switch (sortBy) {
+    case 'invoiceNumber':
+      return [{ invoiceNumber: sortDir }, { issueDate: 'desc' }]
+    case 'supplierName':
+      return [{ supplierName: sortDir }, { issueDate: 'desc' }, { invoiceNumber: 'asc' }]
+    case 'grossAmount':
+      return [{ grossAmount: sortDir }, { issueDate: 'desc' }, { invoiceNumber: 'asc' }]
+    case 'status':
+      return [{ status: sortDir }, { issueDate: 'desc' }, { invoiceNumber: 'asc' }]
+    case 'paymentStatus':
+      return [{ paymentStatus: sortDir }, { issueDate: 'desc' }, { invoiceNumber: 'asc' }]
+    case 'dueDate':
+      return [{ dueDate: sortDir }, { issueDate: 'desc' }, { invoiceNumber: 'asc' }]
+    case 'costCenterId':
+      return [{ costCenterId: sortDir }, { issueDate: 'desc' }, { invoiceNumber: 'asc' }]
+    case 'issueDate':
+    default:
+      return [{ issueDate: sortDir }, { invoiceNumber: 'asc' }, { status: 'asc' }]
+  }
+}
+
 export async function GET(req: NextRequest) {
   const auth = await requireFinanceAdmin()
   if (auth.error) return auth.error
@@ -40,6 +70,8 @@ export async function GET(req: NextRequest) {
     search: req.nextUrl.searchParams.get('search') || undefined,
     amountMin: req.nextUrl.searchParams.get('amountMin') || undefined,
     amountMax: req.nextUrl.searchParams.get('amountMax') || undefined,
+    sortBy: req.nextUrl.searchParams.get('sortBy') || undefined,
+    sortDir: req.nextUrl.searchParams.get('sortDir') || undefined,
   })
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid query parameters', details: parsed.error.flatten() }, { status: 400 })
@@ -103,7 +135,7 @@ export async function GET(req: NextRequest) {
           orderBy: { order: 'asc' },
         },
       },
-      orderBy: [{ status: 'asc' }, { issueDate: 'desc' }, { invoiceNumber: 'asc' }],
+      orderBy: invoiceOrderBy(parsed.data.sortBy, parsed.data.sortDir),
       skip,
       take: parsed.data.pageSize,
     }),

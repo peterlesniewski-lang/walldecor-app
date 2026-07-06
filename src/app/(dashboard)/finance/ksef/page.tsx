@@ -29,7 +29,7 @@ export default async function KsefInboxPage() {
           orderBy: { order: 'asc' },
         },
       },
-      orderBy: [{ status: 'asc' }, { issueDate: 'desc' }, { invoiceNumber: 'asc' }],
+      orderBy: [{ issueDate: 'desc' }, { invoiceNumber: 'asc' }, { status: 'asc' }],
       skip: (INITIAL_PAGE - 1) * INITIAL_PAGE_SIZE,
       take: INITIAL_PAGE_SIZE,
     }),

@@ -53,9 +53,11 @@ describe('KsefInvoiceCreateSchema', () => {
 
 describe('KsefInvoiceQuerySchema', () => {
   it('accepts pagination options for 50, 100, and 200 rows per page', () => {
-    expect(KsefInvoiceQuerySchema.parse({ page: '2', pageSize: '100' })).toEqual({
+    expect(KsefInvoiceQuerySchema.parse({ page: '2', pageSize: '100' })).toMatchObject({
       page: 2,
       pageSize: 100,
+      sortBy: 'issueDate',
+      sortDir: 'desc',
     })
 
     expect(KsefInvoiceQuerySchema.safeParse({ pageSize: '50' }).success).toBe(true)
@@ -67,12 +69,14 @@ describe('KsefInvoiceQuerySchema', () => {
       search: '  525-000-71-33  ',
       amountMin: '100.50',
       amountMax: '500',
-    })).toEqual({
+    })).toMatchObject({
       page: 1,
       pageSize: 50,
       search: '525-000-71-33',
       amountMin: 100.5,
       amountMax: 500,
+      sortBy: 'issueDate',
+      sortDir: 'desc',
     })
   })
 
@@ -85,6 +89,16 @@ describe('KsefInvoiceQuerySchema', () => {
       paymentStatus: 'UNPAID',
       paymentDeadline: 'DUE_0_7',
       pageSize: 100,
+    })
+  })
+
+  it('accepts invoice sorting options', () => {
+    expect(KsefInvoiceQuerySchema.parse({
+      sortBy: 'grossAmount',
+      sortDir: 'asc',
+    })).toMatchObject({
+      sortBy: 'grossAmount',
+      sortDir: 'asc',
     })
   })
 })

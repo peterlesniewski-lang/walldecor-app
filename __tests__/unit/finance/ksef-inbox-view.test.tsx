@@ -104,7 +104,39 @@ describe('KsefInboxView', () => {
     await user.type(screen.getByLabelText('Kwota do'), '500')
     await user.click(screen.getByRole('button', { name: 'Filtruj' }))
 
-    expect(fetchMock).toHaveBeenCalledWith('/api/finance/ksef/invoices?page=1&pageSize=50&search=wall&amountMin=100&amountMax=500')
+    expect(fetchMock).toHaveBeenCalledWith('/api/finance/ksef/invoices?page=1&pageSize=50&sortBy=issueDate&sortDir=desc&search=wall&amountMin=100&amountMax=500')
+  })
+
+  it('requests sorted invoice data after clicking a sortable column header', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      invoices: [],
+      total: 0,
+      page: 1,
+      pageSize: 50,
+      totalPages: 1,
+      grossAmountTotal: 0,
+      counts: { NEW: 0, MAPPED: 0, APPROVED: 0, IGNORED: 0 },
+    })))
+
+    render(
+      <KsefInboxView
+        initialInvoices={invoices}
+        initialTotal={1}
+        initialPage={1}
+        initialPageSize={50}
+        initialTotalPages={1}
+        initialGrossAmountTotal={123}
+        initialCounts={{ NEW: 1, MAPPED: 0, APPROVED: 0, IGNORED: 0 }}
+        initialRules={[]}
+        costCenters={costCenters}
+        subCategories={subCategories}
+      />
+    )
+
+    await user.click(screen.getByRole('button', { name: /Kwota/i }))
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/finance/ksef/invoices?page=1&pageSize=50&sortBy=grossAmount&sortDir=desc')
   })
 
   it('shows the gross amount sum for all invoices and then for filtered results', async () => {

@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
+import { GET as LIST_INVOICES } from '@/app/api/finance/ksef/invoices/route'
 import { PATCH } from '@/app/api/finance/ksef/invoices/[id]/route'
 import { applySupplierRuleToNewInvoices } from '@/lib/finance/ksef-rule-application'
 
@@ -31,6 +32,9 @@ const txMock = vi.hoisted(() => ({
 const prismaMock = vi.hoisted(() => ({
   ksefInvoice: {
     findUnique: vi.fn(),
+    findMany: vi.fn(),
+    count: vi.fn(),
+    groupBy: vi.fn(),
   },
   $transaction: vi.fn(async (callback: (tx: typeof txMock) => unknown) => callback(txMock)),
 }))
@@ -56,6 +60,35 @@ function request(body: unknown) {
     headers: { 'Content-Type': 'application/json' },
   })
 }
+
+describe('GET /api/finance/ksef/invoices', () => {
+  beforeEach(() => {
+    vi.clearAllMocks()
+    prismaMock.ksefInvoice.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+    prismaMock.ksefInvoice.count.mockResolvedValue(0)
+    prismaMock.ksefInvoice.groupBy.mockResolvedValue([])
+  })
+
+  it('lists newest invoices first instead of grouping by status first', async () => {
+    const response = await LIST_INVOICES(new NextRequest('http://localhost/api/finance/ksef/invoices'))
+
+    expect(response.status).toBe(200)
+    expect(prismaMock.ksefInvoice.findMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      orderBy: [{ issueDate: 'desc' }, { invoiceNumber: 'asc' }, { status: 'asc' }],
+    }))
+  })
+
+  it('applies requested invoice sorting from query parameters', async () => {
+    const response = await LIST_INVOICES(new NextRequest('http://localhost/api/finance/ksef/invoices?sortBy=grossAmount&sortDir=asc'))
+
+    expect(response.status).toBe(200)
+    expect(prismaMock.ksefInvoice.findMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      orderBy: [{ grossAmount: 'asc' }, { issueDate: 'desc' }, { invoiceNumber: 'asc' }],
+    }))
+  })
+})
 
 describe('PATCH /api/finance/ksef/invoices/[id]', () => {
   beforeEach(() => {

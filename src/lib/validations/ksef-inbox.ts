@@ -7,6 +7,10 @@ export const VALID_PAYMENT_STATUSES = ['UNPAID', 'PAID'] as const
 export const VALID_PAYMENT_DEADLINES = ['OVERDUE', 'DUE_0_7', 'DUE_8_14', 'DUE_15_30', 'LATER', 'MISSING_DUE_DATE'] as const
 export const VALID_DOCUMENT_STATUSES = ['ACTIVE', 'CORRECTED', 'CORRECTION', 'CANCELLED'] as const
 export const VALID_RULE_MATCH_STATUSES = ['NO_RULE', 'MATCHED', 'CONFLICT'] as const
+export const VALID_KSEF_SORT_FIELDS = ['issueDate', 'invoiceNumber', 'supplierName', 'grossAmount', 'status', 'paymentStatus', 'dueDate', 'costCenterId'] as const
+export const VALID_KSEF_SORT_DIRECTIONS = ['asc', 'desc'] as const
+export type KsefInvoiceSortBy = typeof VALID_KSEF_SORT_FIELDS[number]
+export type KsefInvoiceSortDir = typeof VALID_KSEF_SORT_DIRECTIONS[number]
 
 function isIsoDate(value: string) {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
@@ -61,6 +65,8 @@ export const KsefInvoiceQuerySchema = z.object({
   search: optionalTrimmedString,
   amountMin: optionalNonNegativeNumber,
   amountMax: optionalNonNegativeNumber,
+  sortBy: z.enum(VALID_KSEF_SORT_FIELDS).default('issueDate'),
+  sortDir: z.enum(VALID_KSEF_SORT_DIRECTIONS).default('desc'),
 }).refine(
   (data) => data.amountMin == null || data.amountMax == null || data.amountMin <= data.amountMax,
   {
