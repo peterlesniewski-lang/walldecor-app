@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { GET } from '@/app/api/finance/ksef/invoices/[id]/content/route'
+import { KsefApiError } from '@/lib/finance/ksef-client'
 
 const prismaMock = vi.hoisted(() => ({
   appSetting: {
@@ -155,5 +156,26 @@ describe('GET /api/finance/ksef/invoices/[id]/content', () => {
         paymentDetailsFetchedAt: expect.any(Date),
       }),
     })
+  })
+
+  it('returns a clear rate-limit response when XML is not cached locally', async () => {
+    ksefClientMock.downloadInvoiceXml.mockRejectedValue(new KsefApiError(
+      429,
+      JSON.stringify({
+        title: 'Too Many Requests',
+        status: 429,
+        detail: 'Przekroczono limit 64 żądań na godzinę. Spróbuj ponownie po 29 minutach.',
+      })
+    ))
+
+    const response = await GET(new Request('http://localhost'), {
+      params: Promise.resolve({ id: 'invoice-1' }),
+    })
+    const body = await response.json()
+
+    expect(response.status).toBe(429)
+    expect(body.error).toContain('XML tej faktury nie jest jeszcze w lokalnym cache')
+    expect(body.error).toContain('Przekroczono limit 64 żądań na godzinę')
+    expect(prismaMock.ksefInvoice.update).not.toHaveBeenCalled()
   })
 })

@@ -1,7 +1,13 @@
 import { NextResponse } from 'next/server'
 import { prisma } from '@/lib/prisma'
 import { requireFinanceAdmin } from '@/lib/finance/finance-access'
-import { KsefApiClient, dateFromKsefDate, type KsefEnvironment } from '@/lib/finance/ksef-client'
+import {
+  KsefApiClient,
+  KsefApiError,
+  dateFromKsefDate,
+  describeKsefApiError,
+  type KsefEnvironment,
+} from '@/lib/finance/ksef-client'
 import { parseKsefInvoiceXmlDetails } from '@/lib/finance/ksef-xml-details'
 
 const KSEF_SETTINGS = [
@@ -81,6 +87,15 @@ export async function GET(
       invoice: updatedInvoice,
     })
   } catch (err) {
+    if (err instanceof KsefApiError && err.status === 429) {
+      return NextResponse.json(
+        {
+          error: `XML tej faktury nie jest jeszcze w lokalnym cache, a KSeF odrzucił pobranie online limitem. Uruchom uzupełnianie cache XML po czasie z komunikatu KSeF. ${describeKsefApiError(err)}`,
+        },
+        { status: 429 }
+      )
+    }
+
     return NextResponse.json(
       { error: err instanceof Error ? err.message : 'Nie udało się pobrać treści faktury z KSeF.' },
       { status: 502 }

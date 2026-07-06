@@ -751,10 +751,12 @@ export function KsefInboxView({
       let before: string | null = null
       let totalUpdated = 0
       let totalPaid = 0
+      let totalCachedXml = 0
       let totalScanned = 0
       let totalFailed = 0
+      let rateLimited = false
 
-      // Walk the whole backlog of due-date-less KSeF invoices in throttled,
+      // Walk the whole backlog of KSeF invoices without local XML in throttled,
       // keyset-paginated passes. The endpoint caps each batch; we loop until it
       // reports done. The pass cap is a safety net against an unbounded loop.
       for (let pass = 0; pass < 500; pass++) {
@@ -767,21 +769,23 @@ export function KsefInboxView({
         )
         totalUpdated += result.updated ?? 0
         totalPaid += result.markedPaid ?? 0
+        totalCachedXml += result.cachedXml ?? 0
         totalScanned += result.scanned ?? 0
         totalFailed += result.failed ?? 0
+        rateLimited ||= Boolean(result.rateLimited)
         setSyncMessage(
-          `Uzupełnianie terminów… sprawdzono ${totalScanned}, terminy ${totalUpdated}, opłacone ${totalPaid}${totalFailed ? `, błędy ${totalFailed}` : ''}.`
+          `Uzupełnianie cache XML… sprawdzono ${totalScanned}, XML ${totalCachedXml}, terminy ${totalUpdated}, opłacone ${totalPaid}${totalFailed ? `, błędy ${totalFailed}` : ''}.`
         )
-        if (result.done || !result.nextBefore) break
+        if (result.done || result.rateLimited || !result.nextBefore) break
         before = result.nextBefore
       }
 
       await refreshInvoices({ page: 1 })
       setSyncMessage(
-        `Gotowe. Uzupełniono terminy dla ${totalUpdated} faktur, ${totalPaid} bez terminu oznaczono jako opłacone (sprawdzono ${totalScanned}${totalFailed ? `, nie udało się ${totalFailed}` : ''}).`
+        `${rateLimited ? 'KSeF zatrzymał pobieranie po limicie 64 XML/h. ' : 'Gotowe. '}Zapisano XML w cache dla ${totalCachedXml} faktur, uzupełniono terminy dla ${totalUpdated}, ${totalPaid} bez terminu oznaczono jako opłacone (sprawdzono ${totalScanned}${totalFailed ? `, nie udało się ${totalFailed}` : ''}).`
       )
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Nie udało się uzupełnić terminów płatności')
+      setError(err instanceof Error ? err.message : 'Nie udało się uzupełnić cache XML faktur')
     } finally {
       setSaving(null)
     }
@@ -918,10 +922,10 @@ export function KsefInboxView({
             onClick={backfillDueDates}
             disabled={saving === 'backfill' || saving === 'sync'}
             className="inline-flex w-full items-center justify-center gap-2 rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-semibold disabled:opacity-60"
-            title="Ponownie pobiera XML faktur bez terminu. Uzupełnia termin, jeśli KSeF go zawiera; jeśli faktura nie ma terminu (zwykle już opłacona) — oznacza ją jako opłaconą."
+            title="Pobiera i zapisuje lokalnie XML faktur z KSeF. Uzupełnia termin i konto bankowe, a podgląd faktury działa później z cache bez kolejnego zapytania do KSeF."
           >
             <CalendarClock size={16} />
-            {saving === 'backfill' ? 'Uzupełniam terminy...' : 'Uzupełnij terminy płatności'}
+            {saving === 'backfill' ? 'Uzupełniam cache XML...' : 'Uzupełnij cache XML'}
           </button>
         </div>
       </header>

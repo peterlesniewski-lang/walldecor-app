@@ -86,6 +86,42 @@ describe('POST /api/finance/ksef/invoices/backfill-details', () => {
     })
   })
 
+  it('re-downloads XML for invoices that already have a due date but no cached XML', async () => {
+    prismaMock.ksefInvoice.findMany.mockResolvedValue([
+      {
+        id: 'inv-cached',
+        externalId: 'KSEF-CACHED',
+        issueDate: new Date('2026-07-01T00:00:00.000Z'),
+        dueDate: new Date('2026-07-15T00:00:00.000Z'),
+        bankAccount: '11112222333344445555666677',
+        paymentStatus: 'UNPAID',
+        paidAt: null,
+      },
+    ])
+    ksefClientMock.downloadInvoiceXml.mockResolvedValue(XML_WITH_TERM)
+
+    const response = await POST(makeRequest({}))
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toMatchObject({ scanned: 1, cachedXml: 1, failed: 0 })
+    expect(prismaMock.ksefInvoice.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        source: 'KSEF',
+        xmlContent: null,
+      }),
+    }))
+    expect(prismaMock.ksefInvoice.update).toHaveBeenCalledWith({
+      where: { id: 'inv-cached' },
+      data: expect.objectContaining({
+        dueDate: new Date('2026-07-21T00:00:00.000Z'),
+        bankAccount: '11112222333344445555666677',
+        xmlContent: expect.stringContaining('<Faktura'),
+        xmlFetchedAt: expect.any(Date),
+      }),
+    })
+  })
+
   it('marks an invoice paid when KSeF confirms it has no payment term', async () => {
     prismaMock.ksefInvoice.findMany.mockResolvedValue([
       { id: 'inv-2', externalId: 'KSEF-2', issueDate: new Date('2026-06-10T00:00:00.000Z'), bankAccount: null },

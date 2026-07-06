@@ -13,11 +13,11 @@ import {
   XML_DETAILS_THROTTLE_MS,
 } from '@/lib/finance/ksef-detail-fetch'
 
-// Re-download full invoice XML for KSeF invoices that still lack a payment due
-// date. The regular sync fetches details inline, but a KSeF 429 storm during a
-// large historical import silently leaves hundreds of invoices without a due
-// date. This endpoint recovers them in throttled, keyset-paginated batches so a
-// re-sync of everything is not required. Idempotent: it only fills nulls.
+// Re-download full invoice XML for KSeF invoices that are not cached locally yet.
+// The regular sync fetches details inline, but KSeF caps full XML downloads
+// aggressively, so a large historical import can leave invoices visible in the
+// inbox without XML for preview. This endpoint fills that cache in throttled,
+// keyset-paginated batches so clicking preview does not need to hit KSeF again.
 const KSEF_SETTINGS = ['ksef_enabled', 'ksef_environment', 'ksef_company_nip', 'ksef_token'] as const
 const DEFAULT_BATCH = 50
 const MAX_BATCH = 200
@@ -49,20 +49,28 @@ export async function POST(req: NextRequest) {
   const invoices = await prisma.ksefInvoice.findMany({
     where: {
       source: 'KSEF',
-      dueDate: null,
-      paymentStatus: { not: 'PAID' },
+      externalId: { not: null },
+      xmlContent: null,
       ...(hasValidBefore ? { issueDate: { lt: before } } : {}),
     },
-    select: { id: true, externalId: true, issueDate: true, bankAccount: true },
+    select: {
+      id: true,
+      externalId: true,
+      issueDate: true,
+      dueDate: true,
+      bankAccount: true,
+      paymentStatus: true,
+      paidAt: true,
+    },
     orderBy: { issueDate: 'desc' },
     take: limit,
   })
 
   if (invoices.length === 0) {
     const remaining = await prisma.ksefInvoice.count({
-      where: { source: 'KSEF', dueDate: null, paymentStatus: { not: 'PAID' } },
+      where: { source: 'KSEF', externalId: { not: null }, xmlContent: null },
     })
-    return NextResponse.json({ ok: true, scanned: 0, updated: 0, markedPaid: 0, failed: 0, done: true, nextBefore: null, remaining })
+    return NextResponse.json({ ok: true, scanned: 0, updated: 0, markedPaid: 0, cachedXml: 0, failed: 0, rateLimited: false, done: true, nextBefore: null, remaining })
   }
 
   try {
@@ -71,7 +79,9 @@ export async function POST(req: NextRequest) {
 
     let updated = 0
     let markedPaid = 0
+    let cachedXml = 0
     let failed = 0
+    let rateLimited = false
     let nextBefore: string | null = null
 
     for (const invoice of invoices) {
@@ -85,46 +95,41 @@ export async function POST(req: NextRequest) {
           ksefNumber: invoice.externalId,
         })
 
+        const fetchedAt = new Date()
+        const shouldMarkPaid = !details.dueDate && !invoice.dueDate && invoice.paymentStatus !== 'PAID'
+        const shouldCountDueDateUpdate = Boolean(details.dueDate && !invoice.dueDate)
+
+        await prisma.ksefInvoice.update({
+          where: { id: invoice.id },
+          data: {
+            dueDate: details.dueDate ?? invoice.dueDate,
+            bankAccount: details.bankAccount ?? invoice.bankAccount ?? undefined,
+            paymentDetailsFetchedAt: fetchedAt,
+            xmlContent: details.xml,
+            xmlFetchedAt: fetchedAt,
+            ...(shouldMarkPaid ? { paymentStatus: 'PAID', paidAt: invoice.paidAt ?? invoice.issueDate } : {}),
+          },
+        })
+        cachedXml += 1
+
         if (details.dueDate) {
-          const fetchedAt = new Date()
-          await prisma.ksefInvoice.update({
-            where: { id: invoice.id },
-            data: {
-              dueDate: details.dueDate,
-              bankAccount: details.bankAccount ?? invoice.bankAccount ?? undefined,
-              paymentDetailsFetchedAt: fetchedAt,
-              xmlContent: details.xml,
-              xmlFetchedAt: fetchedAt,
-            },
-          })
-          updated += 1
-        } else {
-          // KSeF confirms this invoice carries no payment term. In practice such
-          // invoices are already paid (cash / immediate payment), so mark them
-          // paid to clear the "no due date" bucket. Reversible per invoice.
-          const fetchedAt = new Date()
-          await prisma.ksefInvoice.update({
-            where: { id: invoice.id },
-            data: {
-              paymentStatus: 'PAID',
-              paidAt: invoice.issueDate,
-              bankAccount: details.bankAccount ?? invoice.bankAccount ?? undefined,
-              paymentDetailsFetchedAt: fetchedAt,
-              xmlContent: details.xml,
-              xmlFetchedAt: fetchedAt,
-            },
-          })
+          if (shouldCountDueDateUpdate) updated += 1
+        } else if (shouldMarkPaid) {
           markedPaid += 1
         }
-      } catch {
+      } catch (err) {
         failed += 1
+        if (err instanceof KsefApiError && err.status === 429) {
+          rateLimited = true
+          break
+        }
       }
 
       await wait(XML_DETAILS_THROTTLE_MS)
     }
 
     const remaining = await prisma.ksefInvoice.count({
-      where: { source: 'KSEF', dueDate: null, paymentStatus: { not: 'PAID' } },
+      where: { source: 'KSEF', externalId: { not: null }, xmlContent: null },
     })
 
     return NextResponse.json({
@@ -132,8 +137,10 @@ export async function POST(req: NextRequest) {
       scanned: invoices.length,
       updated,
       markedPaid,
+      cachedXml,
       failed,
-      done: invoices.length < limit,
+      rateLimited,
+      done: !rateLimited && invoices.length < limit,
       nextBefore,
       remaining,
     })
