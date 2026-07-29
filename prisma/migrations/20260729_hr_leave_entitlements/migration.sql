@@ -1,3 +1,5 @@
+BEGIN IMMEDIATE;
+
 -- CreateTable
 CREATE TABLE "LeaveEntitlementConfig" (
     "id" TEXT NOT NULL PRIMARY KEY,
@@ -81,3 +83,5 @@ SET
     "requiresApproval" = true,
     "tracksBalance" = false
 WHERE "code" = 'UB';
+
+COMMIT;
