@@ -26,6 +26,7 @@ vi.mock('@/lib/prisma', () => ({
     leaveEntitlementConfig: {
       findMany: vi.fn(),
       findUnique: vi.fn(),
+      findFirst: vi.fn(),
     },
     leaveBalanceNew: {
       findUnique: vi.fn(),
@@ -42,11 +43,15 @@ const mockEmployeeFindUnique = vi.mocked(prisma.employee.findUnique)
 const mockLeaveTypeFindUnique = vi.mocked(prisma.leaveType.findUnique)
 const mockConfigFindMany = vi.mocked(prisma.leaveEntitlementConfig.findMany)
 const mockConfigFindUnique = vi.mocked(prisma.leaveEntitlementConfig.findUnique)
+const mockConfigFindFirst = vi.mocked(prisma.leaveEntitlementConfig.findFirst)
 const mockBalanceFindUnique = vi.mocked(prisma.leaveBalanceNew.findUnique)
 const mockCorrectionFindMany = vi.mocked(prisma.leaveBalanceCorrection.findMany)
 const mockTransaction = vi.mocked(prisma.$transaction)
 
 const txConfigCreate = vi.fn()
+const txConfigFindUnique = vi.fn()
+const txConfigFindFirst = vi.fn()
+const txConfigUpdate = vi.fn()
 const txBalanceFindUnique = vi.fn()
 const txBalanceUpsert = vi.fn()
 const txCorrectionCreate = vi.fn()
@@ -71,6 +76,21 @@ const existingBalance = {
   pendingDays: 2,
   carriedOver: 3,
 }
+
+const existingConfig = {
+  id: 'config-1',
+  employeeId: employee.id,
+  mode: 'DAYS_26',
+  customAnnualDays: null,
+  employmentFraction: 1,
+  effectiveFrom: new Date('2026-01-01T00:00:00.000Z'),
+  note: null,
+  createdById: 'admin-1',
+  createdAt: new Date('2026-01-01T08:00:00.000Z'),
+  updatedAt: new Date('2026-07-01T10:00:00.000Z'),
+}
+
+const existingConfigVersion = 'config-1:2026-07-01T10:00:00.000Z'
 
 function session(role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE' = 'ADMIN') {
   return {
@@ -123,17 +143,27 @@ function postRequest(
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.useFakeTimers()
+  vi.setSystemTime(new Date('2026-07-30T12:00:00.000Z'))
   mockGetServerSession.mockResolvedValue(session())
   mockEmployeeFindUnique.mockResolvedValue(employee as never)
   mockLeaveTypeFindUnique.mockResolvedValue(vl as never)
   mockConfigFindMany.mockResolvedValue([])
   mockConfigFindUnique.mockResolvedValue(null)
+  mockConfigFindFirst.mockResolvedValue(null)
   mockBalanceFindUnique.mockResolvedValue(null)
   mockCorrectionFindMany.mockResolvedValue([])
   txBalanceFindUnique.mockResolvedValue(null)
+  txConfigFindUnique.mockResolvedValue(null)
+  txConfigFindFirst.mockResolvedValue(null)
   mockTransaction.mockImplementation(
     async (callback) => callback({
-      leaveEntitlementConfig: { create: txConfigCreate },
+      leaveEntitlementConfig: {
+        findUnique: txConfigFindUnique,
+        findFirst: txConfigFindFirst,
+        create: txConfigCreate,
+        update: txConfigUpdate,
+      },
       leaveBalanceNew: {
         findUnique: txBalanceFindUnique,
         upsert: txBalanceUpsert,
@@ -189,6 +219,19 @@ describe('POST /api/hr/employees/[id]/leave-entitlement validation', () => {
     expect(mockEmployeeFindUnique).not.toHaveBeenCalled()
   })
 
+  it('rejects a future effectiveFrom in the current Warsaw business year', async () => {
+    const response = await POST(
+      postRequest({ effectiveFrom: '2026-07-31' }),
+      params()
+    )
+    const body = await response.json()
+
+    expect(response.status).toBe(400)
+    expect(body.error).toBe('Invalid input')
+    expect(JSON.stringify(body.details)).toContain('2026-07-30')
+    expect(mockEmployeeFindUnique).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['null', null],
     ['numeric', 1767225600000],
@@ -218,7 +261,7 @@ describe('POST /api/hr/employees/[id]/leave-entitlement validation', () => {
     })
   })
 
-  it('requires the preview concurrency token when applying', async () => {
+  it('requires all preview concurrency tokens when applying', async () => {
     const response = await POST(postRequest({ preview: false }), params())
 
     expect(response.status).toBe(400)
@@ -262,8 +305,7 @@ describe('POST /api/hr/employees/[id]/leave-entitlement validation', () => {
 })
 
 describe('GET /api/hr/employees/[id]/leave-entitlement', () => {
-  it('uses the UTC year when the query parameter is absent', async () => {
-    vi.useFakeTimers()
+  it('uses the Warsaw business year when the query parameter is absent', async () => {
     vi.setSystemTime(new Date('2026-12-31T23:30:00.000Z'))
 
     const response = await GET(getRequestWithoutYear(), params())
@@ -272,7 +314,7 @@ describe('GET /api/hr/employees/[id]/leave-entitlement', () => {
     expect(mockConfigFindMany).toHaveBeenCalledWith({
       where: {
         employeeId: employee.id,
-        effectiveFrom: { lte: new Date('2026-12-31T23:59:59.999Z') },
+        effectiveFrom: { lte: new Date('2027-01-01T23:59:59.999Z') },
       },
     })
     expect(mockBalanceFindUnique).toHaveBeenCalledWith({
@@ -280,8 +322,20 @@ describe('GET /api/hr/employees/[id]/leave-entitlement', () => {
         employeeId_leaveTypeId_year: {
           employeeId: employee.id,
           leaveTypeId: vl.id,
-          year: 2026,
+          year: 2027,
         },
+      },
+    })
+  })
+
+  it('uses year end when selecting a historical year', async () => {
+    const response = await GET(getRequest(2025), params())
+
+    expect(response.status).toBe(200)
+    expect(mockConfigFindMany).toHaveBeenCalledWith({
+      where: {
+        employeeId: employee.id,
+        effectiveFrom: { lte: new Date('2025-12-31T23:59:59.999Z') },
       },
     })
   })
@@ -340,7 +394,7 @@ describe('GET /api/hr/employees/[id]/leave-entitlement', () => {
     expect(mockConfigFindMany).toHaveBeenCalledWith({
       where: {
         employeeId: employee.id,
-        effectiveFrom: { lte: new Date('2026-12-31T23:59:59.999Z') },
+        effectiveFrom: { lte: new Date('2026-07-30T23:59:59.999Z') },
       },
     })
     expect(mockCorrectionFindMany).toHaveBeenCalledWith({
@@ -360,9 +414,12 @@ describe('POST leave entitlement preview', () => {
     expect(response.status).toBe(200)
     expect(body).toEqual(expect.objectContaining({
       calculatedDays: 20,
+      targetTotalDays: 23,
       currentTotalDays: 26,
       expectedCurrentTotalDays: 26,
-      deltaDays: -6,
+      expectedCurrentCarriedOver: 3,
+      expectedConfigVersion: null,
+      deltaDays: -3,
       requiresCorrection: true,
       input: expect.objectContaining({
         mode: 'DAYS_20',
@@ -384,11 +441,44 @@ describe('POST leave entitlement preview', () => {
     expect(response.status).toBe(200)
     expect(body).toEqual(expect.objectContaining({
       calculatedDays: 20,
+      targetTotalDays: 20,
       currentTotalDays: 0,
       expectedCurrentTotalDays: null,
+      expectedCurrentCarriedOver: null,
+      expectedConfigVersion: null,
       deltaDays: 20,
       requiresCorrection: false,
     }))
+    expect(mockTransaction).not.toHaveBeenCalled()
+  })
+
+  it('returns the exact-date config version and allows previewing an update', async () => {
+    mockConfigFindUnique.mockResolvedValue(existingConfig as never)
+    mockConfigFindFirst.mockResolvedValue(existingConfig as never)
+    mockBalanceFindUnique.mockResolvedValue(existingBalance as never)
+
+    const response = await POST(postRequest(), params())
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body.expectedConfigVersion).toBe(existingConfigVersion)
+    expect(body.targetTotalDays).toBe(23)
+  })
+
+  it('rejects creating a config older than the currently active config', async () => {
+    mockConfigFindFirst.mockResolvedValue({
+      ...existingConfig,
+      effectiveFrom: new Date('2026-07-01T00:00:00.000Z'),
+    } as never)
+
+    const response = await POST(
+      postRequest({ effectiveFrom: '2026-06-01' }),
+      params()
+    )
+    const body = await response.json()
+
+    expect(response.status).toBe(409)
+    expect(body.code).toBe('CONFIG_DATE_CONFLICT')
     expect(mockTransaction).not.toHaveBeenCalled()
   })
 })
@@ -405,6 +495,8 @@ describe('POST leave entitlement apply', () => {
       postRequest({
         preview: false,
         expectedCurrentTotalDays: 26,
+        expectedCurrentCarriedOver: 3,
+        expectedConfigVersion: null,
         correctionReason,
       }),
       params()
@@ -442,7 +534,7 @@ describe('POST leave entitlement apply', () => {
       pendingDays: 4,
       carriedOver: 5,
     }
-    const appliedBalance = { ...transactionBalance, totalDays: 20 }
+    const appliedBalance = { ...transactionBalance, totalDays: 25 }
     mockBalanceFindUnique.mockResolvedValue(staleBalance as never)
     txBalanceFindUnique.mockResolvedValue(transactionBalance)
     txConfigCreate.mockResolvedValue(appliedConfig)
@@ -453,6 +545,8 @@ describe('POST leave entitlement apply', () => {
       postRequest({
         preview: false,
         expectedCurrentTotalDays: 26,
+        expectedCurrentCarriedOver: 5,
+        expectedConfigVersion: null,
         note: 'Zmiana wymiaru',
         correctionReason: '  Korekta limitu  ',
       }),
@@ -463,14 +557,17 @@ describe('POST leave entitlement apply', () => {
     expect(response.status).toBe(201)
     expect(body).toEqual(expect.objectContaining({
       calculatedDays: 20,
+      targetTotalDays: 25,
       currentTotalDays: 26,
       expectedCurrentTotalDays: 26,
-      deltaDays: -6,
+      expectedCurrentCarriedOver: 5,
+      expectedConfigVersion: null,
+      deltaDays: -1,
       requiresCorrection: true,
       config: expect.objectContaining({ id: appliedConfig.id }),
       balance: expect.objectContaining({
         id: existingBalance.id,
-        totalDays: 20,
+        totalDays: 25,
         usedDays: 7,
         pendingDays: 4,
         carriedOver: 5,
@@ -509,9 +606,9 @@ describe('POST leave entitlement apply', () => {
         employeeId: employee.id,
         leaveTypeId: vl.id,
         year: 2026,
-        totalDays: 20,
+        totalDays: 25,
       },
-      update: { totalDays: 20 },
+      update: { totalDays: 25 },
     })
     expect(txCorrectionCreate).toHaveBeenCalledWith({
       data: {
@@ -528,7 +625,7 @@ describe('POST leave entitlement apply', () => {
           carriedOver: 5,
         }),
         afterJson: JSON.stringify({
-          totalDays: 20,
+          totalDays: 25,
           usedDays: 7,
           pendingDays: 4,
           carriedOver: 5,
@@ -554,6 +651,8 @@ describe('POST leave entitlement apply', () => {
       postRequest({
         preview: false,
         expectedCurrentTotalDays: null,
+        expectedCurrentCarriedOver: null,
+        expectedConfigVersion: null,
       }),
       params()
     )
@@ -580,6 +679,7 @@ describe('POST leave entitlement apply', () => {
     const staleBalance = { ...existingBalance, usedDays: 1, pendingDays: 0 }
     const unchangedBalance = {
       ...existingBalance,
+      totalDays: 30,
       usedDays: 9,
       pendingDays: 3,
       carriedOver: 4,
@@ -593,7 +693,9 @@ describe('POST leave entitlement apply', () => {
       postRequest({
         mode: 'DAYS_26',
         preview: false,
-        expectedCurrentTotalDays: 26,
+        expectedCurrentTotalDays: 30,
+        expectedCurrentCarriedOver: 4,
+        expectedConfigVersion: null,
       }),
       params()
     )
@@ -603,7 +705,7 @@ describe('POST leave entitlement apply', () => {
     expect(body.requiresCorrection).toBe(false)
     expect(body.deltaDays).toBe(0)
     expect(body.balance).toEqual(expect.objectContaining({
-      totalDays: 26,
+      totalDays: 30,
       usedDays: 9,
       pendingDays: 3,
       carriedOver: 4,
@@ -618,14 +720,27 @@ describe('POST leave entitlement apply', () => {
     [
       'presence changed',
       null,
+      null,
       existingBalance,
     ],
     [
       'total changed',
       26,
+      3,
       { ...existingBalance, totalDays: 24 },
     ],
-  ])('returns 409 before writes when preview %s', async (_label, expectedTotal, transactionBalance) => {
+    [
+      'carried over changed',
+      26,
+      3,
+      { ...existingBalance, carriedOver: 4 },
+    ],
+  ])('returns a balance-specific 409 before writes when preview %s', async (
+    _label,
+    expectedTotal,
+    expectedCarriedOver,
+    transactionBalance
+  ) => {
     mockBalanceFindUnique.mockResolvedValue(existingBalance as never)
     txBalanceFindUnique.mockResolvedValue(transactionBalance)
 
@@ -633,12 +748,17 @@ describe('POST leave entitlement apply', () => {
       postRequest({
         preview: false,
         expectedCurrentTotalDays: expectedTotal,
+        expectedCurrentCarriedOver: expectedCarriedOver,
+        expectedConfigVersion: null,
         correctionReason: 'Korekta limitu',
       }),
       params()
     )
+    const body = await response.json()
 
     expect(response.status).toBe(409)
+    expect(body.code).toBe('BALANCE_PREVIEW_CONFLICT')
+    expect(body.error).toContain('balance')
     expect(mockBalanceFindUnique).not.toHaveBeenCalled()
     expect(txBalanceFindUnique).toHaveBeenCalledOnce()
     expect(txConfigCreate).not.toHaveBeenCalled()
@@ -646,22 +766,100 @@ describe('POST leave entitlement apply', () => {
     expect(txCorrectionCreate).not.toHaveBeenCalled()
   })
 
-  it('returns 409 for an existing employee/effectiveFrom config', async () => {
-    mockConfigFindUnique.mockResolvedValue({ id: 'duplicate-config' } as never)
+  it('updates an exact-date config after checking its preview version', async () => {
+    const updatedConfig = {
+      ...existingConfig,
+      mode: 'DAYS_20',
+      updatedAt: new Date('2026-07-30T12:00:00.000Z'),
+    }
+    const updatedBalance = { ...existingBalance, totalDays: 23 }
+    txConfigFindUnique.mockResolvedValue(existingConfig)
+    txConfigFindFirst.mockResolvedValue(existingConfig)
+    txBalanceFindUnique.mockResolvedValue(existingBalance)
+    txConfigUpdate.mockResolvedValue(updatedConfig)
+    txBalanceUpsert.mockResolvedValue(updatedBalance)
+    txCorrectionCreate.mockResolvedValue({ id: 'correction-1' })
 
     const response = await POST(
       postRequest({
         preview: false,
-        expectedCurrentTotalDays: null,
+        expectedCurrentTotalDays: 26,
+        expectedCurrentCarriedOver: 3,
+        expectedConfigVersion: existingConfigVersion,
+        correctionReason: 'Zmiana podstawy urlopu',
       }),
       params()
     )
+    const body = await response.json()
 
-    expect(response.status).toBe(409)
-    expect(mockTransaction).not.toHaveBeenCalled()
+    expect(response.status).toBe(200)
+    expect(body.targetTotalDays).toBe(23)
+    expect(body.expectedConfigVersion).toBe(existingConfigVersion)
+    expect(txConfigUpdate).toHaveBeenCalledWith({
+      where: { id: existingConfig.id },
+      data: {
+        mode: 'DAYS_20',
+        customAnnualDays: null,
+        employmentFraction: 1,
+        note: null,
+      },
+    })
+    expect(txConfigCreate).not.toHaveBeenCalled()
   })
 
-  it('maps a transaction P2002 race to 409', async () => {
+  it('returns a config-specific 409 when the exact-date version changed', async () => {
+    txConfigFindUnique.mockResolvedValue({
+      ...existingConfig,
+      updatedAt: new Date('2026-07-30T11:00:00.000Z'),
+    })
+    txConfigFindFirst.mockResolvedValue(existingConfig)
+    txBalanceFindUnique.mockResolvedValue(existingBalance)
+
+    const response = await POST(
+      postRequest({
+        preview: false,
+        expectedCurrentTotalDays: 26,
+        expectedCurrentCarriedOver: 3,
+        expectedConfigVersion: existingConfigVersion,
+        correctionReason: 'Zmiana podstawy urlopu',
+      }),
+      params()
+    )
+    const body = await response.json()
+
+    expect(response.status).toBe(409)
+    expect(body.code).toBe('CONFIG_VERSION_CONFLICT')
+    expect(body.error).toContain('config')
+    expect(txConfigUpdate).not.toHaveBeenCalled()
+    expect(txConfigCreate).not.toHaveBeenCalled()
+    expect(txBalanceUpsert).not.toHaveBeenCalled()
+  })
+
+  it('rejects creating a config older than the active config inside the transaction', async () => {
+    txConfigFindFirst.mockResolvedValue({
+      ...existingConfig,
+      effectiveFrom: new Date('2026-07-01T00:00:00.000Z'),
+    })
+
+    const response = await POST(
+      postRequest({
+        effectiveFrom: '2026-06-01',
+        preview: false,
+        expectedCurrentTotalDays: null,
+        expectedCurrentCarriedOver: null,
+        expectedConfigVersion: null,
+      }),
+      params()
+    )
+    const body = await response.json()
+
+    expect(response.status).toBe(409)
+    expect(body.code).toBe('CONFIG_DATE_CONFLICT')
+    expect(txConfigCreate).not.toHaveBeenCalled()
+    expect(txBalanceUpsert).not.toHaveBeenCalled()
+  })
+
+  it('maps an exact-date transaction P2002 race to a config-specific 409', async () => {
     mockTransaction.mockRejectedValue(
       Object.assign(new Error('Unique constraint failed'), {
         code: 'P2002',
@@ -673,11 +871,15 @@ describe('POST leave entitlement apply', () => {
       postRequest({
         preview: false,
         expectedCurrentTotalDays: null,
+        expectedCurrentCarriedOver: null,
+        expectedConfigVersion: null,
       }),
       params()
     )
+    const body = await response.json()
 
     expect(response.status).toBe(409)
+    expect(body.code).toBe('CONFIG_VERSION_CONFLICT')
   })
 
   it('does not mislabel an unrelated P2002 as an entitlement date conflict', async () => {
@@ -691,6 +893,8 @@ describe('POST leave entitlement apply', () => {
       postRequest({
         preview: false,
         expectedCurrentTotalDays: null,
+        expectedCurrentCarriedOver: null,
+        expectedConfigVersion: null,
       }),
       params()
     )).rejects.toBe(unrelatedError)

@@ -17,6 +17,7 @@ export interface LeaveEntitlementPanelData {
     effectiveFrom: string
     note: string | null
     createdAt?: string
+    updatedAt?: string
   } | null
   calculatedDays: number | null
   balance: {
@@ -42,6 +43,7 @@ export interface LeaveEntitlementPanelData {
 interface LeaveEntitlementPanelProps {
   employeeId: string
   targetYear: number
+  maxEffectiveDate: string
   initialData: LeaveEntitlementPanelData
   configurationError?: string | null
 }
@@ -57,8 +59,11 @@ interface NormalizedFormValues {
 
 interface PreviewResult {
   calculatedDays: number
+  targetTotalDays: number
   currentTotalDays: number
   expectedCurrentTotalDays: number | null
+  expectedCurrentCarriedOver: number | null
+  expectedConfigVersion: string | null
   deltaDays: number
   requiresCorrection: boolean
 }
@@ -83,19 +88,17 @@ function formatDays(value: number): string {
   return `${numberFormatter.format(value)} dni`
 }
 
-function defaultMode(data: LeaveEntitlementPanelData): LeaveEntitlementMode {
-  if (data.config) return data.config.mode
-  if (data.balance?.totalDays === 20) return 'DAYS_20'
-  if (data.balance?.totalDays === 26) return 'DAYS_26'
-  return 'CUSTOM'
+interface FormErrors {
+  mode?: string
+  customAnnualDays?: string
+  employmentFraction?: string
+  effectiveFrom?: string
+  note?: string
 }
 
 function defaultCustomDays(data: LeaveEntitlementPanelData): string {
   if (data.config?.customAnnualDays != null) {
     return String(data.config.customAnnualDays)
-  }
-  if (data.config?.mode === 'CUSTOM' || defaultMode(data) === 'CUSTOM') {
-    return data.balance ? String(data.balance.totalDays) : ''
   }
   return ''
 }
@@ -104,8 +107,14 @@ function defaultEffectiveFrom(data: LeaveEntitlementPanelData, year: number): st
   return data.config?.effectiveFrom.slice(0, 10) ?? `${year}-01-01`
 }
 
-function isValidHttpDate(value: string, targetYear: number): boolean {
-  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) return false
+function effectiveDateError(
+  value: string,
+  targetYear: number,
+  maxEffectiveDate: string
+): string | null {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(value)) {
+    return 'Podaj prawidłową datę obowiązywania.'
+  }
 
   const [year, month, day] = value.split('-').map(Number)
   const parsed = new Date(Date.UTC(year, month - 1, day))
@@ -114,10 +123,14 @@ function isValidHttpDate(value: string, targetYear: number): boolean {
     parsed.getUTCMonth() !== month - 1 ||
     parsed.getUTCDate() !== day
   ) {
-    return false
+    return 'Podaj prawidłową datę obowiązywania.'
   }
 
-  return parsed <= new Date(Date.UTC(targetYear, 11, 31, 23, 59, 59, 999))
+  if (year > targetYear || value > maxEffectiveDate) {
+    return `Data nie może być późniejsza niż ${maxEffectiveDate}.`
+  }
+
+  return null
 }
 
 function parseResponseError(data: unknown, fallback: string): string {
@@ -132,14 +145,31 @@ function parseResponseError(data: unknown, fallback: string): string {
   return fallback
 }
 
+function parseResponseCode(data: unknown): string | null {
+  if (
+    typeof data === 'object' &&
+    data !== null &&
+    'code' in data &&
+    typeof data.code === 'string'
+  ) {
+    return data.code
+  }
+  return null
+}
+
 function parsePreview(data: unknown): PreviewResult | null {
   if (typeof data !== 'object' || data === null) return null
   const row = data as Record<string, unknown>
   if (
     typeof row.calculatedDays !== 'number' ||
+    typeof row.targetTotalDays !== 'number' ||
     typeof row.currentTotalDays !== 'number' ||
     (row.expectedCurrentTotalDays !== null &&
       typeof row.expectedCurrentTotalDays !== 'number') ||
+    (row.expectedCurrentCarriedOver !== null &&
+      typeof row.expectedCurrentCarriedOver !== 'number') ||
+    (row.expectedConfigVersion !== null &&
+      typeof row.expectedConfigVersion !== 'string') ||
     typeof row.deltaDays !== 'number' ||
     typeof row.requiresCorrection !== 'boolean'
   ) {
@@ -148,8 +178,11 @@ function parsePreview(data: unknown): PreviewResult | null {
 
   return {
     calculatedDays: row.calculatedDays,
+    targetTotalDays: row.targetTotalDays,
     currentTotalDays: row.currentTotalDays,
     expectedCurrentTotalDays: row.expectedCurrentTotalDays,
+    expectedCurrentCarriedOver: row.expectedCurrentCarriedOver,
+    expectedConfigVersion: row.expectedConfigVersion,
     deltaDays: row.deltaDays,
     requiresCorrection: row.requiresCorrection,
   }
@@ -192,11 +225,41 @@ function formatCorrectionDate(value: string): string {
 export function LeaveEntitlementPanel({
   employeeId,
   targetYear,
+  maxEffectiveDate,
+  initialData,
+  configurationError = null,
+}: LeaveEntitlementPanelProps) {
+  const identity = JSON.stringify({
+    employeeId,
+    targetYear,
+    maxEffectiveDate,
+    initialData,
+    configurationError,
+  })
+
+  return (
+    <LeaveEntitlementPanelContent
+      key={identity}
+      employeeId={employeeId}
+      targetYear={targetYear}
+      maxEffectiveDate={maxEffectiveDate}
+      initialData={initialData}
+      configurationError={configurationError}
+    />
+  )
+}
+
+function LeaveEntitlementPanelContent({
+  employeeId,
+  targetYear,
+  maxEffectiveDate,
   initialData,
   configurationError = null,
 }: LeaveEntitlementPanelProps) {
   const router = useRouter()
-  const [mode, setMode] = useState<LeaveEntitlementMode>(() => defaultMode(initialData))
+  const [mode, setMode] = useState<LeaveEntitlementMode | null>(
+    initialData.config?.mode ?? null
+  )
   const [customAnnualDays, setCustomAnnualDays] = useState(() => defaultCustomDays(initialData))
   const [employmentFraction, setEmploymentFraction] = useState(() =>
     String(initialData.config?.employmentFraction ?? 1)
@@ -232,6 +295,7 @@ export function LeaveEntitlementPanel({
     formVersionRef.current += 1
     setPreview(null)
     setCorrectionReason('')
+    setPendingAction(null)
     setError(null)
     setSuccess(null)
   }
@@ -241,11 +305,30 @@ export function LeaveEntitlementPanel({
     invalidatePreview()
   }
 
-  function normalizeForm(): NormalizedFormValues | null {
+  function validateForm(): {
+    normalized: NormalizedFormValues | null
+    errors: FormErrors
+  } {
+    const errors: FormErrors = {}
+    if (!mode) {
+      errors.mode = 'Wybierz roczny limit.'
+    }
+
     const fraction = Number(employmentFraction)
-    if (!Number.isFinite(fraction) || fraction <= 0 || fraction > 1) return null
-    if (!isValidHttpDate(effectiveFrom, targetYear)) return null
-    if (note.length > 1000) return null
+    if (!Number.isFinite(fraction) || fraction <= 0 || fraction > 1) {
+      errors.employmentFraction =
+        'Wymiar etatu musi być większy od 0 i nie większy niż 1.'
+    }
+
+    const dateError = effectiveDateError(
+      effectiveFrom,
+      targetYear,
+      maxEffectiveDate
+    )
+    if (dateError) errors.effectiveFrom = dateError
+    if (note.length > 1000) {
+      errors.note = 'Notatka może mieć maksymalnie 1000 znaków.'
+    }
 
     let customDays: number | null = null
     if (mode === 'CUSTOM') {
@@ -255,21 +338,30 @@ export function LeaveEntitlementPanel({
         customDays < 1 ||
         customDays > 365
       ) {
-        return null
+        errors.customAnnualDays =
+          'Własny limit musi być liczbą całkowitą od 1 do 365.'
       }
     }
 
+    if (Object.keys(errors).length > 0 || !mode) {
+      return { normalized: null, errors }
+    }
+
     return {
-      mode,
-      customAnnualDays: customDays,
-      employmentFraction: fraction,
-      effectiveFrom,
-      note: note.trim() || null,
-      year: targetYear,
+      normalized: {
+        mode,
+        customAnnualDays: customDays,
+        employmentFraction: fraction,
+        effectiveFrom,
+        note: note.trim() || null,
+        year: targetYear,
+      },
+      errors,
     }
   }
 
-  const normalizedForm = normalizeForm()
+  const formValidation = validateForm()
+  const normalizedForm = formValidation.normalized
   const reasonLength = correctionReason.trim().length
   const correctionReasonValid =
     !preview?.result.requiresCorrection || (reasonLength >= 3 && reasonLength <= 1000)
@@ -345,11 +437,14 @@ export function LeaveEntitlementPanel({
     setPendingAction('apply')
     setError(null)
     setSuccess(null)
+    const applyVersion = preview.version
 
     const payload = {
       ...preview.form,
       preview: false,
       expectedCurrentTotalDays: preview.result.expectedCurrentTotalDays,
+      expectedCurrentCarriedOver: preview.result.expectedCurrentCarriedOver,
+      expectedConfigVersion: preview.result.expectedConfigVersion,
       ...(preview.result.requiresCorrection
         ? { correctionReason: correctionReason.trim() }
         : {}),
@@ -365,11 +460,28 @@ export function LeaveEntitlementPanel({
         }
       )
       const data: unknown = await response.json().catch(() => null)
+      if (
+        !mountedRef.current ||
+        formVersionRef.current !== applyVersion
+      ) {
+        return
+      }
       if (!response.ok) {
         if (response.status === 409) {
           setPreview(null)
           setCorrectionReason('')
-          setError('Saldo zmieniło się od czasu podglądu. Przelicz ponownie.')
+          const code = parseResponseCode(data)
+          if (code === 'CONFIG_VERSION_CONFLICT') {
+            setError(
+              'Konfiguracja zmieniła się od czasu podglądu. Przelicz ponownie.'
+            )
+          } else if (code === 'CONFIG_DATE_CONFLICT') {
+            setError(
+              'Data konfiguracji koliduje z aktywnym wpisem. Przelicz ponownie.'
+            )
+          } else {
+            setError('Saldo zmieniło się od czasu podglądu. Przelicz ponownie.')
+          }
           return
         }
         setError(parseResponseError(data, 'Nie udało się zapisać uprawnienia.'))
@@ -381,9 +493,13 @@ export function LeaveEntitlementPanel({
       setSuccess('Zapisano uprawnienie urlopowe.')
       router.refresh()
     } catch {
-      setError('Błąd połączenia z serwerem.')
+      if (mountedRef.current && formVersionRef.current === applyVersion) {
+        setError('Błąd połączenia z serwerem.')
+      }
     } finally {
-      setPendingAction(null)
+      if (mountedRef.current && formVersionRef.current === applyVersion) {
+        setPendingAction(null)
+      }
     }
   }
 
@@ -470,6 +586,11 @@ export function LeaveEntitlementPanel({
               <div
                 role="group"
                 aria-labelledby="leave-entitlement-mode-label"
+                aria-describedby={
+                  formValidation.errors.mode
+                    ? 'leave-entitlement-mode-error'
+                    : undefined
+                }
                 className="grid h-9 grid-cols-3 rounded-md border border-[var(--wd-border)] bg-[var(--wd-surface-2)] p-0.5"
               >
                 {MODES.map((item) => {
@@ -491,6 +612,14 @@ export function LeaveEntitlementPanel({
                   )
                 })}
               </div>
+              {formValidation.errors.mode && (
+                <p
+                  id="leave-entitlement-mode-error"
+                  className="text-xs text-red-700"
+                >
+                  {formValidation.errors.mode}
+                </p>
+              )}
             </div>
 
             {mode === 'CUSTOM' && (
@@ -503,12 +632,26 @@ export function LeaveEntitlementPanel({
                   max={365}
                   step={1}
                   value={customAnnualDays}
+                  aria-invalid={Boolean(formValidation.errors.customAnnualDays)}
+                  aria-describedby={
+                    formValidation.errors.customAnnualDays
+                      ? 'leave-entitlement-custom-days-error'
+                      : undefined
+                  }
                   onChange={(event) => {
                     setCustomAnnualDays(event.target.value)
                     invalidatePreview()
                   }}
                   required
                 />
+                {formValidation.errors.customAnnualDays && (
+                  <p
+                    id="leave-entitlement-custom-days-error"
+                    className="text-xs text-red-700"
+                  >
+                    {formValidation.errors.customAnnualDays}
+                  </p>
+                )}
               </div>
             )}
 
@@ -521,12 +664,26 @@ export function LeaveEntitlementPanel({
                 max={1}
                 step={0.01}
                 value={employmentFraction}
+                aria-invalid={Boolean(formValidation.errors.employmentFraction)}
+                aria-describedby={
+                  formValidation.errors.employmentFraction
+                    ? 'leave-entitlement-fraction-error'
+                    : undefined
+                }
                 onChange={(event) => {
                   setEmploymentFraction(event.target.value)
                   invalidatePreview()
                 }}
                 required
               />
+              {formValidation.errors.employmentFraction && (
+                <p
+                  id="leave-entitlement-fraction-error"
+                  className="text-xs text-red-700"
+                >
+                  {formValidation.errors.employmentFraction}
+                </p>
+              )}
             </div>
 
             <div className="space-y-1.5">
@@ -534,13 +691,28 @@ export function LeaveEntitlementPanel({
               <Input
                 id="leave-entitlement-effective-from"
                 type="date"
+                max={maxEffectiveDate}
                 value={effectiveFrom}
+                aria-invalid={Boolean(formValidation.errors.effectiveFrom)}
+                aria-describedby={
+                  formValidation.errors.effectiveFrom
+                    ? 'leave-entitlement-effective-from-error'
+                    : undefined
+                }
                 onChange={(event) => {
                   setEffectiveFrom(event.target.value)
                   invalidatePreview()
                 }}
                 required
               />
+              {formValidation.errors.effectiveFrom && (
+                <p
+                  id="leave-entitlement-effective-from-error"
+                  className="text-xs text-red-700"
+                >
+                  {formValidation.errors.effectiveFrom}
+                </p>
+              )}
             </div>
 
             <div className="space-y-1.5 md:col-span-2">
@@ -550,12 +722,26 @@ export function LeaveEntitlementPanel({
                 maxLength={1000}
                 rows={2}
                 value={note}
+                aria-invalid={Boolean(formValidation.errors.note)}
+                aria-describedby={
+                  formValidation.errors.note
+                    ? 'leave-entitlement-note-error'
+                    : undefined
+                }
                 onChange={(event) => {
                   setNote(event.target.value)
                   invalidatePreview()
                 }}
                 className="flex w-full rounded-md border border-input bg-background px-3 py-2 text-sm outline-none placeholder:text-muted-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-50"
               />
+              {formValidation.errors.note && (
+                <p
+                  id="leave-entitlement-note-error"
+                  className="text-xs text-red-700"
+                >
+                  {formValidation.errors.note}
+                </p>
+              )}
             </div>
           </div>
 
@@ -595,6 +781,15 @@ export function LeaveEntitlementPanel({
             <div aria-live="polite" className="mt-4 border-y border-[var(--wd-border)] bg-[var(--wd-surface-2)] px-3 py-3">
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm tabular-nums text-[var(--wd-text-primary)]">
                 <span>Roczny wymiar: {formatDays(preview.result.calculatedDays)}</span>
+                {preview.result.expectedCurrentCarriedOver !== null && (
+                  <span>
+                    Przeniesione:{' '}
+                    {formatDays(preview.result.expectedCurrentCarriedOver)}
+                  </span>
+                )}
+                <span>
+                  Saldo po zmianie: {formatDays(preview.result.targetTotalDays)}
+                </span>
                 <span>Aktualne saldo: {formatDays(preview.result.currentTotalDays)}</span>
                 <span className="font-medium">
                   Zmiana salda:{' '}

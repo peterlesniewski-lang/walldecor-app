@@ -5,6 +5,11 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { leaveEntitlementSaveSchema } from '@/lib/hr/schemas'
 import {
+  entitlementAsOfDate,
+  getWarsawBusinessDate,
+  maxEffectiveDateForYear,
+} from '@/lib/hr/business-date'
+import {
   calculateConfiguredEntitlement,
   selectEffectiveEntitlement,
   type LeaveEntitlementMode,
@@ -24,11 +29,9 @@ type BalanceSnapshotSource = {
 const yearSchema = z.coerce.number().int().min(2000).max(2100)
 
 class PreviewBalanceConflictError extends Error {}
+class PreviewConfigConflictError extends Error {}
+class ConfigDateConflictError extends Error {}
 class CorrectionReasonRequiredError extends Error {}
-
-function yearEnd(year: number): Date {
-  return new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999))
-}
 
 function snapshot(balance: BalanceSnapshotSource) {
   return {
@@ -85,13 +88,36 @@ function previewMetadata(
   balance: BalanceSnapshotSource | null
 ) {
   const currentTotalDays = balance?.totalDays ?? 0
+  const carriedOver = balance?.carriedOver ?? 0
+  const targetTotalDays = calculatedDays + carriedOver
+
   return {
     calculatedDays,
+    targetTotalDays,
     currentTotalDays,
     expectedCurrentTotalDays: balance?.totalDays ?? null,
-    deltaDays: calculatedDays - currentTotalDays,
-    requiresCorrection: balance !== null && balance.totalDays !== calculatedDays,
+    expectedCurrentCarriedOver: balance?.carriedOver ?? null,
+    deltaDays: targetTotalDays - currentTotalDays,
+    requiresCorrection: balance !== null && balance.totalDays !== targetTotalDays,
   }
+}
+
+function configVersion(
+  config: { id: string; updatedAt: Date } | null
+): string | null {
+  return config ? `${config.id}:${config.updatedAt.toISOString()}` : null
+}
+
+function isOlderThanActiveConfig(
+  exactConfig: { id: string } | null,
+  activeConfig: { effectiveFrom: Date } | null,
+  effectiveFrom: Date
+): boolean {
+  return (
+    exactConfig === null &&
+    activeConfig !== null &&
+    effectiveFrom < activeConfig.effectiveFrom
+  )
 }
 
 function invalidInput(details: unknown) {
@@ -112,14 +138,15 @@ export async function GET(req: NextRequest, context: RouteContext) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
+  const now = new Date()
   const parsedYear = yearSchema.safeParse(
-    req.nextUrl.searchParams.get('year') ?? new Date().getUTCFullYear()
+    req.nextUrl.searchParams.get('year') ?? getWarsawBusinessDate(now).year
   )
   if (!parsedYear.success) return invalidInput(parsedYear.error.flatten())
 
   const { id: employeeId } = await context.params
   const year = parsedYear.data
-  const targetYearEnd = yearEnd(year)
+  const targetAsOf = entitlementAsOfDate(year, now)
   const [employee, vlType] = await Promise.all([
     prisma.employee.findUnique({
       where: { id: employeeId },
@@ -137,7 +164,7 @@ export async function GET(req: NextRequest, context: RouteContext) {
     prisma.leaveEntitlementConfig.findMany({
       where: {
         employeeId,
-        effectiveFrom: { lte: targetYearEnd },
+        effectiveFrom: { lte: targetAsOf },
       },
     }),
     prisma.leaveBalanceNew.findUnique({
@@ -155,7 +182,7 @@ export async function GET(req: NextRequest, context: RouteContext) {
     }),
   ])
 
-  const config = selectEffectiveEntitlement(configs, targetYearEnd)
+  const config = selectEffectiveEntitlement(configs, targetAsOf)
   const calculatedDays = config
     ? calculateConfiguredEntitlement({
         mode: config.mode as LeaveEntitlementMode,
@@ -196,6 +223,22 @@ export async function POST(req: NextRequest, context: RouteContext) {
 
   const { id: employeeId } = await context.params
   const input = parsed.data
+  const now = new Date()
+  const businessDate = getWarsawBusinessDate(now)
+  const maxEffectiveDate = maxEffectiveDateForYear(input.year, now)
+  const targetAsOf = entitlementAsOfDate(input.year, now)
+  const effectiveDate = input.effectiveFrom.toISOString().slice(0, 10)
+
+  if (input.year === businessDate.year && effectiveDate > maxEffectiveDate) {
+    return invalidInput({
+      fieldErrors: {
+        effectiveFrom: [
+          `effectiveFrom must be no later than ${maxEffectiveDate}`,
+        ],
+      },
+    })
+  }
+
   const [employee, vlType] = await Promise.all([
     prisma.employee.findUnique({
       where: { id: employeeId },
@@ -217,22 +260,6 @@ export async function POST(req: NextRequest, context: RouteContext) {
     year: input.year,
   })
 
-  const duplicateConfig = await prisma.leaveEntitlementConfig.findUnique({
-    where: {
-      employeeId_effectiveFrom: {
-        employeeId,
-        effectiveFrom: input.effectiveFrom,
-      },
-    },
-  })
-
-  if (duplicateConfig) {
-    return NextResponse.json(
-      { error: 'Leave entitlement config already exists for this effective date' },
-      { status: 409 }
-    )
-  }
-
   const normalizedInput = {
     mode: input.mode,
     customAnnualDays: input.customAnnualDays,
@@ -243,24 +270,23 @@ export async function POST(req: NextRequest, context: RouteContext) {
   }
 
   if (input.preview) {
-    const existingBalance = await prisma.leaveBalanceNew.findUnique({
-      where: {
-        employeeId_leaveTypeId_year: {
-          employeeId,
-          leaveTypeId: vlType.id,
-          year: input.year,
+    const [exactConfig, activeConfig, existingBalance] = await Promise.all([
+      prisma.leaveEntitlementConfig.findUnique({
+        where: {
+          employeeId_effectiveFrom: {
+            employeeId,
+            effectiveFrom: input.effectiveFrom,
+          },
         },
-      },
-    })
-    return NextResponse.json({
-      ...previewMetadata(calculatedDays, existingBalance),
-      input: normalizedInput,
-    })
-  }
-
-  try {
-    const applied = await prisma.$transaction(async (tx) => {
-      const currentBalance = await tx.leaveBalanceNew.findUnique({
+      }),
+      prisma.leaveEntitlementConfig.findFirst({
+        where: {
+          employeeId,
+          effectiveFrom: { lte: targetAsOf },
+        },
+        orderBy: { effectiveFrom: 'desc' },
+      }),
+      prisma.leaveBalanceNew.findUnique({
         where: {
           employeeId_leaveTypeId_year: {
             employeeId,
@@ -268,27 +294,110 @@ export async function POST(req: NextRequest, context: RouteContext) {
             year: input.year,
           },
         },
-      })
-      const metadata = previewMetadata(calculatedDays, currentBalance)
+      }),
+    ])
 
-      if (input.expectedCurrentTotalDays !== metadata.expectedCurrentTotalDays) {
+    if (
+      isOlderThanActiveConfig(
+        exactConfig,
+        activeConfig,
+        input.effectiveFrom
+      )
+    ) {
+      return NextResponse.json(
+        {
+          code: 'CONFIG_DATE_CONFLICT',
+          error: 'Leave entitlement config date is older than the active config',
+        },
+        { status: 409 }
+      )
+    }
+
+    return NextResponse.json({
+      ...previewMetadata(calculatedDays, existingBalance),
+      expectedConfigVersion: configVersion(exactConfig),
+      input: normalizedInput,
+    })
+  }
+
+  try {
+    const applied = await prisma.$transaction(async (tx) => {
+      const [exactConfig, activeConfig, currentBalance] = await Promise.all([
+        tx.leaveEntitlementConfig.findUnique({
+          where: {
+            employeeId_effectiveFrom: {
+              employeeId,
+              effectiveFrom: input.effectiveFrom,
+            },
+          },
+        }),
+        tx.leaveEntitlementConfig.findFirst({
+          where: {
+            employeeId,
+            effectiveFrom: { lte: targetAsOf },
+          },
+          orderBy: { effectiveFrom: 'desc' },
+        }),
+        tx.leaveBalanceNew.findUnique({
+          where: {
+            employeeId_leaveTypeId_year: {
+              employeeId,
+              leaveTypeId: vlType.id,
+              year: input.year,
+            },
+          },
+        }),
+      ])
+
+      if (input.expectedConfigVersion !== configVersion(exactConfig)) {
+        throw new PreviewConfigConflictError()
+      }
+      if (
+        isOlderThanActiveConfig(
+          exactConfig,
+          activeConfig,
+          input.effectiveFrom
+        )
+      ) {
+        throw new ConfigDateConflictError()
+      }
+
+      const metadata = {
+        ...previewMetadata(calculatedDays, currentBalance),
+        expectedConfigVersion: configVersion(exactConfig),
+      }
+
+      if (
+        input.expectedCurrentTotalDays !== metadata.expectedCurrentTotalDays ||
+        input.expectedCurrentCarriedOver !== metadata.expectedCurrentCarriedOver
+      ) {
         throw new PreviewBalanceConflictError()
       }
       if (metadata.requiresCorrection && !input.correctionReason) {
         throw new CorrectionReasonRequiredError()
       }
 
-      const config = await tx.leaveEntitlementConfig.create({
-        data: {
-          employeeId,
-          mode: input.mode,
-          customAnnualDays: input.customAnnualDays,
-          employmentFraction: input.employmentFraction,
-          effectiveFrom: input.effectiveFrom,
-          note: input.note ?? null,
-          createdById: session.user.id,
-        },
-      })
+      const config = exactConfig
+        ? await tx.leaveEntitlementConfig.update({
+            where: { id: exactConfig.id },
+            data: {
+              mode: input.mode,
+              customAnnualDays: input.customAnnualDays,
+              employmentFraction: input.employmentFraction,
+              note: input.note ?? null,
+            },
+          })
+        : await tx.leaveEntitlementConfig.create({
+            data: {
+              employeeId,
+              mode: input.mode,
+              customAnnualDays: input.customAnnualDays,
+              employmentFraction: input.employmentFraction,
+              effectiveFrom: input.effectiveFrom,
+              note: input.note ?? null,
+              createdById: session.user.id,
+            },
+          })
 
       const balance = await tx.leaveBalanceNew.upsert({
         where: {
@@ -302,9 +411,9 @@ export async function POST(req: NextRequest, context: RouteContext) {
           employeeId,
           leaveTypeId: vlType.id,
           year: input.year,
-          totalDays: calculatedDays,
+          totalDays: metadata.targetTotalDays,
         },
-        update: { totalDays: calculatedDays },
+        update: { totalDays: metadata.targetTotalDays },
       })
 
       if (metadata.requiresCorrection && currentBalance) {
@@ -322,7 +431,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
         })
       }
 
-      return { config, balance, metadata }
+      return { config, balance, metadata, updatedExistingConfig: exactConfig !== null }
     })
 
     return NextResponse.json({
@@ -330,11 +439,32 @@ export async function POST(req: NextRequest, context: RouteContext) {
       input: normalizedInput,
       config: applied.config,
       balance: applied.balance,
-    }, { status: 201 })
+    }, { status: applied.updatedExistingConfig ? 200 : 201 })
   } catch (error) {
+    if (error instanceof PreviewConfigConflictError) {
+      return NextResponse.json(
+        {
+          code: 'CONFIG_VERSION_CONFLICT',
+          error: 'Leave entitlement config changed since preview',
+        },
+        { status: 409 }
+      )
+    }
+    if (error instanceof ConfigDateConflictError) {
+      return NextResponse.json(
+        {
+          code: 'CONFIG_DATE_CONFLICT',
+          error: 'Leave entitlement config date is older than the active config',
+        },
+        { status: 409 }
+      )
+    }
     if (error instanceof PreviewBalanceConflictError) {
       return NextResponse.json(
-        { error: 'Leave balance changed since preview' },
+        {
+          code: 'BALANCE_PREVIEW_CONFLICT',
+          error: 'Leave balance changed since preview',
+        },
         { status: 409 }
       )
     }
@@ -346,7 +476,10 @@ export async function POST(req: NextRequest, context: RouteContext) {
     }
     if (isEntitlementConfigUniqueError(error)) {
       return NextResponse.json(
-        { error: 'Leave entitlement config already exists for this effective date' },
+        {
+          code: 'CONFIG_VERSION_CONFLICT',
+          error: 'Leave entitlement config changed since preview',
+        },
         { status: 409 }
       )
     }

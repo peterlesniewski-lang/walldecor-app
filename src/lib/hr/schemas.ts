@@ -129,6 +129,8 @@ export const leaveEntitlementSaveSchema = z.object({
   year: z.number().int().min(2000).max(2100),
   preview: z.boolean().default(true),
   expectedCurrentTotalDays: z.number().nullable().optional(),
+  expectedCurrentCarriedOver: z.number().min(0).nullable().optional(),
+  expectedConfigVersion: z.string().min(1).nullable().optional(),
   correctionReason: z.string().trim().min(3).max(1000).optional(),
 }).superRefine((data, ctx) => {
   if (data.mode === 'CUSTOM' && data.customAnnualDays === null) {
@@ -153,6 +155,22 @@ export const leaveEntitlementSaveSchema = z.object({
       code: 'custom',
       message: 'expectedCurrentTotalDays is required when applying',
       path: ['expectedCurrentTotalDays'],
+    })
+  }
+
+  if (!data.preview && data.expectedCurrentCarriedOver === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'expectedCurrentCarriedOver is required when applying',
+      path: ['expectedCurrentCarriedOver'],
+    })
+  }
+
+  if (!data.preview && data.expectedConfigVersion === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'expectedConfigVersion is required when applying',
+      path: ['expectedConfigVersion'],
     })
   }
 })

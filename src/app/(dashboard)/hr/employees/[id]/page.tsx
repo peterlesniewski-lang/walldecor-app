@@ -18,6 +18,11 @@ import {
   selectEffectiveEntitlement,
   type LeaveEntitlementMode,
 } from '@/lib/hr/leave-entitlement'
+import {
+  entitlementAsOfDate,
+  getWarsawBusinessDate,
+  maxEffectiveDateForYear,
+} from '@/lib/hr/business-date'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -283,7 +288,8 @@ type LeaveEntitlementPanelResult = {
 
 async function fetchLeaveEntitlementPanelData(
   employee: { id: string; startDate: Date },
-  year: number
+  year: number,
+  targetAsOf: Date
 ): Promise<LeaveEntitlementPanelResult> {
   const vlType = await prisma.leaveType.findUnique({
     where: { code: 'VL' },
@@ -303,12 +309,11 @@ async function fetchLeaveEntitlementPanelData(
     }
   }
 
-  const targetYearEnd = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999))
   const [configs, balance, corrections] = await Promise.all([
     prisma.leaveEntitlementConfig.findMany({
       where: {
         employeeId: employee.id,
-        effectiveFrom: { lte: targetYearEnd },
+        effectiveFrom: { lte: targetAsOf },
       },
       select: {
         id: true,
@@ -318,6 +323,7 @@ async function fetchLeaveEntitlementPanelData(
         effectiveFrom: true,
         note: true,
         createdAt: true,
+        updatedAt: true,
       },
     }),
     prisma.leaveBalanceNew.findUnique({
@@ -354,7 +360,7 @@ async function fetchLeaveEntitlementPanelData(
     }),
   ])
 
-  const config = selectEffectiveEntitlement(configs, targetYearEnd)
+  const config = selectEffectiveEntitlement(configs, targetAsOf)
   const mode = config?.mode as LeaveEntitlementMode | undefined
   const calculatedDays = config && mode
     ? calculateConfiguredEntitlement({
@@ -377,6 +383,7 @@ async function fetchLeaveEntitlementPanelData(
             effectiveFrom: config.effectiveFrom.toISOString(),
             note: config.note,
             createdAt: config.createdAt.toISOString(),
+            updatedAt: config.updatedAt.toISOString(),
           }
         : null,
       calculatedDays,
@@ -413,9 +420,12 @@ export default async function EmployeeProfilePage({ params }: Params) {
   if (!employee) notFound()
   if (!canViewEmployeeRecord(session, employee, viewerEmployee)) notFound()
 
-  const targetYear = new Date().getUTCFullYear()
+  const now = new Date()
+  const targetYear = getWarsawBusinessDate(now).year
+  const targetAsOf = entitlementAsOfDate(targetYear, now)
+  const maxEffectiveDate = maxEffectiveDateForYear(targetYear, now)
   const leaveEntitlement = isAdmin
-    ? await fetchLeaveEntitlementPanelData(employee, targetYear)
+    ? await fetchLeaveEntitlementPanelData(employee, targetYear, targetAsOf)
     : null
 
   // Fetch current week time entries
@@ -449,6 +459,7 @@ export default async function EmployeeProfilePage({ params }: Params) {
             <LeaveEntitlementPanel
               employeeId={employee.id}
               targetYear={targetYear}
+              maxEffectiveDate={maxEffectiveDate}
               initialData={leaveEntitlement.data}
               configurationError={leaveEntitlement.configurationError}
             />

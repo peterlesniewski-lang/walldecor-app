@@ -80,6 +80,9 @@ describe('LeaveTabClient balance permissions', () => {
     )
 
     await user.click(screen.getByTitle('Edytuj saldo'))
+    const year = screen.getByLabelText('Rok') as HTMLInputElement
+    expect(year.value).toBe('2026')
+    expect(year.disabled).toBe(true)
     const totalDays = screen.getByLabelText('Dni urlopowe (łącznie)')
     const reason = screen.getByLabelText('Powód korekty')
     await user.clear(totalDays)
@@ -122,7 +125,8 @@ describe('LeaveTabClient balance permissions', () => {
     await user.type(screen.getByLabelText('Powód korekty'), 'Korekta limitu')
     await user.click(screen.getByRole('button', { name: 'Zapisz' }))
 
-    expect(await screen.findByText('Korekta nie zmienia salda')).toBeTruthy()
+    expect((await screen.findByRole('alert')).textContent)
+      .toContain('Korekta nie zmienia salda')
     expect((screen.getByLabelText('Dni urlopowe (łącznie)') as HTMLInputElement).value)
       .toBe('20')
     expect((screen.getByLabelText('Powód korekty') as HTMLInputElement).value)

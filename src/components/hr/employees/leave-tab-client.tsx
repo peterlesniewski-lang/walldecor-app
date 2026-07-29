@@ -265,6 +265,8 @@ function BalanceModal({ mode, employeeId, balance, onClose, onSuccess }: Balance
               max={2100}
               value={year}
               onChange={(e) => setYear(e.target.value)}
+              disabled={mode === 'edit'}
+              className={mode === 'edit' ? 'bg-[var(--wd-surface-2)]' : undefined}
               required
             />
           </div>
@@ -306,7 +308,10 @@ function BalanceModal({ mode, employeeId, balance, onClose, onSuccess }: Balance
 
           {/* Error */}
           {error && (
-            <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
+            <p
+              role="alert"
+              className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2"
+            >
               {error}
             </p>
           )}
