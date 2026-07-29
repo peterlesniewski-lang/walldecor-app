@@ -8,7 +8,16 @@ import { EmployeeTabs } from './employee-tabs'
 import { EmployeeActions } from './employee-actions'
 import { getWeekRange } from '@/lib/hr/utils'
 import { LeaveTabClient } from '@/components/hr/employees/leave-tab-client'
+import {
+  LeaveEntitlementPanel,
+  type LeaveEntitlementPanelData,
+} from '@/components/hr/employees/leave-entitlement-panel'
 import { canViewEmployeeRecord } from '@/lib/hr/access'
+import {
+  calculateConfiguredEntitlement,
+  selectEffectiveEntitlement,
+  type LeaveEntitlementMode,
+} from '@/lib/hr/leave-entitlement'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -267,6 +276,124 @@ async function fetchEmployee(id: string, includeConfidential: boolean) {
   })
 }
 
+type LeaveEntitlementPanelResult = {
+  data: LeaveEntitlementPanelData
+  configurationError: string | null
+}
+
+async function fetchLeaveEntitlementPanelData(
+  employee: { id: string; startDate: Date },
+  year: number
+): Promise<LeaveEntitlementPanelResult> {
+  const vlType = await prisma.leaveType.findUnique({
+    where: { code: 'VL' },
+    select: { id: true },
+  })
+
+  if (!vlType) {
+    return {
+      data: {
+        config: null,
+        calculatedDays: null,
+        balance: null,
+        corrections: [],
+        needsReview: true,
+      },
+      configurationError: 'Nie skonfigurowano kanonicznego typu urlopu VL.',
+    }
+  }
+
+  const targetYearEnd = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999))
+  const [configs, balance, corrections] = await Promise.all([
+    prisma.leaveEntitlementConfig.findMany({
+      where: {
+        employeeId: employee.id,
+        effectiveFrom: { lte: targetYearEnd },
+      },
+      select: {
+        id: true,
+        mode: true,
+        customAnnualDays: true,
+        employmentFraction: true,
+        effectiveFrom: true,
+        note: true,
+        createdAt: true,
+      },
+    }),
+    prisma.leaveBalanceNew.findUnique({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId: employee.id,
+          leaveTypeId: vlType.id,
+          year,
+        },
+      },
+      select: {
+        id: true,
+        year: true,
+        totalDays: true,
+        usedDays: true,
+        pendingDays: true,
+        carriedOver: true,
+      },
+    }),
+    prisma.leaveBalanceCorrection.findMany({
+      where: {
+        employeeId: employee.id,
+        leaveTypeId: vlType.id,
+        year,
+      },
+      orderBy: { createdAt: 'desc' },
+      select: {
+        id: true,
+        createdAt: true,
+        reason: true,
+        beforeJson: true,
+        afterJson: true,
+      },
+    }),
+  ])
+
+  const config = selectEffectiveEntitlement(configs, targetYearEnd)
+  const mode = config?.mode as LeaveEntitlementMode | undefined
+  const calculatedDays = config && mode
+    ? calculateConfiguredEntitlement({
+        mode,
+        customAnnualDays: config.customAnnualDays,
+        employmentFraction: config.employmentFraction,
+        employmentStartDate: employee.startDate,
+        year,
+      })
+    : null
+
+  return {
+    data: {
+      config: config && mode
+        ? {
+            id: config.id,
+            mode,
+            customAnnualDays: config.customAnnualDays,
+            employmentFraction: config.employmentFraction,
+            effectiveFrom: config.effectiveFrom.toISOString(),
+            note: config.note,
+            createdAt: config.createdAt.toISOString(),
+          }
+        : null,
+      calculatedDays,
+      balance,
+      corrections: corrections.map((correction) => ({
+        id: correction.id,
+        createdAt: correction.createdAt.toISOString(),
+        reason: correction.reason,
+        beforeJson: correction.beforeJson,
+        afterJson: correction.afterJson,
+      })),
+      needsReview: config === null,
+    },
+    configurationError: null,
+  }
+}
+
 // ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default async function EmployeeProfilePage({ params }: Params) {
@@ -286,7 +413,10 @@ export default async function EmployeeProfilePage({ params }: Params) {
   if (!employee) notFound()
   if (!canViewEmployeeRecord(session, employee, viewerEmployee)) notFound()
 
-  const canEditLeave = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
+  const targetYear = new Date().getUTCFullYear()
+  const leaveEntitlement = isAdmin
+    ? await fetchLeaveEntitlementPanelData(employee, targetYear)
+    : null
 
   // Fetch current week time entries
   const { start, end } = getWeekRange(new Date())
@@ -314,37 +444,47 @@ export default async function EmployeeProfilePage({ params }: Params) {
       id: 'leave',
       label: 'Urlopy',
       content: (
-        <LeaveTabClient
-          employeeId={employee.id}
-          balances={employee.leaveBalancesNew.map((b) => ({
-            id: b.id,
-            year: b.year,
-            totalDays: b.totalDays,
-            usedDays: b.usedDays,
-            pendingDays: b.pendingDays,
-            carriedOver: b.carriedOver,
-            leaveType: {
-              id: b.leaveType.id,
-              name: b.leaveType.name,
-              code: b.leaveType.code,
-              color: b.leaveType.color,
-            },
-          }))}
-          requests={employee.leaveRequestsNew.map((r) => ({
-            id: r.id,
-            startDate: r.startDate.toISOString(),
-            endDate: r.endDate.toISOString(),
-            days: r.days,
-            status: r.status,
-            leaveType: {
-              id: r.leaveType.id,
-              name: r.leaveType.name,
-              code: r.leaveType.code,
-              color: r.leaveType.color,
-            },
-          }))}
-          canEdit={canEditLeave}
-        />
+        <div className="space-y-8">
+          {leaveEntitlement && (
+            <LeaveEntitlementPanel
+              employeeId={employee.id}
+              targetYear={targetYear}
+              initialData={leaveEntitlement.data}
+              configurationError={leaveEntitlement.configurationError}
+            />
+          )}
+          <LeaveTabClient
+            employeeId={employee.id}
+            balances={employee.leaveBalancesNew.map((b) => ({
+              id: b.id,
+              year: b.year,
+              totalDays: b.totalDays,
+              usedDays: b.usedDays,
+              pendingDays: b.pendingDays,
+              carriedOver: b.carriedOver,
+              leaveType: {
+                id: b.leaveType.id,
+                name: b.leaveType.name,
+                code: b.leaveType.code,
+                color: b.leaveType.color,
+              },
+            }))}
+            requests={employee.leaveRequestsNew.map((r) => ({
+              id: r.id,
+              startDate: r.startDate.toISOString(),
+              endDate: r.endDate.toISOString(),
+              days: r.days,
+              status: r.status,
+              leaveType: {
+                id: r.leaveType.id,
+                name: r.leaveType.name,
+                code: r.leaveType.code,
+                color: r.leaveType.color,
+              },
+            }))}
+            canEditBalance={isAdmin}
+          />
+        </div>
       ),
     },
   ]

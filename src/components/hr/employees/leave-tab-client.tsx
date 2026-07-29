@@ -6,6 +6,7 @@ import { Button } from '@/components/ui/button'
 import {
   Dialog,
   DialogContent,
+  DialogDescription,
   DialogHeader,
   DialogTitle,
   DialogFooter,
@@ -46,7 +47,7 @@ interface LeaveTabClientProps {
   employeeId: string
   balances: LeaveBalance[]
   requests: LeaveRequest[]
-  canEdit: boolean
+  canEditBalance: boolean
 }
 
 // ─── Status helpers ───────────────────────────────────────────────────────────
@@ -67,7 +68,13 @@ const STATUS_STYLES: Record<string, string> = {
 
 // ─── Empty state ──────────────────────────────────────────────────────────────
 
-function EmptyState({ canEdit, onAdd }: { canEdit: boolean; onAdd: () => void }) {
+function EmptyState({
+  canEditBalance,
+  onAdd,
+}: {
+  canEditBalance: boolean
+  onAdd: () => void
+}) {
   return (
     <div className="flex flex-col items-center justify-center py-16 text-center">
       <div
@@ -82,7 +89,7 @@ function EmptyState({ canEdit, onAdd }: { canEdit: boolean; onAdd: () => void })
       <p className="text-sm mb-4" style={{ color: 'var(--wd-text-muted)' }}>
         Nie przypisano jeszcze salda urlopowego.
       </p>
-      {canEdit && (
+      {canEditBalance && (
         <Button variant="outline" size="sm" onClick={onAdd} className="gap-2">
           <Plus className="w-3.5 h-3.5" />
           Dodaj saldo
@@ -108,16 +115,16 @@ function BalanceModal({ mode, employeeId, balance, onClose, onSuccess }: Balance
   const [year, setYear] = useState<string>(balance ? String(balance.year) : String(currentYear))
   const [leaveTypeId, setLeaveTypeId] = useState<string>('')
   const [totalDays, setTotalDays] = useState<string>(balance ? String(balance.totalDays) : '')
+  const [reason, setReason] = useState('')
 
   const [leaveTypes, setLeaveTypes] = useState<LeaveType[] | null>(null)
-  const [loadingTypes, setLoadingTypes] = useState(false)
+  const [loadingTypes, setLoadingTypes] = useState(mode === 'add')
   const [error, setError] = useState<string | null>(null)
   const [isPending, startTransition] = useTransition()
 
   // Fetch leave types on mount — only needed in "add" mode
   useEffect(() => {
     if (mode !== 'add') return
-    setLoadingTypes(true)
     fetch('/api/hr/leave-types')
       .then((r) => r.json())
       .then((data: LeaveType[]) => {
@@ -149,6 +156,11 @@ function BalanceModal({ mode, employeeId, balance, onClose, onSuccess }: Balance
       setError('Wybierz typ urlopu')
       return
     }
+    const normalizedReason = reason.trim()
+    if (mode === 'edit' && (normalizedReason.length < 3 || normalizedReason.length > 1000)) {
+      setError('Powód korekty musi mieć od 3 do 1000 znaków')
+      return
+    }
 
     startTransition(async () => {
       try {
@@ -168,7 +180,7 @@ function BalanceModal({ mode, employeeId, balance, onClose, onSuccess }: Balance
           res = await fetch(`/api/hr/leave-balances/${balance!.id}`, {
             method: 'PATCH',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ totalDays: daysNum }),
+            body: JSON.stringify({ totalDays: daysNum, reason: normalizedReason }),
           })
         }
 
@@ -197,6 +209,11 @@ function BalanceModal({ mode, employeeId, balance, onClose, onSuccess }: Balance
           <DialogTitle>
             {mode === 'add' ? 'Dodaj saldo urlopowe' : 'Edytuj saldo urlopowe'}
           </DialogTitle>
+          <DialogDescription className="sr-only">
+            {mode === 'add'
+              ? 'Uzupełnij dane nowego salda urlopowego.'
+              : 'Zmień saldo i podaj wymagany powód korekty.'}
+          </DialogDescription>
         </DialogHeader>
 
         <form onSubmit={handleSubmit} className="space-y-4 py-2">
@@ -273,6 +290,20 @@ function BalanceModal({ mode, employeeId, balance, onClose, onSuccess }: Balance
             )}
           </div>
 
+          {mode === 'edit' && (
+            <div className="space-y-1.5">
+              <Label htmlFor="balanceCorrectionReason">Powód korekty</Label>
+              <Input
+                id="balanceCorrectionReason"
+                value={reason}
+                onChange={(e) => setReason(e.target.value)}
+                minLength={3}
+                maxLength={1000}
+                required
+              />
+            </div>
+          )}
+
           {/* Error */}
           {error && (
             <p className="text-sm text-red-600 bg-red-50 border border-red-200 rounded-md px-3 py-2">
@@ -297,7 +328,12 @@ function BalanceModal({ mode, employeeId, balance, onClose, onSuccess }: Balance
 
 // ─── Main component ───────────────────────────────────────────────────────────
 
-export function LeaveTabClient({ employeeId, balances, requests, canEdit }: LeaveTabClientProps) {
+export function LeaveTabClient({
+  employeeId,
+  balances,
+  requests,
+  canEditBalance,
+}: LeaveTabClientProps) {
   const router = useRouter()
   const [addOpen, setAddOpen] = useState(false)
   const [editBalance, setEditBalance] = useState<LeaveBalance | null>(null)
@@ -313,7 +349,10 @@ export function LeaveTabClient({ employeeId, balances, requests, canEdit }: Leav
   if (!hasData) {
     return (
       <>
-        <EmptyState canEdit={canEdit} onAdd={() => setAddOpen(true)} />
+        <EmptyState
+          canEditBalance={canEditBalance}
+          onAdd={() => setAddOpen(true)}
+        />
         {addOpen && (
           <BalanceModal
             mode="add"
@@ -333,7 +372,7 @@ export function LeaveTabClient({ employeeId, balances, requests, canEdit }: Leav
         <div>
           <div className="flex items-center justify-between mb-4">
             <h3 className="text-base font-semibold text-[var(--wd-text-primary)]">Saldo urlopowe</h3>
-            {canEdit && (
+            {canEditBalance && (
               <Button variant="outline" size="sm" onClick={() => setAddOpen(true)} className="gap-2">
                 <Plus className="w-3.5 h-3.5" />
                 Dodaj saldo
@@ -362,7 +401,7 @@ export function LeaveTabClient({ employeeId, balances, requests, canEdit }: Leav
                       <span className="text-sm num" style={{ color: 'var(--wd-text-muted)' }}>
                         {b.usedDays} / {b.totalDays} dni
                       </span>
-                      {canEdit && (
+                      {canEditBalance && (
                         <button
                           onClick={() => setEditBalance(b)}
                           className="p-1 rounded hover:bg-[var(--wd-surface-2)] text-[var(--wd-text-muted)] hover:text-[var(--wd-text-primary)] transition-colors"
@@ -400,7 +439,7 @@ export function LeaveTabClient({ employeeId, balances, requests, canEdit }: Leav
       )}
 
       {/* No balances yet but has requests — show add button */}
-      {balances.length === 0 && canEdit && (
+      {balances.length === 0 && canEditBalance && (
         <div className="flex items-center justify-between">
           <h3 className="text-base font-semibold text-[var(--wd-text-primary)]">Saldo urlopowe</h3>
           <Button variant="outline" size="sm" onClick={() => setAddOpen(true)} className="gap-2">
