@@ -420,6 +420,21 @@ export function LeaveEntitlementPanel({
         )}
       </div>
 
+      <p className="mt-3 flex flex-wrap items-baseline gap-x-2 text-sm">
+        <span className="text-[var(--wd-text-muted)]">Aktywny roczny wymiar</span>
+        <span
+          className={`num font-semibold tabular-nums ${
+            initialData.calculatedDays === null
+              ? 'text-[var(--wd-text-muted)]'
+              : 'text-[var(--wd-text-primary)]'
+          }`}
+        >
+          {initialData.calculatedDays === null
+            ? 'Nie wyliczono'
+            : formatDays(initialData.calculatedDays)}
+        </span>
+      </p>
+
       {configurationError ? (
         <p role="alert" className="mt-4 border-l-2 border-red-300 pl-3 text-sm text-red-700">
           {configurationError}

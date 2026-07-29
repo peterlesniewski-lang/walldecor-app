@@ -66,6 +66,29 @@ afterEach(() => {
 })
 
 describe('LeaveEntitlementPanel', () => {
+  it('shows the active calculated annual entitlement before preview', () => {
+    renderPanel()
+
+    const activeResult = screen.getByText('Aktywny roczny wymiar').closest('p')!
+    expect(within(activeResult).getByText('26 dni')).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Zastosuj' }) as HTMLButtonElement).disabled)
+      .toBe(true)
+  })
+
+  it('shows no misleading numeric entitlement when the active result is unavailable', () => {
+    renderPanel({
+      config: null,
+      calculatedDays: null,
+      balance: null,
+      corrections: [],
+      needsReview: true,
+    })
+
+    const activeResult = screen.getByText('Aktywny roczny wymiar').closest('p')!
+    expect(within(activeResult).getByText('Nie wyliczono')).toBeTruthy()
+    expect(within(activeResult).queryByText(/\d+ dni/)).toBeNull()
+  })
+
   it('marks missing effective configuration for review', () => {
     renderPanel({
       config: null,
