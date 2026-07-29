@@ -4,6 +4,7 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { defaultCostTagSeedRows } from '../src/lib/finance/cost-tags'
 import { buildAdminSeedUserUpsert } from '../src/lib/accounts/seed-admin'
+import { SYSTEM_LEAVE_TYPES } from '../src/lib/hr/leave-type-catalog'
 
 const prisma = new PrismaClient()
 
@@ -259,23 +260,6 @@ const POLISH_HOLIDAYS = [
   { name: 'Święto Niepodległości', date: new Date('2026-11-11'), country: 'PL' },
   { name: 'Boże Narodzenie', date: new Date('2026-12-25'), country: 'PL' },
   { name: 'Drugi dzień Bożego Narodzenia', date: new Date('2026-12-26'), country: 'PL' },
-]
-
-const LEAVE_TYPES = [
-  { code: 'VL',  name: 'Urlop wypoczynkowy',       color: '#3B82F6', isPaid: true,  requiresApproval: true,  tracksBalance: true,  maxDaysPerYear: 26,   parentCode: null },
-  { code: 'VLD', name: 'Urlop na żądanie',          color: '#8B5CF6', isPaid: true,  requiresApproval: false, tracksBalance: true,  maxDaysPerYear: 4,    parentCode: 'VL' },
-  { code: 'SL',  name: 'Zwolnienie chorobowe',      color: '#EF4444', isPaid: true,  requiresApproval: false, tracksBalance: false, maxDaysPerYear: null, parentCode: null },
-  { code: 'RW',  name: 'Praca zdalna',              color: '#10B981', isPaid: true,  requiresApproval: true,  tracksBalance: true,  maxDaysPerYear: null, parentCode: null },
-  { code: 'RWO', name: 'Okazjonalna praca zdalna',  color: '#6EE7B7', isPaid: true,  requiresApproval: false, tracksBalance: true,  maxDaysPerYear: 24,   parentCode: null },
-  { code: 'DEL', name: 'Delegacja',                 color: '#7C3AED', isPaid: true,  requiresApproval: true,  tracksBalance: true,  maxDaysPerYear: null, parentCode: null },
-  { code: 'ML',  name: 'Urlop macierzyński',        color: '#EC4899', isPaid: true,  requiresApproval: true,  tracksBalance: true,  maxDaysPerYear: null, parentCode: null },
-  { code: 'PL',  name: 'Urlop tacierzyński',        color: '#F59E0B', isPaid: true,  requiresApproval: true,  tracksBalance: true,  maxDaysPerYear: null, parentCode: null },
-  { code: 'UO',  name: 'Urlop opiekuńczy',          color: '#F97316', isPaid: false, requiresApproval: true,  tracksBalance: true,  maxDaysPerYear: 5,    parentCode: null },
-  { code: 'OT',  name: 'Czas wolny za nadgodziny',  color: '#14B8A6', isPaid: true,  requiresApproval: true,  tracksBalance: true,  maxDaysPerYear: null, parentCode: null },
-  { code: 'FIL', name: 'Opieka nad chorym',         color: '#FB923C', isPaid: true,  requiresApproval: false, tracksBalance: true,  maxDaysPerYear: 2,    parentCode: null },
-  { code: 'VBL', name: 'Urlop dodatkowy',           color: '#60A5FA', isPaid: true,  requiresApproval: true,  tracksBalance: true,  maxDaysPerYear: null, parentCode: null },
-  { code: 'VSL', name: 'Urlop wolontariacki',       color: '#34D399', isPaid: false, requiresApproval: true,  tracksBalance: true,  maxDaysPerYear: 6,    parentCode: null },
-  { code: 'ZOW', name: 'Zwolnienie z pracy',        color: '#94A3B8', isPaid: true,  requiresApproval: true,  tracksBalance: true,  maxDaysPerYear: null, parentCode: null },
 ]
 
 const MONTH_END_PROCEDURES = [
@@ -580,7 +564,7 @@ async function main() {
   // 11. Leave Types (with parent relationships)
   // First pass: create all without parents
   const leaveTypeIds: Record<string, string> = {}
-  for (const lt of LEAVE_TYPES) {
+  for (const lt of SYSTEM_LEAVE_TYPES) {
     const created = await prisma.leaveType.upsert({
       where: { code: lt.code },
       update: {
@@ -606,7 +590,7 @@ async function main() {
   }
 
   // Second pass: set parent relationships
-  for (const lt of LEAVE_TYPES) {
+  for (const lt of SYSTEM_LEAVE_TYPES) {
     if (lt.parentCode) {
       await prisma.leaveType.update({
         where: { code: lt.code },
@@ -614,7 +598,7 @@ async function main() {
       })
     }
   }
-  console.log('Leave types seeded (14)')
+  console.log(`Leave types seeded (${SYSTEM_LEAVE_TYPES.length})`)
 
   // 12. TimeTrackingRule per division
   await prisma.timeTrackingRule.upsert({
