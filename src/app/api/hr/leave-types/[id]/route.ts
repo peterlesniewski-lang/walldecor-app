@@ -10,6 +10,7 @@ const leaveTypeUpdateSchema = z.object({
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).optional(),
   isPaid: z.boolean().optional(),
   requiresApproval: z.boolean().optional(),
+  tracksBalance: z.boolean().optional(),
   maxDaysPerYear: z.number().int().min(1).nullable().optional(),
   parentId: z.string().nullable().optional(),
   isActive: z.boolean().optional(),

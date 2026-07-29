@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { canViewEmployeeRecord } from '@/lib/hr/access'
+import { shouldTrackLeaveBalance } from '@/lib/hr/leave-balance-policy'
 
 const rejectSchema = z.object({
   rejectionNote: z.string().min(1, 'Powód odrzucenia jest wymagany'),
@@ -63,15 +64,18 @@ export async function PATCH(
 
   // Pobierz saldo aby zaktualizować pendingDays
   const year = leaveRequest.startDate.getFullYear()
-  const balance = await prisma.leaveBalanceNew.findUnique({
-    where: {
-      employeeId_leaveTypeId_year: {
-        employeeId: leaveRequest.employeeId,
-        leaveTypeId: leaveRequest.leaveTypeId,
-        year,
-      },
-    },
-  })
+  const tracksBalance = shouldTrackLeaveBalance(leaveRequest.leaveType, leaveRequest)
+  const balance = tracksBalance
+    ? await prisma.leaveBalanceNew.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: leaveRequest.employeeId,
+            leaveTypeId: leaveRequest.leaveTypeId,
+            year,
+          },
+        },
+      })
+    : null
 
   // 1 & 2. Transakcja: zaktualizuj wniosek + saldo
   const updated = await prisma.$transaction(async (tx) => {

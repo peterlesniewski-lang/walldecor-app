@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { canViewEmployeeRecord } from '@/lib/hr/access'
+import { shouldTrackLeaveBalance } from '@/lib/hr/leave-balance-policy'
 
 export async function PATCH(
   _req: NextRequest,
@@ -55,15 +56,18 @@ export async function PATCH(
 
   // 2. Pobierz saldo urlopowe
   const year = leaveRequest.startDate.getFullYear()
-  const balance = await prisma.leaveBalanceNew.findUnique({
-    where: {
-      employeeId_leaveTypeId_year: {
-        employeeId: leaveRequest.employeeId,
-        leaveTypeId: leaveRequest.leaveTypeId,
-        year,
-      },
-    },
-  })
+  const tracksBalance = shouldTrackLeaveBalance(leaveRequest.leaveType, leaveRequest)
+  const balance = tracksBalance
+    ? await prisma.leaveBalanceNew.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId: leaveRequest.employeeId,
+            leaveTypeId: leaveRequest.leaveTypeId,
+            year,
+          },
+        },
+      })
+    : null
 
   // 3. Walidacja salda
   if (balance) {

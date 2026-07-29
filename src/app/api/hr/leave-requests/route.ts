@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { leaveRequestCreateSchema } from '@/lib/hr/schemas'
 import { calculateWorkingDays } from '@/lib/hr/utils'
+import { shouldTrackLeaveBalance } from '@/lib/hr/leave-balance-policy'
 import {
   canViewEmployeeRecord,
   getScopedEmployeeWhere,
@@ -148,9 +149,13 @@ export async function POST(req: NextRequest) {
   }
 
   const year = startDate.getFullYear()
+  const tracksBalance = shouldTrackLeaveBalance(leaveType, {
+    isRemoteWork,
+    isDelegation,
+  })
 
-  // Check balance availability (skip for remote work and delegation)
-  if (!isRemoteWork && !isDelegation) {
+  // Check balance availability only for leave types that consume an entitlement.
+  if (tracksBalance) {
     const balance = await prisma.leaveBalanceNew.findUnique({
       where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
     })
@@ -232,8 +237,7 @@ export async function POST(req: NextRequest) {
       },
     })
 
-    // Update pendingDays balance (only if balance-tracked type)
-    if (!isRemoteWork && !isDelegation) {
+    if (tracksBalance) {
       await tx.leaveBalanceNew.update({
         where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
         data: { pendingDays: { increment: days } },

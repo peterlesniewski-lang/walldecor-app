@@ -754,6 +754,7 @@ model LeaveType {
   color            String        @default("#3B82F6")
   isPaid           Boolean       @default(true)
   requiresApproval Boolean       @default(true)
+  tracksBalance    Boolean       @default(true)
   maxDaysPerYear   Int?
   isActive         Boolean       @default(true)
   parentId         String?

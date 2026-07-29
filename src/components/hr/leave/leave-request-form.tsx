@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import { X, Calendar, Info, AlertCircle, Loader2 } from 'lucide-react'
 import { EmployeeSelect } from '@/components/hr/employees/employee-select'
+import { shouldTrackLeaveBalance } from '@/lib/hr/leave-balance-policy'
 import { calculateWorkingDays } from '@/lib/hr/utils'
 
 interface LeaveType {
@@ -12,6 +13,7 @@ interface LeaveType {
   color: string
   isPaid: boolean
   requiresApproval: boolean
+  tracksBalance: boolean
 }
 
 interface LeaveBalance {
@@ -58,15 +60,15 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
 
   const currentYear = new Date().getFullYear()
 
-  // Admin: load all leave types on mount so dropdown is always populated
+  // Load all active types so non-balance leave (for example sick leave) is
+  // available even when the employee has no LeaveBalanceNew record.
   useEffect(() => {
-    if (!isAdmin) return
-    fetch('/api/hr/leave-types')
+    fetch('/api/hr/leave-types?activeOnly=true')
       .then((r) => r.json())
       .then((data: unknown) => {
         const list = Array.isArray(data) ? data as LeaveType[] : (data as { leaveTypes?: LeaveType[] }).leaveTypes ?? []
         setAllLeaveTypes(list)
-        if (list.length > 0 && !leaveTypeId) setLeaveTypeId(list[0].id)
+        if (isAdmin && list.length > 0 && !leaveTypeId) setLeaveTypeId(list[0].id)
       })
       .catch(() => {})
   // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -118,6 +120,9 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
   }, [loadOnDemandCount])
 
   const selectedBalance = balances.find((b) => b.leaveTypeId === leaveTypeId)
+  const selectedLeaveType =
+    allLeaveTypes.find((leaveType) => leaveType.id === leaveTypeId) ??
+    selectedBalance?.leaveType
   const available = selectedBalance
     ? selectedBalance.totalDays - selectedBalance.usedDays - selectedBalance.pendingDays
     : 0
@@ -127,8 +132,11 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
       ? calculateWorkingDays(new Date(startDate), new Date(endDate))
       : 0
 
+  const tracksBalance = selectedLeaveType
+    ? shouldTrackLeaveBalance(selectedLeaveType, { isRemoteWork })
+    : !isRemoteWork
   const hasEnoughBalance =
-    isRemoteWork || available >= workingDays || workingDays === 0
+    !tracksBalance || available >= workingDays || workingDays === 0
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -235,29 +243,27 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
           className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-white text-[var(--wd-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--wd-dark)]/20 focus:border-[var(--wd-dark)] transition-colors"
         >
           <option value="">Wybierz typ urlopu…</option>
-          {isAdmin
-            ? allLeaveTypes.map((lt) => {
-                const bal = balances.find((b) => b.leaveTypeId === lt.id)
-                const avail = bal ? bal.totalDays - bal.usedDays - bal.pendingDays : null
-                return (
-                  <option key={lt.id} value={lt.id}>
-                    {lt.code} — {lt.name}{avail !== null ? ` (${avail % 1 === 0 ? avail : avail.toFixed(1)} dni pozostałych)` : ''}
-                  </option>
-                )
-              })
-            : balances.map((b) => {
-                const avail = b.totalDays - b.usedDays - b.pendingDays
-                return (
-                  <option key={b.leaveTypeId} value={b.leaveTypeId}>
-                    {b.leaveType.code} — {b.leaveType.name} ({avail % 1 === 0 ? avail : avail.toFixed(1)} dni pozostałych)
-                  </option>
-                )
-              })
-          }
+          {(allLeaveTypes.length > 0 ? allLeaveTypes : balances.map((balance) => balance.leaveType))
+            .map((leaveType) => {
+              const balance = balances.find((item) => item.leaveTypeId === leaveType.id)
+              const leaveAvailable = balance
+                ? balance.totalDays - balance.usedDays - balance.pendingDays
+                : null
+              const balanceLabel =
+                leaveType.tracksBalance && leaveAvailable !== null
+                  ? ` (${leaveAvailable % 1 === 0 ? leaveAvailable : leaveAvailable.toFixed(1)} dni pozostałych)`
+                  : ''
+
+              return (
+                <option key={leaveType.id} value={leaveType.id}>
+                  {leaveType.code} — {leaveType.name}{balanceLabel}
+                </option>
+              )
+            })}
         </select>
 
         {/* Balance progress */}
-        {selectedBalance && (
+        {tracksBalance && selectedBalance && (
           <div className="mt-1 flex flex-col gap-1">
             <div className="h-1.5 rounded-full bg-[var(--wd-surface-2)] overflow-hidden">
               <div
@@ -280,10 +286,15 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
             </div>
           </div>
         )}
+        {selectedLeaveType && !tracksBalance && (
+          <p className="mt-1 text-[11px] text-[var(--wd-text-muted)]">
+            Ten typ nie pomniejsza salda urlopowego.
+          </p>
+        )}
       </div>
 
       {/* On demand */}
-      {selectedBalance && (
+      {tracksBalance && selectedBalance && (
         <label className="flex items-start gap-2.5 cursor-pointer">
           <input
             type="checkbox"
@@ -367,7 +378,7 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
       </div>
 
       {/* Insufficient balance warning */}
-      {workingDays > 0 && !hasEnoughBalance && (
+      {workingDays > 0 && tracksBalance && !hasEnoughBalance && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
           <AlertCircle size={14} className="shrink-0" />
           <span>
@@ -416,7 +427,7 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
       </div>
 
       {/* Info */}
-      {selectedBalance?.leaveType.requiresApproval && (
+      {selectedLeaveType?.requiresApproval && (
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-[var(--wd-surface-2)] text-[var(--wd-text-muted)] text-xs">
           <Info size={12} className="shrink-0" />
           <span>Ten typ urlopu wymaga zatwierdzenia przez przełożonego</span>

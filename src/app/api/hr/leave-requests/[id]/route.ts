@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { canViewEmployeeRecord } from '@/lib/hr/access'
+import { shouldTrackLeaveBalance } from '@/lib/hr/leave-balance-policy'
 
 export async function GET(
   req: NextRequest,
@@ -65,6 +66,11 @@ export async function DELETE(
 
   const request = await prisma.leaveRequestNew.findUnique({
     where: { id },
+    include: {
+      leaveType: {
+        select: { tracksBalance: true },
+      },
+    },
   })
 
   if (!request) return NextResponse.json({ error: 'Not found' }, { status: 404 })
@@ -92,7 +98,7 @@ export async function DELETE(
     })
 
     // Restore pending days if balance-tracked
-    if (!request.isRemoteWork && !request.isDelegation) {
+    if (shouldTrackLeaveBalance(request.leaveType, request)) {
       const year = request.startDate.getFullYear()
       await tx.leaveBalanceNew.updateMany({
         where: {

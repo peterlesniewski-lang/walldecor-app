@@ -10,6 +10,7 @@ const leaveTypeCreateSchema = z.object({
   color: z.string().regex(/^#[0-9A-Fa-f]{6}$/).default('#3B82F6'),
   isPaid: z.boolean().default(true),
   requiresApproval: z.boolean().default(true),
+  tracksBalance: z.boolean().default(true),
   maxDaysPerYear: z.number().int().min(1).optional(),
   parentId: z.string().optional(),
 })

@@ -107,7 +107,7 @@ export async function POST(req: NextRequest) {
 
   if (annualDays > 0) {
     const leaveTypes = await prisma.leaveType.findMany({
-      where: { isActive: true, isPaid: true },
+      where: { isActive: true, isPaid: true, tracksBalance: true },
       select: { id: true },
     })
     if (leaveTypes.length > 0) {
