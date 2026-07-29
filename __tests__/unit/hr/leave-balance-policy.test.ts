@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   isOnDemandLeave,
+  LeaveBalancePolicyConfigurationError,
   resolveLeaveBalancePoolId,
   shouldTrackLeaveBalance,
 } from '@/lib/hr/leave-balance-policy'
@@ -34,8 +35,19 @@ describe('leave balance pool policy', () => {
     expect(resolveLeaveBalancePoolId(vld)).toBe('vl')
   })
 
-  it('does not use a balance pool when VLD has no parent', () => {
-    expect(resolveLeaveBalancePoolId({ ...vld, parentId: null })).toBeNull()
+  it('fails closed when VLD has no parent balance pool', () => {
+    expect(() => resolveLeaveBalancePoolId({
+      ...vld,
+      parentId: null,
+    })).toThrow(LeaveBalancePolicyConfigurationError)
+  })
+
+  it('fails closed when a runtime VLD object is missing parentId', () => {
+    expect(() => resolveLeaveBalancePoolId({
+      id: 'vld',
+      code: 'VLD',
+      tracksBalance: true,
+    } as never)).toThrow(LeaveBalancePolicyConfigurationError)
   })
 
   it('uses the leave type own pool for ordinary tracked leave', () => {
@@ -65,8 +77,12 @@ describe('leave balance pool policy', () => {
     expect(shouldTrackLeaveBalance(legacyVld)).toBe(true)
     expect(resolveLeaveBalancePoolId(canonicalVld)).toBe('vl')
     expect(shouldTrackLeaveBalance(canonicalVld)).toBe(true)
-    expect(resolveLeaveBalancePoolId(canonicalVldWithoutParent)).toBeNull()
-    expect(shouldTrackLeaveBalance(canonicalVldWithoutParent)).toBe(false)
+    expect(() => resolveLeaveBalancePoolId(canonicalVldWithoutParent)).toThrow(
+      LeaveBalancePolicyConfigurationError
+    )
+    expect(() => shouldTrackLeaveBalance(canonicalVldWithoutParent)).toThrow(
+      LeaveBalancePolicyConfigurationError
+    )
   })
 
   it('recognizes VLD by type even for historical rows with isOnDemand=false', () => {

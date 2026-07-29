@@ -17,13 +17,20 @@ type LegacyBalancePolicyLeaveType = {
   parentId?: string | null
 }
 
+export class LeaveBalancePolicyConfigurationError extends Error {}
+
 export function resolveLeaveBalancePoolId(
   leaveType: BalancePolicyLeaveType,
   request: LeaveRequestBalancePolicy = {}
 ): string | null {
+  if (leaveType.code === 'VLD' && !leaveType.parentId) {
+    throw new LeaveBalancePolicyConfigurationError(
+      'Typ urlopu VLD nie ma skonfigurowanej nadrzędnej puli VL'
+    )
+  }
   if (request.isRemoteWork || request.isDelegation) return null
   if (leaveType.code === 'SL' || leaveType.code === 'UB') return null
-  if (leaveType.code === 'VLD') return leaveType.parentId ?? null
+  if (leaveType.code === 'VLD') return leaveType.parentId
   return leaveType.tracksBalance ? leaveType.id : null
 }
 

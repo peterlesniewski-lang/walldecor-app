@@ -6,8 +6,13 @@ import { leaveRequestCreateSchema } from '@/lib/hr/schemas'
 import { calculateWorkingDays } from '@/lib/hr/utils'
 import {
   isOnDemandLeave,
+  LeaveBalancePolicyConfigurationError,
   resolveLeaveBalancePoolId,
 } from '@/lib/hr/leave-balance-policy'
+import {
+  runSerializableTransactionWithRetry,
+  SerializableTransactionConflictError,
+} from '@/lib/hr/serializable-transaction'
 import {
   canViewEmployeeRecord,
   getScopedEmployeeWhere,
@@ -26,27 +31,6 @@ class LeaveRequestDomainError extends Error {
     readonly payload: LeaveRequestErrorPayload
   ) {
     super(payload.error)
-  }
-}
-
-function isRetryableReservationConflict(error: unknown) {
-  if (!error || typeof error !== 'object' || !('code' in error)) return false
-
-  if (error.code === 'P2034') return true
-
-  return (
-    error.code === 'P2028' &&
-    error instanceof Error &&
-    error.message.includes('expired transaction')
-  )
-}
-
-async function runWithReservationRetry<T>(operation: () => Promise<T>) {
-  try {
-    return await operation()
-  } catch (error) {
-    if (!isRetryableReservationConflict(error)) throw error
-    return operation()
   }
 }
 
@@ -106,8 +90,8 @@ export async function GET(req: NextRequest) {
     const year = parseInt(yearParam, 10)
     if (!isNaN(year)) {
       where.startDate = {
-        gte: new Date(year, 0, 1),
-        lte: new Date(year, 11, 31, 23, 59, 59, 999),
+        gte: new Date(Date.UTC(year, 0, 1)),
+        lte: new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999)),
       }
     }
   }
@@ -184,129 +168,169 @@ export async function POST(req: NextRequest) {
   })
   if (!leaveType) return NextResponse.json({ error: 'Leave type not found' }, { status: 404 })
 
+  if (startDate.getUTCFullYear() !== endDate.getUTCFullYear()) {
+    return NextResponse.json(
+      { error: 'Wniosek urlopowy nie może obejmować dwóch lat kalendarzowych' },
+      { status: 422 }
+    )
+  }
+
+  let balancePoolId: string | null
+  try {
+    balancePoolId = resolveLeaveBalancePoolId(leaveType, {
+      isRemoteWork,
+      isDelegation,
+    })
+  } catch (error) {
+    if (error instanceof LeaveBalancePolicyConfigurationError) {
+      return NextResponse.json({ error: error.message }, { status: 503 })
+    }
+    throw error
+  }
+
   const days = calculateWorkingDays(startDate, endDate)
   if (days <= 0) {
     return NextResponse.json({ error: 'Wybrany zakres nie zawiera dni roboczych' }, { status: 422 })
   }
 
-  const overlap = await prisma.leaveRequestNew.findFirst({
-    where: {
-      employeeId,
-      status: { notIn: ['cancelled', 'rejected'] },
-      OR: [
-        { startDate: { lte: endDate }, endDate: { gte: startDate } },
-      ],
-    },
-  })
-
-  if (overlap) {
-    return NextResponse.json(
-      { error: 'Wniosek nakłada się z innym wnioskiem urlopowym' },
-      { status: 422 }
-    )
-  }
-
   const year = startDate.getUTCFullYear()
   const yearStart = new Date(Date.UTC(year, 0, 1))
   const yearEnd = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999))
-  const balancePoolId = resolveLeaveBalancePoolId(leaveType, {
-    isRemoteWork,
-    isDelegation,
-  })
   const canonicalOnDemand = isOnDemandLeave(leaveType, { isOnDemand })
 
   try {
-    const leaveRequest = await runWithReservationRetry(() => prisma.$transaction(async (tx) => {
-      const balance = balancePoolId
-        ? await tx.leaveBalanceNew.findUnique({
+    const leaveRequest = await runSerializableTransactionWithRetry(() =>
+      prisma.$transaction(
+        async (tx) => {
+          const overlap = await tx.leaveRequestNew.findFirst({
             where: {
-              employeeId_leaveTypeId_year: {
+              employeeId,
+              status: { notIn: ['cancelled', 'rejected'] },
+              OR: [
+                {
+                  startDate: { lte: endDate },
+                  endDate: { gte: startDate },
+                },
+              ],
+            },
+          })
+
+          if (overlap) {
+            throw new LeaveRequestDomainError(422, {
+              error: 'Wniosek nakłada się z innym wnioskiem urlopowym',
+            })
+          }
+
+          const balance = balancePoolId
+            ? await tx.leaveBalanceNew.findUnique({
+                where: {
+                  employeeId_leaveTypeId_year: {
+                    employeeId,
+                    leaveTypeId: balancePoolId,
+                    year,
+                  },
+                },
+              })
+            : null
+
+          if (balancePoolId && !balance) {
+            throw new LeaveRequestDomainError(422, {
+              error: 'Brak salda urlopowego dla tego typu urlopu',
+            })
+          }
+
+          if (balance) {
+            const available =
+              balance.totalDays - balance.usedDays - balance.pendingDays
+            if (available < days) {
+              throw new LeaveRequestDomainError(422, {
+                error: 'Niewystarczające saldo urlopowe',
+                available,
+                requested: days,
+              })
+            }
+          }
+
+          if (canonicalOnDemand) {
+            const usedOnDemand = await tx.leaveRequestNew.aggregate({
+              where: {
                 employeeId,
-                leaveTypeId: balancePoolId,
-                year,
+                status: { notIn: ['cancelled', 'rejected'] },
+                startDate: {
+                  gte: yearStart,
+                  lte: yearEnd,
+                },
+                OR: [
+                  { isOnDemand: true },
+                  { leaveType: { code: 'VLD' } },
+                ],
+              },
+              _sum: { days: true },
+            })
+
+            if ((usedOnDemand._sum.days ?? 0) + days > 4) {
+              throw new LeaveRequestDomainError(422, {
+                error:
+                  'Przekroczono limit urlopu na żądanie (maks. 4 dni w roku)',
+              })
+            }
+          }
+
+          const request = await tx.leaveRequestNew.create({
+            data: {
+              employeeId,
+              leaveTypeId,
+              startDate,
+              endDate,
+              days,
+              isOnDemand: canonicalOnDemand,
+              isRemoteWork,
+              isDelegation,
+              substituteId,
+              notifySubstitute,
+              note,
+              status: 'pending',
+            },
+            include: {
+              leaveType: true,
+              employee: {
+                select: {
+                  id: true,
+                  firstName: true,
+                  lastName: true,
+                  email: true,
+                  position: true,
+                },
               },
             },
           })
-        : null
 
-      if (balancePoolId && !balance) {
-        throw new LeaveRequestDomainError(422, {
-          error: 'Brak salda urlopowego dla tego typu urlopu',
-        })
-      }
+          if (balance) {
+            await tx.leaveBalanceNew.update({
+              where: { id: balance.id },
+              data: { pendingDays: { increment: days } },
+            })
+          }
 
-      if (balance) {
-        const available = balance.totalDays - balance.usedDays - balance.pendingDays
-        if (available < days) {
-          throw new LeaveRequestDomainError(422, {
-            error: 'Niewystarczające saldo urlopowe',
-            available,
-            requested: days,
-          })
-        }
-      }
-
-      if (canonicalOnDemand) {
-        const usedOnDemand = await tx.leaveRequestNew.aggregate({
-          where: {
-            employeeId,
-            status: { notIn: ['cancelled', 'rejected'] },
-            startDate: {
-              gte: yearStart,
-              lte: yearEnd,
-            },
-            OR: [
-              { isOnDemand: true },
-              { leaveType: { code: 'VLD' } },
-            ],
-          },
-          _sum: { days: true },
-        })
-
-        if ((usedOnDemand._sum.days ?? 0) + days > 4) {
-          throw new LeaveRequestDomainError(422, {
-            error: 'Przekroczono limit urlopu na żądanie (maks. 4 dni w roku)',
-          })
-        }
-      }
-
-      const request = await tx.leaveRequestNew.create({
-        data: {
-          employeeId,
-          leaveTypeId,
-          startDate,
-          endDate,
-          days,
-          isOnDemand: canonicalOnDemand,
-          isRemoteWork,
-          isDelegation,
-          substituteId,
-          notifySubstitute,
-          note,
-          status: 'pending',
+          return request
         },
-        include: {
-          leaveType: true,
-          employee: {
-            select: { id: true, firstName: true, lastName: true, email: true, position: true },
-          },
-        },
-      })
-
-      if (balance) {
-        await tx.leaveBalanceNew.update({
-          where: { id: balance.id },
-          data: { pendingDays: { increment: days } },
-        })
-      }
-
-      return request
-    }, { isolationLevel: 'Serializable' }))
+        { isolationLevel: 'Serializable' }
+      )
+    )
 
     return NextResponse.json(leaveRequest, { status: 201 })
   } catch (error) {
     if (error instanceof LeaveRequestDomainError) {
       return NextResponse.json(error.payload, { status: error.status })
+    }
+    if (error instanceof SerializableTransactionConflictError) {
+      return NextResponse.json(
+        {
+          error:
+            'Wniosek nie został zapisany z powodu równoczesnej zmiany. Spróbuj ponownie.',
+        },
+        { status: 409 }
+      )
     }
     throw error
   }

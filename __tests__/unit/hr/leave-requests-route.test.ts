@@ -55,6 +55,7 @@ const mockTransaction = vi.mocked(prisma.$transaction)
 const txRequestCreate = vi.fn()
 const txRequestUpdate = vi.fn()
 const txRequestUpdateMany = vi.fn()
+const txRequestFindFirst = vi.fn()
 const txRequestFindUnique = vi.fn()
 const txRequestAggregate = vi.fn()
 const txBalanceFindUnique = vi.fn()
@@ -66,6 +67,7 @@ const tx = {
     create: txRequestCreate,
     update: txRequestUpdate,
     updateMany: txRequestUpdateMany,
+    findFirst: txRequestFindFirst,
     findUnique: txRequestFindUnique,
     aggregate: txRequestAggregate,
   },
@@ -246,6 +248,7 @@ beforeEach(() => {
     status: 'pending',
   })
   txRequestUpdateMany.mockResolvedValue({ count: 1 })
+  txRequestFindFirst.mockResolvedValue(null)
   txRequestAggregate.mockResolvedValue({ _sum: { days: 0 } })
   txBalanceFindUnique.mockResolvedValue(null)
   txBalanceUpdate.mockResolvedValue(balance())
@@ -275,9 +278,119 @@ describe('GET /api/hr/leave-requests', () => {
     expect(body).toEqual([])
     expect(mockFindMany).not.toHaveBeenCalled()
   })
+
+  it('uses canonical UTC boundaries for the year filter', async () => {
+    mockFindMany.mockResolvedValue([])
+
+    const response = await GET(request(
+      'GET',
+      undefined,
+      'http://localhost/api/hr/leave-requests?year=2026'
+    ))
+
+    expect(response.status).toBe(200)
+    expect(mockFindMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({
+        startDate: {
+          gte: new Date('2026-01-01T00:00:00.000Z'),
+          lte: new Date('2026-12-31T23:59:59.999Z'),
+        },
+      }),
+    }))
+  })
 })
 
 describe('POST /api/hr/leave-requests', () => {
+  it('rejects a UTC calendar-year crossing before starting a transaction', async () => {
+    const response = await postLeave({
+      startDate: '2026-12-31',
+      endDate: '2027-01-04',
+    })
+
+    expect(response.status).toBe(422)
+    expect(mockTransaction).not.toHaveBeenCalled()
+    expect(txRequestCreate).not.toHaveBeenCalled()
+    expect(txBalanceUpdate).not.toHaveBeenCalled()
+  })
+
+  it('returns 503 before mutation when VLD has no parent pool', async () => {
+    mockLeaveTypeFindUnique.mockResolvedValue(
+      leaveType('VLD', { parentId: null }) as never
+    )
+
+    const response = await postLeave({
+      leaveTypeId: 'leave-type-vld',
+      isOnDemand: false,
+    })
+
+    expect(response.status).toBe(503)
+    expect(mockTransaction).not.toHaveBeenCalled()
+    expect(txRequestCreate).not.toHaveBeenCalled()
+    expect(txBalanceUpdate).not.toHaveBeenCalled()
+  })
+
+  it('checks overlap inside the transaction before balance or request writes', async () => {
+    txRequestFindFirst.mockResolvedValue({ id: 'overlap' })
+
+    const response = await postLeave()
+
+    expect(response.status).toBe(422)
+    expect(mockRequestFindFirst).not.toHaveBeenCalled()
+    expect(txRequestFindFirst).toHaveBeenCalledWith({
+      where: {
+        employeeId: employee.id,
+        status: { notIn: ['cancelled', 'rejected'] },
+        OR: [
+          {
+            startDate: { lte: new Date('2026-07-29T00:00:00.000Z') },
+            endDate: { gte: new Date('2026-07-29T00:00:00.000Z') },
+          },
+        ],
+      },
+    })
+    expect(txBalanceFindUnique).not.toHaveBeenCalled()
+    expect(txRequestCreate).not.toHaveBeenCalled()
+    expect(txBalanceUpdate).not.toHaveBeenCalled()
+  })
+
+  it('rechecks overlap after a transaction conflict before creating', async () => {
+    txRequestFindFirst
+      .mockRejectedValueOnce(Object.assign(new Error('Write conflict'), {
+        code: 'P2034',
+      }))
+      .mockResolvedValueOnce({ id: 'overlap-after-retry' })
+
+    const response = await postLeave()
+
+    expect(response.status).toBe(422)
+    expect(mockTransaction).toHaveBeenCalledTimes(2)
+    expect(txRequestFindFirst).toHaveBeenCalledTimes(2)
+    expect(txRequestCreate).not.toHaveBeenCalled()
+    expect(txBalanceUpdate).not.toHaveBeenCalled()
+  })
+
+  it('maps exhausted transaction conflicts to a controlled 409', async () => {
+    mockTransaction.mockRejectedValue(Object.assign(
+      new Error('Transaction failed due to a write conflict'),
+      { code: 'P2034' }
+    ))
+
+    const response = await postLeave()
+
+    expect(response.status).toBe(409)
+    expect(mockTransaction).toHaveBeenCalledTimes(3)
+    expect(txRequestCreate).not.toHaveBeenCalled()
+    expect(txBalanceUpdate).not.toHaveBeenCalled()
+  })
+
+  it('propagates a non-retryable transaction failure', async () => {
+    const failure = new Error('Database connection lost')
+    mockTransaction.mockRejectedValue(failure)
+
+    await expect(postLeave()).rejects.toBe(failure)
+    expect(mockTransaction).toHaveBeenCalledOnce()
+  })
+
   it.each([
     ['SL', 'leave-type-sl'],
     ['UB', 'leave-type-ub'],
@@ -490,6 +603,18 @@ describe('POST /api/hr/leave-requests', () => {
 })
 
 describe('PATCH /api/hr/leave-requests/[id]/approve', () => {
+  it('returns 503 before mutation when VLD has no parent pool', async () => {
+    arrangeLifecycle(leaveType('VLD', { parentId: null }))
+
+    const response = await approveLeave(request('PATCH'), params())
+
+    expect(response.status).toBe(503)
+    expect(mockTransaction).not.toHaveBeenCalled()
+    expect(txRequestUpdateMany).not.toHaveBeenCalled()
+    expect(txBalanceUpdate).not.toHaveBeenCalled()
+    expect(mockNotificationCreate).not.toHaveBeenCalled()
+  })
+
   it('moves VLD pending days to used days on the parent VL balance id', async () => {
     arrangeLifecycle()
     txBalanceFindUnique.mockResolvedValue(balance())
@@ -582,9 +707,43 @@ describe('PATCH /api/hr/leave-requests/[id]/approve', () => {
     expect(mockNotificationCreate).toHaveBeenCalledTimes(1)
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
+
+  it('retries P2028 and returns deterministic 409 when another lifecycle action won', async () => {
+    arrangeLifecycle()
+    txRequestUpdateMany.mockResolvedValue({ count: 0 })
+    mockTransaction
+      .mockRejectedValueOnce(Object.assign(
+        new Error('Transaction already closed because of an expired transaction'),
+        { code: 'P2028' }
+      ))
+      .mockImplementationOnce(async (callback) => callback(tx as never) as never)
+
+    const response = await approveLeave(request('PATCH'), params())
+
+    expect(response.status).toBe(409)
+    expect(mockTransaction).toHaveBeenCalledTimes(2)
+    expect(txBalanceFindUnique).not.toHaveBeenCalled()
+    expect(txBalanceUpdate).not.toHaveBeenCalled()
+    expect(mockNotificationCreate).not.toHaveBeenCalled()
+  })
 })
 
 describe('PATCH /api/hr/leave-requests/[id]/reject', () => {
+  it('returns 503 before mutation when VLD has no parent pool', async () => {
+    arrangeLifecycle(leaveType('VLD', { parentId: null }))
+
+    const response = await rejectLeave(
+      request('PATCH', { rejectionNote: 'Brak obsady' }),
+      params()
+    )
+
+    expect(response.status).toBe(503)
+    expect(mockTransaction).not.toHaveBeenCalled()
+    expect(txRequestUpdateMany).not.toHaveBeenCalled()
+    expect(txBalanceUpdate).not.toHaveBeenCalled()
+    expect(mockNotificationCreate).not.toHaveBeenCalled()
+  })
+
   it('decrements VLD pending days on the parent VL balance id', async () => {
     arrangeLifecycle()
     txBalanceFindUnique.mockResolvedValue(balance())
@@ -671,6 +830,17 @@ describe('PATCH /api/hr/leave-requests/[id]/reject', () => {
 })
 
 describe('DELETE /api/hr/leave-requests/[id]', () => {
+  it('returns 503 before mutation when VLD has no parent pool', async () => {
+    arrangeLifecycle(leaveType('VLD', { parentId: null }))
+
+    const response = await cancelLeave(request('DELETE'), params())
+
+    expect(response.status).toBe(503)
+    expect(mockTransaction).not.toHaveBeenCalled()
+    expect(txRequestUpdateMany).not.toHaveBeenCalled()
+    expect(txBalanceUpdate).not.toHaveBeenCalled()
+  })
+
   it('decrements VLD pending days on the parent VL balance id', async () => {
     arrangeLifecycle()
     txBalanceFindUnique.mockResolvedValue(balance())

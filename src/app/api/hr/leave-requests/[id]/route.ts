@@ -3,7 +3,14 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { canViewEmployeeRecord } from '@/lib/hr/access'
-import { resolveLeaveBalancePoolId } from '@/lib/hr/leave-balance-policy'
+import {
+  LeaveBalancePolicyConfigurationError,
+  resolveLeaveBalancePoolId,
+} from '@/lib/hr/leave-balance-policy'
+import {
+  runSerializableTransactionWithRetry,
+  SerializableTransactionConflictError,
+} from '@/lib/hr/serializable-transaction'
 
 class LeaveCancellationError extends Error {
   constructor(
@@ -104,50 +111,66 @@ export async function DELETE(
   }
 
   const year = request.startDate.getUTCFullYear()
-  const balancePoolId = resolveLeaveBalancePoolId(request.leaveType, request)
+  let balancePoolId: string | null
+  try {
+    balancePoolId = resolveLeaveBalancePoolId(request.leaveType, request)
+  } catch (error) {
+    if (error instanceof LeaveBalancePolicyConfigurationError) {
+      return NextResponse.json({ error: error.message }, { status: 503 })
+    }
+    throw error
+  }
 
   try {
-    await prisma.$transaction(async (tx) => {
-      const transition = await tx.leaveRequestNew.updateMany({
-        where: { id, status: 'pending' },
-        data: { status: 'cancelled' },
-      })
-
-      if (transition.count !== 1) {
-        throw new LeaveCancellationError(409, 'Wniosek został już przetworzony')
-      }
-
-      if (balancePoolId) {
-        const balance = await tx.leaveBalanceNew.findUnique({
-          where: {
-            employeeId_leaveTypeId_year: {
-              employeeId: request.employeeId,
-              leaveTypeId: balancePoolId,
-              year,
-            },
-          },
+    await runSerializableTransactionWithRetry(() =>
+      prisma.$transaction(async (tx) => {
+        const transition = await tx.leaveRequestNew.updateMany({
+          where: { id, status: 'pending' },
+          data: { status: 'cancelled' },
         })
 
-        // Historical requests may outlive an erroneous or deleted balance row.
-        // Cancellation can still proceed because it only releases entitlement.
-        if (balance) {
-          if (balance.pendingDays < request.days) {
-            throw new LeaveCancellationError(
-              409,
-              'Saldo oczekujących dni jest niższe niż liczba dni wniosku'
-            )
-          }
-
-          await tx.leaveBalanceNew.update({
-            where: { id: balance.id },
-            data: { pendingDays: { decrement: request.days } },
-          })
+        if (transition.count !== 1) {
+          throw new LeaveCancellationError(409, 'Wniosek został już przetworzony')
         }
-      }
-    }, { isolationLevel: 'Serializable' })
+
+        if (balancePoolId) {
+          const balance = await tx.leaveBalanceNew.findUnique({
+            where: {
+              employeeId_leaveTypeId_year: {
+                employeeId: request.employeeId,
+                leaveTypeId: balancePoolId,
+                year,
+              },
+            },
+          })
+
+          // Historical requests may outlive an erroneous or deleted balance row.
+          // Cancellation can still proceed because it only releases entitlement.
+          if (balance) {
+            if (balance.pendingDays < request.days) {
+              throw new LeaveCancellationError(
+                409,
+                'Saldo oczekujących dni jest niższe niż liczba dni wniosku'
+              )
+            }
+
+            await tx.leaveBalanceNew.update({
+              where: { id: balance.id },
+              data: { pendingDays: { decrement: request.days } },
+            })
+          }
+        }
+      }, { isolationLevel: 'Serializable' })
+    )
   } catch (error) {
     if (error instanceof LeaveCancellationError) {
       return NextResponse.json({ error: error.message }, { status: error.status })
+    }
+    if (error instanceof SerializableTransactionConflictError) {
+      return NextResponse.json(
+        { error: 'Wniosek został zmieniony równocześnie. Spróbuj ponownie.' },
+        { status: 409 }
+      )
     }
     throw error
   }

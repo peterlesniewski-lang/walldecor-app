@@ -43,6 +43,32 @@ describe('getPolishHolidays', () => {
 })
 
 describe('calculateWorkingDays', () => {
+  it('counts a UTC-midnight four-day VLD range consistently', () => {
+    const start = new Date('2026-07-27T00:00:00.000Z')
+    const end = new Date('2026-07-30T00:00:00.000Z')
+
+    expect(calculateWorkingDays(start, end)).toBe(4)
+  })
+
+  it('skips a UTC-midnight weekend without shifting calendar dates', () => {
+    const start = new Date('2026-07-31T00:00:00.000Z')
+    const end = new Date('2026-08-03T00:00:00.000Z')
+
+    expect(calculateWorkingDays(start, end)).toBe(2)
+  })
+
+  it('matches Polish holidays using UTC YYYY-MM-DD', () => {
+    const independenceDay = new Date('2026-11-11T00:00:00.000Z')
+
+    expect(calculateWorkingDays(independenceDay, independenceDay)).toBe(0)
+  })
+
+  it('matches extra holidays using the canonical UTC date', () => {
+    const day = new Date('2026-07-29T00:00:00.000Z')
+
+    expect(calculateWorkingDays(day, day, ['2026-07-29'])).toBe(0)
+  })
+
   it('skips weekends in a full week Mon–Fri = 5 days', () => {
     // 2025-04-14 (Monday) to 2025-04-18 (Friday) — no holidays that week
     const start = utcDate(2025, 4, 14)

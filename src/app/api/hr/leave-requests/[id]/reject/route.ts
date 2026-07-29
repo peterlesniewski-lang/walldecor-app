@@ -4,7 +4,14 @@ import { z } from 'zod'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { canViewEmployeeRecord } from '@/lib/hr/access'
-import { resolveLeaveBalancePoolId } from '@/lib/hr/leave-balance-policy'
+import {
+  LeaveBalancePolicyConfigurationError,
+  resolveLeaveBalancePoolId,
+} from '@/lib/hr/leave-balance-policy'
+import {
+  runSerializableTransactionWithRetry,
+  SerializableTransactionConflictError,
+} from '@/lib/hr/serializable-transaction'
 
 const rejectSchema = z.object({
   rejectionNote: z.string().min(1, 'Powód odrzucenia jest wymagany'),
@@ -81,7 +88,15 @@ export async function PATCH(
   }
 
   const year = leaveRequest.startDate.getUTCFullYear()
-  const balancePoolId = resolveLeaveBalancePoolId(leaveRequest.leaveType, leaveRequest)
+  let balancePoolId: string | null
+  try {
+    balancePoolId = resolveLeaveBalancePoolId(leaveRequest.leaveType, leaveRequest)
+  } catch (error) {
+    if (error instanceof LeaveBalancePolicyConfigurationError) {
+      return NextResponse.json({ error: error.message }, { status: 503 })
+    }
+    throw error
+  }
 
   const rejectRequest = () =>
     prisma.$transaction(async (tx) => {
@@ -151,10 +166,16 @@ export async function PATCH(
 
   let updated: Awaited<ReturnType<typeof rejectRequest>>
   try {
-    updated = await rejectRequest()
+    updated = await runSerializableTransactionWithRetry(rejectRequest)
   } catch (error) {
     if (error instanceof LeaveRejectionError) {
       return NextResponse.json({ error: error.message }, { status: error.status })
+    }
+    if (error instanceof SerializableTransactionConflictError) {
+      return NextResponse.json(
+        { error: 'Wniosek został zmieniony równocześnie. Spróbuj ponownie.' },
+        { status: 409 }
+      )
     }
     throw error
   }
