@@ -142,6 +142,13 @@ function LeaveTypeModal({
   const protectedTitles = getProtectedUiTitles(
     editing?.code ?? normalizedCode
   )
+  const subtypeParentTitle = editing?.subtypes.length
+    ? 'Typ mający podtypy musi pozostać typem głównym.'
+    : undefined
+  const parentProtectionTitle = [
+    protectedTitles?.parentId,
+    subtypeParentTitle,
+  ].filter((title): title is string => Boolean(title)).join(' ') || undefined
 
   const applyProtectedRules = useCallback((
     targetCode: string,
@@ -217,7 +224,9 @@ function LeaveTypeModal({
   }, [applyProtectedRules, creationProtectionCode, editing])
 
   const protectedDescriptionId = (field: ProtectedUiField) =>
-    protectedTitles?.[field]
+    (field === 'parentId'
+      ? parentProtectionTitle
+      : protectedTitles?.[field])
       ? `leave-type-${field}-protected`
       : undefined
 
@@ -483,8 +492,8 @@ function LeaveTypeModal({
               id="leave-type-parent"
               value={parentId}
               onChange={(e) => setParentId(e.target.value)}
-              disabled={Boolean(protectedTitles?.parentId)}
-              title={protectedTitles?.parentId}
+              disabled={Boolean(parentProtectionTitle)}
+              title={parentProtectionTitle}
               aria-describedby={protectedDescriptionId('parentId')}
               className="w-full rounded-lg border border-[var(--wd-border)] bg-[var(--wd-surface)] px-3 py-2 text-sm text-[var(--wd-text-primary)] transition focus:outline-none focus:ring-2 focus:ring-[var(--wd-sand)]"
             >
@@ -497,9 +506,9 @@ function LeaveTypeModal({
                   </option>
                 ))}
             </select>
-            {protectedTitles?.parentId && (
+            {parentProtectionTitle && (
               <span id={protectedDescriptionId('parentId')} className="sr-only">
-                {protectedTitles.parentId}
+                {parentProtectionTitle}
               </span>
             )}
           </div>

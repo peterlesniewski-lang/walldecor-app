@@ -46,6 +46,10 @@ function leaveType(
 }
 
 const vld = leaveType('VLD', { name: 'Urlop na żądanie' })
+const customSubtype = leaveType('CUSTOM_CHILD', {
+  name: 'Podtyp urlopu dodatkowego',
+  parentId: 'leave-type-custom',
+})
 const leaveTypes = [
   leaveType('VL', {
     name: 'Urlop wypoczynkowy',
@@ -53,7 +57,10 @@ const leaveTypes = [
   }),
   leaveType('SL', { name: 'Zwolnienie chorobowe' }),
   leaveType('UB', { name: 'Urlop bezpłatny' }),
-  leaveType('CUSTOM', { name: 'Urlop dodatkowy' }),
+  leaveType('CUSTOM', {
+    name: 'Urlop dodatkowy',
+    subtypes: [customSubtype],
+  }),
 ]
 
 function jsonResponse(data: unknown, status = 200) {
@@ -149,6 +156,48 @@ describe('LeaveTypesPage', () => {
     expect(approvalDescriptionId).toBeTruthy()
     expect(document.getElementById(approvalDescriptionId!)?.textContent)
       .toMatch(/VLD.*akcept/i)
+  })
+
+  it('disables parent selection accessibly for a custom type with subtypes', async () => {
+    installFetchMock()
+    render(<LeaveTypesPage />)
+    const user = userEvent.setup()
+
+    await screen.findByText('CUSTOM')
+    await user.click(within(rowForCode('CUSTOM')).getByTitle('Edytuj'))
+
+    const dialog = screen.getByRole('dialog', { name: 'Edytuj typ urlopu' })
+    const parent = within(dialog).getByLabelText(
+      /Typ nadrzędny/i
+    ) as HTMLSelectElement
+
+    expect(parent.disabled).toBe(true)
+    expect(parent.title).toMatch(/podtypy.*główn/i)
+    const descriptionId = parent.getAttribute('aria-describedby')
+    expect(descriptionId).toBeTruthy()
+    expect(document.getElementById(descriptionId!)?.textContent)
+      .toMatch(/podtypy.*główn/i)
+  })
+
+  it('composes canonical and subtype parent explanations', async () => {
+    installFetchMock()
+    render(<LeaveTypesPage />)
+    const user = userEvent.setup()
+
+    await screen.findByText('VL')
+    await user.click(within(rowForCode('VL')).getByTitle('Edytuj'))
+
+    const dialog = screen.getByRole('dialog', { name: 'Edytuj typ urlopu' })
+    const parent = within(dialog).getByLabelText(
+      /Typ nadrzędny/i
+    ) as HTMLSelectElement
+
+    expect(parent.disabled).toBe(true)
+    expect(parent.title).toMatch(/VL.*nadrzędn/i)
+    expect(parent.title).toMatch(/podtypy.*główn/i)
+    const descriptionId = parent.getAttribute('aria-describedby')
+    expect(document.getElementById(descriptionId!)?.textContent)
+      .toMatch(/VL.*nadrzędn.*podtypy.*główn/i)
   })
 
   it('opens a named dialog with labeled controls and restores focus on Escape', async () => {

@@ -373,6 +373,26 @@ describe('PATCH /api/hr/leave-types/:id', () => {
     expectNoMutation()
   })
 
+  it('returns 503 without repairing VLD when VL disappears inside the transaction', async () => {
+    arrangeExisting(leaveType('VLD'))
+    txFindUnique.mockResolvedValue(null)
+
+    const response = await PATCH(
+      request('PATCH', { name: 'Nowa nazwa' }),
+      params('leave-type-vld')
+    )
+    const body = await response.json()
+
+    expect(response.status).toBe(503)
+    expect(body.error).toMatch(/VLD.*VL.*główn|konfigur/i)
+    expect(mockTransaction).toHaveBeenCalled()
+    expect(txFindUnique).toHaveBeenCalledWith({
+      where: { code: 'VL' },
+      select: { id: true, parentId: true },
+    })
+    expectNoMutation()
+  })
+
   it('returns 503 when canonical VL is missing for VLD', async () => {
     const vld = leaveType('VLD')
     mockFindUnique.mockImplementation((async ({
@@ -696,6 +716,33 @@ describe('POST /api/hr/leave-types', () => {
 
     expect(response.status).toBe(503)
     expect(body.error).toMatch(/VLD.*VL.*główn|konfigur/i)
+    expect(txFindUnique).toHaveBeenCalledWith({
+      where: { code: 'VL' },
+      select: { id: true, parentId: true },
+    })
+    expectNoMutation()
+  })
+
+  it('returns 503 without creating VLD when VL disappears inside the transaction', async () => {
+    mockFindUnique.mockImplementation((async ({
+      where,
+    }: {
+      where: { id?: string; code?: string }
+    }) => {
+      if (where.code === 'VL') return leaveType('VL')
+      return null
+    }) as never)
+    txFindUnique.mockResolvedValue(null)
+
+    const response = await POST(request('POST', {
+      name: 'Urlop na żądanie',
+      code: 'VLD',
+    }))
+    const body = await response.json()
+
+    expect(response.status).toBe(503)
+    expect(body.error).toMatch(/VLD.*VL.*główn|konfigur/i)
+    expect(mockTransaction).toHaveBeenCalled()
     expect(txFindUnique).toHaveBeenCalledWith({
       where: { code: 'VL' },
       select: { id: true, parentId: true },
