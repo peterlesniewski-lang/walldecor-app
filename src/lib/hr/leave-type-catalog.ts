@@ -68,6 +68,7 @@ export const PROTECTED_LEAVE_TYPE_RULES = {
     isPaid: true,
     requiresApproval: true,
     tracksBalance: true,
+    parentCode: null,
   },
   SL: { tracksBalance: false },
   UB: {

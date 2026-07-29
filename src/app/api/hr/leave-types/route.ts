@@ -168,6 +168,10 @@ export async function POST(req: NextRequest) {
     protectedUpdate.parentCode =
       parsed.data.parentId === canonicalVl?.id ? 'VL' : null
   }
+  if (parsed.data.code === 'VL' && hasOwn(parsed.data, 'parentId')) {
+    protectedUpdate.parentCode =
+      parsed.data.parentId === null ? null : 'INNY'
+  }
 
   const protectedError = validateProtectedLeaveTypeUpdate(
     parsed.data.code,
@@ -182,6 +186,8 @@ export async function POST(req: NextRequest) {
     : {}
   const parentId = parsed.data.code === 'VLD'
     ? canonicalVl!.id
+    : parsed.data.code === 'VL'
+      ? null
     : parsed.data.parentId ?? null
   const createData = {
     name: parsed.data.name,
@@ -198,9 +204,25 @@ export async function POST(req: NextRequest) {
   try {
     const leaveType = await runSerializableTransactionWithRetry(() =>
       prisma.$transaction(async (tx) => {
-        if (parsed.data.code !== 'VLD' && parentId) {
+        let transactionParentId = parentId
+
+        if (parsed.data.code === 'VLD') {
+          const transactionVl = await tx.leaveType.findUnique({
+            where: { code: 'VL' },
+            select: { id: true, parentId: true },
+          })
+          if (!transactionVl || transactionVl.parentId !== null) {
+            throw new LeaveTypeMutationError(
+              503,
+              'Konfiguracja VLD jest nieprawidłowa: kanoniczny typ VL musi istnieć i być typem głównym.'
+            )
+          }
+          transactionParentId = transactionVl.id
+        }
+
+        if (parsed.data.code !== 'VLD' && transactionParentId) {
           const parent = await tx.leaveType.findUnique({
-            where: { id: parentId },
+            where: { id: transactionParentId },
             select: { id: true, parentId: true },
           })
           if (!parent) {
@@ -215,7 +237,10 @@ export async function POST(req: NextRequest) {
         }
 
         return tx.leaveType.create({
-          data: createData,
+          data: {
+            ...createData,
+            parentId: transactionParentId,
+          },
           include: {
             subtypes: true,
             _count: {

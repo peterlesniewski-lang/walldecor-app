@@ -166,6 +166,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     protectedUpdate.parentCode =
       parsed.data.parentId === canonicalVl?.id ? 'VL' : null
   }
+  if (existing.code === 'VL' && hasOwn(parsed.data, 'parentId')) {
+    protectedUpdate.parentCode =
+      parsed.data.parentId === null ? null : 'INNY'
+  }
 
   const protectedError = validateProtectedLeaveTypeUpdate(
     existing.code,
@@ -196,15 +200,43 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const updateData = {
     ...parsed.data,
     ...canonicalBehavior,
-    ...(existing.code === 'VLD' ? { parentId: canonicalVl!.id } : {}),
+    ...(existing.code === 'VL' ? { parentId: null } : {}),
   }
 
   try {
     const leaveType = await runSerializableTransactionWithRetry(() =>
       prisma.$transaction(async (tx) => {
-        if (existing.code !== 'VLD' && parsed.data.parentId) {
+        let transactionParentId = parsed.data.parentId
+
+        if (existing.code === 'VLD') {
+          const transactionVl = await tx.leaveType.findUnique({
+            where: { code: 'VL' },
+            select: { id: true, parentId: true },
+          })
+          if (!transactionVl || transactionVl.parentId !== null) {
+            throw new LeaveTypeMutationError(
+              503,
+              'Konfiguracja VLD jest nieprawidłowa: kanoniczny typ VL musi istnieć i być typem głównym.'
+            )
+          }
+          transactionParentId = transactionVl.id
+        }
+
+        if (transactionParentId) {
+          const subtypeCount = await tx.leaveType.count({
+            where: { parentId: id },
+          })
+          if (subtypeCount > 0) {
+            throw new LeaveTypeMutationError(
+              422,
+              'Typ urlopu mający podtypy nie może zostać przeniesiony pod inny typ.'
+            )
+          }
+        }
+
+        if (existing.code !== 'VLD' && transactionParentId) {
           const parent = await tx.leaveType.findUnique({
-            where: { id: parsed.data.parentId },
+            where: { id: transactionParentId },
             select: { id: true, parentId: true },
           })
           if (!parent) {
@@ -220,7 +252,12 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
         return tx.leaveType.update({
           where: { id },
-          data: updateData,
+          data: {
+            ...updateData,
+            ...(existing.code === 'VLD'
+              ? { parentId: transactionParentId }
+              : {}),
+          },
           include: {
             subtypes: true,
             _count: {

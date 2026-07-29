@@ -65,6 +65,7 @@ const PROTECTED_UI_TITLES = {
     isPaid: 'VL musi pozostać urlopem płatnym.',
     requiresApproval: 'VL musi wymagać akceptacji.',
     tracksBalance: 'VL musi pomniejszać saldo urlopowe.',
+    parentId: 'VL musi pozostać typem głównym i nie może mieć typu nadrzędnego.',
   },
   SL: {
     code: 'Kod SL jest chroniony i nie może zostać zmieniony.',
@@ -167,8 +168,10 @@ function LeaveTypeModal({
         : fallback.maxDays
     )
     setParentId(
-      targetCode === 'VLD'
-        ? canonicalVlId
+      Object.prototype.hasOwnProperty.call(rules ?? {}, 'parentCode')
+        ? rules?.parentCode === 'VL'
+          ? canonicalVlId
+          : ''
         : fallback.parentId
     )
   }, [canonicalVlId])

@@ -155,6 +155,7 @@ describe('system leave type catalog', () => {
         isPaid: true,
         requiresApproval: true,
         tracksBalance: true,
+        parentCode: null,
       },
       SL: { tracksBalance: false },
       UB: {
@@ -194,5 +195,8 @@ describe('system leave type catalog', () => {
     expect(validateProtectedLeaveTypeUpdate('VL', {
       isPaid: false,
     })).toMatch(/VL.*płatn/i)
+    expect(validateProtectedLeaveTypeUpdate('VL', {
+      parentCode: 'CUSTOM',
+    })).toMatch(/VL.*nadrzędn/i)
   })
 })

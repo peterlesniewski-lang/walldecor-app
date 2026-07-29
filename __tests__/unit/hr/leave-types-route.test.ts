@@ -38,11 +38,13 @@ const mockPendingCount = vi.mocked(prisma.leaveRequestNew.count)
 const mockTransaction = vi.mocked(prisma.$transaction)
 
 const txFindUnique = vi.fn()
+const txCount = vi.fn()
 const txCreate = vi.fn()
 const txUpdate = vi.fn()
 const tx = {
   leaveType: {
     findUnique: txFindUnique,
+    count: txCount,
     create: txCreate,
     update: txUpdate,
   },
@@ -152,6 +154,7 @@ beforeEach(() => {
   mockUpdate.mockResolvedValue(leaveType('CUSTOM') as never)
   mockPendingCount.mockResolvedValue(0)
   txFindUnique.mockResolvedValue(null)
+  txCount.mockResolvedValue(0)
   txCreate.mockResolvedValue(leaveType('CUSTOM'))
   txUpdate.mockResolvedValue(leaveType('CUSTOM'))
   mockTransaction.mockImplementation(
@@ -196,6 +199,22 @@ describe('PATCH /api/hr/leave-types/:id', () => {
 
     expect(response.status).toBe(422)
     expect(body.error).toMatch(message)
+    expectNoMutation()
+  })
+
+  it('rejects moving VL under another type before hierarchy lookup or update', async () => {
+    arrangeExisting(leaveType('VL'))
+
+    const response = await PATCH(
+      request('PATCH', { parentId: 'leave-type-parent' }),
+      params('leave-type-vl')
+    )
+    const body = await response.json()
+
+    expect(response.status).toBe(422)
+    expect(body.error).toMatch(/VL.*nadrzędn/i)
+    expect(mockTransaction).not.toHaveBeenCalled()
+    expect(txFindUnique).not.toHaveBeenCalled()
     expectNoMutation()
   })
 
@@ -258,6 +277,7 @@ describe('PATCH /api/hr/leave-types/:id', () => {
       isPaid: true,
       requiresApproval: true,
       tracksBalance: true,
+      parentId: null,
     }],
     ['UB', {
       isPaid: false,
@@ -309,6 +329,10 @@ describe('PATCH /api/hr/leave-types/:id', () => {
     )
 
     expect(response.status).toBe(200)
+    expect(txFindUnique).toHaveBeenCalledWith({
+      where: { code: 'VL' },
+      select: { id: true, parentId: true },
+    })
     expect(txUpdate).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'leave-type-vld' },
       data: expect.objectContaining({
@@ -319,6 +343,34 @@ describe('PATCH /api/hr/leave-types/:id', () => {
         parentId: 'leave-type-vl',
       }),
     }))
+  })
+
+  it('returns 503 without repairing VLD when transaction-local VL is non-root', async () => {
+    arrangeExisting(leaveType('VLD'))
+    txFindUnique.mockImplementation(async ({
+      where,
+    }: {
+      where: { id?: string; code?: string }
+    }) => {
+      if (where.code === 'VL') {
+        return leaveType('VL', { parentId: 'leave-type-custom' })
+      }
+      return null
+    })
+
+    const response = await PATCH(
+      request('PATCH', { name: 'Nowa nazwa' }),
+      params('leave-type-vld')
+    )
+    const body = await response.json()
+
+    expect(response.status).toBe(503)
+    expect(body.error).toMatch(/VLD.*VL.*główn|konfigur/i)
+    expect(txFindUnique).toHaveBeenCalledWith({
+      where: { code: 'VL' },
+      select: { id: true, parentId: true },
+    })
+    expectNoMutation()
   })
 
   it('returns 503 when canonical VL is missing for VLD', async () => {
@@ -429,6 +481,9 @@ describe('PATCH /api/hr/leave-types/:id', () => {
       expect.any(Function),
       { isolationLevel: 'Serializable' }
     )
+    expect(txCount).toHaveBeenCalledWith({
+      where: { parentId: 'leave-type-custom' },
+    })
     expect(txFindUnique).toHaveBeenCalledWith({
       where: { id: 'leave-type-parent' },
       select: { id: true, parentId: true },
@@ -471,6 +526,29 @@ describe('PATCH /api/hr/leave-types/:id', () => {
     expect(body.error).toMatch(/jeden poziom|główn/i)
     expect(txUpdate).not.toHaveBeenCalled()
   })
+
+  it.each(['CUSTOM', 'SL'] as const)(
+    'rejects moving %s with subtypes under another root inside the transaction',
+    async (code) => {
+      const existing = leaveType(code)
+      arrangeExisting(existing)
+      txCount.mockResolvedValue(1)
+
+      const response = await PATCH(
+        request('PATCH', { parentId: 'leave-type-parent' }),
+        params(existing.id)
+      )
+      const body = await response.json()
+
+      expect(response.status).toBe(422)
+      expect(body.error).toMatch(/podtyp|dzieci|jeden poziom/i)
+      expect(txCount).toHaveBeenCalledWith({
+        where: { parentId: existing.id },
+      })
+      expect(txFindUnique).not.toHaveBeenCalled()
+      expectNoMutation()
+    }
+  )
 
   it('maps exhausted serializable retries to 409', async () => {
     arrangeExisting(leaveType('CUSTOM'))
@@ -534,6 +612,7 @@ describe('POST /api/hr/leave-types', () => {
 
   it.each([
     ['VL', { isPaid: false }, /VL.*płatn/i],
+    ['VL', { parentId: 'leave-type-parent' }, /VL.*nadrzędn/i],
     ['SL', { tracksBalance: true }, /SL.*sald/i],
     ['UB', { isPaid: true, requiresApproval: true, tracksBalance: false }, /UB.*płatn/i],
     ['VLD', {
@@ -596,6 +675,34 @@ describe('POST /api/hr/leave-types', () => {
     }))
   })
 
+  it('returns 503 without creating VLD when transaction-local VL is non-root', async () => {
+    mockFindUnique.mockImplementation((async ({
+      where,
+    }: {
+      where: { id?: string; code?: string }
+    }) => {
+      if (where.code === 'VL') return leaveType('VL')
+      return null
+    }) as never)
+    txFindUnique.mockResolvedValue(
+      leaveType('VL', { parentId: 'leave-type-custom' })
+    )
+
+    const response = await POST(request('POST', {
+      name: 'Urlop na żądanie',
+      code: 'VLD',
+    }))
+    const body = await response.json()
+
+    expect(response.status).toBe(503)
+    expect(body.error).toMatch(/VLD.*VL.*główn|konfigur/i)
+    expect(txFindUnique).toHaveBeenCalledWith({
+      where: { code: 'VL' },
+      select: { id: true, parentId: true },
+    })
+    expectNoMutation()
+  })
+
   it('resolves canonical VL and defaults when creating VLD with omitted behavior', async () => {
     mockFindUnique.mockImplementation((async ({
       where,
@@ -605,6 +712,7 @@ describe('POST /api/hr/leave-types', () => {
       if (where.code === 'VL') return leaveType('VL')
       return null
     }) as never)
+    txFindUnique.mockResolvedValue(leaveType('VL'))
     txCreate.mockResolvedValue(leaveType('VLD'))
 
     const response = await POST(request('POST', {
@@ -613,6 +721,10 @@ describe('POST /api/hr/leave-types', () => {
     }))
 
     expect(response.status).toBe(201)
+    expect(txFindUnique).toHaveBeenCalledWith({
+      where: { code: 'VL' },
+      select: { id: true, parentId: true },
+    })
     expect(txCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         code: 'VLD',
