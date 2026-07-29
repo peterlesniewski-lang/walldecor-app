@@ -109,10 +109,10 @@ export function calcProportionalLeaveDays(
   year: number,
   annualDays: number = 26
 ): number {
-  const startYear = startDate.getFullYear()
+  const startYear = startDate.getUTCFullYear()
   if (startYear > year) return 0
   if (startYear < year) return annualDays
   // zatrudniony w tym samym roku: od miesiąca startowego do grudnia włącznie
-  const monthsLeft = 12 - startDate.getMonth() // getMonth() jest 0-indexed
+  const monthsLeft = 12 - startDate.getUTCMonth() // getUTCMonth() jest 0-indexed
   return Math.ceil(annualDays * monthsLeft / 12)
 }

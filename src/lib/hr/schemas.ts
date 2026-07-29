@@ -97,14 +97,31 @@ export const leaveBalanceUpdateSchema = z.object({
   carriedOver: z.number().min(0).optional(),
 })
 
+const httpDateSchema = z.string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'effectiveFrom must use YYYY-MM-DD')
+  .refine((value) => {
+    const [year, month, day] = value.split('-').map(Number)
+    const date = new Date(Date.UTC(year, month - 1, day))
+    return (
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day
+    )
+  }, 'effectiveFrom must be a valid calendar date')
+  .transform((value) => {
+    const [year, month, day] = value.split('-').map(Number)
+    return new Date(Date.UTC(year, month - 1, day))
+  })
+
 export const leaveEntitlementSaveSchema = z.object({
   mode: z.enum(['DAYS_20', 'DAYS_26', 'CUSTOM']),
   customAnnualDays: z.number().int().min(1).max(365).nullable().default(null),
   employmentFraction: z.number().gt(0).max(1),
-  effectiveFrom: z.coerce.date(),
+  effectiveFrom: httpDateSchema,
   note: z.string().max(1000).nullable().optional(),
   year: z.number().int().min(2000).max(2100),
   preview: z.boolean().default(true),
+  expectedCurrentTotalDays: z.number().nullable().optional(),
   correctionReason: z.string().trim().min(3).max(1000).optional(),
 }).superRefine((data, ctx) => {
   if (data.mode === 'CUSTOM' && data.customAnnualDays === null) {
@@ -121,6 +138,14 @@ export const leaveEntitlementSaveSchema = z.object({
       code: 'custom',
       message: 'effectiveFrom must be no later than the end of the target year',
       path: ['effectiveFrom'],
+    })
+  }
+
+  if (!data.preview && data.expectedCurrentTotalDays === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'expectedCurrentTotalDays is required when applying',
+      path: ['expectedCurrentTotalDays'],
     })
   }
 })

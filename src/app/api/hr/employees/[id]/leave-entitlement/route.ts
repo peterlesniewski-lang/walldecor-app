@@ -23,6 +23,9 @@ type BalanceSnapshotSource = {
 
 const yearSchema = z.coerce.number().int().min(2000).max(2100)
 
+class PreviewBalanceConflictError extends Error {}
+class CorrectionReasonRequiredError extends Error {}
+
 function yearEnd(year: number): Date {
   return new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999))
 }
@@ -36,13 +39,59 @@ function snapshot(balance: BalanceSnapshotSource) {
   }
 }
 
-function isP2002(error: unknown): boolean {
+function isEntitlementConfigUniqueError(error: unknown): boolean {
+  if (
+    typeof error !== 'object' ||
+    error === null ||
+    !('code' in error) ||
+    error.code !== 'P2002' ||
+    !('meta' in error) ||
+    typeof error.meta !== 'object' ||
+    error.meta === null ||
+    !('target' in error.meta)
+  ) {
+    return false
+  }
+
+  const target = error.meta.target
+  const fields = Array.isArray(target)
+    ? target
+    : typeof target === 'string'
+      ? target.match(/employeeId|effectiveFrom/g) ?? []
+      : []
+
   return (
-    typeof error === 'object' &&
-    error !== null &&
-    'code' in error &&
-    error.code === 'P2002'
+    fields.length === 2 &&
+    fields.includes('employeeId') &&
+    fields.includes('effectiveFrom')
   )
+}
+
+function normalizeCorrectionReason(rawInput: unknown): unknown {
+  if (typeof rawInput !== 'object' || rawInput === null || Array.isArray(rawInput)) {
+    return rawInput
+  }
+
+  const correctionReason = (rawInput as Record<string, unknown>).correctionReason
+  if (typeof correctionReason !== 'string' || correctionReason.trim().length >= 3) {
+    return rawInput
+  }
+
+  return { ...rawInput, correctionReason: undefined }
+}
+
+function previewMetadata(
+  calculatedDays: number,
+  balance: BalanceSnapshotSource | null
+) {
+  const currentTotalDays = balance?.totalDays ?? 0
+  return {
+    calculatedDays,
+    currentTotalDays,
+    expectedCurrentTotalDays: balance?.totalDays ?? null,
+    deltaDays: calculatedDays - currentTotalDays,
+    requiresCorrection: balance !== null && balance.totalDays !== calculatedDays,
+  }
 }
 
 function invalidInput(details: unknown) {
@@ -64,7 +113,7 @@ export async function GET(req: NextRequest, context: RouteContext) {
   }
 
   const parsedYear = yearSchema.safeParse(
-    req.nextUrl.searchParams.get('year') ?? new Date().getFullYear()
+    req.nextUrl.searchParams.get('year') ?? new Date().getUTCFullYear()
   )
   if (!parsedYear.success) return invalidInput(parsedYear.error.flatten())
 
@@ -140,30 +189,9 @@ export async function POST(req: NextRequest, context: RouteContext) {
     return invalidInput('Request body must be valid JSON')
   }
 
-  let parsed = leaveEntitlementSaveSchema.safeParse(rawInput)
-  let invalidCorrectionReason = false
-
-  if (!parsed.success) {
-    const onlyCorrectionReasonIsTooShort = parsed.error.issues.every(
-      (issue) => issue.path[0] === 'correctionReason' && issue.code === 'too_small'
-    )
-
-    if (
-      onlyCorrectionReasonIsTooShort &&
-      typeof rawInput === 'object' &&
-      rawInput !== null &&
-      'correctionReason' in rawInput
-    ) {
-      const inputWithoutReason = { ...rawInput }
-      delete inputWithoutReason.correctionReason
-      const reparsed = leaveEntitlementSaveSchema.safeParse(inputWithoutReason)
-      if (reparsed.success && reparsed.data.preview === false) {
-        parsed = reparsed
-        invalidCorrectionReason = true
-      }
-    }
-  }
-
+  const parsed = leaveEntitlementSaveSchema.safeParse(
+    normalizeCorrectionReason(rawInput)
+  )
   if (!parsed.success) return invalidInput(parsed.error.flatten())
 
   const { id: employeeId } = await context.params
@@ -189,25 +217,14 @@ export async function POST(req: NextRequest, context: RouteContext) {
     year: input.year,
   })
 
-  const [existingBalance, duplicateConfig] = await Promise.all([
-    prisma.leaveBalanceNew.findUnique({
-      where: {
-        employeeId_leaveTypeId_year: {
-          employeeId,
-          leaveTypeId: vlType.id,
-          year: input.year,
-        },
+  const duplicateConfig = await prisma.leaveEntitlementConfig.findUnique({
+    where: {
+      employeeId_effectiveFrom: {
+        employeeId,
+        effectiveFrom: input.effectiveFrom,
       },
-    }),
-    prisma.leaveEntitlementConfig.findUnique({
-      where: {
-        employeeId_effectiveFrom: {
-          employeeId,
-          effectiveFrom: input.effectiveFrom,
-        },
-      },
-    }),
-  ])
+    },
+  })
 
   if (duplicateConfig) {
     return NextResponse.json(
@@ -216,38 +233,51 @@ export async function POST(req: NextRequest, context: RouteContext) {
     )
   }
 
-  const currentTotalDays = existingBalance?.totalDays ?? 0
-  const requiresCorrection =
-    existingBalance !== null && existingBalance.totalDays !== calculatedDays
-  const preview = {
-    calculatedDays,
-    currentTotalDays,
-    deltaDays: calculatedDays - currentTotalDays,
-    requiresCorrection,
-    input: {
-      mode: input.mode,
-      customAnnualDays: input.customAnnualDays,
-      employmentFraction: input.employmentFraction,
-      effectiveFrom: input.effectiveFrom,
-      note: input.note ?? null,
-      year: input.year,
-    },
+  const normalizedInput = {
+    mode: input.mode,
+    customAnnualDays: input.customAnnualDays,
+    employmentFraction: input.employmentFraction,
+    effectiveFrom: input.effectiveFrom,
+    note: input.note ?? null,
+    year: input.year,
   }
 
-  if (input.preview) return NextResponse.json(preview)
-
-  if (requiresCorrection && (!input.correctionReason || invalidCorrectionReason)) {
-    return NextResponse.json(
-      { error: 'Correction reason must contain at least 3 characters' },
-      { status: 422 }
-    )
-  }
-  if (invalidCorrectionReason) {
-    return invalidInput('correctionReason must contain at least 3 characters')
+  if (input.preview) {
+    const existingBalance = await prisma.leaveBalanceNew.findUnique({
+      where: {
+        employeeId_leaveTypeId_year: {
+          employeeId,
+          leaveTypeId: vlType.id,
+          year: input.year,
+        },
+      },
+    })
+    return NextResponse.json({
+      ...previewMetadata(calculatedDays, existingBalance),
+      input: normalizedInput,
+    })
   }
 
   try {
     const applied = await prisma.$transaction(async (tx) => {
+      const currentBalance = await tx.leaveBalanceNew.findUnique({
+        where: {
+          employeeId_leaveTypeId_year: {
+            employeeId,
+            leaveTypeId: vlType.id,
+            year: input.year,
+          },
+        },
+      })
+      const metadata = previewMetadata(calculatedDays, currentBalance)
+
+      if (input.expectedCurrentTotalDays !== metadata.expectedCurrentTotalDays) {
+        throw new PreviewBalanceConflictError()
+      }
+      if (metadata.requiresCorrection && !input.correctionReason) {
+        throw new CorrectionReasonRequiredError()
+      }
+
       const config = await tx.leaveEntitlementConfig.create({
         data: {
           employeeId,
@@ -277,7 +307,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
         update: { totalDays: calculatedDays },
       })
 
-      if (requiresCorrection && existingBalance) {
+      if (metadata.requiresCorrection && currentBalance) {
         await tx.leaveBalanceCorrection.create({
           data: {
             balanceId: balance.id,
@@ -286,18 +316,35 @@ export async function POST(req: NextRequest, context: RouteContext) {
             year: input.year,
             reason: input.correctionReason!,
             actorId: session.user.id,
-            beforeJson: JSON.stringify(snapshot(existingBalance)),
+            beforeJson: JSON.stringify(snapshot(currentBalance)),
             afterJson: JSON.stringify(snapshot(balance)),
           },
         })
       }
 
-      return { config, balance }
+      return { config, balance, metadata }
     })
 
-    return NextResponse.json({ ...preview, ...applied }, { status: 201 })
+    return NextResponse.json({
+      ...applied.metadata,
+      input: normalizedInput,
+      config: applied.config,
+      balance: applied.balance,
+    }, { status: 201 })
   } catch (error) {
-    if (isP2002(error)) {
+    if (error instanceof PreviewBalanceConflictError) {
+      return NextResponse.json(
+        { error: 'Leave balance changed since preview' },
+        { status: 409 }
+      )
+    }
+    if (error instanceof CorrectionReasonRequiredError) {
+      return NextResponse.json(
+        { error: 'Correction reason must contain at least 3 characters' },
+        { status: 422 }
+      )
+    }
+    if (isEntitlementConfigUniqueError(error)) {
       return NextResponse.json(
         { error: 'Leave entitlement config already exists for this effective date' },
         { status: 409 }

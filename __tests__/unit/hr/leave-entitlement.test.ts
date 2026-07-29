@@ -91,6 +91,17 @@ describe('calculateConfiguredEntitlement', () => {
     ).toBe(7)
   })
 
+  it('treats a UTC-midnight employment date as its canonical UTC month', () => {
+    expect(
+      calculateConfiguredEntitlement(
+        entitlement({
+          mode: 'DAYS_26',
+          employmentStartDate: new Date('2026-07-01T00:00:00.000Z'),
+        })
+      )
+    ).toBe(13)
+  })
+
   it('returns zero when employment starts after the target year', () => {
     expect(
       calculateConfiguredEntitlement(
