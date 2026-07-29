@@ -67,6 +67,18 @@ describe('calculateConfiguredEntitlement', () => {
     ).toBe(20)
   })
 
+  it('does not round a floating-point representation error up to another day', () => {
+    expect(
+      calculateConfiguredEntitlement(
+        entitlement({
+          mode: 'CUSTOM',
+          customAnnualDays: 25,
+          employmentFraction: 0.28,
+        })
+      )
+    ).toBe(7)
+  })
+
   it('applies the existing partial-year month rule after fraction rounding', () => {
     expect(
       calculateConfiguredEntitlement(
@@ -92,6 +104,23 @@ describe('calculateConfiguredEntitlement', () => {
       calculateConfiguredEntitlement(entitlement({ employmentFraction: fraction }))
     ).toThrow('Employment fraction must be greater than 0 and at most 1')
   })
+
+  it('rejects an invalid employment start date', () => {
+    expect(() =>
+      calculateConfiguredEntitlement(
+        entitlement({ employmentStartDate: new Date(Number.NaN) })
+      )
+    ).toThrow('Employment start date must be a valid Date')
+  })
+
+  it.each([2026.5, Number.NaN, Number.POSITIVE_INFINITY])(
+    'rejects an invalid target year: %s',
+    (year) => {
+      expect(() => calculateConfiguredEntitlement(entitlement({ year }))).toThrow(
+        'Year must be a finite integer'
+      )
+    }
+  )
 })
 
 describe('selectEffectiveEntitlement', () => {
@@ -134,5 +163,20 @@ describe('selectEffectiveEntitlement', () => {
     selectEffectiveEntitlement(configs, new Date('2026-06-01T00:00:00Z'))
 
     expect(configs).toEqual(originalOrder)
+  })
+
+  it('rejects an invalid target date', () => {
+    expect(() =>
+      selectEffectiveEntitlement([oldConfig], new Date(Number.NaN))
+    ).toThrow('Target date must be a valid Date')
+  })
+
+  it('rejects a config with an invalid effective date', () => {
+    expect(() =>
+      selectEffectiveEntitlement(
+        [{ id: 'invalid', effectiveFrom: new Date(Number.NaN) }],
+        new Date('2026-01-01T00:00:00Z')
+      )
+    ).toThrow('Entitlement effectiveFrom must be a valid Date')
   })
 })
