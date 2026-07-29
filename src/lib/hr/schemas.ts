@@ -96,3 +96,31 @@ export const leaveBalanceUpdateSchema = z.object({
   usedDays: z.number().min(0).optional(),
   carriedOver: z.number().min(0).optional(),
 })
+
+export const leaveEntitlementSaveSchema = z.object({
+  mode: z.enum(['DAYS_20', 'DAYS_26', 'CUSTOM']),
+  customAnnualDays: z.number().int().min(1).max(365).nullable().default(null),
+  employmentFraction: z.number().gt(0).max(1),
+  effectiveFrom: z.coerce.date(),
+  note: z.string().max(1000).nullable().optional(),
+  year: z.number().int().min(2000).max(2100),
+  preview: z.boolean().default(true),
+  correctionReason: z.string().trim().min(3).max(1000).optional(),
+}).superRefine((data, ctx) => {
+  if (data.mode === 'CUSTOM' && data.customAnnualDays === null) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'customAnnualDays is required for CUSTOM mode',
+      path: ['customAnnualDays'],
+    })
+  }
+
+  const targetYearEnd = new Date(Date.UTC(data.year, 11, 31, 23, 59, 59, 999))
+  if (data.effectiveFrom > targetYearEnd) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'effectiveFrom must be no later than the end of the target year',
+      path: ['effectiveFrom'],
+    })
+  }
+})
