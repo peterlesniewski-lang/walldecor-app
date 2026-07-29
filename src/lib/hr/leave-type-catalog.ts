@@ -16,6 +16,29 @@ export const SYSTEM_LEAVE_TYPES = [
   { code: 'ZOW', name: 'Zwolnienie z pracy',        color: '#94A3B8', isPaid: true,  requiresApproval: true,  tracksBalance: true,  maxDaysPerYear: null, parentCode: null },
 ] as const
 
+export type SystemLeaveType = (typeof SYSTEM_LEAVE_TYPES)[number]
+
+export function buildSystemLeaveTypeUpsert(leaveType: SystemLeaveType) {
+  const sharedData = {
+    name: leaveType.name,
+    color: leaveType.color,
+    isPaid: leaveType.isPaid,
+    requiresApproval: leaveType.requiresApproval,
+    tracksBalance: leaveType.tracksBalance,
+    maxDaysPerYear: leaveType.maxDaysPerYear,
+    parentId: null,
+  }
+
+  return {
+    update: sharedData,
+    create: {
+      code: leaveType.code,
+      ...sharedData,
+      isActive: true,
+    },
+  }
+}
+
 export const PROTECTED_LEAVE_TYPE_RULES = {
   SL: { tracksBalance: false },
   UB: {

@@ -5,6 +5,7 @@ import {
   shouldTrackLeaveBalance,
 } from '@/lib/hr/leave-balance-policy'
 import {
+  buildSystemLeaveTypeUpsert,
   PROTECTED_LEAVE_TYPE_RULES,
   SYSTEM_LEAVE_TYPES,
 } from '@/lib/hr/leave-type-catalog'
@@ -83,6 +84,15 @@ describe('system leave type catalog', () => {
     const codes = SYSTEM_LEAVE_TYPES.map(({ code }) => code)
 
     expect(new Set(codes).size).toBe(codes.length)
+  })
+
+  it('clears stale parents in every first-pass system type upsert', () => {
+    for (const leaveType of SYSTEM_LEAVE_TYPES) {
+      const upsert = buildSystemLeaveTypeUpsert(leaveType)
+
+      expect(upsert.update.parentId).toBeNull()
+      expect(upsert.create.parentId).toBeNull()
+    }
   })
 
   it.each([

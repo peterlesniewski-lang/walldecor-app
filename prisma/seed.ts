@@ -4,7 +4,10 @@ import * as fs from 'fs'
 import * as path from 'path'
 import { defaultCostTagSeedRows } from '../src/lib/finance/cost-tags'
 import { buildAdminSeedUserUpsert } from '../src/lib/accounts/seed-admin'
-import { SYSTEM_LEAVE_TYPES } from '../src/lib/hr/leave-type-catalog'
+import {
+  buildSystemLeaveTypeUpsert,
+  SYSTEM_LEAVE_TYPES,
+} from '../src/lib/hr/leave-type-catalog'
 
 const prisma = new PrismaClient()
 
@@ -562,42 +565,28 @@ async function main() {
   console.log('Polish holidays seeded (24)')
 
   // 11. Leave Types (with parent relationships)
-  // First pass: create all without parents
-  const leaveTypeIds: Record<string, string> = {}
-  for (const lt of SYSTEM_LEAVE_TYPES) {
-    const created = await prisma.leaveType.upsert({
-      where: { code: lt.code },
-      update: {
-        name: lt.name,
-        color: lt.color,
-        isPaid: lt.isPaid,
-        requiresApproval: lt.requiresApproval,
-        tracksBalance: lt.tracksBalance,
-        maxDaysPerYear: lt.maxDaysPerYear,
-      },
-      create: {
-        code: lt.code,
-        name: lt.name,
-        color: lt.color,
-        isPaid: lt.isPaid,
-        requiresApproval: lt.requiresApproval,
-        tracksBalance: lt.tracksBalance,
-        maxDaysPerYear: lt.maxDaysPerYear,
-        isActive: true,
-      },
-    })
-    leaveTypeIds[lt.code] = created.id
-  }
+  await prisma.$transaction(async (tx) => {
+    // First pass: converge every system type without parent relationships.
+    const leaveTypeIds: Record<string, string> = {}
+    for (const leaveType of SYSTEM_LEAVE_TYPES) {
+      const upsert = buildSystemLeaveTypeUpsert(leaveType)
+      const created = await tx.leaveType.upsert({
+        where: { code: leaveType.code },
+        ...upsert,
+      })
+      leaveTypeIds[leaveType.code] = created.id
+    }
 
-  // Second pass: set parent relationships
-  for (const lt of SYSTEM_LEAVE_TYPES) {
-    if (lt.parentCode) {
-      await prisma.leaveType.update({
-        where: { code: lt.code },
-        data: { parentId: leaveTypeIds[lt.parentCode] },
+    // Second pass: restore only parent relationships declared by the catalog.
+    for (const leaveType of SYSTEM_LEAVE_TYPES) {
+      if (!leaveType.parentCode) continue
+
+      await tx.leaveType.update({
+        where: { code: leaveType.code },
+        data: { parentId: leaveTypeIds[leaveType.parentCode] },
       })
     }
-  }
+  })
   console.log(`Leave types seeded (${SYSTEM_LEAVE_TYPES.length})`)
 
   // 12. TimeTrackingRule per division
