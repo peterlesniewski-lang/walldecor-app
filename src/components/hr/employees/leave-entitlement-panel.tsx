@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import { Calculator, History, Loader2, Save } from 'lucide-react'
 import { Button } from '@/components/ui/button'
@@ -61,6 +61,12 @@ interface PreviewResult {
   expectedCurrentTotalDays: number | null
   deltaDays: number
   requiresCorrection: boolean
+}
+
+interface StoredPreview {
+  result: PreviewResult
+  form: NormalizedFormValues
+  version: number
 }
 
 const MODES: Array<{ value: LeaveEntitlementMode; label: string }> = [
@@ -199,11 +205,22 @@ export function LeaveEntitlementPanel({
     defaultEffectiveFrom(initialData, targetYear)
   )
   const [note, setNote] = useState(initialData.config?.note ?? '')
-  const [preview, setPreview] = useState<PreviewResult | null>(null)
+  const [preview, setPreview] = useState<StoredPreview | null>(null)
   const [correctionReason, setCorrectionReason] = useState('')
   const [pendingAction, setPendingAction] = useState<'preview' | 'apply' | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [success, setSuccess] = useState<string | null>(null)
+  const formVersionRef = useRef(0)
+  const activePreviewRequestRef = useRef<number | null>(null)
+  const mountedRef = useRef(true)
+
+  useEffect(() => {
+    mountedRef.current = true
+    return () => {
+      mountedRef.current = false
+      formVersionRef.current += 1
+    }
+  }, [])
 
   useEffect(() => {
     if (!success) return
@@ -212,6 +229,7 @@ export function LeaveEntitlementPanel({
   }, [success])
 
   function invalidatePreview() {
+    formVersionRef.current += 1
     setPreview(null)
     setCorrectionReason('')
     setError(null)
@@ -254,15 +272,20 @@ export function LeaveEntitlementPanel({
   const normalizedForm = normalizeForm()
   const reasonLength = correctionReason.trim().length
   const correctionReasonValid =
-    !preview?.requiresCorrection || (reasonLength >= 3 && reasonLength <= 1000)
+    !preview?.result.requiresCorrection || (reasonLength >= 3 && reasonLength <= 1000)
+  const previewIsCurrent =
+    preview !== null && preview.version === formVersionRef.current
   const canApply =
-    preview !== null &&
-    normalizedForm !== null &&
+    previewIsCurrent &&
     correctionReasonValid &&
     pendingAction === null
 
   async function requestPreview() {
     if (!normalizedForm) return
+    const formSnapshot = normalizedForm
+    const requestVersion = formVersionRef.current + 1
+    formVersionRef.current = requestVersion
+    activePreviewRequestRef.current = requestVersion
     setPendingAction('preview')
     setError(null)
     setSuccess(null)
@@ -275,10 +298,16 @@ export function LeaveEntitlementPanel({
         {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ ...normalizedForm, preview: true }),
+          body: JSON.stringify({ ...formSnapshot, preview: true }),
         }
       )
       const data: unknown = await response.json().catch(() => null)
+      if (
+        !mountedRef.current ||
+        formVersionRef.current !== requestVersion
+      ) {
+        return
+      }
       if (!response.ok) {
         setError(parseResponseError(data, 'Nie udało się przeliczyć uprawnienia.'))
         return
@@ -289,25 +318,39 @@ export function LeaveEntitlementPanel({
         setError('Serwer zwrócił nieprawidłowy podgląd uprawnienia.')
         return
       }
-      setPreview(parsedPreview)
+      setPreview({
+        result: parsedPreview,
+        form: formSnapshot,
+        version: requestVersion,
+      })
     } catch {
-      setError('Błąd połączenia z serwerem.')
+      if (mountedRef.current && formVersionRef.current === requestVersion) {
+        setError('Błąd połączenia z serwerem.')
+      }
     } finally {
-      setPendingAction(null)
+      if (
+        mountedRef.current &&
+        activePreviewRequestRef.current === requestVersion
+      ) {
+        activePreviewRequestRef.current = null
+        setPendingAction(null)
+      }
     }
   }
 
   async function applyEntitlement() {
-    if (!preview || !normalizedForm || !correctionReasonValid) return
+    if (!preview || preview.version !== formVersionRef.current || !correctionReasonValid) {
+      return
+    }
     setPendingAction('apply')
     setError(null)
     setSuccess(null)
 
     const payload = {
-      ...normalizedForm,
+      ...preview.form,
       preview: false,
-      expectedCurrentTotalDays: preview.expectedCurrentTotalDays,
-      ...(preview.requiresCorrection
+      expectedCurrentTotalDays: preview.result.expectedCurrentTotalDays,
+      ...(preview.result.requiresCorrection
         ? { correctionReason: correctionReason.trim() }
         : {}),
     }
@@ -536,17 +579,17 @@ export function LeaveEntitlementPanel({
           {preview && (
             <div aria-live="polite" className="mt-4 border-y border-[var(--wd-border)] bg-[var(--wd-surface-2)] px-3 py-3">
               <div className="flex flex-wrap gap-x-6 gap-y-1 text-sm tabular-nums text-[var(--wd-text-primary)]">
-                <span>Roczny wymiar: {formatDays(preview.calculatedDays)}</span>
-                <span>Aktualne saldo: {formatDays(preview.currentTotalDays)}</span>
+                <span>Roczny wymiar: {formatDays(preview.result.calculatedDays)}</span>
+                <span>Aktualne saldo: {formatDays(preview.result.currentTotalDays)}</span>
                 <span className="font-medium">
                   Zmiana salda:{' '}
-                  {preview.deltaDays === 0
+                  {preview.result.deltaDays === 0
                     ? 'bez zmian'
-                    : `${preview.deltaDays > 0 ? '+' : ''}${numberFormatter.format(preview.deltaDays)} dni`}
+                    : `${preview.result.deltaDays > 0 ? '+' : ''}${numberFormatter.format(preview.result.deltaDays)} dni`}
                 </span>
               </div>
 
-              {preview.requiresCorrection && (
+              {preview.result.requiresCorrection && (
                 <div className="mt-3 max-w-xl space-y-1.5">
                   <Label htmlFor="leave-entitlement-correction-reason">Powód korekty</Label>
                   <Input

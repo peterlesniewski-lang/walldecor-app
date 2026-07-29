@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
@@ -40,6 +40,14 @@ function jsonResponse(data: unknown, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json' },
   })
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve
+  })
+  return { promise, resolve }
 }
 
 function renderPanel(data: LeaveEntitlementPanelData = configuredData) {
@@ -244,6 +252,88 @@ describe('LeaveEntitlementPanel', () => {
     expect(screen.queryByText('Zmiana salda: bez zmian')).toBeNull()
     expect((screen.getByRole('button', { name: 'Zastosuj' }) as HTMLButtonElement).disabled)
       .toBe(true)
+  })
+
+  it('ignores an in-flight stale preview and applies the exact second form snapshot', async () => {
+    const firstPreview = deferred<Response>()
+    const fetchMock = vi.fn()
+      .mockReturnValueOnce(firstPreview.promise)
+      .mockResolvedValueOnce(jsonResponse({
+        calculatedDays: 10,
+        currentTotalDays: 26,
+        expectedCurrentTotalDays: 26,
+        deltaDays: -16,
+        requiresCorrection: true,
+      }))
+      .mockResolvedValueOnce(jsonResponse({ id: 'config-new' }, 201))
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderPanel()
+
+    await user.click(screen.getByRole('button', { name: 'Przelicz' }))
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({
+      mode: 'DAYS_26',
+      customAnnualDays: null,
+      employmentFraction: 1,
+      effectiveFrom: '2026-01-01',
+      note: null,
+      year: 2026,
+      preview: true,
+    })
+
+    await user.click(screen.getByRole('button', { name: '20 dni' }))
+    await user.clear(screen.getByLabelText('Wymiar etatu'))
+    await user.type(screen.getByLabelText('Wymiar etatu'), '0.5')
+    await user.clear(screen.getByLabelText('Obowiązuje od'))
+    await user.type(screen.getByLabelText('Obowiązuje od'), '2026-02-01')
+    await user.type(screen.getByLabelText('Notatka (opcjonalnie)'), 'Nowe warunki')
+
+    await act(async () => {
+      firstPreview.resolve(jsonResponse({
+        calculatedDays: 26,
+        currentTotalDays: 26,
+        expectedCurrentTotalDays: 26,
+        deltaDays: 0,
+        requiresCorrection: false,
+      }))
+      await firstPreview.promise
+    })
+
+    await waitFor(() => {
+      expect((screen.getByRole('button', { name: 'Przelicz' }) as HTMLButtonElement).disabled)
+        .toBe(false)
+    })
+    expect(screen.queryByText('Zmiana salda: bez zmian')).toBeNull()
+    expect(screen.queryByLabelText('Powód korekty')).toBeNull()
+    expect((screen.getByRole('button', { name: 'Zastosuj' }) as HTMLButtonElement).disabled)
+      .toBe(true)
+
+    await user.click(screen.getByRole('button', { name: 'Przelicz' }))
+    expect(await screen.findByText('Zmiana salda: -16 dni')).toBeTruthy()
+    await user.type(screen.getByLabelText('Powód korekty'), 'Zmiana wymiaru etatu')
+    await user.click(screen.getByRole('button', { name: 'Zastosuj' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(3))
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toEqual({
+      mode: 'DAYS_20',
+      customAnnualDays: null,
+      employmentFraction: 0.5,
+      effectiveFrom: '2026-02-01',
+      note: 'Nowe warunki',
+      year: 2026,
+      preview: true,
+    })
+    expect(JSON.parse(String(fetchMock.mock.calls[2][1]?.body))).toEqual({
+      mode: 'DAYS_20',
+      customAnnualDays: null,
+      employmentFraction: 0.5,
+      effectiveFrom: '2026-02-01',
+      note: 'Nowe warunki',
+      year: 2026,
+      preview: false,
+      expectedCurrentTotalDays: 26,
+      correctionReason: 'Zmiana wymiaru etatu',
+    })
   })
 
   it('clears a stale 409 preview and requires recalculation', async () => {
