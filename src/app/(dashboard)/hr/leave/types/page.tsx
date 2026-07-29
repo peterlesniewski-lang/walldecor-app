@@ -33,7 +33,7 @@ interface LeaveType {
   maxDaysPerYear: number | null
   isActive: boolean
   parentId: string | null
-  subtypes: LeaveType[]
+  subtypes?: LeaveType[]
   _count: {
     leaveBalancesNew: number
     leaveRequestsNew: number
@@ -142,7 +142,7 @@ function LeaveTypeModal({
   const protectedTitles = getProtectedUiTitles(
     editing?.code ?? normalizedCode
   )
-  const subtypeParentTitle = editing?.subtypes.length
+  const subtypeParentTitle = editing?.subtypes?.length
     ? 'Typ mający podtypy musi pozostać typem głównym.'
     : undefined
   const parentProtectionTitle = [
@@ -727,7 +727,7 @@ export default function LeaveTypesPage() {
   const rows: Array<{ type: LeaveType; indent: boolean }> = []
   for (const type of leaveTypes.filter((t) => t.parentId === null)) {
     rows.push({ type, indent: false })
-    for (const sub of type.subtypes) {
+    for (const sub of type.subtypes ?? []) {
       rows.push({ type: sub, indent: true })
     }
   }

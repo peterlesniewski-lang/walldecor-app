@@ -14,7 +14,7 @@ interface TestLeaveType {
   maxDaysPerYear: number | null
   isActive: boolean
   parentId: string | null
-  subtypes: TestLeaveType[]
+  subtypes?: TestLeaveType[]
   _count: {
     leaveBalancesNew: number
     leaveRequestsNew: number
@@ -45,7 +45,16 @@ function leaveType(
   }
 }
 
-const vld = leaveType('VLD', { name: 'Urlop na żądanie' })
+function nestedLeaveType(
+  code: string,
+  overrides: Partial<TestLeaveType> = {}
+) {
+  const type = leaveType(code, overrides)
+  delete type.subtypes
+  return type
+}
+
+const vld = nestedLeaveType('VLD', { name: 'Urlop na żądanie' })
 const customSubtype = leaveType('CUSTOM_CHILD', {
   name: 'Podtyp urlopu dodatkowego',
   parentId: 'leave-type-custom',
@@ -118,6 +127,28 @@ describe('LeaveTypesPage', () => {
       .not.toBeNull()
     expect(within(rowForCode('VL')).getByText('Saldo')).not.toBeNull()
     expect(within(rowForCode('UB')).getByText('Bez salda')).not.toBeNull()
+  })
+
+  it('opens protected editing for a nested type without subtypes', async () => {
+    installFetchMock()
+    render(<LeaveTypesPage />)
+    const user = userEvent.setup()
+
+    await screen.findByText('VLD')
+    await user.click(within(rowForCode('VLD')).getByTitle('Edytuj'))
+
+    const dialog = screen.getByRole('dialog', { name: 'Edytuj typ urlopu' })
+    const parent = within(dialog).getByLabelText(
+      /Typ nadrzędny/i
+    ) as HTMLSelectElement
+    const approval = within(dialog).getByRole('checkbox', {
+      name: 'Wymaga akceptacji',
+    }) as HTMLInputElement
+
+    expect(parent.value).toBe('leave-type-vl')
+    expect(parent.disabled).toBe(true)
+    expect(parent.title).toMatch(/VLD.*VL/i)
+    expect(approval.disabled).toBe(true)
   })
 
   it('disables only canonical VLD behavior fields with explanatory titles', async () => {
