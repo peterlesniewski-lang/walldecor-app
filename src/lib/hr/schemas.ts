@@ -91,11 +91,18 @@ export const overtimeRequestSchema = z.object({
   reason: z.string().min(1),
 })
 
-export const leaveBalanceUpdateSchema = z.object({
+export const leaveBalanceCorrectionSchema = z.object({
   totalDays: z.number().min(0).optional(),
   usedDays: z.number().min(0).optional(),
   carriedOver: z.number().min(0).optional(),
-})
+  reason: z.string().trim().min(3).max(1000),
+}).strict().refine(
+  (data) =>
+    data.totalDays !== undefined ||
+    data.usedDays !== undefined ||
+    data.carriedOver !== undefined,
+  { message: 'At least one leave balance field is required' }
+)
 
 const httpDateSchema = z.string()
   .regex(/^\d{4}-\d{2}-\d{2}$/, 'effectiveFrom must use YYYY-MM-DD')

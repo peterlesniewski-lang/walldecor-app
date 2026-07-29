@@ -104,7 +104,7 @@ export async function GET(req: NextRequest) {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (session.user.role !== 'ADMIN' && session.user.role !== 'MANAGER') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  if (session.user.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const parsed = leaveBalanceCreateSchema.safeParse(await req.json())
   if (!parsed.success) {
@@ -121,17 +121,6 @@ export async function POST(req: NextRequest) {
 
   if (!employee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
   if (!leaveType) return NextResponse.json({ error: 'Leave type not found' }, { status: 404 })
-  if (session.user.role === 'MANAGER') {
-    const viewerEmployee = session.user.employeeId
-      ? await prisma.employee.findUnique({
-          where: { id: session.user.employeeId },
-          select: { id: true, divisionId: true, active: true },
-        })
-      : null
-    if (!canViewEmployeeRecord(session, employee, viewerEmployee)) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
-  }
 
   // Check for duplicate
   const existing = await prisma.leaveBalanceNew.findUnique({
