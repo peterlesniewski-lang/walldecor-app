@@ -1,5 +1,5 @@
 import { z } from 'zod'
-import { EMPLOYMENT_TYPES, LEAVE_STATUSES, TIME_ENTRY_STATUSES, TIME_ENTRY_SOURCES, BREAK_TYPES } from './constants'
+import { EMPLOYMENT_TYPES, TIME_ENTRY_SOURCES, BREAK_TYPES } from './constants'
 
 export const employeeCreateSchema = z.object({
   firstName: z.string().min(1).max(100),
@@ -131,6 +131,7 @@ export const leaveEntitlementSaveSchema = z.object({
   expectedCurrentTotalDays: z.number().nullable().optional(),
   expectedCurrentCarriedOver: z.number().min(0).nullable().optional(),
   expectedConfigVersion: z.string().min(1).nullable().optional(),
+  expectedActiveConfigVersion: z.string().min(1).nullable().optional(),
   correctionReason: z.string().trim().min(3).max(1000).optional(),
 }).superRefine((data, ctx) => {
   if (data.mode === 'CUSTOM' && data.customAnnualDays === null) {
@@ -171,6 +172,14 @@ export const leaveEntitlementSaveSchema = z.object({
       code: 'custom',
       message: 'expectedConfigVersion is required when applying',
       path: ['expectedConfigVersion'],
+    })
+  }
+
+  if (!data.preview && data.expectedActiveConfigVersion === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'expectedActiveConfigVersion is required when applying',
+      path: ['expectedActiveConfigVersion'],
     })
   }
 })

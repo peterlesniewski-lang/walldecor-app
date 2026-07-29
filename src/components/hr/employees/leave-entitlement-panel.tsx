@@ -64,7 +64,10 @@ interface PreviewResult {
   expectedCurrentTotalDays: number | null
   expectedCurrentCarriedOver: number | null
   expectedConfigVersion: string | null
+  expectedActiveConfigVersion: string | null
   deltaDays: number
+  configChanged: boolean
+  balanceChanged: boolean
   requiresCorrection: boolean
 }
 
@@ -170,7 +173,11 @@ function parsePreview(data: unknown): PreviewResult | null {
       typeof row.expectedCurrentCarriedOver !== 'number') ||
     (row.expectedConfigVersion !== null &&
       typeof row.expectedConfigVersion !== 'string') ||
+    (row.expectedActiveConfigVersion !== null &&
+      typeof row.expectedActiveConfigVersion !== 'string') ||
     typeof row.deltaDays !== 'number' ||
+    typeof row.configChanged !== 'boolean' ||
+    typeof row.balanceChanged !== 'boolean' ||
     typeof row.requiresCorrection !== 'boolean'
   ) {
     return null
@@ -183,37 +190,91 @@ function parsePreview(data: unknown): PreviewResult | null {
     expectedCurrentTotalDays: row.expectedCurrentTotalDays,
     expectedCurrentCarriedOver: row.expectedCurrentCarriedOver,
     expectedConfigVersion: row.expectedConfigVersion,
+    expectedActiveConfigVersion: row.expectedActiveConfigVersion,
     deltaDays: row.deltaDays,
+    configChanged: row.configChanged,
+    balanceChanged: row.balanceChanged,
     requiresCorrection: row.requiresCorrection,
   }
 }
 
-function parseHistoricalTotal(raw: string | undefined): number | null {
-  if (!raw) return null
+interface HistoricalEntitlementConfig {
+  mode: LeaveEntitlementMode
+  customAnnualDays: number | null
+  employmentFraction: number
+  note: string | null
+}
+
+interface HistoricalSnapshot {
+  totalDays: number | null
+  entitlementConfig: HistoricalEntitlementConfig | null
+}
+
+function isLeaveEntitlementMode(value: unknown): value is LeaveEntitlementMode {
+  return value === 'DAYS_20' || value === 'DAYS_26' || value === 'CUSTOM'
+}
+
+function parseHistoricalSnapshot(raw: string | undefined): HistoricalSnapshot {
+  const empty: HistoricalSnapshot = {
+    totalDays: null,
+    entitlementConfig: null,
+  }
+  if (!raw) return empty
   try {
     const parsed: unknown = JSON.parse(raw)
+    if (typeof parsed !== 'object' || parsed === null) return empty
+
+    const row = parsed as Record<string, unknown>
+    const totalDays =
+      typeof row.totalDays === 'number' && Number.isFinite(row.totalDays)
+        ? row.totalDays
+        : null
+    let entitlementConfig: HistoricalEntitlementConfig | null = null
+
     if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      'totalDays' in parsed &&
-      typeof parsed.totalDays === 'number' &&
-      Number.isFinite(parsed.totalDays)
+      typeof row.entitlementConfig === 'object' &&
+      row.entitlementConfig !== null
     ) {
-      return parsed.totalDays
+      const config = row.entitlementConfig as Record<string, unknown>
+      if (
+        isLeaveEntitlementMode(config.mode) &&
+        (config.customAnnualDays === null ||
+          (typeof config.customAnnualDays === 'number' &&
+            Number.isFinite(config.customAnnualDays))) &&
+        typeof config.employmentFraction === 'number' &&
+        Number.isFinite(config.employmentFraction) &&
+        (config.note === null || typeof config.note === 'string')
+      ) {
+        entitlementConfig = {
+          mode: config.mode,
+          customAnnualDays: config.customAnnualDays,
+          employmentFraction: config.employmentFraction,
+          note: config.note,
+        }
+      }
     }
+
+    return { totalDays, entitlementConfig }
   } catch {
-    return null
+    return empty
   }
-  return null
+}
+
+function formatHistoricalMode(config: HistoricalEntitlementConfig): string {
+  if (config.mode === 'DAYS_20') return '20 dni'
+  if (config.mode === 'DAYS_26') return '26 dni'
+  return config.customAnnualDays === null
+    ? 'Własny'
+    : `Własny (${formatDays(config.customAnnualDays)})`
 }
 
 function historicalTotal(
   normalized: number | null | undefined,
-  raw: string | undefined
+  snapshot: HistoricalSnapshot
 ): number | null {
   return typeof normalized === 'number' && Number.isFinite(normalized)
     ? normalized
-    : parseHistoricalTotal(raw)
+    : snapshot.totalDays
 }
 
 function formatCorrectionDate(value: string): string {
@@ -275,6 +336,7 @@ function LeaveEntitlementPanelContent({
   const [success, setSuccess] = useState<string | null>(null)
   const formVersionRef = useRef(0)
   const activePreviewRequestRef = useRef<number | null>(null)
+  const activeApplyRequestRef = useRef<number | null>(null)
   const mountedRef = useRef(true)
 
   useEffect(() => {
@@ -292,6 +354,7 @@ function LeaveEntitlementPanelContent({
   }, [success])
 
   function invalidatePreview() {
+    if (activeApplyRequestRef.current !== null) return
     formVersionRef.current += 1
     setPreview(null)
     setCorrectionReason('')
@@ -301,6 +364,7 @@ function LeaveEntitlementPanelContent({
   }
 
   function selectMode(nextMode: LeaveEntitlementMode) {
+    if (activeApplyRequestRef.current !== null) return
     setMode(nextMode)
     invalidatePreview()
   }
@@ -371,6 +435,7 @@ function LeaveEntitlementPanelContent({
     previewIsCurrent &&
     correctionReasonValid &&
     pendingAction === null
+  const isApplying = pendingAction === 'apply'
 
   async function requestPreview() {
     if (!normalizedForm) return
@@ -401,7 +466,16 @@ function LeaveEntitlementPanelContent({
         return
       }
       if (!response.ok) {
-        setError(parseResponseError(data, 'Nie udało się przeliczyć uprawnienia.'))
+        const code = parseResponseCode(data)
+        if (response.status === 409 && code === 'CONFIG_DATE_CONFLICT') {
+          setError(
+            'Data obowiązywania jest wcześniejsza niż aktywna konfiguracja.'
+          )
+        } else if (response.status === 409 && code === 'CONFIG_CONFLICT') {
+          setError('Konfiguracja zmieniła się. Przelicz ponownie.')
+        } else {
+          setError(parseResponseError(data, 'Nie udało się przeliczyć uprawnienia.'))
+        }
         return
       }
 
@@ -431,13 +505,19 @@ function LeaveEntitlementPanelContent({
   }
 
   async function applyEntitlement() {
-    if (!preview || preview.version !== formVersionRef.current || !correctionReasonValid) {
+    if (
+      activeApplyRequestRef.current !== null ||
+      !preview ||
+      preview.version !== formVersionRef.current ||
+      !correctionReasonValid
+    ) {
       return
     }
+    const applyVersion = preview.version
+    activeApplyRequestRef.current = applyVersion
     setPendingAction('apply')
     setError(null)
     setSuccess(null)
-    const applyVersion = preview.version
 
     const payload = {
       ...preview.form,
@@ -445,6 +525,8 @@ function LeaveEntitlementPanelContent({
       expectedCurrentTotalDays: preview.result.expectedCurrentTotalDays,
       expectedCurrentCarriedOver: preview.result.expectedCurrentCarriedOver,
       expectedConfigVersion: preview.result.expectedConfigVersion,
+      expectedActiveConfigVersion:
+        preview.result.expectedActiveConfigVersion,
       ...(preview.result.requiresCorrection
         ? { correctionReason: correctionReason.trim() }
         : {}),
@@ -471,7 +553,7 @@ function LeaveEntitlementPanelContent({
           setPreview(null)
           setCorrectionReason('')
           const code = parseResponseCode(data)
-          if (code === 'CONFIG_VERSION_CONFLICT') {
+          if (code === 'CONFIG_CONFLICT') {
             setError(
               'Konfiguracja zmieniła się od czasu podglądu. Przelicz ponownie.'
             )
@@ -497,7 +579,12 @@ function LeaveEntitlementPanelContent({
         setError('Błąd połączenia z serwerem.')
       }
     } finally {
-      if (mountedRef.current && formVersionRef.current === applyVersion) {
+      if (
+        mountedRef.current &&
+        formVersionRef.current === applyVersion &&
+        activeApplyRequestRef.current === applyVersion
+      ) {
+        activeApplyRequestRef.current = null
         setPendingAction(null)
       }
     }
@@ -600,8 +687,9 @@ function LeaveEntitlementPanelContent({
                       key={item.value}
                       type="button"
                       aria-pressed={selected}
+                      disabled={isApplying}
                       onClick={() => selectMode(item.value)}
-                      className={`min-w-0 rounded px-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1 ${
+                      className={`min-w-0 rounded px-2 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50 ${
                         selected
                           ? 'bg-white text-[var(--wd-text-primary)] shadow-sm'
                           : 'text-[var(--wd-text-muted)] hover:text-[var(--wd-text-primary)]'
@@ -632,6 +720,7 @@ function LeaveEntitlementPanelContent({
                   max={365}
                   step={1}
                   value={customAnnualDays}
+                  disabled={isApplying}
                   aria-invalid={Boolean(formValidation.errors.customAnnualDays)}
                   aria-describedby={
                     formValidation.errors.customAnnualDays
@@ -639,6 +728,7 @@ function LeaveEntitlementPanelContent({
                       : undefined
                   }
                   onChange={(event) => {
+                    if (activeApplyRequestRef.current !== null) return
                     setCustomAnnualDays(event.target.value)
                     invalidatePreview()
                   }}
@@ -664,6 +754,7 @@ function LeaveEntitlementPanelContent({
                 max={1}
                 step={0.01}
                 value={employmentFraction}
+                disabled={isApplying}
                 aria-invalid={Boolean(formValidation.errors.employmentFraction)}
                 aria-describedby={
                   formValidation.errors.employmentFraction
@@ -671,6 +762,7 @@ function LeaveEntitlementPanelContent({
                     : undefined
                 }
                 onChange={(event) => {
+                  if (activeApplyRequestRef.current !== null) return
                   setEmploymentFraction(event.target.value)
                   invalidatePreview()
                 }}
@@ -693,6 +785,7 @@ function LeaveEntitlementPanelContent({
                 type="date"
                 max={maxEffectiveDate}
                 value={effectiveFrom}
+                disabled={isApplying}
                 aria-invalid={Boolean(formValidation.errors.effectiveFrom)}
                 aria-describedby={
                   formValidation.errors.effectiveFrom
@@ -700,6 +793,7 @@ function LeaveEntitlementPanelContent({
                     : undefined
                 }
                 onChange={(event) => {
+                  if (activeApplyRequestRef.current !== null) return
                   setEffectiveFrom(event.target.value)
                   invalidatePreview()
                 }}
@@ -722,6 +816,7 @@ function LeaveEntitlementPanelContent({
                 maxLength={1000}
                 rows={2}
                 value={note}
+                disabled={isApplying}
                 aria-invalid={Boolean(formValidation.errors.note)}
                 aria-describedby={
                   formValidation.errors.note
@@ -729,6 +824,7 @@ function LeaveEntitlementPanelContent({
                     : undefined
                 }
                 onChange={(event) => {
+                  if (activeApplyRequestRef.current !== null) return
                   setNote(event.target.value)
                   invalidatePreview()
                 }}
@@ -791,6 +887,9 @@ function LeaveEntitlementPanelContent({
                   Saldo po zmianie: {formatDays(preview.result.targetTotalDays)}
                 </span>
                 <span>Aktualne saldo: {formatDays(preview.result.currentTotalDays)}</span>
+                {preview.result.configChanged && (
+                  <span className="font-medium">Zmiana konfiguracji</span>
+                )}
                 <span className="font-medium">
                   Zmiana salda:{' '}
                   {preview.result.deltaDays === 0
@@ -806,6 +905,7 @@ function LeaveEntitlementPanelContent({
                     id="leave-entitlement-correction-reason"
                     value={correctionReason}
                     onChange={(event) => setCorrectionReason(event.target.value)}
+                    disabled={isApplying}
                     minLength={3}
                     maxLength={1000}
                     required
@@ -838,14 +938,22 @@ function LeaveEntitlementPanelContent({
             ) : (
               <div className="mt-2 divide-y divide-[var(--wd-border)]">
                 {initialData.corrections.map((correction) => {
+                  const beforeSnapshot = parseHistoricalSnapshot(
+                    correction.beforeJson
+                  )
+                  const afterSnapshot = parseHistoricalSnapshot(
+                    correction.afterJson
+                  )
                   const before = historicalTotal(
                     correction.beforeTotalDays,
-                    correction.beforeJson
+                    beforeSnapshot
                   )
                   const after = historicalTotal(
                     correction.afterTotalDays,
-                    correction.afterJson
+                    afterSnapshot
                   )
+                  const beforeConfig = beforeSnapshot.entitlementConfig
+                  const afterConfig = afterSnapshot.entitlementConfig
                   return (
                     <div
                       key={correction.id}
@@ -858,6 +966,28 @@ function LeaveEntitlementPanelContent({
                         <p className="text-xs text-[var(--wd-text-muted)]">
                           {formatCorrectionDate(correction.createdAt)}
                         </p>
+                        {beforeConfig && afterConfig && (
+                          <div className="mt-1 space-y-0.5 text-xs text-[var(--wd-text-muted)]">
+                            <p>
+                              Tryb: {formatHistoricalMode(beforeConfig)} →{' '}
+                              {formatHistoricalMode(afterConfig)}
+                            </p>
+                            <p>
+                              Etat:{' '}
+                              {numberFormatter.format(
+                                beforeConfig.employmentFraction
+                              )}{' '}
+                              →{' '}
+                              {numberFormatter.format(
+                                afterConfig.employmentFraction
+                              )}
+                            </p>
+                            <p>
+                              Notatka: {beforeConfig.note ?? 'Brak'} →{' '}
+                              {afterConfig.note ?? 'Brak'}
+                            </p>
+                          </div>
+                        )}
                       </div>
                       <span className="num whitespace-nowrap text-sm tabular-nums text-[var(--wd-text-primary)]">
                         {before === null ? '—' : numberFormatter.format(before)} →{' '}

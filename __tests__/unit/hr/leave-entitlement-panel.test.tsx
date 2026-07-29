@@ -203,7 +203,10 @@ describe('LeaveEntitlementPanel', () => {
       expectedCurrentTotalDays: 29,
       expectedCurrentCarriedOver: 3,
       expectedConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
+      expectedActiveConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
       deltaDays: -6,
+      configChanged: true,
+      balanceChanged: true,
       requiresCorrection: true,
     }))
     vi.stubGlobal('fetch', fetchMock)
@@ -254,7 +257,10 @@ describe('LeaveEntitlementPanel', () => {
         expectedCurrentTotalDays: 29,
         expectedCurrentCarriedOver: 3,
         expectedConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
+        expectedActiveConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
         deltaDays: -6,
+        configChanged: true,
+        balanceChanged: true,
         requiresCorrection: true,
       }))
       .mockResolvedValueOnce(jsonResponse({ id: 'config-1' }))
@@ -279,10 +285,99 @@ describe('LeaveEntitlementPanel', () => {
       expectedCurrentTotalDays: 29,
       expectedCurrentCarriedOver: 3,
       expectedConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
+      expectedActiveConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
       correctionReason: 'Zmiana stażu',
     })
     await waitFor(() => expect(refreshMock).toHaveBeenCalledOnce())
     expect(screen.getByText('Zapisano uprawnienie urlopowe.')).toBeTruthy()
+  })
+
+  it('requires a reason when only the existing configuration changes', async () => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      calculatedDays: 26,
+      targetTotalDays: 29,
+      currentTotalDays: 29,
+      expectedCurrentTotalDays: 29,
+      expectedCurrentCarriedOver: 3,
+      expectedConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
+      expectedActiveConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
+      deltaDays: 0,
+      configChanged: true,
+      balanceChanged: false,
+      requiresCorrection: true,
+    })))
+    const user = userEvent.setup()
+    renderPanel()
+
+    await user.type(screen.getByLabelText('Notatka (opcjonalnie)'), 'Nowe warunki')
+    await user.click(screen.getByRole('button', { name: 'Przelicz' }))
+
+    expect(await screen.findByText('Zmiana konfiguracji')).toBeTruthy()
+    expect(screen.getByText('Zmiana salda: bez zmian')).toBeTruthy()
+    expect(screen.getByLabelText('Powód korekty')).toBeTruthy()
+    expect((screen.getByRole('button', { name: 'Zastosuj' }) as HTMLButtonElement).disabled)
+      .toBe(true)
+  })
+
+  it('locks the whole form during apply and completes the active request', async () => {
+    const applyResponse = deferred<Response>()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({
+        calculatedDays: 20,
+        targetTotalDays: 23,
+        currentTotalDays: 29,
+        expectedCurrentTotalDays: 29,
+        expectedCurrentCarriedOver: 3,
+        expectedConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
+        expectedActiveConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
+        deltaDays: -6,
+        configChanged: true,
+        balanceChanged: true,
+        requiresCorrection: true,
+      }))
+      .mockReturnValueOnce(applyResponse.promise)
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    renderPanel()
+
+    await user.click(screen.getByRole('button', { name: '20 dni' }))
+    await user.click(screen.getByRole('button', { name: 'Przelicz' }))
+    await user.type(await screen.findByLabelText('Powód korekty'), 'Zmiana limitu')
+    await user.click(screen.getByRole('button', { name: 'Zastosuj' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    const mode20 = screen.getByRole('button', { name: '20 dni' }) as HTMLButtonElement
+    const mode26 = screen.getByRole('button', { name: '26 dni' }) as HTMLButtonElement
+    const custom = screen.getByRole('button', { name: 'Własny' }) as HTMLButtonElement
+    const fraction = screen.getByLabelText('Wymiar etatu') as HTMLInputElement
+    const effectiveFrom = screen.getByLabelText('Obowiązuje od') as HTMLInputElement
+    const note = screen.getByLabelText('Notatka (opcjonalnie)') as HTMLTextAreaElement
+    const reason = screen.getByLabelText('Powód korekty') as HTMLInputElement
+    const previewButton = screen.getByRole('button', { name: 'Przelicz' }) as HTMLButtonElement
+    const applyButton = screen.getByRole('button', { name: 'Zastosuj' }) as HTMLButtonElement
+
+    expect(mode20.disabled).toBe(true)
+    expect(mode26.disabled).toBe(true)
+    expect(custom.disabled).toBe(true)
+    expect(fraction.disabled).toBe(true)
+    expect(effectiveFrom.disabled).toBe(true)
+    expect(note.disabled).toBe(true)
+    expect(reason.disabled).toBe(true)
+    expect(previewButton.disabled).toBe(true)
+    expect(applyButton.disabled).toBe(true)
+
+    await user.click(mode26)
+    await user.click(previewButton)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(mode20.getAttribute('aria-pressed')).toBe('true')
+
+    await act(async () => {
+      applyResponse.resolve(jsonResponse({ id: 'config-1' }))
+      await applyResponse.promise
+    })
+
+    expect(await screen.findByText('Zapisano uprawnienie urlopowe.')).toBeTruthy()
+    expect(refreshMock).toHaveBeenCalledOnce()
   })
 
   it('applies a missing balance with an expected null token and no reason', async () => {
@@ -294,7 +389,10 @@ describe('LeaveEntitlementPanel', () => {
         expectedCurrentTotalDays: null,
         expectedCurrentCarriedOver: null,
         expectedConfigVersion: null,
+        expectedActiveConfigVersion: null,
         deltaDays: 20,
+        configChanged: false,
+        balanceChanged: false,
         requiresCorrection: false,
       }))
       .mockResolvedValueOnce(jsonResponse({ id: 'config-new' }, 201))
@@ -318,6 +416,7 @@ describe('LeaveEntitlementPanel', () => {
     expect(applyBody.expectedCurrentTotalDays).toBeNull()
     expect(applyBody.expectedCurrentCarriedOver).toBeNull()
     expect(applyBody.expectedConfigVersion).toBeNull()
+    expect(applyBody.expectedActiveConfigVersion).toBeNull()
     expect(applyBody).not.toHaveProperty('correctionReason')
   })
 
@@ -329,7 +428,10 @@ describe('LeaveEntitlementPanel', () => {
       expectedCurrentTotalDays: 29,
       expectedCurrentCarriedOver: 3,
       expectedConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
+      expectedActiveConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
       deltaDays: 0,
+      configChanged: false,
+      balanceChanged: false,
       requiresCorrection: false,
     })))
     const user = userEvent.setup()
@@ -356,7 +458,10 @@ describe('LeaveEntitlementPanel', () => {
         expectedCurrentTotalDays: 29,
         expectedCurrentCarriedOver: 3,
         expectedConfigVersion: null,
+        expectedActiveConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
         deltaDays: -16,
+        configChanged: false,
+        balanceChanged: true,
         requiresCorrection: true,
       }))
       .mockResolvedValueOnce(jsonResponse({ id: 'config-new' }, 201))
@@ -395,7 +500,10 @@ describe('LeaveEntitlementPanel', () => {
         expectedCurrentTotalDays: 29,
         expectedCurrentCarriedOver: 3,
         expectedConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
+        expectedActiveConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
         deltaDays: 0,
+        configChanged: false,
+        balanceChanged: false,
         requiresCorrection: false,
       }))
       await firstPreview.promise
@@ -427,6 +535,7 @@ describe('LeaveEntitlementPanel', () => {
       expectedCurrentTotalDays: 29,
       expectedCurrentCarriedOver: 3,
       expectedConfigVersion: null,
+      expectedActiveConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
       correctionReason: 'Zmiana wymiaru etatu',
     })
   })
@@ -439,7 +548,10 @@ describe('LeaveEntitlementPanel', () => {
       expectedCurrentTotalDays: 29,
       expectedCurrentCarriedOver: 3,
       expectedConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
+      expectedActiveConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
       deltaDays: -6,
+      configChanged: true,
+      balanceChanged: true,
       requiresCorrection: true,
     }
     const fetchMock = vi.fn()
@@ -477,13 +589,16 @@ describe('LeaveEntitlementPanel', () => {
       expectedCurrentTotalDays: 29,
       expectedCurrentCarriedOver: 3,
       expectedConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
+      expectedActiveConfigVersion: 'config-1:2026-07-01T10:00:00.000Z',
       deltaDays: -6,
+      configChanged: true,
+      balanceChanged: true,
       requiresCorrection: true,
     }
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(jsonResponse(preview))
       .mockResolvedValueOnce(jsonResponse({
-        code: 'CONFIG_VERSION_CONFLICT',
+        code: 'CONFIG_CONFLICT',
         error: 'Leave entitlement config changed since preview',
       }, 409))
     vi.stubGlobal('fetch', fetchMock)
@@ -502,6 +617,29 @@ describe('LeaveEntitlementPanel', () => {
       .toBeNull()
   })
 
+  it.each([
+    [
+      'CONFIG_DATE_CONFLICT',
+      'Data obowiązywania jest wcześniejsza niż aktywna konfiguracja.',
+    ],
+    [
+      'CONFIG_CONFLICT',
+      'Konfiguracja zmieniła się. Przelicz ponownie.',
+    ],
+  ])('localizes preview %s', async (code, expectedMessage) => {
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({
+      code,
+      error: 'English server conflict',
+    }, 409)))
+    const user = userEvent.setup()
+    renderPanel()
+
+    await user.click(screen.getByRole('button', { name: 'Przelicz' }))
+
+    expect(await screen.findByText(expectedMessage)).toBeTruthy()
+    expect(screen.queryByText('English server conflict')).toBeNull()
+  })
+
   it('resets form and ignores stale requests after employee identity changes', async () => {
     const oldPreview = deferred<Response>()
     const fetchMock = vi.fn()
@@ -513,7 +651,10 @@ describe('LeaveEntitlementPanel', () => {
         expectedCurrentTotalDays: null,
         expectedCurrentCarriedOver: null,
         expectedConfigVersion: null,
+        expectedActiveConfigVersion: null,
         deltaDays: 20,
+        configChanged: false,
+        balanceChanged: false,
         requiresCorrection: false,
       }))
     vi.stubGlobal('fetch', fetchMock)
@@ -544,7 +685,10 @@ describe('LeaveEntitlementPanel', () => {
         expectedCurrentTotalDays: 29,
         expectedCurrentCarriedOver: 3,
         expectedConfigVersion: 'stale-version',
+        expectedActiveConfigVersion: 'stale-version',
         deltaDays: 0,
+        configChanged: false,
+        balanceChanged: false,
         requiresCorrection: false,
       }))
       await oldPreview.promise
@@ -588,6 +732,47 @@ describe('LeaveEntitlementPanel', () => {
     expect(screen.getByText('26 → 20 dni')).toBeTruthy()
     expect(screen.getByText('Stary import')).toBeTruthy()
     expect(screen.getByText('— → —')).toBeTruthy()
+  })
+
+  it('renders audited entitlement mode, fraction, and note changes', () => {
+    const balanceSnapshot = {
+      totalDays: 29,
+      usedDays: 5,
+      pendingDays: 2,
+      carriedOver: 3,
+      changeType: 'ENTITLEMENT_CONFIG',
+    }
+    renderPanel({
+      ...configuredData,
+      corrections: [{
+        id: 'correction-config',
+        createdAt: '2026-07-25T10:00:00.000Z',
+        reason: 'Zmiana warunków zatrudnienia',
+        beforeJson: JSON.stringify({
+          ...balanceSnapshot,
+          entitlementConfig: {
+            mode: 'DAYS_26',
+            customAnnualDays: null,
+            employmentFraction: 1,
+            note: 'Poprzednie warunki',
+          },
+        }),
+        afterJson: JSON.stringify({
+          ...balanceSnapshot,
+          entitlementConfig: {
+            mode: 'CUSTOM',
+            customAnnualDays: 52,
+            employmentFraction: 0.5,
+            note: 'Nowe warunki',
+          },
+        }),
+      }],
+    })
+
+    expect(screen.getByText('Tryb: 26 dni → Własny (52 dni)')).toBeTruthy()
+    expect(screen.getByText('Etat: 1 → 0,5')).toBeTruthy()
+    expect(screen.getByText('Notatka: Poprzednie warunki → Nowe warunki')).toBeTruthy()
+    expect(screen.getByText('29 → 29 dni')).toBeTruthy()
   })
 
   it('preserves current usage values and displays negative availability', () => {

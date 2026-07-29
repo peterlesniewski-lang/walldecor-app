@@ -419,7 +419,10 @@ describe('POST leave entitlement preview', () => {
       expectedCurrentTotalDays: 26,
       expectedCurrentCarriedOver: 3,
       expectedConfigVersion: null,
+      expectedActiveConfigVersion: null,
       deltaDays: -3,
+      configChanged: false,
+      balanceChanged: true,
       requiresCorrection: true,
       input: expect.objectContaining({
         mode: 'DAYS_20',
@@ -446,7 +449,10 @@ describe('POST leave entitlement preview', () => {
       expectedCurrentTotalDays: null,
       expectedCurrentCarriedOver: null,
       expectedConfigVersion: null,
+      expectedActiveConfigVersion: null,
       deltaDays: 20,
+      configChanged: false,
+      balanceChanged: false,
       requiresCorrection: false,
     }))
     expect(mockTransaction).not.toHaveBeenCalled()
@@ -462,17 +468,23 @@ describe('POST leave entitlement preview', () => {
 
     expect(response.status).toBe(200)
     expect(body.expectedConfigVersion).toBe(existingConfigVersion)
+    expect(body.expectedActiveConfigVersion).toBe(existingConfigVersion)
+    expect(body.configChanged).toBe(true)
     expect(body.targetTotalDays).toBe(23)
   })
 
-  it('rejects creating a config older than the currently active config', async () => {
-    mockConfigFindFirst.mockResolvedValue({
+  it('rejects an exact config older than the currently active config', async () => {
+    const newerActiveConfig = {
       ...existingConfig,
+      id: 'config-newer',
       effectiveFrom: new Date('2026-07-01T00:00:00.000Z'),
-    } as never)
+      updatedAt: new Date('2026-07-15T10:00:00.000Z'),
+    }
+    mockConfigFindUnique.mockResolvedValue(existingConfig as never)
+    mockConfigFindFirst.mockResolvedValue(newerActiveConfig as never)
 
     const response = await POST(
-      postRequest({ effectiveFrom: '2026-06-01' }),
+      postRequest({ effectiveFrom: '2026-01-01' }),
       params()
     )
     const body = await response.json()
@@ -480,6 +492,37 @@ describe('POST leave entitlement preview', () => {
     expect(response.status).toBe(409)
     expect(body.code).toBe('CONFIG_DATE_CONFLICT')
     expect(mockTransaction).not.toHaveBeenCalled()
+  })
+
+  it('marks a same-date config-only change as requiring an audited reason', async () => {
+    const unchangedBalance = { ...existingBalance, totalDays: 29 }
+    mockConfigFindUnique.mockResolvedValue(existingConfig as never)
+    mockConfigFindFirst.mockResolvedValue(existingConfig as never)
+    mockBalanceFindUnique.mockResolvedValue(unchangedBalance as never)
+
+    const response = await POST(
+      postRequest({
+        mode: 'CUSTOM',
+        customAnnualDays: 52,
+        employmentFraction: 0.5,
+        note: 'Nowe warunki',
+      }),
+      params()
+    )
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toEqual(expect.objectContaining({
+      calculatedDays: 26,
+      targetTotalDays: 29,
+      currentTotalDays: 29,
+      deltaDays: 0,
+      configChanged: true,
+      balanceChanged: false,
+      requiresCorrection: true,
+      expectedConfigVersion: existingConfigVersion,
+      expectedActiveConfigVersion: existingConfigVersion,
+    }))
   })
 })
 
@@ -497,6 +540,7 @@ describe('POST leave entitlement apply', () => {
         expectedCurrentTotalDays: 26,
         expectedCurrentCarriedOver: 3,
         expectedConfigVersion: null,
+        expectedActiveConfigVersion: null,
         correctionReason,
       }),
       params()
@@ -547,6 +591,7 @@ describe('POST leave entitlement apply', () => {
         expectedCurrentTotalDays: 26,
         expectedCurrentCarriedOver: 5,
         expectedConfigVersion: null,
+        expectedActiveConfigVersion: null,
         note: 'Zmiana wymiaru',
         correctionReason: '  Korekta limitu  ',
       }),
@@ -562,7 +607,10 @@ describe('POST leave entitlement apply', () => {
       expectedCurrentTotalDays: 26,
       expectedCurrentCarriedOver: 5,
       expectedConfigVersion: null,
+      expectedActiveConfigVersion: null,
       deltaDays: -1,
+      configChanged: false,
+      balanceChanged: true,
       requiresCorrection: true,
       config: expect.objectContaining({ id: appliedConfig.id }),
       balance: expect.objectContaining({
@@ -653,6 +701,7 @@ describe('POST leave entitlement apply', () => {
         expectedCurrentTotalDays: null,
         expectedCurrentCarriedOver: null,
         expectedConfigVersion: null,
+        expectedActiveConfigVersion: null,
       }),
       params()
     )
@@ -660,6 +709,8 @@ describe('POST leave entitlement apply', () => {
 
     expect(response.status).toBe(201)
     expect(body.requiresCorrection).toBe(false)
+    expect(body.configChanged).toBe(false)
+    expect(body.balanceChanged).toBe(false)
     expect(body.expectedCurrentTotalDays).toBeNull()
     expect(body.config).toEqual(appliedConfig)
     expect(body.balance).toEqual(appliedBalance)
@@ -696,6 +747,7 @@ describe('POST leave entitlement apply', () => {
         expectedCurrentTotalDays: 30,
         expectedCurrentCarriedOver: 4,
         expectedConfigVersion: null,
+        expectedActiveConfigVersion: null,
       }),
       params()
     )
@@ -712,7 +764,7 @@ describe('POST leave entitlement apply', () => {
     }))
     expect(mockBalanceFindUnique).not.toHaveBeenCalled()
     expect(txConfigCreate).toHaveBeenCalledOnce()
-    expect(txBalanceUpsert).toHaveBeenCalledOnce()
+    expect(txBalanceUpsert).not.toHaveBeenCalled()
     expect(txCorrectionCreate).not.toHaveBeenCalled()
   })
 
@@ -750,6 +802,7 @@ describe('POST leave entitlement apply', () => {
         expectedCurrentTotalDays: expectedTotal,
         expectedCurrentCarriedOver: expectedCarriedOver,
         expectedConfigVersion: null,
+        expectedActiveConfigVersion: null,
         correctionReason: 'Korekta limitu',
       }),
       params()
@@ -786,6 +839,7 @@ describe('POST leave entitlement apply', () => {
         expectedCurrentTotalDays: 26,
         expectedCurrentCarriedOver: 3,
         expectedConfigVersion: existingConfigVersion,
+        expectedActiveConfigVersion: existingConfigVersion,
         correctionReason: 'Zmiana podstawy urlopu',
       }),
       params()
@@ -821,6 +875,7 @@ describe('POST leave entitlement apply', () => {
         expectedCurrentTotalDays: 26,
         expectedCurrentCarriedOver: 3,
         expectedConfigVersion: existingConfigVersion,
+        expectedActiveConfigVersion: existingConfigVersion,
         correctionReason: 'Zmiana podstawy urlopu',
       }),
       params()
@@ -828,7 +883,7 @@ describe('POST leave entitlement apply', () => {
     const body = await response.json()
 
     expect(response.status).toBe(409)
-    expect(body.code).toBe('CONFIG_VERSION_CONFLICT')
+    expect(body.code).toBe('CONFIG_CONFLICT')
     expect(body.error).toContain('config')
     expect(txConfigUpdate).not.toHaveBeenCalled()
     expect(txConfigCreate).not.toHaveBeenCalled()
@@ -848,6 +903,7 @@ describe('POST leave entitlement apply', () => {
         expectedCurrentTotalDays: null,
         expectedCurrentCarriedOver: null,
         expectedConfigVersion: null,
+        expectedActiveConfigVersion: existingConfigVersion,
       }),
       params()
     )
@@ -857,6 +913,186 @@ describe('POST leave entitlement apply', () => {
     expect(body.code).toBe('CONFIG_DATE_CONFLICT')
     expect(txConfigCreate).not.toHaveBeenCalled()
     expect(txBalanceUpsert).not.toHaveBeenCalled()
+  })
+
+  it('returns CONFIG_CONFLICT when a newer active config appears after preview', async () => {
+    const previewActiveConfig = existingConfig
+    const newerActiveConfig = {
+      ...existingConfig,
+      id: 'config-newer',
+      effectiveFrom: new Date('2026-07-01T00:00:00.000Z'),
+      updatedAt: new Date('2026-07-20T10:00:00.000Z'),
+    }
+    mockConfigFindFirst.mockResolvedValue(previewActiveConfig as never)
+
+    const previewResponse = await POST(
+      postRequest({ effectiveFrom: '2026-06-01' }),
+      params()
+    )
+    const previewBody = await previewResponse.json()
+    expect(previewResponse.status).toBe(200)
+    expect(previewBody.expectedActiveConfigVersion).toBe(existingConfigVersion)
+
+    txConfigFindFirst.mockResolvedValue(newerActiveConfig)
+    const applyResponse = await POST(
+      postRequest({
+        effectiveFrom: '2026-06-01',
+        preview: false,
+        expectedCurrentTotalDays: previewBody.expectedCurrentTotalDays,
+        expectedCurrentCarriedOver: previewBody.expectedCurrentCarriedOver,
+        expectedConfigVersion: previewBody.expectedConfigVersion,
+        expectedActiveConfigVersion: previewBody.expectedActiveConfigVersion,
+      }),
+      params()
+    )
+    const applyBody = await applyResponse.json()
+
+    expect(applyResponse.status).toBe(409)
+    expect(applyBody.code).toBe('CONFIG_CONFLICT')
+    expect(txConfigCreate).not.toHaveBeenCalled()
+    expect(txConfigUpdate).not.toHaveBeenCalled()
+    expect(txBalanceUpsert).not.toHaveBeenCalled()
+    expect(txCorrectionCreate).not.toHaveBeenCalled()
+  })
+
+  it('requires a reason and audits full config snapshots when only exact config changes', async () => {
+    const unchangedBalance = { ...existingBalance, totalDays: 29 }
+    const updatedConfig = {
+      ...existingConfig,
+      mode: 'CUSTOM',
+      customAnnualDays: 52,
+      employmentFraction: 0.5,
+      note: 'Nowe warunki',
+      updatedAt: new Date('2026-07-30T12:00:00.000Z'),
+    }
+    txConfigFindUnique.mockResolvedValue(existingConfig)
+    txConfigFindFirst.mockResolvedValue(existingConfig)
+    txBalanceFindUnique.mockResolvedValue(unchangedBalance)
+
+    const missingReasonResponse = await POST(
+      postRequest({
+        mode: 'CUSTOM',
+        customAnnualDays: 52,
+        employmentFraction: 0.5,
+        note: 'Nowe warunki',
+        preview: false,
+        expectedCurrentTotalDays: 29,
+        expectedCurrentCarriedOver: 3,
+        expectedConfigVersion: existingConfigVersion,
+        expectedActiveConfigVersion: existingConfigVersion,
+      }),
+      params()
+    )
+
+    expect(missingReasonResponse.status).toBe(422)
+    expect(txConfigUpdate).not.toHaveBeenCalled()
+    expect(txBalanceUpsert).not.toHaveBeenCalled()
+    expect(txCorrectionCreate).not.toHaveBeenCalled()
+
+    txConfigUpdate.mockResolvedValue(updatedConfig)
+    txCorrectionCreate.mockResolvedValue({ id: 'correction-config' })
+    const response = await POST(
+      postRequest({
+        mode: 'CUSTOM',
+        customAnnualDays: 52,
+        employmentFraction: 0.5,
+        note: 'Nowe warunki',
+        preview: false,
+        expectedCurrentTotalDays: 29,
+        expectedCurrentCarriedOver: 3,
+        expectedConfigVersion: existingConfigVersion,
+        expectedActiveConfigVersion: existingConfigVersion,
+        correctionReason: 'Zmiana warunków zatrudnienia',
+      }),
+      params()
+    )
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toEqual(expect.objectContaining({
+      deltaDays: 0,
+      configChanged: true,
+      balanceChanged: false,
+      requiresCorrection: true,
+    }))
+    expect(txConfigUpdate).toHaveBeenCalledOnce()
+    expect(txBalanceUpsert).not.toHaveBeenCalled()
+    expect(txCorrectionCreate).toHaveBeenCalledOnce()
+
+    const correctionData = txCorrectionCreate.mock.calls[0][0].data
+    expect(correctionData).toEqual(expect.objectContaining({
+      reason: 'Zmiana warunków zatrudnienia',
+      actorId: 'admin-1',
+    }))
+    const before = JSON.parse(correctionData.beforeJson)
+    const after = JSON.parse(correctionData.afterJson)
+    expect(before).toEqual(expect.objectContaining({
+      totalDays: 29,
+      usedDays: 5,
+      pendingDays: 2,
+      carriedOver: 3,
+      changeType: 'ENTITLEMENT_CONFIG',
+      entitlementConfig: expect.objectContaining({
+        id: existingConfig.id,
+        mode: 'DAYS_26',
+        customAnnualDays: null,
+        employmentFraction: 1,
+        note: null,
+      }),
+    }))
+    expect(after).toEqual(expect.objectContaining({
+      totalDays: 29,
+      usedDays: 5,
+      pendingDays: 2,
+      carriedOver: 3,
+      changeType: 'ENTITLEMENT_CONFIG',
+      entitlementConfig: expect.objectContaining({
+        id: existingConfig.id,
+        mode: 'CUSTOM',
+        customAnnualDays: 52,
+        employmentFraction: 0.5,
+        note: 'Nowe warunki',
+      }),
+    }))
+  })
+
+  it('treats a literal same-date config and balance no-op as success without writes', async () => {
+    const unchangedBalance = { ...existingBalance, totalDays: 29 }
+    txConfigFindUnique.mockResolvedValue(existingConfig)
+    txConfigFindFirst.mockResolvedValue(existingConfig)
+    txBalanceFindUnique.mockResolvedValue(unchangedBalance)
+
+    const response = await POST(
+      postRequest({
+        mode: 'DAYS_26',
+        preview: false,
+        expectedCurrentTotalDays: 29,
+        expectedCurrentCarriedOver: 3,
+        expectedConfigVersion: existingConfigVersion,
+        expectedActiveConfigVersion: existingConfigVersion,
+      }),
+      params()
+    )
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toEqual(expect.objectContaining({
+      configChanged: false,
+      balanceChanged: false,
+      requiresCorrection: false,
+      config: expect.objectContaining({
+        id: existingConfig.id,
+        mode: existingConfig.mode,
+      }),
+      balance: expect.objectContaining({
+        id: unchangedBalance.id,
+        totalDays: 29,
+      }),
+    }))
+    expect(txConfigUpdate).not.toHaveBeenCalled()
+    expect(txConfigCreate).not.toHaveBeenCalled()
+    expect(txBalanceUpsert).not.toHaveBeenCalled()
+    expect(txCorrectionCreate).not.toHaveBeenCalled()
   })
 
   it('maps an exact-date transaction P2002 race to a config-specific 409', async () => {
@@ -873,13 +1109,14 @@ describe('POST leave entitlement apply', () => {
         expectedCurrentTotalDays: null,
         expectedCurrentCarriedOver: null,
         expectedConfigVersion: null,
+        expectedActiveConfigVersion: null,
       }),
       params()
     )
     const body = await response.json()
 
     expect(response.status).toBe(409)
-    expect(body.code).toBe('CONFIG_VERSION_CONFLICT')
+    expect(body.code).toBe('CONFIG_CONFLICT')
   })
 
   it('does not mislabel an unrelated P2002 as an entitlement date conflict', async () => {
@@ -895,6 +1132,7 @@ describe('POST leave entitlement apply', () => {
         expectedCurrentTotalDays: null,
         expectedCurrentCarriedOver: null,
         expectedConfigVersion: null,
+        expectedActiveConfigVersion: null,
       }),
       params()
     )).rejects.toBe(unrelatedError)

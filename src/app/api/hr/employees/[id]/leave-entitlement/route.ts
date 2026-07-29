@@ -26,6 +26,26 @@ type BalanceSnapshotSource = {
   carriedOver: number
 }
 
+type EntitlementConfigSnapshotSource = {
+  id: string
+  employeeId: string
+  mode: string
+  customAnnualDays: number | null
+  employmentFraction: number
+  effectiveFrom: Date
+  note: string | null
+  createdById: string
+  createdAt: Date
+  updatedAt: Date
+}
+
+type EntitlementConfigInput = {
+  mode: string
+  customAnnualDays: number | null
+  employmentFraction: number
+  note?: string | null
+}
+
 const yearSchema = z.coerce.number().int().min(2000).max(2100)
 
 class PreviewBalanceConflictError extends Error {}
@@ -39,6 +59,21 @@ function snapshot(balance: BalanceSnapshotSource) {
     usedDays: balance.usedDays,
     pendingDays: balance.pendingDays,
     carriedOver: balance.carriedOver,
+  }
+}
+
+function entitlementConfigSnapshot(config: EntitlementConfigSnapshotSource) {
+  return {
+    id: config.id,
+    employeeId: config.employeeId,
+    mode: config.mode,
+    customAnnualDays: config.customAnnualDays,
+    employmentFraction: config.employmentFraction,
+    effectiveFrom: config.effectiveFrom.toISOString(),
+    note: config.note,
+    createdById: config.createdById,
+    createdAt: config.createdAt.toISOString(),
+    updatedAt: config.updatedAt.toISOString(),
   }
 }
 
@@ -85,11 +120,21 @@ function normalizeCorrectionReason(rawInput: unknown): unknown {
 
 function previewMetadata(
   calculatedDays: number,
-  balance: BalanceSnapshotSource | null
+  balance: BalanceSnapshotSource | null,
+  exactConfig: EntitlementConfigInput | null,
+  input: EntitlementConfigInput
 ) {
   const currentTotalDays = balance?.totalDays ?? 0
   const carriedOver = balance?.carriedOver ?? 0
   const targetTotalDays = calculatedDays + carriedOver
+  const balanceChanged =
+    balance !== null && balance.totalDays !== targetTotalDays
+  const configChanged =
+    exactConfig !== null &&
+    (exactConfig.mode !== input.mode ||
+      exactConfig.customAnnualDays !== input.customAnnualDays ||
+      exactConfig.employmentFraction !== input.employmentFraction ||
+      exactConfig.note !== (input.note ?? null))
 
   return {
     calculatedDays,
@@ -98,7 +143,9 @@ function previewMetadata(
     expectedCurrentTotalDays: balance?.totalDays ?? null,
     expectedCurrentCarriedOver: balance?.carriedOver ?? null,
     deltaDays: targetTotalDays - currentTotalDays,
-    requiresCorrection: balance !== null && balance.totalDays !== targetTotalDays,
+    configChanged,
+    balanceChanged,
+    requiresCorrection: configChanged || balanceChanged,
   }
 }
 
@@ -109,15 +156,10 @@ function configVersion(
 }
 
 function isOlderThanActiveConfig(
-  exactConfig: { id: string } | null,
   activeConfig: { effectiveFrom: Date } | null,
   effectiveFrom: Date
 ): boolean {
-  return (
-    exactConfig === null &&
-    activeConfig !== null &&
-    effectiveFrom < activeConfig.effectiveFrom
-  )
+  return activeConfig !== null && effectiveFrom < activeConfig.effectiveFrom
 }
 
 function invalidInput(details: unknown) {
@@ -297,13 +339,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
       }),
     ])
 
-    if (
-      isOlderThanActiveConfig(
-        exactConfig,
-        activeConfig,
-        input.effectiveFrom
-      )
-    ) {
+    if (isOlderThanActiveConfig(activeConfig, input.effectiveFrom)) {
       return NextResponse.json(
         {
           code: 'CONFIG_DATE_CONFLICT',
@@ -314,8 +350,9 @@ export async function POST(req: NextRequest, context: RouteContext) {
     }
 
     return NextResponse.json({
-      ...previewMetadata(calculatedDays, existingBalance),
+      ...previewMetadata(calculatedDays, existingBalance, exactConfig, input),
       expectedConfigVersion: configVersion(exactConfig),
+      expectedActiveConfigVersion: configVersion(activeConfig),
       input: normalizedInput,
     })
   }
@@ -349,22 +386,20 @@ export async function POST(req: NextRequest, context: RouteContext) {
         }),
       ])
 
-      if (input.expectedConfigVersion !== configVersion(exactConfig)) {
+      if (
+        input.expectedConfigVersion !== configVersion(exactConfig) ||
+        input.expectedActiveConfigVersion !== configVersion(activeConfig)
+      ) {
         throw new PreviewConfigConflictError()
       }
-      if (
-        isOlderThanActiveConfig(
-          exactConfig,
-          activeConfig,
-          input.effectiveFrom
-        )
-      ) {
+      if (isOlderThanActiveConfig(activeConfig, input.effectiveFrom)) {
         throw new ConfigDateConflictError()
       }
 
       const metadata = {
-        ...previewMetadata(calculatedDays, currentBalance),
+        ...previewMetadata(calculatedDays, currentBalance, exactConfig, input),
         expectedConfigVersion: configVersion(exactConfig),
+        expectedActiveConfigVersion: configVersion(activeConfig),
       }
 
       if (
@@ -377,17 +412,21 @@ export async function POST(req: NextRequest, context: RouteContext) {
         throw new CorrectionReasonRequiredError()
       }
 
-      const config = exactConfig
-        ? await tx.leaveEntitlementConfig.update({
-            where: { id: exactConfig.id },
-            data: {
-              mode: input.mode,
-              customAnnualDays: input.customAnnualDays,
-              employmentFraction: input.employmentFraction,
-              note: input.note ?? null,
-            },
-          })
-        : await tx.leaveEntitlementConfig.create({
+      let config
+      if (exactConfig) {
+        config = metadata.configChanged
+          ? await tx.leaveEntitlementConfig.update({
+              where: { id: exactConfig.id },
+              data: {
+                mode: input.mode,
+                customAnnualDays: input.customAnnualDays,
+                employmentFraction: input.employmentFraction,
+                note: input.note ?? null,
+              },
+            })
+          : exactConfig
+      } else {
+        config = await tx.leaveEntitlementConfig.create({
             data: {
               employeeId,
               mode: input.mode,
@@ -398,25 +437,49 @@ export async function POST(req: NextRequest, context: RouteContext) {
               createdById: session.user.id,
             },
           })
+      }
 
-      const balance = await tx.leaveBalanceNew.upsert({
-        where: {
-          employeeId_leaveTypeId_year: {
-            employeeId,
-            leaveTypeId: vlType.id,
-            year: input.year,
-          },
-        },
-        create: {
-          employeeId,
-          leaveTypeId: vlType.id,
-          year: input.year,
-          totalDays: metadata.targetTotalDays,
-        },
-        update: { totalDays: metadata.targetTotalDays },
-      })
+      const balance =
+        currentBalance !== null && !metadata.balanceChanged
+          ? currentBalance
+          : await tx.leaveBalanceNew.upsert({
+              where: {
+                employeeId_leaveTypeId_year: {
+                  employeeId,
+                  leaveTypeId: vlType.id,
+                  year: input.year,
+                },
+              },
+              create: {
+                employeeId,
+                leaveTypeId: vlType.id,
+                year: input.year,
+                totalDays: metadata.targetTotalDays,
+              },
+              update: { totalDays: metadata.targetTotalDays },
+            })
 
-      if (metadata.requiresCorrection && currentBalance) {
+      if (metadata.requiresCorrection) {
+        const beforeBalance = currentBalance ?? balance
+        const beforeSnapshot = snapshot(beforeBalance)
+        const afterSnapshot = snapshot(balance)
+        const beforeJson =
+          metadata.configChanged && exactConfig
+            ? {
+                ...beforeSnapshot,
+                changeType: 'ENTITLEMENT_CONFIG',
+                entitlementConfig: entitlementConfigSnapshot(exactConfig),
+              }
+            : beforeSnapshot
+        const afterJson =
+          metadata.configChanged
+            ? {
+                ...afterSnapshot,
+                changeType: 'ENTITLEMENT_CONFIG',
+                entitlementConfig: entitlementConfigSnapshot(config),
+              }
+            : afterSnapshot
+
         await tx.leaveBalanceCorrection.create({
           data: {
             balanceId: balance.id,
@@ -425,8 +488,8 @@ export async function POST(req: NextRequest, context: RouteContext) {
             year: input.year,
             reason: input.correctionReason!,
             actorId: session.user.id,
-            beforeJson: JSON.stringify(snapshot(currentBalance)),
-            afterJson: JSON.stringify(snapshot(balance)),
+            beforeJson: JSON.stringify(beforeJson),
+            afterJson: JSON.stringify(afterJson),
           },
         })
       }
@@ -444,7 +507,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
     if (error instanceof PreviewConfigConflictError) {
       return NextResponse.json(
         {
-          code: 'CONFIG_VERSION_CONFLICT',
+          code: 'CONFIG_CONFLICT',
           error: 'Leave entitlement config changed since preview',
         },
         { status: 409 }
@@ -477,7 +540,7 @@ export async function POST(req: NextRequest, context: RouteContext) {
     if (isEntitlementConfigUniqueError(error)) {
       return NextResponse.json(
         {
-          code: 'CONFIG_VERSION_CONFLICT',
+          code: 'CONFIG_CONFLICT',
           error: 'Leave entitlement config changed since preview',
         },
         { status: 409 }
