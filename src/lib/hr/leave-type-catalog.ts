@@ -54,3 +54,51 @@ export const PROTECTED_LEAVE_TYPE_RULES = {
     parentCode: 'VL',
   },
 } as const
+
+export interface ProtectedLeaveTypeUpdate {
+  isPaid?: boolean
+  requiresApproval?: boolean
+  tracksBalance?: boolean
+  maxDaysPerYear?: number | null
+  parentCode?: string | null
+}
+
+const PROTECTED_FIELD_LABELS: Record<keyof ProtectedLeaveTypeUpdate, string> = {
+  isPaid: 'płatny',
+  requiresApproval: 'wymaga akceptacji',
+  tracksBalance: 'pomniejsza saldo',
+  maxDaysPerYear: 'limit roczny',
+  parentCode: 'typ nadrzędny',
+}
+
+function formatProtectedValue(value: boolean | number | string | null) {
+  if (value === true) return 'tak'
+  if (value === false) return 'nie'
+  if (value === null) return 'brak'
+  if (typeof value === 'string') return `kod ${value}`
+  return String(value)
+}
+
+export function validateProtectedLeaveTypeUpdate(
+  code: string,
+  update: ProtectedLeaveTypeUpdate
+): string | null {
+  if (!Object.prototype.hasOwnProperty.call(PROTECTED_LEAVE_TYPE_RULES, code)) {
+    return null
+  }
+
+  const rules = PROTECTED_LEAVE_TYPE_RULES[
+    code as keyof typeof PROTECTED_LEAVE_TYPE_RULES
+  ] as Partial<ProtectedLeaveTypeUpdate>
+
+  for (const field of Object.keys(rules) as Array<keyof ProtectedLeaveTypeUpdate>) {
+    if (
+      Object.prototype.hasOwnProperty.call(update, field) &&
+      update[field] !== rules[field]
+    ) {
+      return `Typ ${code}: chroniona reguła „${PROTECTED_FIELD_LABELS[field]}” wymaga wartości ${formatProtectedValue(rules[field] as boolean | number | string | null)}.`
+    }
+  }
+
+  return null
+}

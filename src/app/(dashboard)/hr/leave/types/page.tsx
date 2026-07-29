@@ -12,6 +12,7 @@ interface LeaveType {
   color: string
   isPaid: boolean
   requiresApproval: boolean
+  tracksBalance: boolean
   maxDaysPerYear: number | null
   isActive: boolean
   parentId: string | null
@@ -33,6 +34,37 @@ const PRESET_COLORS = [
   { hex: '#F97316', label: 'Pomarańczowy' },
 ]
 
+type ProtectedUiField =
+  | 'code'
+  | 'isPaid'
+  | 'requiresApproval'
+  | 'tracksBalance'
+  | 'maxDaysPerYear'
+  | 'parentId'
+
+const PROTECTED_UI_TITLES: Partial<
+  Record<string, Partial<Record<ProtectedUiField, string>>>
+> = {
+  SL: {
+    code: 'Kod SL jest chroniony i nie może zostać zmieniony.',
+    tracksBalance: 'SL nie pomniejsza salda urlopowego.',
+  },
+  UB: {
+    code: 'Kod UB jest chroniony i nie może zostać zmieniony.',
+    isPaid: 'UB musi pozostać urlopem bezpłatnym.',
+    requiresApproval: 'UB musi wymagać akceptacji.',
+    tracksBalance: 'UB nie pomniejsza salda urlopowego.',
+    maxDaysPerYear: 'UB nie może mieć rocznego limitu dni.',
+  },
+  VLD: {
+    code: 'Kod VLD jest chroniony i nie może zostać zmieniony.',
+    requiresApproval: 'VLD musi wymagać akceptacji.',
+    tracksBalance: 'VLD musi pomniejszać saldo urlopowe.',
+    maxDaysPerYear: 'VLD ma chroniony limit 4 dni.',
+    parentId: 'VLD musi wskazywać kanoniczny typ VL.',
+  },
+}
+
 // ─── Modal ─────────────────────────────────────────────────────────────────────
 
 interface ModalProps {
@@ -49,10 +81,15 @@ function LeaveTypeModal({ open, onClose, onSaved, editing, parentOptions }: Moda
   const [color, setColor] = useState('#3B82F6')
   const [isPaid, setIsPaid] = useState(true)
   const [requiresApproval, setRequiresApproval] = useState(true)
+  const [tracksBalance, setTracksBalance] = useState(true)
   const [maxDays, setMaxDays] = useState('')
   const [parentId, setParentId] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
+  const canonicalVlId = parentOptions.find((option) => option.code === 'VL')?.id ?? ''
+  const protectedTitles = editing
+    ? PROTECTED_UI_TITLES[editing.code]
+    : undefined
 
   useEffect(() => {
     if (editing) {
@@ -61,19 +98,29 @@ function LeaveTypeModal({ open, onClose, onSaved, editing, parentOptions }: Moda
       setColor(editing.color)
       setIsPaid(editing.isPaid)
       setRequiresApproval(editing.requiresApproval)
-      setMaxDays(editing.maxDaysPerYear ? String(editing.maxDaysPerYear) : '')
-      setParentId(editing.parentId ?? '')
+      setTracksBalance(editing.tracksBalance)
+      setMaxDays(
+        editing.maxDaysPerYear !== null
+          ? String(editing.maxDaysPerYear)
+          : ''
+      )
+      setParentId(
+        editing.code === 'VLD'
+          ? canonicalVlId
+          : editing.parentId ?? ''
+      )
     } else {
       setName('')
       setCode('')
       setColor('#3B82F6')
       setIsPaid(true)
       setRequiresApproval(true)
+      setTracksBalance(true)
       setMaxDays('')
       setParentId('')
     }
     setError('')
-  }, [editing, open])
+  }, [canonicalVlId, editing, open])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -86,8 +133,13 @@ function LeaveTypeModal({ open, onClose, onSaved, editing, parentOptions }: Moda
       color,
       isPaid,
       requiresApproval,
-      maxDaysPerYear: maxDays ? parseInt(maxDays, 10) : undefined,
-      parentId: parentId || undefined,
+      tracksBalance,
+      maxDaysPerYear: maxDays
+        ? parseInt(maxDays, 10)
+        : editing
+          ? null
+          : undefined,
+      parentId: parentId || (editing ? null : undefined),
     }
 
     try {
@@ -174,6 +226,8 @@ function LeaveTypeModal({ open, onClose, onSaved, editing, parentOptions }: Moda
               onChange={(e) => setCode(e.target.value.toUpperCase())}
               required
               maxLength={20}
+              disabled={Boolean(protectedTitles?.code)}
+              title={protectedTitles?.code}
               className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-[var(--wd-surface)] text-[var(--wd-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--wd-sand)] transition font-mono uppercase"
               placeholder="np. VL"
             />
@@ -210,36 +264,69 @@ function LeaveTypeModal({ open, onClose, onSaved, editing, parentOptions }: Moda
             </div>
           </div>
 
-          {/* Toggles row */}
-          <div className="flex gap-4">
-            {/* isPaid */}
-            <label className="flex items-center gap-2 cursor-pointer">
-              <div
-                onClick={() => setIsPaid(!isPaid)}
-                className="relative w-9 h-5 rounded-full transition-colors cursor-pointer"
-                style={{ background: isPaid ? 'var(--wd-sand)' : 'var(--wd-border)' }}
-              >
-                <div
-                  className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform"
-                  style={{ left: isPaid ? '18px' : '2px' }}
-                />
-              </div>
-              <span className="text-sm text-[var(--wd-text-primary)]">Płatny</span>
+          {/* Behavior controls */}
+          <div className="flex flex-wrap gap-x-4 gap-y-2">
+            <label
+              className={`flex items-center gap-2 ${
+                protectedTitles?.isPaid
+                  ? 'cursor-not-allowed opacity-60'
+                  : 'cursor-pointer'
+              }`}
+              title={protectedTitles?.isPaid}
+            >
+              <input
+                type="checkbox"
+                checked={isPaid}
+                onChange={(e) => setIsPaid(e.target.checked)}
+                disabled={Boolean(protectedTitles?.isPaid)}
+                title={protectedTitles?.isPaid}
+                className="h-4 w-4 rounded border-[var(--wd-border)] accent-[var(--wd-dark)]"
+              />
+              <span className="text-sm text-[var(--wd-text-primary)]">
+                Płatny
+              </span>
             </label>
 
-            {/* requiresApproval */}
-            <label className="flex items-center gap-2 cursor-pointer">
-              <div
-                onClick={() => setRequiresApproval(!requiresApproval)}
-                className="relative w-9 h-5 rounded-full transition-colors cursor-pointer"
-                style={{ background: requiresApproval ? 'var(--wd-sand)' : 'var(--wd-border)' }}
-              >
-                <div
-                  className="absolute top-0.5 w-4 h-4 rounded-full bg-white shadow transition-transform"
-                  style={{ left: requiresApproval ? '18px' : '2px' }}
-                />
-              </div>
-              <span className="text-sm text-[var(--wd-text-primary)]">Wymaga akceptacji</span>
+            <label
+              className={`flex items-center gap-2 ${
+                protectedTitles?.requiresApproval
+                  ? 'cursor-not-allowed opacity-60'
+                  : 'cursor-pointer'
+              }`}
+              title={protectedTitles?.requiresApproval}
+            >
+              <input
+                type="checkbox"
+                checked={requiresApproval}
+                onChange={(e) => setRequiresApproval(e.target.checked)}
+                disabled={Boolean(protectedTitles?.requiresApproval)}
+                title={protectedTitles?.requiresApproval}
+                className="h-4 w-4 rounded border-[var(--wd-border)] accent-[var(--wd-dark)]"
+              />
+              <span className="text-sm text-[var(--wd-text-primary)]">
+                Wymaga akceptacji
+              </span>
+            </label>
+
+            <label
+              className={`flex items-center gap-2 ${
+                protectedTitles?.tracksBalance
+                  ? 'cursor-not-allowed opacity-60'
+                  : 'cursor-pointer'
+              }`}
+              title={protectedTitles?.tracksBalance}
+            >
+              <input
+                type="checkbox"
+                checked={tracksBalance}
+                onChange={(e) => setTracksBalance(e.target.checked)}
+                disabled={Boolean(protectedTitles?.tracksBalance)}
+                title={protectedTitles?.tracksBalance}
+                className="h-4 w-4 rounded border-[var(--wd-border)] accent-[var(--wd-dark)]"
+              />
+              <span className="text-sm text-[var(--wd-text-primary)]">
+                Pomniejsza saldo
+              </span>
             </label>
           </div>
 
@@ -254,6 +341,8 @@ function LeaveTypeModal({ open, onClose, onSaved, editing, parentOptions }: Moda
               onChange={(e) => setMaxDays(e.target.value)}
               min={1}
               max={365}
+              disabled={Boolean(protectedTitles?.maxDaysPerYear)}
+              title={protectedTitles?.maxDaysPerYear}
               className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-[var(--wd-surface)] text-[var(--wd-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--wd-sand)] transition"
               placeholder="np. 26"
             />
@@ -267,6 +356,8 @@ function LeaveTypeModal({ open, onClose, onSaved, editing, parentOptions }: Moda
             <select
               value={parentId}
               onChange={(e) => setParentId(e.target.value)}
+              disabled={Boolean(protectedTitles?.parentId)}
+              title={protectedTitles?.parentId}
               className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-[var(--wd-surface)] text-[var(--wd-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--wd-sand)] transition"
             >
               <option value="">— brak (typ główny) —</option>
@@ -361,6 +452,17 @@ function LeaveTypeRow({
           }`}
         >
           {type.requiresApproval ? 'Wymaga akc.' : 'Automatyczny'}
+        </span>
+      </td>
+      <td>
+        <span
+          className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-medium border ${
+            type.tracksBalance
+              ? 'bg-sky-50 text-sky-700 border-sky-200'
+              : 'bg-stone-50 text-stone-500 border-stone-200'
+          }`}
+        >
+          {type.tracksBalance ? 'Saldo' : 'Bez salda'}
         </span>
       </td>
       <td>
@@ -518,6 +620,7 @@ export default function LeaveTypesPage() {
                   <th>Nazwa</th>
                   <th>Opłacalność</th>
                   <th>Akceptacja</th>
+                  <th>Saldo</th>
                   <th>Limit roczny</th>
                   <th>Użycie</th>
                   <th className="text-right">Akcje</th>

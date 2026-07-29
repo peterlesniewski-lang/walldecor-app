@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import {
+  PROTECTED_LEAVE_TYPE_RULES,
+  validateProtectedLeaveTypeUpdate,
+  type ProtectedLeaveTypeUpdate,
+} from '@/lib/hr/leave-type-catalog'
 import { z } from 'zod'
 
 const leaveTypeUpdateSchema = z.object({
@@ -25,13 +30,74 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   const { id } = await params
 
-  const parsed = leaveTypeUpdateSchema.safeParse(await req.json())
+  let body: unknown
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Nieprawidłowy JSON' }, { status: 400 })
+  }
+
+  const parsed = leaveTypeUpdateSchema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid input', details: parsed.error.flatten() }, { status: 400 })
   }
 
   const existing = await prisma.leaveType.findUnique({ where: { id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  let canonicalVl: { id: string } | null = null
+  if (existing.code === 'VLD') {
+    canonicalVl = await prisma.leaveType.findUnique({
+      where: { code: 'VL' },
+      select: { id: true },
+    })
+    if (!canonicalVl) {
+      return NextResponse.json(
+        { error: 'Typ VLD wymaga kanonicznego typu nadrzędnego VL, którego brakuje.' },
+        { status: 503 }
+      )
+    }
+  }
+
+  const isProtected = Object.prototype.hasOwnProperty.call(
+    PROTECTED_LEAVE_TYPE_RULES,
+    existing.code
+  )
+  if (isProtected && parsed.data.code && parsed.data.code !== existing.code) {
+    return NextResponse.json(
+      { error: `Typ ${existing.code}: chroniony kod nie może zostać zmieniony.` },
+      { status: 422 }
+    )
+  }
+
+  const protectedUpdate: ProtectedLeaveTypeUpdate = {}
+  if (parsed.data.isPaid !== undefined) {
+    protectedUpdate.isPaid = parsed.data.isPaid
+  }
+  if (parsed.data.requiresApproval !== undefined) {
+    protectedUpdate.requiresApproval = parsed.data.requiresApproval
+  }
+  if (parsed.data.tracksBalance !== undefined) {
+    protectedUpdate.tracksBalance = parsed.data.tracksBalance
+  }
+  if (Object.prototype.hasOwnProperty.call(parsed.data, 'maxDaysPerYear')) {
+    protectedUpdate.maxDaysPerYear = parsed.data.maxDaysPerYear
+  }
+  if (
+    existing.code === 'VLD' &&
+    Object.prototype.hasOwnProperty.call(parsed.data, 'parentId')
+  ) {
+    protectedUpdate.parentCode =
+      parsed.data.parentId === canonicalVl?.id ? 'VL' : null
+  }
+
+  const protectedError = validateProtectedLeaveTypeUpdate(
+    existing.code,
+    protectedUpdate
+  )
+  if (protectedError) {
+    return NextResponse.json({ error: protectedError }, { status: 422 })
+  }
 
   // Check code uniqueness if code is being changed
   if (parsed.data.code && parsed.data.code !== existing.code) {
@@ -41,9 +107,29 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     }
   }
 
+  if (parsed.data.parentId === id) {
+    return NextResponse.json(
+      { error: 'Typ urlopu nie może być typem nadrzędnym dla samego siebie.' },
+      { status: 422 }
+    )
+  }
+
+  if (existing.code !== 'VLD' && parsed.data.parentId) {
+    const parent = await prisma.leaveType.findUnique({
+      where: { id: parsed.data.parentId },
+    })
+    if (!parent) {
+      return NextResponse.json({ error: 'Parent leave type not found' }, { status: 404 })
+    }
+  }
+
+  const updateData = existing.code === 'VLD'
+    ? { ...parsed.data, parentId: canonicalVl!.id }
+    : parsed.data
+
   const leaveType = await prisma.leaveType.update({
     where: { id },
-    data: parsed.data,
+    data: updateData,
     include: {
       subtypes: true,
       _count: {

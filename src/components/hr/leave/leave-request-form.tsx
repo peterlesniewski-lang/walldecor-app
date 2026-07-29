@@ -1,7 +1,7 @@
 'use client'
 
 import { useState, useEffect, useCallback } from 'react'
-import { X, Calendar, Info, AlertCircle, Loader2 } from 'lucide-react'
+import { Calendar, Info, AlertCircle, Loader2 } from 'lucide-react'
 import { EmployeeSelect } from '@/components/hr/employees/employee-select'
 import { shouldTrackLeaveBalance } from '@/lib/hr/leave-balance-policy'
 import { calculateWorkingDays } from '@/lib/hr/utils'
@@ -14,6 +14,7 @@ interface LeaveType {
   isPaid: boolean
   requiresApproval: boolean
   tracksBalance: boolean
+  parentId: string | null
 }
 
 interface LeaveBalance {
@@ -34,6 +35,20 @@ interface LeaveRequestFormProps {
   onCancel: () => void
 }
 
+function readArrayPayload<T>(data: unknown, key?: string): T[] {
+  if (Array.isArray(data)) return data as T[]
+  if (!key || !data || typeof data !== 'object') return []
+
+  const nested = (data as Record<string, unknown>)[key]
+  return Array.isArray(nested) ? nested as T[] : []
+}
+
+function formatDays(value: number) {
+  return new Intl.NumberFormat('pl-PL', {
+    maximumFractionDigits: 2,
+  }).format(value)
+}
+
 export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, onSuccess, onCancel }: LeaveRequestFormProps) {
   const [balances, setBalances] = useState<LeaveBalance[]>([])
   const [allLeaveTypes, setAllLeaveTypes] = useState<LeaveType[]>([])
@@ -48,7 +63,6 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
   const [leaveTypeId, setLeaveTypeId] = useState('')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
-  const [isOnDemand, setIsOnDemand] = useState(false)
   const [isRemoteWork, setIsRemoteWork] = useState(false)
   const [substituteId, setSubstituteId] = useState<string | undefined>()
   const [notifySubstitute, setNotifySubstitute] = useState(false)
@@ -59,14 +73,25 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
   const [onDemandUsed, setOnDemandUsed] = useState(0)
 
   const currentYear = new Date().getFullYear()
+  const selectedLeaveType =
+    allLeaveTypes.find((leaveType) => leaveType.id === leaveTypeId) ??
+    balances.find((balance) => balance.leaveTypeId === leaveTypeId)?.leaveType
+  const canonicalVlId =
+    allLeaveTypes.find((leaveType) => leaveType.code === 'VL')?.id ??
+    balances.find((balance) => balance.leaveType.code === 'VL')?.leaveTypeId
+  const selectedBalancePoolId =
+    selectedLeaveType?.code === 'VLD' ? canonicalVlId : selectedLeaveType?.id
+  const selectedBalance = balances.find(
+    (balance) => balance.leaveTypeId === selectedBalancePoolId
+  )
 
   // Load all active types so non-balance leave (for example sick leave) is
   // available even when the employee has no LeaveBalanceNew record.
   useEffect(() => {
     fetch('/api/hr/leave-types?activeOnly=true')
-      .then((r) => r.json())
+      .then((response) => response.ok ? response.json() : null)
       .then((data: unknown) => {
-        const list = Array.isArray(data) ? data as LeaveType[] : (data as { leaveTypes?: LeaveType[] }).leaveTypes ?? []
+        const list = readArrayPayload<LeaveType>(data, 'leaveTypes')
         setAllLeaveTypes(list)
         if (isAdmin && list.length > 0 && !leaveTypeId) setLeaveTypeId(list[0].id)
       })
@@ -77,6 +102,7 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
   const loadBalances = useCallback(async () => {
     if (!employeeId) {
       setBalances([])
+      setOnDemandUsed(0)
       if (!isAdmin) setLeaveTypeId('')
       return
     }
@@ -84,48 +110,77 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
     try {
       const res = await fetch(`/api/hr/leave-balances?employeeId=${employeeId}&year=${currentYear}`)
       if (res.ok) {
-        const data = await res.json() as LeaveBalance[]
+        const data = readArrayPayload<LeaveBalance>(await res.json())
         setBalances(data)
-        if (!isAdmin && data.length > 0) setLeaveTypeId(data[0].leaveTypeId)
+        if (!isAdmin && data.length > 0) {
+          setLeaveTypeId(data[0].leaveTypeId)
+        }
+      } else {
+        setBalances([])
       }
+    } catch {
+      setBalances([])
     } finally {
       setLoadingBalances(false)
     }
   }, [employeeId, currentYear, isAdmin])
-
-  const loadOnDemandCount = useCallback(async () => {
-    if (!leaveTypeId || !employeeId) return
-    try {
-      const res = await fetch(
-        `/api/hr/leave-requests?employeeId=${employeeId}&year=${currentYear}`
-      )
-      if (res.ok) {
-        const data = await res.json()
-        const count = (data as { isOnDemand: boolean; status: string }[]).filter(
-          (r) => r.isOnDemand && !['cancelled', 'rejected'].includes(r.status)
-        ).length
-        setOnDemandUsed(count)
-      }
-    } catch {
-      // ignore
-    }
-  }, [employeeId, leaveTypeId, currentYear])
 
   useEffect(() => {
     loadBalances()
   }, [loadBalances])
 
   useEffect(() => {
-    loadOnDemandCount()
-  }, [loadOnDemandCount])
+    let cancelled = false
+    setOnDemandUsed(0)
 
-  const selectedBalance = balances.find((b) => b.leaveTypeId === leaveTypeId)
-  const selectedLeaveType =
-    allLeaveTypes.find((leaveType) => leaveType.id === leaveTypeId) ??
-    selectedBalance?.leaveType
+    if (!employeeId || selectedLeaveType?.code !== 'VLD') {
+      return () => {
+        cancelled = true
+      }
+    }
+
+    const loadOnDemandDays = async () => {
+      try {
+        const res = await fetch(
+          `/api/hr/leave-requests?employeeId=${employeeId}&year=${currentYear}`
+        )
+        if (!res.ok) return
+
+        const rows = readArrayPayload<{
+          days?: unknown
+          isOnDemand?: unknown
+          status?: unknown
+          leaveType?: { code?: unknown }
+        }>(await res.json(), 'leaveRequests')
+        const usedDays = rows.reduce((sum, row) => {
+          if (
+            row.status === 'cancelled' ||
+            row.status === 'rejected' ||
+            (row.isOnDemand !== true && row.leaveType?.code !== 'VLD')
+          ) {
+            return sum
+          }
+
+          const days = Number(row.days)
+          return Number.isFinite(days) ? sum + days : sum
+        }, 0)
+
+        if (!cancelled) setOnDemandUsed(usedDays)
+      } catch {
+        // Keep the counter at zero when historical data cannot be loaded.
+      }
+    }
+
+    void loadOnDemandDays()
+    return () => {
+      cancelled = true
+    }
+  }, [employeeId, selectedLeaveType?.code, currentYear])
+
   const available = selectedBalance
     ? selectedBalance.totalDays - selectedBalance.usedDays - selectedBalance.pendingDays
     : 0
+  const onDemandRemaining = Math.max(0, 4 - onDemandUsed)
 
   const workingDays =
     startDate && endDate
@@ -167,7 +222,7 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
           leaveTypeId,
           startDate,
           endDate,
-          isOnDemand,
+          isOnDemand: selectedLeaveType?.code === 'VLD',
           isRemoteWork,
           isDelegation: false,
           substituteId,
@@ -235,23 +290,24 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
         </label>
         <select
           value={leaveTypeId}
-          onChange={(e) => {
-            setLeaveTypeId(e.target.value)
-            setIsOnDemand(false)
-          }}
+          onChange={(e) => setLeaveTypeId(e.target.value)}
           required
           className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-white text-[var(--wd-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--wd-dark)]/20 focus:border-[var(--wd-dark)] transition-colors"
         >
           <option value="">Wybierz typ urlopu…</option>
           {(allLeaveTypes.length > 0 ? allLeaveTypes : balances.map((balance) => balance.leaveType))
             .map((leaveType) => {
-              const balance = balances.find((item) => item.leaveTypeId === leaveType.id)
+              const balancePoolId =
+                leaveType.code === 'VLD' ? canonicalVlId : leaveType.id
+              const balance = balances.find(
+                (item) => item.leaveTypeId === balancePoolId
+              )
               const leaveAvailable = balance
                 ? balance.totalDays - balance.usedDays - balance.pendingDays
                 : null
               const balanceLabel =
                 leaveType.tracksBalance && leaveAvailable !== null
-                  ? ` (${leaveAvailable % 1 === 0 ? leaveAvailable : leaveAvailable.toFixed(1)} dni pozostałych)`
+                  ? ` (${formatDays(leaveAvailable)} dni pozostałych)`
                   : ''
 
               return (
@@ -281,7 +337,7 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
             <div className="flex items-center justify-between text-[11px] text-[var(--wd-text-muted)]">
               <span>{selectedBalance.usedDays} wyk. · {selectedBalance.pendingDays} oczekujące</span>
               <span className="font-semibold" style={{ color: selectedBalance.leaveType.color }}>
-                {available % 1 === 0 ? available : available.toFixed(1)} / {selectedBalance.totalDays} dni
+                {formatDays(available)} / {formatDays(selectedBalance.totalDays)} dni
               </span>
             </div>
           </div>
@@ -291,25 +347,12 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
             Ten typ nie pomniejsza salda urlopowego.
           </p>
         )}
+        {selectedLeaveType?.code === 'VLD' && (
+          <p className="mt-1 text-xs font-medium text-[var(--wd-text-primary)]">
+            Pozostało: {formatDays(onDemandRemaining)} z 4 dni
+          </p>
+        )}
       </div>
-
-      {/* On demand */}
-      {tracksBalance && selectedBalance && (
-        <label className="flex items-start gap-2.5 cursor-pointer">
-          <input
-            type="checkbox"
-            checked={isOnDemand}
-            onChange={(e) => setIsOnDemand(e.target.checked)}
-            className="mt-0.5 rounded border-[var(--wd-border)] accent-[var(--wd-dark)]"
-          />
-          <span className="text-sm text-[var(--wd-text-primary)]">
-            Urlop na żądanie{' '}
-            <span className="text-[var(--wd-text-muted)]">
-              (max 4/rok — pozostało: {4 - onDemandUsed})
-            </span>
-          </span>
-        </label>
-      )}
 
       {/* Remote work */}
       <label className="flex items-start gap-2.5 cursor-pointer">
@@ -382,7 +425,7 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
         <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-700 text-sm">
           <AlertCircle size={14} className="shrink-0" />
           <span>
-            Niewystarczające saldo urlopowe — dostępne: {available % 1 === 0 ? available : available.toFixed(1)} dni, wymagane: {workingDays} dni
+            Niewystarczające saldo urlopowe — dostępne: {formatDays(available)} dni, wymagane: {formatDays(workingDays)} dni
           </span>
         </div>
       )}

@@ -2,6 +2,10 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import {
+  validateProtectedLeaveTypeUpdate,
+  type ProtectedLeaveTypeUpdate,
+} from '@/lib/hr/leave-type-catalog'
 import { z } from 'zod'
 
 const leaveTypeCreateSchema = z.object({
@@ -12,7 +16,7 @@ const leaveTypeCreateSchema = z.object({
   requiresApproval: z.boolean().default(true),
   tracksBalance: z.boolean().default(true),
   maxDaysPerYear: z.number().int().min(1).optional(),
-  parentId: z.string().optional(),
+  parentId: z.string().nullable().optional(),
 })
 
 export async function GET(req: NextRequest) {
@@ -57,7 +61,14 @@ export async function POST(req: NextRequest) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (session.user.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-  const parsed = leaveTypeCreateSchema.safeParse(await req.json())
+  let body: unknown
+  try {
+    body = await req.json()
+  } catch {
+    return NextResponse.json({ error: 'Nieprawidłowy JSON' }, { status: 400 })
+  }
+
+  const parsed = leaveTypeCreateSchema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid input', details: parsed.error.flatten() }, { status: 400 })
   }
@@ -68,16 +79,56 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Code already exists' }, { status: 409 })
   }
 
-  // Validate parentId if provided
-  if (parsed.data.parentId) {
-    const parent = await prisma.leaveType.findUnique({ where: { id: parsed.data.parentId } })
+  let canonicalVl: { id: string } | null = null
+  if (parsed.data.code === 'VLD') {
+    canonicalVl = await prisma.leaveType.findUnique({
+      where: { code: 'VL' },
+      select: { id: true },
+    })
+    if (!canonicalVl) {
+      return NextResponse.json(
+        { error: 'Typ VLD wymaga kanonicznego typu nadrzędnego VL, którego brakuje.' },
+        { status: 503 }
+      )
+    }
+  }
+
+  const protectedUpdate: ProtectedLeaveTypeUpdate = {
+    isPaid: parsed.data.isPaid,
+    requiresApproval: parsed.data.requiresApproval,
+    tracksBalance: parsed.data.tracksBalance,
+    maxDaysPerYear: parsed.data.maxDaysPerYear ?? null,
+  }
+  if (parsed.data.code === 'VLD') {
+    protectedUpdate.parentCode =
+      parsed.data.parentId === undefined || parsed.data.parentId === canonicalVl?.id
+        ? 'VL'
+        : null
+  }
+
+  const protectedError = validateProtectedLeaveTypeUpdate(
+    parsed.data.code,
+    protectedUpdate
+  )
+  if (protectedError) {
+    return NextResponse.json({ error: protectedError }, { status: 422 })
+  }
+
+  if (parsed.data.code !== 'VLD' && parsed.data.parentId) {
+    const parent = await prisma.leaveType.findUnique({
+      where: { id: parsed.data.parentId },
+    })
     if (!parent) {
       return NextResponse.json({ error: 'Parent leave type not found' }, { status: 404 })
     }
   }
 
+  const createData = parsed.data.code === 'VLD'
+    ? { ...parsed.data, parentId: canonicalVl!.id }
+    : parsed.data
+
   const leaveType = await prisma.leaveType.create({
-    data: parsed.data,
+    data: createData,
     include: {
       subtypes: true,
       _count: {
