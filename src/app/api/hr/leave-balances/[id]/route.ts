@@ -56,6 +56,10 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       carriedOver: carriedOver ?? before.carriedOver,
     }
 
+    if (after.carriedOver > after.totalDays) {
+      return { status: 'invalid-carryover' } as const
+    }
+
     if (
       before.totalDays === after.totalDays &&
       before.usedDays === after.usedDays &&
@@ -107,6 +111,12 @@ export async function PATCH(req: NextRequest, { params }: Params) {
 
   if (result.status === 'not-found') {
     return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
+  if (result.status === 'invalid-carryover') {
+    return NextResponse.json(
+      { error: 'Carried over days cannot exceed total days' },
+      { status: 422 }
+    )
   }
   if (result.status === 'no-op') {
     return NextResponse.json(

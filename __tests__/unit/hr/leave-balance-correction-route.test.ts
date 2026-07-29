@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
+import { leaveBalanceCorrectionSchema } from '@/lib/hr/schemas'
 import { PATCH } from '@/app/api/hr/leave-balances/[id]/route'
 import {
   GET as getLeaveBalances,
@@ -183,6 +184,18 @@ describe('PATCH /api/hr/leave-balances/[id] access', () => {
 
 describe('PATCH /api/hr/leave-balances/[id] validation', () => {
   it.each([
+    ['negative', -1],
+    ['non-finite', Number.POSITIVE_INFINITY],
+  ])('keeps rejecting %s balance values', (_label, value) => {
+    const parsed = leaveBalanceCorrectionSchema.safeParse({
+      totalDays: value,
+      reason: 'Manual correction',
+    })
+
+    expect(parsed.success).toBe(false)
+  })
+
+  it.each([
     ['missing', undefined],
     ['too short after trimming', ' x '],
   ])('returns 400 for a %s reason', async (_label, reason) => {
@@ -323,6 +336,83 @@ describe('PATCH /api/hr/leave-balances/[id] correction transaction', () => {
       .toBeLessThan(txBalanceUpdate.mock.invocationCallOrder[0])
     expect(txBalanceUpdate.mock.invocationCallOrder[0])
       .toBeLessThan(txCorrectionCreate.mock.invocationCallOrder[0])
+  })
+
+  it.each([
+    [
+      'totalDays below existing carriedOver',
+      { totalDays: 2 },
+    ],
+    [
+      'carriedOver above existing totalDays',
+      { carriedOver: 27 },
+    ],
+    [
+      'carriedOver above the proposed totalDays',
+      { totalDays: 24, carriedOver: 25 },
+    ],
+  ])('returns 422 without writes when %s', async (_label, correction) => {
+    const response = await PATCH(
+      patchRequest({
+        ...correction,
+        reason: 'Invalid carryover correction',
+      }),
+      params()
+    )
+    const body = await response.json()
+
+    expect(response.status).toBe(422)
+    expect(body.error).toBe('Carried over days cannot exceed total days')
+    expect(mockTransaction).toHaveBeenCalledOnce()
+    expect(txBalanceFindUnique).toHaveBeenCalledOnce()
+    expect(txBalanceUpdate).not.toHaveBeenCalled()
+    expect(txCorrectionCreate).not.toHaveBeenCalled()
+  })
+
+  it('allows and audits historical overdraft after lowering totalDays', async () => {
+    const overdraftBalance = {
+      ...updatedBalance,
+      totalDays: 6,
+      carriedOver: currentBalance.carriedOver,
+    }
+    txBalanceUpdate.mockResolvedValueOnce(overdraftBalance)
+
+    const response = await PATCH(
+      patchRequest({
+        totalDays: 6,
+        reason: 'Lower entitlement after recorded leave',
+      }),
+      params()
+    )
+
+    expect(response.status).toBe(200)
+    expect(currentBalance.usedDays + currentBalance.pendingDays)
+      .toBeGreaterThan(overdraftBalance.totalDays)
+    expect(txBalanceUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: { totalDays: 6 },
+    }))
+    expect(txCorrectionCreate).toHaveBeenCalledWith({
+      data: {
+        balanceId: currentBalance.id,
+        employeeId: currentBalance.employeeId,
+        leaveTypeId: currentBalance.leaveTypeId,
+        year: currentBalance.year,
+        reason: 'Lower entitlement after recorded leave',
+        actorId: 'admin-user',
+        beforeJson: JSON.stringify({
+          totalDays: 26,
+          usedDays: 5,
+          pendingDays: 2,
+          carriedOver: 3,
+        }),
+        afterJson: JSON.stringify({
+          totalDays: 6,
+          usedDays: 5,
+          pendingDays: 2,
+          carriedOver: 3,
+        }),
+      },
+    })
   })
 
   it('returns 422 without writes when supplied values do not change the balance', async () => {
