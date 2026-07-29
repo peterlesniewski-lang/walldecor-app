@@ -2,7 +2,7 @@ export type BalancePolicyLeaveType = {
   id: string
   code: string
   tracksBalance: boolean
-  parentId?: string | null
+  parentId: string | null
 }
 
 interface LeaveRequestBalancePolicy {
@@ -39,12 +39,12 @@ export function shouldTrackLeaveBalance(
   leaveType: LegacyBalancePolicyLeaveType,
   request: LeaveRequestBalancePolicy = {}
 ): boolean {
-  if (leaveType.id && leaveType.code) {
+  if (leaveType.id && leaveType.code && 'parentId' in leaveType) {
     return resolveLeaveBalancePoolId({
       id: leaveType.id,
       code: leaveType.code,
       tracksBalance: leaveType.tracksBalance,
-      parentId: leaveType.parentId,
+      parentId: leaveType.parentId ?? null,
     }, request) !== null
   }
   return leaveType.tracksBalance && !request.isRemoteWork && !request.isDelegation

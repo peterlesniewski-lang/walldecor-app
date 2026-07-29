@@ -46,6 +46,7 @@ describe('leave balance pool policy', () => {
       id: 'untracked',
       code: 'OTHER',
       tracksBalance: false,
+      parentId: null,
     })).toBeNull()
   })
 
@@ -53,6 +54,18 @@ describe('leave balance pool policy', () => {
     expect(shouldTrackLeaveBalance(vl)).toBe(true)
     expect(shouldTrackLeaveBalance({ ...vl, tracksBalance: false })).toBe(false)
     expect(shouldTrackLeaveBalance(vl, { isRemoteWork: true })).toBe(false)
+  })
+
+  it('keeps legacy VLD tracked until parentId is explicitly selected', () => {
+    const legacyVld = { id: 'vld', code: 'VLD', tracksBalance: true }
+    const canonicalVld = { ...legacyVld, parentId: 'vl' }
+    const canonicalVldWithoutParent = { ...legacyVld, parentId: null }
+
+    expect(shouldTrackLeaveBalance(legacyVld)).toBe(true)
+    expect(resolveLeaveBalancePoolId(canonicalVld)).toBe('vl')
+    expect(shouldTrackLeaveBalance(canonicalVld)).toBe(true)
+    expect(resolveLeaveBalancePoolId(canonicalVldWithoutParent)).toBeNull()
+    expect(shouldTrackLeaveBalance(canonicalVldWithoutParent)).toBe(false)
   })
 
   it('recognizes VLD by type even for historical rows with isOnDemand=false', () => {
