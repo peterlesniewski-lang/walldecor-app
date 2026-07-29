@@ -1,7 +1,24 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { Plus, Pencil, PowerOff, ChevronRight, Loader2, X, Check } from 'lucide-react'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import {
+  isCanonicalLeaveTypeCode,
+  PROTECTED_LEAVE_TYPE_RULES,
+  type CanonicalLeaveTypeCode,
+  type ProtectedLeaveTypeUpdate,
+} from '@/lib/hr/leave-type-catalog'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -42,9 +59,13 @@ type ProtectedUiField =
   | 'maxDaysPerYear'
   | 'parentId'
 
-const PROTECTED_UI_TITLES: Partial<
-  Record<string, Partial<Record<ProtectedUiField, string>>>
-> = {
+const PROTECTED_UI_TITLES = {
+  VL: {
+    code: 'Kod VL jest chroniony i nie może zostać zmieniony.',
+    isPaid: 'VL musi pozostać urlopem płatnym.',
+    requiresApproval: 'VL musi wymagać akceptacji.',
+    tracksBalance: 'VL musi pomniejszać saldo urlopowe.',
+  },
   SL: {
     code: 'Kod SL jest chroniony i nie może zostać zmieniony.',
     tracksBalance: 'SL nie pomniejsza salda urlopowego.',
@@ -63,6 +84,23 @@ const PROTECTED_UI_TITLES: Partial<
     maxDaysPerYear: 'VLD ma chroniony limit 4 dni.',
     parentId: 'VLD musi wskazywać kanoniczny typ VL.',
   },
+} satisfies Record<
+  CanonicalLeaveTypeCode,
+  Partial<Record<ProtectedUiField, string>>
+>
+
+function getProtectedUiTitles(
+  code: string
+): Partial<Record<ProtectedUiField, string>> | undefined {
+  return isCanonicalLeaveTypeCode(code)
+    ? PROTECTED_UI_TITLES[code]
+    : undefined
+}
+
+function getProtectedRules(code: string): ProtectedLeaveTypeUpdate | undefined {
+  return isCanonicalLeaveTypeCode(code)
+    ? PROTECTED_LEAVE_TYPE_RULES[code]
+    : undefined
 }
 
 // ─── Modal ─────────────────────────────────────────────────────────────────────
@@ -73,9 +111,17 @@ interface ModalProps {
   onSaved: () => void
   editing: LeaveType | null
   parentOptions: Array<{ id: string; name: string; code: string }>
+  returnFocusRef: React.RefObject<HTMLElement | null>
 }
 
-function LeaveTypeModal({ open, onClose, onSaved, editing, parentOptions }: ModalProps) {
+function LeaveTypeModal({
+  open,
+  onClose,
+  onSaved,
+  editing,
+  parentOptions,
+  returnFocusRef,
+}: ModalProps) {
   const [name, setName] = useState('')
   const [code, setCode] = useState('')
   const [color, setColor] = useState('#3B82F6')
@@ -87,28 +133,61 @@ function LeaveTypeModal({ open, onClose, onSaved, editing, parentOptions }: Moda
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
   const canonicalVlId = parentOptions.find((option) => option.code === 'VL')?.id ?? ''
-  const protectedTitles = editing
-    ? PROTECTED_UI_TITLES[editing.code]
-    : undefined
+  const normalizedCode = code.trim().toUpperCase()
+  const creationProtectionCode =
+    !editing && isCanonicalLeaveTypeCode(normalizedCode)
+      ? normalizedCode
+      : null
+  const protectedTitles = getProtectedUiTitles(
+    editing?.code ?? normalizedCode
+  )
+
+  const applyProtectedRules = useCallback((
+    targetCode: string,
+    fallback: {
+      isPaid: boolean
+      requiresApproval: boolean
+      tracksBalance: boolean
+      maxDays: string
+      parentId: string
+    }
+  ) => {
+    const rules = getProtectedRules(targetCode)
+
+    setIsPaid(rules?.isPaid ?? fallback.isPaid)
+    setRequiresApproval(
+      rules?.requiresApproval ?? fallback.requiresApproval
+    )
+    setTracksBalance(rules?.tracksBalance ?? fallback.tracksBalance)
+    setMaxDays(
+      Object.prototype.hasOwnProperty.call(rules ?? {}, 'maxDaysPerYear')
+        ? rules?.maxDaysPerYear === null
+          ? ''
+          : String(rules?.maxDaysPerYear)
+        : fallback.maxDays
+    )
+    setParentId(
+      targetCode === 'VLD'
+        ? canonicalVlId
+        : fallback.parentId
+    )
+  }, [canonicalVlId])
 
   useEffect(() => {
     if (editing) {
       setName(editing.name)
       setCode(editing.code)
       setColor(editing.color)
-      setIsPaid(editing.isPaid)
-      setRequiresApproval(editing.requiresApproval)
-      setTracksBalance(editing.tracksBalance)
-      setMaxDays(
-        editing.maxDaysPerYear !== null
-          ? String(editing.maxDaysPerYear)
-          : ''
-      )
-      setParentId(
-        editing.code === 'VLD'
-          ? canonicalVlId
-          : editing.parentId ?? ''
-      )
+      applyProtectedRules(editing.code, {
+        isPaid: editing.isPaid,
+        requiresApproval: editing.requiresApproval,
+        tracksBalance: editing.tracksBalance,
+        maxDays:
+          editing.maxDaysPerYear !== null
+            ? String(editing.maxDaysPerYear)
+            : '',
+        parentId: editing.parentId ?? '',
+      })
     } else {
       setName('')
       setCode('')
@@ -120,7 +199,24 @@ function LeaveTypeModal({ open, onClose, onSaved, editing, parentOptions }: Moda
       setParentId('')
     }
     setError('')
-  }, [canonicalVlId, editing, open])
+  }, [applyProtectedRules, editing, open])
+
+  useEffect(() => {
+    if (editing) return
+
+    applyProtectedRules(creationProtectionCode ?? '', {
+      isPaid: true,
+      requiresApproval: true,
+      tracksBalance: true,
+      maxDays: '',
+      parentId: '',
+    })
+  }, [applyProtectedRules, creationProtectionCode, editing])
+
+  const protectedDescriptionId = (field: ProtectedUiField) =>
+    protectedTitles?.[field]
+      ? `leave-type-${field}-protected`
+      : undefined
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -167,175 +263,190 @@ function LeaveTypeModal({ open, onClose, onSaved, editing, parentOptions }: Moda
     }
   }
 
-  if (!open) return null
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      {/* Backdrop */}
-      <div
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-        onClick={onClose}
-      />
-
-      {/* Modal */}
-      <div
-        className="relative w-full max-w-md rounded-xl shadow-2xl"
-        style={{ background: 'var(--wd-white)', border: '1px solid var(--wd-border)' }}
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose()
+      }}
+    >
+      <DialogContent
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          returnFocusRef.current?.focus()
+        }}
+        className="max-w-md gap-0 overflow-hidden border-[var(--wd-border)] bg-[var(--wd-white)] p-0 shadow-2xl"
       >
-        {/* Header */}
-        <div
-          className="flex items-center justify-between px-5 py-4 border-b"
+        <DialogHeader
+          className="border-b px-5 py-4 pr-12"
           style={{ borderColor: 'var(--wd-border)' }}
         >
-          <h2 className="font-semibold text-[var(--wd-text-primary)]">
+          <DialogTitle className="text-base font-semibold text-[var(--wd-text-primary)]">
             {editing ? 'Edytuj typ urlopu' : 'Dodaj typ urlopu'}
-          </h2>
-          <button
-            onClick={onClose}
-            className="p-1 rounded-md hover:bg-[var(--wd-surface-2)] text-[var(--wd-text-muted)] transition-colors"
-          >
-            <X size={16} />
-          </button>
-        </div>
+          </DialogTitle>
+          <DialogDescription className="sr-only">
+            Ustaw nazwę, kod i zachowanie typu urlopu.
+          </DialogDescription>
+        </DialogHeader>
 
-        {/* Form */}
-        <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          {/* Name */}
+        <form onSubmit={handleSubmit} className="space-y-4 p-5">
           <div>
-            <label className="block text-xs font-medium text-[var(--wd-text-muted)] mb-1.5 uppercase tracking-wide">
+            <Label
+              htmlFor="leave-type-name"
+              className="mb-1.5 block text-xs font-medium uppercase text-[var(--wd-text-muted)]"
+            >
               Nazwa
-            </label>
-            <input
+            </Label>
+            <Input
+              id="leave-type-name"
               type="text"
               value={name}
               onChange={(e) => setName(e.target.value)}
               required
-              className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-[var(--wd-surface)] text-[var(--wd-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--wd-sand)] transition"
+              className="h-auto w-full rounded-lg border-[var(--wd-border)] bg-[var(--wd-surface)] px-3 py-2 text-sm text-[var(--wd-text-primary)] focus-visible:ring-[var(--wd-sand)]"
               placeholder="np. Urlop wypoczynkowy"
             />
           </div>
 
-          {/* Code */}
           <div>
-            <label className="block text-xs font-medium text-[var(--wd-text-muted)] mb-1.5 uppercase tracking-wide">
+            <Label
+              htmlFor="leave-type-code"
+              className="mb-1.5 block text-xs font-medium uppercase text-[var(--wd-text-muted)]"
+            >
               Kod
-            </label>
-            <input
+            </Label>
+            <Input
+              id="leave-type-code"
               type="text"
               value={code}
               onChange={(e) => setCode(e.target.value.toUpperCase())}
               required
               maxLength={20}
-              disabled={Boolean(protectedTitles?.code)}
-              title={protectedTitles?.code}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-[var(--wd-surface)] text-[var(--wd-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--wd-sand)] transition font-mono uppercase"
+              disabled={Boolean(editing && protectedTitles?.code)}
+              title={editing ? protectedTitles?.code : undefined}
+              aria-describedby={
+                editing ? protectedDescriptionId('code') : undefined
+              }
+              className="h-auto w-full rounded-lg border-[var(--wd-border)] bg-[var(--wd-surface)] px-3 py-2 font-mono text-sm uppercase text-[var(--wd-text-primary)] focus-visible:ring-[var(--wd-sand)]"
               placeholder="np. VL"
             />
+            {editing && protectedTitles?.code && (
+              <span id={protectedDescriptionId('code')} className="sr-only">
+                {protectedTitles.code}
+              </span>
+            )}
           </div>
 
-          {/* Color */}
           <div>
-            <label className="block text-xs font-medium text-[var(--wd-text-muted)] mb-1.5 uppercase tracking-wide">
+            <Label
+              htmlFor="leave-type-color"
+              className="mb-1.5 block text-xs font-medium uppercase text-[var(--wd-text-muted)]"
+            >
               Kolor
-            </label>
-            <div className="flex items-center gap-2 flex-wrap">
-              {PRESET_COLORS.map((c) => (
+            </Label>
+            <div className="flex flex-wrap items-center gap-2">
+              {PRESET_COLORS.map((preset) => (
                 <button
-                  key={c.hex}
+                  key={preset.hex}
                   type="button"
-                  title={c.label}
-                  onClick={() => setColor(c.hex)}
-                  className="relative w-7 h-7 rounded-full transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-offset-1 focus:ring-[var(--wd-sand)]"
-                  style={{ backgroundColor: c.hex }}
+                  title={preset.label}
+                  onClick={() => setColor(preset.hex)}
+                  className="relative h-7 w-7 rounded-full transition-transform hover:scale-110 focus:outline-none focus:ring-2 focus:ring-[var(--wd-sand)] focus:ring-offset-1"
+                  style={{ backgroundColor: preset.hex }}
                 >
-                  {color === c.hex && (
-                    <Check size={12} className="absolute inset-0 m-auto text-white" strokeWidth={3} />
+                  {color === preset.hex && (
+                    <Check
+                      size={12}
+                      className="absolute inset-0 m-auto text-white"
+                      strokeWidth={3}
+                    />
                   )}
                 </button>
               ))}
-              <input
+              <Input
+                id="leave-type-color"
                 type="color"
                 value={color}
                 onChange={(e) => setColor(e.target.value)}
                 title="Własny kolor"
-                className="w-7 h-7 rounded-full cursor-pointer border border-[var(--wd-border)] p-0 overflow-hidden"
+                className="h-7 w-7 cursor-pointer overflow-hidden rounded-full border border-[var(--wd-border)] p-0"
               />
-              <span className="text-xs font-mono text-[var(--wd-text-muted)]">{color}</span>
+              <span className="font-mono text-xs text-[var(--wd-text-muted)]">
+                {color}
+              </span>
             </div>
           </div>
 
-          {/* Behavior controls */}
           <div className="flex flex-wrap gap-x-4 gap-y-2">
-            <label
-              className={`flex items-center gap-2 ${
-                protectedTitles?.isPaid
-                  ? 'cursor-not-allowed opacity-60'
-                  : 'cursor-pointer'
-              }`}
-              title={protectedTitles?.isPaid}
-            >
-              <input
-                type="checkbox"
-                checked={isPaid}
-                onChange={(e) => setIsPaid(e.target.checked)}
-                disabled={Boolean(protectedTitles?.isPaid)}
-                title={protectedTitles?.isPaid}
-                className="h-4 w-4 rounded border-[var(--wd-border)] accent-[var(--wd-dark)]"
-              />
-              <span className="text-sm text-[var(--wd-text-primary)]">
-                Płatny
-              </span>
-            </label>
+            {([
+              {
+                field: 'isPaid' as const,
+                id: 'leave-type-paid',
+                label: 'Płatny',
+                checked: isPaid,
+                onChange: setIsPaid,
+              },
+              {
+                field: 'requiresApproval' as const,
+                id: 'leave-type-approval',
+                label: 'Wymaga akceptacji',
+                checked: requiresApproval,
+                onChange: setRequiresApproval,
+              },
+              {
+                field: 'tracksBalance' as const,
+                id: 'leave-type-balance',
+                label: 'Pomniejsza saldo',
+                checked: tracksBalance,
+                onChange: setTracksBalance,
+              },
+            ]).map((control) => {
+              const protectedTitle = protectedTitles?.[control.field]
+              const descriptionId = protectedDescriptionId(control.field)
 
-            <label
-              className={`flex items-center gap-2 ${
-                protectedTitles?.requiresApproval
-                  ? 'cursor-not-allowed opacity-60'
-                  : 'cursor-pointer'
-              }`}
-              title={protectedTitles?.requiresApproval}
-            >
-              <input
-                type="checkbox"
-                checked={requiresApproval}
-                onChange={(e) => setRequiresApproval(e.target.checked)}
-                disabled={Boolean(protectedTitles?.requiresApproval)}
-                title={protectedTitles?.requiresApproval}
-                className="h-4 w-4 rounded border-[var(--wd-border)] accent-[var(--wd-dark)]"
-              />
-              <span className="text-sm text-[var(--wd-text-primary)]">
-                Wymaga akceptacji
-              </span>
-            </label>
-
-            <label
-              className={`flex items-center gap-2 ${
-                protectedTitles?.tracksBalance
-                  ? 'cursor-not-allowed opacity-60'
-                  : 'cursor-pointer'
-              }`}
-              title={protectedTitles?.tracksBalance}
-            >
-              <input
-                type="checkbox"
-                checked={tracksBalance}
-                onChange={(e) => setTracksBalance(e.target.checked)}
-                disabled={Boolean(protectedTitles?.tracksBalance)}
-                title={protectedTitles?.tracksBalance}
-                className="h-4 w-4 rounded border-[var(--wd-border)] accent-[var(--wd-dark)]"
-              />
-              <span className="text-sm text-[var(--wd-text-primary)]">
-                Pomniejsza saldo
-              </span>
-            </label>
+              return (
+                <div key={control.field}>
+                  <Label
+                    htmlFor={control.id}
+                    className={`flex items-center gap-2 text-sm text-[var(--wd-text-primary)] ${
+                      protectedTitle
+                        ? 'cursor-not-allowed opacity-60'
+                        : 'cursor-pointer'
+                    }`}
+                    title={protectedTitle}
+                  >
+                    <input
+                      id={control.id}
+                      type="checkbox"
+                      checked={control.checked}
+                      onChange={(e) => control.onChange(e.target.checked)}
+                      disabled={Boolean(protectedTitle)}
+                      title={protectedTitle}
+                      aria-describedby={descriptionId}
+                      className="h-4 w-4 rounded border-[var(--wd-border)] accent-[var(--wd-dark)]"
+                    />
+                    <span>{control.label}</span>
+                  </Label>
+                  {protectedTitle && (
+                    <span id={descriptionId} className="sr-only">
+                      {protectedTitle}
+                    </span>
+                  )}
+                </div>
+              )
+            })}
           </div>
 
-          {/* Max days */}
           <div>
-            <label className="block text-xs font-medium text-[var(--wd-text-muted)] mb-1.5 uppercase tracking-wide">
-              Maks. dni w roku <span className="normal-case font-normal">(opcjonalnie)</span>
-            </label>
-            <input
+            <Label
+              htmlFor="leave-type-max-days"
+              className="mb-1.5 block text-xs font-medium uppercase text-[var(--wd-text-muted)]"
+            >
+              Maks. dni w roku{' '}
+              <span className="normal-case font-normal">(opcjonalnie)</span>
+            </Label>
+            <Input
+              id="leave-type-max-days"
               type="number"
               value={maxDays}
               onChange={(e) => setMaxDays(e.target.value)}
@@ -343,62 +454,80 @@ function LeaveTypeModal({ open, onClose, onSaved, editing, parentOptions }: Moda
               max={365}
               disabled={Boolean(protectedTitles?.maxDaysPerYear)}
               title={protectedTitles?.maxDaysPerYear}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-[var(--wd-surface)] text-[var(--wd-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--wd-sand)] transition"
+              aria-describedby={protectedDescriptionId('maxDaysPerYear')}
+              className="h-auto w-full rounded-lg border-[var(--wd-border)] bg-[var(--wd-surface)] px-3 py-2 text-sm text-[var(--wd-text-primary)] focus-visible:ring-[var(--wd-sand)]"
               placeholder="np. 26"
             />
+            {protectedTitles?.maxDaysPerYear && (
+              <span
+                id={protectedDescriptionId('maxDaysPerYear')}
+                className="sr-only"
+              >
+                {protectedTitles.maxDaysPerYear}
+              </span>
+            )}
           </div>
 
-          {/* Parent */}
           <div>
-            <label className="block text-xs font-medium text-[var(--wd-text-muted)] mb-1.5 uppercase tracking-wide">
-              Typ nadrzędny <span className="normal-case font-normal">(opcjonalnie)</span>
-            </label>
+            <Label
+              htmlFor="leave-type-parent"
+              className="mb-1.5 block text-xs font-medium uppercase text-[var(--wd-text-muted)]"
+            >
+              Typ nadrzędny{' '}
+              <span className="normal-case font-normal">(opcjonalnie)</span>
+            </Label>
             <select
+              id="leave-type-parent"
               value={parentId}
               onChange={(e) => setParentId(e.target.value)}
               disabled={Boolean(protectedTitles?.parentId)}
               title={protectedTitles?.parentId}
-              className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-[var(--wd-surface)] text-[var(--wd-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--wd-sand)] transition"
+              aria-describedby={protectedDescriptionId('parentId')}
+              className="w-full rounded-lg border border-[var(--wd-border)] bg-[var(--wd-surface)] px-3 py-2 text-sm text-[var(--wd-text-primary)] transition focus:outline-none focus:ring-2 focus:ring-[var(--wd-sand)]"
             >
               <option value="">— brak (typ główny) —</option>
               {parentOptions
-                .filter((p) => p.id !== editing?.id)
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
-                    [{p.code}] {p.name}
+                .filter((parent) => parent.id !== editing?.id)
+                .map((parent) => (
+                  <option key={parent.id} value={parent.id}>
+                    [{parent.code}] {parent.name}
                   </option>
                 ))}
             </select>
+            {protectedTitles?.parentId && (
+              <span id={protectedDescriptionId('parentId')} className="sr-only">
+                {protectedTitles.parentId}
+              </span>
+            )}
           </div>
 
-          {/* Error */}
           {error && (
-            <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg border border-red-200">
+            <p className="rounded-lg border border-red-200 bg-red-50 px-3 py-2 text-xs text-red-600">
               {error}
             </p>
           )}
 
-          {/* Actions */}
-          <div className="flex items-center justify-end gap-2 pt-1">
-            <button
+          <DialogFooter className="flex-row items-center justify-end gap-2 pt-1 sm:space-x-0">
+            <Button
               type="button"
               onClick={onClose}
-              className="px-4 py-2 text-sm font-medium rounded-lg border border-[var(--wd-border)] text-[var(--wd-text-muted)] hover:bg-[var(--wd-surface-2)] transition-colors"
+              variant="outline"
+              className="h-auto rounded-lg border-[var(--wd-border)] px-4 py-2 text-sm font-medium text-[var(--wd-text-muted)] hover:bg-[var(--wd-surface-2)]"
             >
               Anuluj
-            </button>
-            <button
+            </Button>
+            <Button
               type="submit"
               disabled={loading}
-              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg bg-[var(--wd-dark)] text-white hover:bg-[#2E2E2E] disabled:opacity-50 transition-colors"
+              className="h-auto rounded-lg bg-[var(--wd-dark)] px-4 py-2 text-sm font-medium text-white hover:bg-[#2E2E2E]"
             >
               {loading && <Loader2 size={14} className="animate-spin" />}
               {editing ? 'Zapisz zmiany' : 'Dodaj typ'}
-            </button>
-          </div>
+            </Button>
+          </DialogFooter>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -415,6 +544,11 @@ function LeaveTypeRow({
   onEdit: (t: LeaveType) => void
   onDeactivate: (t: LeaveType) => void
 }) {
+  const canonical = isCanonicalLeaveTypeCode(type.code)
+  const deactivateDescriptionId = canonical
+    ? `leave-type-${type.id}-deactivate-protected`
+    : undefined
+
   return (
     <tr className={!type.isActive ? 'opacity-50' : ''}>
       <td>
@@ -479,19 +613,35 @@ function LeaveTypeRow({
         <div className="flex items-center gap-1 justify-end">
           <button
             onClick={() => onEdit(type)}
+            aria-label={`Edytuj ${type.code}`}
             className="p-1.5 rounded-md text-[var(--wd-text-muted)] hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] transition-colors"
             title="Edytuj"
           >
             <Pencil size={14} />
           </button>
           {type.isActive && (
-            <button
-              onClick={() => onDeactivate(type)}
-              className="p-1.5 rounded-md text-[var(--wd-text-muted)] hover:bg-red-50 hover:text-red-600 transition-colors"
-              title="Dezaktywuj"
-            >
-              <PowerOff size={14} />
-            </button>
+            <>
+              <button
+                onClick={() => onDeactivate(type)}
+                disabled={canonical}
+                aria-label={`Dezaktywuj ${type.code}`}
+                aria-describedby={deactivateDescriptionId}
+                className="p-1.5 rounded-md text-[var(--wd-text-muted)] hover:bg-red-50 hover:text-red-600 disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-transparent disabled:hover:text-[var(--wd-text-muted)] transition-colors"
+                title={
+                  canonical
+                    ? `Typ ${type.code} jest kanoniczny i nie może zostać dezaktywowany.`
+                    : 'Dezaktywuj'
+                }
+              >
+                <PowerOff size={14} />
+              </button>
+              {canonical && (
+                <span id={deactivateDescriptionId} className="sr-only">
+                  Typ {type.code} jest kanoniczny i nie może zostać
+                  dezaktywowany.
+                </span>
+              )}
+            </>
           )}
         </div>
       </td>
@@ -508,6 +658,7 @@ export default function LeaveTypesPage() {
   const [editing, setEditing] = useState<LeaveType | null>(null)
   const [deactivating, setDeactivating] = useState<string | null>(null)
   const [deactivateError, setDeactivateError] = useState<string | null>(null)
+  const dialogReturnFocusRef = useRef<HTMLElement | null>(null)
 
   const fetchTypes = useCallback(async () => {
     setLoading(true)
@@ -527,11 +678,13 @@ export default function LeaveTypesPage() {
   }, [fetchTypes])
 
   const handleEdit = (type: LeaveType) => {
+    dialogReturnFocusRef.current = document.activeElement as HTMLElement | null
     setEditing(type)
     setModalOpen(true)
   }
 
   const handleAdd = () => {
+    dialogReturnFocusRef.current = document.activeElement as HTMLElement | null
     setEditing(null)
     setModalOpen(true)
   }
@@ -658,6 +811,7 @@ export default function LeaveTypesPage() {
         onSaved={fetchTypes}
         editing={editing}
         parentOptions={topLevelTypes}
+        returnFocusRef={dialogReturnFocusRef}
       />
     </div>
   )

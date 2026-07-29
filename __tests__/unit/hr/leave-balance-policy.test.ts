@@ -7,8 +7,11 @@ import {
 } from '@/lib/hr/leave-balance-policy'
 import {
   buildSystemLeaveTypeUpsert,
+  CANONICAL_LEAVE_TYPE_CODE_SET,
+  isCanonicalLeaveTypeCode,
   PROTECTED_LEAVE_TYPE_RULES,
   SYSTEM_LEAVE_TYPES,
+  validateProtectedLeaveTypeUpdate,
 } from '@/lib/hr/leave-type-catalog'
 
 const vl = { id: 'vl', code: 'VL', tracksBalance: true, parentId: null }
@@ -148,6 +151,11 @@ describe('system leave type catalog', () => {
 
   it('exports the exact protected leave type rules', () => {
     expect(PROTECTED_LEAVE_TYPE_RULES).toEqual({
+      VL: {
+        isPaid: true,
+        requiresApproval: true,
+        tracksBalance: true,
+      },
       SL: { tracksBalance: false },
       UB: {
         isPaid: false,
@@ -162,5 +170,29 @@ describe('system leave type catalog', () => {
         parentCode: 'VL',
       },
     })
+  })
+
+  it('recognizes only canonical leave type codes', () => {
+    expect([...CANONICAL_LEAVE_TYPE_CODE_SET]).toEqual([
+      'VL',
+      'VLD',
+      'SL',
+      'UB',
+    ])
+    expect(isCanonicalLeaveTypeCode('VL')).toBe(true)
+    expect(isCanonicalLeaveTypeCode('VLD')).toBe(true)
+    expect(isCanonicalLeaveTypeCode('SL')).toBe(true)
+    expect(isCanonicalLeaveTypeCode('UB')).toBe(true)
+    expect(isCanonicalLeaveTypeCode('CUSTOM')).toBe(false)
+  })
+
+  it('validates only explicitly supplied canonical behavior fields', () => {
+    expect(validateProtectedLeaveTypeUpdate('VL', {})).toBeNull()
+    expect(validateProtectedLeaveTypeUpdate('VL', {
+      maxDaysPerYear: 20,
+    })).toBeNull()
+    expect(validateProtectedLeaveTypeUpdate('VL', {
+      isPaid: false,
+    })).toMatch(/VL.*płatn/i)
   })
 })

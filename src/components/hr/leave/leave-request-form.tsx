@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect } from 'react'
 import { Calendar, Info, AlertCircle, Loader2 } from 'lucide-react'
 import { EmployeeSelect } from '@/components/hr/employees/employee-select'
 import { shouldTrackLeaveBalance } from '@/lib/hr/leave-balance-policy'
@@ -49,6 +49,17 @@ function formatDays(value: number) {
   }).format(value)
 }
 
+function getUtcYear(date: string) {
+  if (!date) return new Date().getUTCFullYear()
+
+  const year = new Date(`${date}T00:00:00.000Z`).getUTCFullYear()
+  return Number.isFinite(year) ? year : new Date().getUTCFullYear()
+}
+
+function isAbortError(error: unknown) {
+  return error instanceof DOMException && error.name === 'AbortError'
+}
+
 export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, onSuccess, onCancel }: LeaveRequestFormProps) {
   const [balances, setBalances] = useState<LeaveBalance[]>([])
   const [allLeaveTypes, setAllLeaveTypes] = useState<LeaveType[]>([])
@@ -72,7 +83,7 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
   const [error, setError] = useState<string | null>(null)
   const [onDemandUsed, setOnDemandUsed] = useState(0)
 
-  const currentYear = new Date().getFullYear()
+  const selectedYear = getUtcYear(startDate)
   const selectedLeaveType =
     allLeaveTypes.find((leaveType) => leaveType.id === leaveTypeId) ??
     balances.find((balance) => balance.leaveTypeId === leaveTypeId)?.leaveType
@@ -99,52 +110,69 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isAdmin])
 
-  const loadBalances = useCallback(async () => {
+  useEffect(() => {
+    const controller = new AbortController()
+
+    setBalances([])
+    setOnDemandUsed(0)
+
     if (!employeeId) {
-      setBalances([])
-      setOnDemandUsed(0)
-      if (!isAdmin) setLeaveTypeId('')
-      return
-    }
-    setLoadingBalances(true)
-    try {
-      const res = await fetch(`/api/hr/leave-balances?employeeId=${employeeId}&year=${currentYear}`)
-      if (res.ok) {
-        const data = readArrayPayload<LeaveBalance>(await res.json())
-        setBalances(data)
-        if (!isAdmin && data.length > 0) {
-          setLeaveTypeId(data[0].leaveTypeId)
-        }
-      } else {
-        setBalances([])
-      }
-    } catch {
-      setBalances([])
-    } finally {
       setLoadingBalances(false)
+      if (!isAdmin) setLeaveTypeId('')
+      return () => controller.abort()
     }
-  }, [employeeId, currentYear, isAdmin])
+
+    setLoadingBalances(true)
+
+    const loadBalances = async () => {
+      try {
+        const res = await fetch(
+          `/api/hr/leave-balances?employeeId=${employeeId}&year=${selectedYear}`,
+          { signal: controller.signal }
+        )
+        if (controller.signal.aborted) return
+
+        if (res.ok) {
+          const data = readArrayPayload<LeaveBalance>(await res.json())
+          if (controller.signal.aborted) return
+
+          setBalances(data)
+          if (!isAdmin && data.length > 0) {
+            setLeaveTypeId((current) => current || data[0].leaveTypeId)
+          }
+        } else {
+          setBalances([])
+        }
+      } catch (fetchError) {
+        if (!controller.signal.aborted && !isAbortError(fetchError)) {
+          setBalances([])
+        }
+      } finally {
+        if (!controller.signal.aborted) {
+          setLoadingBalances(false)
+        }
+      }
+    }
+
+    void loadBalances()
+    return () => controller.abort()
+  }, [employeeId, selectedYear, isAdmin])
 
   useEffect(() => {
-    loadBalances()
-  }, [loadBalances])
-
-  useEffect(() => {
-    let cancelled = false
+    const controller = new AbortController()
     setOnDemandUsed(0)
 
     if (!employeeId || selectedLeaveType?.code !== 'VLD') {
-      return () => {
-        cancelled = true
-      }
+      return () => controller.abort()
     }
 
     const loadOnDemandDays = async () => {
       try {
         const res = await fetch(
-          `/api/hr/leave-requests?employeeId=${employeeId}&year=${currentYear}`
+          `/api/hr/leave-requests?employeeId=${employeeId}&year=${selectedYear}`,
+          { signal: controller.signal }
         )
-        if (!res.ok) return
+        if (!res.ok || controller.signal.aborted) return
 
         const rows = readArrayPayload<{
           days?: unknown
@@ -165,17 +193,16 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
           return Number.isFinite(days) ? sum + days : sum
         }, 0)
 
-        if (!cancelled) setOnDemandUsed(usedDays)
-      } catch {
+        if (!controller.signal.aborted) setOnDemandUsed(usedDays)
+      } catch (fetchError) {
+        if (isAbortError(fetchError)) return
         // Keep the counter at zero when historical data cannot be loaded.
       }
     }
 
     void loadOnDemandDays()
-    return () => {
-      cancelled = true
-    }
-  }, [employeeId, selectedLeaveType?.code, currentYear])
+    return () => controller.abort()
+  }, [employeeId, selectedLeaveType?.code, selectedYear])
 
   const available = selectedBalance
     ? selectedBalance.totalDays - selectedBalance.usedDays - selectedBalance.pendingDays
@@ -204,6 +231,11 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
 
     if (!leaveTypeId || !startDate || !endDate) {
       setError('Wypełnij wszystkie wymagane pola')
+      return
+    }
+
+    if (getUtcYear(startDate) !== getUtcYear(endDate)) {
+      setError('Data początku i końca muszą wskazywać ten sam rok')
       return
     }
 
@@ -258,6 +290,7 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
             onChange={(val) => {
               setSelectedEmployeeId(val)
               setBalances([])
+              setOnDemandUsed(0)
               setLeaveTypeId('')
             }}
             placeholder="Wybierz pracownika…"

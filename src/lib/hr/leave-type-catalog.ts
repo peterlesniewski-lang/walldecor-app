@@ -39,7 +39,36 @@ export function buildSystemLeaveTypeUpsert(leaveType: SystemLeaveType) {
   }
 }
 
+export const CANONICAL_LEAVE_TYPE_CODES = ['VL', 'VLD', 'SL', 'UB'] as const
+
+export type CanonicalLeaveTypeCode =
+  (typeof CANONICAL_LEAVE_TYPE_CODES)[number]
+
+export const CANONICAL_LEAVE_TYPE_CODE_SET: ReadonlySet<CanonicalLeaveTypeCode> =
+  new Set(CANONICAL_LEAVE_TYPE_CODES)
+
+export function isCanonicalLeaveTypeCode(
+  code: string
+): code is CanonicalLeaveTypeCode {
+  return CANONICAL_LEAVE_TYPE_CODES.some(
+    (canonicalCode) => canonicalCode === code
+  )
+}
+
+export interface ProtectedLeaveTypeUpdate {
+  isPaid?: boolean
+  requiresApproval?: boolean
+  tracksBalance?: boolean
+  maxDaysPerYear?: number | null
+  parentCode?: string | null
+}
+
 export const PROTECTED_LEAVE_TYPE_RULES = {
+  VL: {
+    isPaid: true,
+    requiresApproval: true,
+    tracksBalance: true,
+  },
   SL: { tracksBalance: false },
   UB: {
     isPaid: false,
@@ -53,15 +82,7 @@ export const PROTECTED_LEAVE_TYPE_RULES = {
     maxDaysPerYear: 4,
     parentCode: 'VL',
   },
-} as const
-
-export interface ProtectedLeaveTypeUpdate {
-  isPaid?: boolean
-  requiresApproval?: boolean
-  tracksBalance?: boolean
-  maxDaysPerYear?: number | null
-  parentCode?: string | null
-}
+} satisfies Record<CanonicalLeaveTypeCode, ProtectedLeaveTypeUpdate>
 
 const PROTECTED_FIELD_LABELS: Record<keyof ProtectedLeaveTypeUpdate, string> = {
   isPaid: 'płatny',
@@ -83,20 +104,27 @@ export function validateProtectedLeaveTypeUpdate(
   code: string,
   update: ProtectedLeaveTypeUpdate
 ): string | null {
-  if (!Object.prototype.hasOwnProperty.call(PROTECTED_LEAVE_TYPE_RULES, code)) {
+  if (!isCanonicalLeaveTypeCode(code)) {
     return null
   }
 
-  const rules = PROTECTED_LEAVE_TYPE_RULES[
-    code as keyof typeof PROTECTED_LEAVE_TYPE_RULES
-  ] as Partial<ProtectedLeaveTypeUpdate>
+  const rules: ProtectedLeaveTypeUpdate = PROTECTED_LEAVE_TYPE_RULES[code]
 
-  for (const field of Object.keys(rules) as Array<keyof ProtectedLeaveTypeUpdate>) {
+  const protectedFields: Array<keyof ProtectedLeaveTypeUpdate> = [
+    'isPaid',
+    'requiresApproval',
+    'tracksBalance',
+    'maxDaysPerYear',
+    'parentCode',
+  ]
+
+  for (const field of protectedFields) {
     if (
+      Object.prototype.hasOwnProperty.call(rules, field) &&
       Object.prototype.hasOwnProperty.call(update, field) &&
       update[field] !== rules[field]
     ) {
-      return `Typ ${code}: chroniona reguła „${PROTECTED_FIELD_LABELS[field]}” wymaga wartości ${formatProtectedValue(rules[field] as boolean | number | string | null)}.`
+      return `Typ ${code}: chroniona reguła „${PROTECTED_FIELD_LABELS[field]}” wymaga wartości ${formatProtectedValue(rules[field]!)}.`
     }
   }
 

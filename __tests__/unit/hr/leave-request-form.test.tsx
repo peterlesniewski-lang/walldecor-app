@@ -1,10 +1,35 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { LeaveRequestForm } from '@/components/hr/leave/leave-request-form'
 
 vi.mock('@/components/hr/employees/employee-select', () => ({
-  EmployeeSelect: () => <div data-testid="employee-select" />,
+  EmployeeSelect: ({
+    value,
+    onChange,
+    placeholder,
+  }: {
+    value?: string
+    onChange: (value: string | undefined) => void
+    placeholder?: string
+  }) => {
+    if (placeholder?.includes('zastępcę')) {
+      return <div data-testid="substitute-select" />
+    }
+
+    return (
+      <select
+        aria-label={placeholder}
+        value={value ?? ''}
+        onChange={(event) => onChange(event.target.value || undefined)}
+      >
+        <option value="">Wybierz pracownika</option>
+        <option value="employee-1">Pracownik 1</option>
+        <option value="employee-a">Pracownik A</option>
+        <option value="employee-b">Pracownik B</option>
+      </select>
+    )
+  },
 }))
 
 const leaveTypes = [
@@ -115,6 +140,15 @@ function jsonResponse(data: unknown, status = 200) {
     status,
     headers: { 'Content-Type': 'application/json' },
   })
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((promiseResolve) => {
+    resolve = promiseResolve
+  })
+
+  return { promise, resolve }
 }
 
 function installFetchMock(requestRows = historicalRequests) {
@@ -255,5 +289,211 @@ describe('LeaveRequestForm', () => {
       name: /CUSTOM.*6 dni pozostałych/i,
     })).not.toBeNull()
     expect(screen.getByText('6 / 10 dni')).not.toBeNull()
+  })
+
+  it('loads balances and on-demand history for the UTC year selected by start date', async () => {
+    const fetchMock = installFetchMock()
+    renderForm()
+    const user = userEvent.setup()
+
+    await screen.findByRole('option', { name: /VLD.*Urlop na żądanie/i })
+    const [startDate] = dateInputs()
+    await user.type(startDate, '2028-03-06')
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/hr/leave-balances?employeeId=employee-1&year=2028',
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+    })
+
+    const typeSelect = screen.getByRole('option', {
+      name: /VLD.*Urlop na żądanie/i,
+    }).closest('select')!
+    await user.selectOptions(typeSelect, 'leave-type-vld')
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith(
+        '/api/hr/leave-requests?employeeId=employee-1&year=2028',
+        expect.objectContaining({ signal: expect.any(AbortSignal) })
+      )
+    })
+  })
+
+  it('does not submit a request spanning two UTC years', async () => {
+    const fetchMock = installFetchMock()
+    renderForm()
+    const user = userEvent.setup()
+
+    const typeSelect = await screen.findByRole('combobox')
+    await user.selectOptions(typeSelect, 'leave-type-ub')
+    const [startDate] = dateInputs()
+    await user.type(startDate, '2027-12-30')
+    const endDate = await waitFor(() => {
+      const input = dateInputs()[1]
+      expect(input).toBeDefined()
+      return input
+    })
+    await user.type(endDate, '2028-01-03')
+
+    fireEvent.submit(screen.getByRole('button', {
+      name: 'Złóż wniosek',
+    }).closest('form')!)
+
+    expect(await screen.findByText(/ten sam rok/i)).not.toBeNull()
+    expect(fetchMock.mock.calls.find(
+      ([url, init]) =>
+        url === '/api/hr/leave-requests' &&
+        (init as RequestInit | undefined)?.method === 'POST'
+    )).toBeUndefined()
+  })
+
+  it('ignores a late balance response for employee A after employee B is selected', async () => {
+    const employeeAResponse = deferred<Response>()
+    const balancesA = [{
+      ...balances[0],
+      id: 'balance-a',
+      totalDays: 5,
+      usedDays: 4,
+      pendingDays: 0,
+    }]
+    const balancesB = [{
+      ...balances[0],
+      id: 'balance-b',
+      totalDays: 30,
+      usedDays: 2,
+      pendingDays: 0,
+    }]
+    const fetchMock = vi.fn((
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      void init
+      const url = String(input)
+      if (url === '/api/hr/leave-types?activeOnly=true') {
+        return Promise.resolve(jsonResponse(leaveTypes))
+      }
+      if (url.includes('employeeId=employee-a')) {
+        return employeeAResponse.promise
+      }
+      if (url.includes('employeeId=employee-b')) {
+        return Promise.resolve(jsonResponse(balancesB))
+      }
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    render(
+      <LeaveRequestForm
+        isAdmin
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    )
+
+    const employeeSelect = screen.getByRole('combobox', {
+      name: /Wybierz pracownika/i,
+    })
+    await user.selectOptions(employeeSelect, 'employee-a')
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([url]) =>
+        String(url).includes('employeeId=employee-a')
+      )).toBe(true)
+    })
+    const employeeACall = fetchMock.mock.calls.find(([url]) =>
+      String(url).includes('employeeId=employee-a')
+    )
+
+    await user.selectOptions(employeeSelect, 'employee-b')
+    expect(await screen.findByRole('option', {
+      name: /^VL\b.*28 dni pozostałych/i,
+    })).not.toBeNull()
+    expect((employeeACall?.[1] as RequestInit | undefined)?.signal?.aborted)
+      .toBe(true)
+
+    await act(async () => {
+      employeeAResponse.resolve(jsonResponse(balancesA))
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('option', {
+      name: /^VL\b.*28 dni pozostałych/i,
+    })).not.toBeNull()
+    expect(screen.queryByRole('option', {
+      name: /^VL\b.*1 dni pozostałych/i,
+    })).toBeNull()
+  })
+
+  it('ignores late on-demand history from the previous employee', async () => {
+    const employeeAHistory = deferred<Response>()
+    const fetchMock = vi.fn((
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      void init
+      const url = String(input)
+      if (url === '/api/hr/leave-types?activeOnly=true') {
+        return Promise.resolve(jsonResponse(leaveTypes))
+      }
+      if (url.startsWith('/api/hr/leave-balances?')) {
+        return Promise.resolve(jsonResponse(balances))
+      }
+      if (url.includes('/api/hr/leave-requests?') && url.includes('employee-a')) {
+        return employeeAHistory.promise
+      }
+      if (url.includes('/api/hr/leave-requests?') && url.includes('employee-b')) {
+        return Promise.resolve(jsonResponse([{
+          days: 1,
+          isOnDemand: true,
+          status: 'approved',
+          leaveType: { code: 'VL' },
+        }]))
+      }
+      throw new Error(`Unexpected fetch: ${url}`)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+
+    render(
+      <LeaveRequestForm
+        isAdmin
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    )
+
+    const employeeSelect = screen.getByRole('combobox', {
+      name: /Wybierz pracownika/i,
+    })
+    await user.selectOptions(employeeSelect, 'employee-a')
+    let typeSelect = (await screen.findByRole('option', {
+      name: /VLD.*Urlop na żądanie/i,
+    })).closest('select')!
+    await user.selectOptions(typeSelect, 'leave-type-vld')
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([url]) =>
+        String(url).includes('/leave-requests?') &&
+        String(url).includes('employee-a')
+      )).toBe(true)
+    })
+
+    await user.selectOptions(employeeSelect, 'employee-b')
+    typeSelect = (await screen.findByRole('option', {
+      name: /VLD.*Urlop na żądanie/i,
+    })).closest('select')!
+    await user.selectOptions(typeSelect, 'leave-type-vld')
+    expect(await screen.findByText('Pozostało: 3 z 4 dni')).not.toBeNull()
+
+    await act(async () => {
+      employeeAHistory.resolve(jsonResponse([{
+        days: 3,
+        isOnDemand: true,
+        status: 'approved',
+        leaveType: { code: 'VL' },
+      }]))
+      await Promise.resolve()
+    })
+    expect(screen.getByText('Pozostało: 3 z 4 dni')).not.toBeNull()
+    expect(screen.queryByText('Pozostało: 1 z 4 dni')).toBeNull()
   })
 })

@@ -4,9 +4,15 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import {
   PROTECTED_LEAVE_TYPE_RULES,
+  isCanonicalLeaveTypeCode,
   validateProtectedLeaveTypeUpdate,
+  type CanonicalLeaveTypeCode,
   type ProtectedLeaveTypeUpdate,
 } from '@/lib/hr/leave-type-catalog'
+import {
+  runSerializableTransactionWithRetry,
+  SerializableTransactionConflictError,
+} from '@/lib/hr/serializable-transaction'
 import { z } from 'zod'
 
 const leaveTypeUpdateSchema = z.object({
@@ -18,10 +24,60 @@ const leaveTypeUpdateSchema = z.object({
   tracksBalance: z.boolean().optional(),
   maxDaysPerYear: z.number().int().min(1).nullable().optional(),
   parentId: z.string().nullable().optional(),
-  isActive: z.boolean().optional(),
-})
+}).strict()
 
 type Params = { params: Promise<{ id: string }> }
+
+class LeaveTypeMutationError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message)
+  }
+}
+
+function hasOwn(value: object, field: PropertyKey) {
+  return Object.prototype.hasOwnProperty.call(value, field)
+}
+
+function getProtectedBehavior(code: CanonicalLeaveTypeCode) {
+  const rules: ProtectedLeaveTypeUpdate = PROTECTED_LEAVE_TYPE_RULES[code]
+
+  return {
+    ...(rules.isPaid !== undefined ? { isPaid: rules.isPaid } : {}),
+    ...(rules.requiresApproval !== undefined
+      ? { requiresApproval: rules.requiresApproval }
+      : {}),
+    ...(rules.tracksBalance !== undefined
+      ? { tracksBalance: rules.tracksBalance }
+      : {}),
+    ...(hasOwn(rules, 'maxDaysPerYear')
+      ? { maxDaysPerYear: rules.maxDaysPerYear }
+      : {}),
+  }
+}
+
+function isCodeUniqueConstraintError(error: unknown) {
+  if (
+    !(error instanceof Error) ||
+    !('code' in error) ||
+    error.code !== 'P2002' ||
+    !('meta' in error) ||
+    typeof error.meta !== 'object' ||
+    error.meta === null ||
+    !('target' in error.meta)
+  ) {
+    return false
+  }
+
+  const target = error.meta.target
+  if (Array.isArray(target)) {
+    return target.length === 1 && target[0] === 'code'
+  }
+
+  return typeof target === 'string' && /(?:^|_)code(?:_|$)/i.test(target)
+}
 
 export async function PATCH(req: NextRequest, { params }: Params) {
   const session = await getServerSession(authOptions)
@@ -37,13 +93,47 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: 'Nieprawidłowy JSON' }, { status: 400 })
   }
 
+  const existing = await prisma.leaveType.findUnique({ where: { id } })
+  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  if (
+    isCanonicalLeaveTypeCode(existing.code) &&
+    typeof body === 'object' &&
+    body !== null &&
+    hasOwn(body, 'isActive')
+  ) {
+    return NextResponse.json(
+      { error: `Typ ${existing.code}: typ kanoniczny nie może zostać dezaktywowany.` },
+      { status: 422 }
+    )
+  }
+
   const parsed = leaveTypeUpdateSchema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid input', details: parsed.error.flatten() }, { status: 400 })
   }
 
-  const existing = await prisma.leaveType.findUnique({ where: { id } })
-  if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (
+    isCanonicalLeaveTypeCode(existing.code) &&
+    parsed.data.code &&
+    parsed.data.code !== existing.code
+  ) {
+    return NextResponse.json(
+      { error: `Typ ${existing.code}: chroniony kod nie może zostać zmieniony.` },
+      { status: 422 }
+    )
+  }
+
+  if (
+    !isCanonicalLeaveTypeCode(existing.code) &&
+    parsed.data.code &&
+    isCanonicalLeaveTypeCode(parsed.data.code)
+  ) {
+    return NextResponse.json(
+      { error: `Kod ${parsed.data.code} jest zarezerwowany dla kanonicznego typu urlopu.` },
+      { status: 422 }
+    )
+  }
 
   let canonicalVl: { id: string } | null = null
   if (existing.code === 'VLD') {
@@ -59,34 +149,20 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     }
   }
 
-  const isProtected = Object.prototype.hasOwnProperty.call(
-    PROTECTED_LEAVE_TYPE_RULES,
-    existing.code
-  )
-  if (isProtected && parsed.data.code && parsed.data.code !== existing.code) {
-    return NextResponse.json(
-      { error: `Typ ${existing.code}: chroniony kod nie może zostać zmieniony.` },
-      { status: 422 }
-    )
-  }
-
   const protectedUpdate: ProtectedLeaveTypeUpdate = {}
-  if (parsed.data.isPaid !== undefined) {
+  if (hasOwn(parsed.data, 'isPaid')) {
     protectedUpdate.isPaid = parsed.data.isPaid
   }
-  if (parsed.data.requiresApproval !== undefined) {
+  if (hasOwn(parsed.data, 'requiresApproval')) {
     protectedUpdate.requiresApproval = parsed.data.requiresApproval
   }
-  if (parsed.data.tracksBalance !== undefined) {
+  if (hasOwn(parsed.data, 'tracksBalance')) {
     protectedUpdate.tracksBalance = parsed.data.tracksBalance
   }
-  if (Object.prototype.hasOwnProperty.call(parsed.data, 'maxDaysPerYear')) {
+  if (hasOwn(parsed.data, 'maxDaysPerYear')) {
     protectedUpdate.maxDaysPerYear = parsed.data.maxDaysPerYear
   }
-  if (
-    existing.code === 'VLD' &&
-    Object.prototype.hasOwnProperty.call(parsed.data, 'parentId')
-  ) {
+  if (existing.code === 'VLD' && hasOwn(parsed.data, 'parentId')) {
     protectedUpdate.parentCode =
       parsed.data.parentId === canonicalVl?.id ? 'VL' : null
   }
@@ -114,34 +190,66 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     )
   }
 
-  if (existing.code !== 'VLD' && parsed.data.parentId) {
-    const parent = await prisma.leaveType.findUnique({
-      where: { id: parsed.data.parentId },
-    })
-    if (!parent) {
-      return NextResponse.json({ error: 'Parent leave type not found' }, { status: 404 })
-    }
+  const canonicalBehavior = isCanonicalLeaveTypeCode(existing.code)
+    ? getProtectedBehavior(existing.code)
+    : {}
+  const updateData = {
+    ...parsed.data,
+    ...canonicalBehavior,
+    ...(existing.code === 'VLD' ? { parentId: canonicalVl!.id } : {}),
   }
 
-  const updateData = existing.code === 'VLD'
-    ? { ...parsed.data, parentId: canonicalVl!.id }
-    : parsed.data
+  try {
+    const leaveType = await runSerializableTransactionWithRetry(() =>
+      prisma.$transaction(async (tx) => {
+        if (existing.code !== 'VLD' && parsed.data.parentId) {
+          const parent = await tx.leaveType.findUnique({
+            where: { id: parsed.data.parentId },
+            select: { id: true, parentId: true },
+          })
+          if (!parent) {
+            throw new LeaveTypeMutationError(404, 'Parent leave type not found')
+          }
+          if (parent.parentId !== null) {
+            throw new LeaveTypeMutationError(
+              422,
+              'Hierarchia typów urlopu może mieć tylko jeden poziom; wybierz typ główny.'
+            )
+          }
+        }
 
-  const leaveType = await prisma.leaveType.update({
-    where: { id },
-    data: updateData,
-    include: {
-      subtypes: true,
-      _count: {
-        select: {
-          leaveBalancesNew: true,
-          leaveRequestsNew: true,
-        },
-      },
-    },
-  })
+        return tx.leaveType.update({
+          where: { id },
+          data: updateData,
+          include: {
+            subtypes: true,
+            _count: {
+              select: {
+                leaveBalancesNew: true,
+                leaveRequestsNew: true,
+              },
+            },
+          },
+        })
+      }, { isolationLevel: 'Serializable' })
+    )
 
-  return NextResponse.json(leaveType)
+    return NextResponse.json(leaveType)
+  } catch (error) {
+    if (error instanceof LeaveTypeMutationError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
+    }
+    if (error instanceof SerializableTransactionConflictError) {
+      return NextResponse.json(
+        { error: 'Nie udało się zapisać typu urlopu z powodu konfliktu danych.' },
+        { status: 409 }
+      )
+    }
+    if (isCodeUniqueConstraintError(error)) {
+      return NextResponse.json({ error: 'Code already exists' }, { status: 409 })
+    }
+    throw error
+  }
 }
 
 export async function DELETE(_req: NextRequest, { params }: Params) {
@@ -153,6 +261,13 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
 
   const existing = await prisma.leaveType.findUnique({ where: { id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+
+  if (isCanonicalLeaveTypeCode(existing.code)) {
+    return NextResponse.json(
+      { error: `Typ ${existing.code}: typ kanoniczny nie może zostać dezaktywowany.` },
+      { status: 422 }
+    )
+  }
 
   // Check for pending leave requests
   const pendingRequests = await prisma.leaveRequestNew.count({

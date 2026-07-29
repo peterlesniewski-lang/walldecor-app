@@ -3,7 +3,10 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
 import { POST } from '@/app/api/hr/leave-types/route'
-import { PATCH } from '@/app/api/hr/leave-types/[id]/route'
+import {
+  DELETE,
+  PATCH,
+} from '@/app/api/hr/leave-types/[id]/route'
 
 vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
@@ -23,6 +26,7 @@ vi.mock('@/lib/prisma', () => ({
     leaveRequestNew: {
       count: vi.fn(),
     },
+    $transaction: vi.fn(),
   },
 }))
 
@@ -30,6 +34,19 @@ const mockGetServerSession = vi.mocked(getServerSession)
 const mockFindUnique = vi.mocked(prisma.leaveType.findUnique)
 const mockCreate = vi.mocked(prisma.leaveType.create)
 const mockUpdate = vi.mocked(prisma.leaveType.update)
+const mockPendingCount = vi.mocked(prisma.leaveRequestNew.count)
+const mockTransaction = vi.mocked(prisma.$transaction)
+
+const txFindUnique = vi.fn()
+const txCreate = vi.fn()
+const txUpdate = vi.fn()
+const tx = {
+  leaveType: {
+    findUnique: txFindUnique,
+    create: txCreate,
+    update: txUpdate,
+  },
+}
 
 const adminSession = {
   user: {
@@ -78,13 +95,17 @@ function leaveType(
 }
 
 function request(
-  method: 'POST' | 'PATCH',
-  body: Record<string, unknown> | string
+  method: 'POST' | 'PATCH' | 'DELETE',
+  body?: Record<string, unknown> | string
 ) {
   return new NextRequest('http://localhost/api/hr/leave-types', {
     method,
-    headers: { 'Content-Type': 'application/json' },
-    body: typeof body === 'string' ? body : JSON.stringify(body),
+    ...(body === undefined
+      ? {}
+      : {
+          headers: { 'Content-Type': 'application/json' },
+          body: typeof body === 'string' ? body : JSON.stringify(body),
+        }),
   })
 }
 
@@ -104,6 +125,23 @@ function arrangeExisting(existing: ReturnType<typeof leaveType>) {
     return null
   }) as never)
   mockUpdate.mockResolvedValue(existing as never)
+  txFindUnique.mockImplementation(async ({
+    where,
+  }: {
+    where: { id?: string; code?: string }
+  }) => {
+    if (where.id === 'leave-type-parent') return leaveType('PARENT')
+    if (where.code === 'VL') return leaveType('VL')
+    return null
+  })
+  txUpdate.mockResolvedValue(existing)
+}
+
+function expectNoMutation() {
+  expect(mockCreate).not.toHaveBeenCalled()
+  expect(mockUpdate).not.toHaveBeenCalled()
+  expect(txCreate).not.toHaveBeenCalled()
+  expect(txUpdate).not.toHaveBeenCalled()
 }
 
 beforeEach(() => {
@@ -112,6 +150,13 @@ beforeEach(() => {
   mockFindUnique.mockResolvedValue(null)
   mockCreate.mockResolvedValue(leaveType('CUSTOM') as never)
   mockUpdate.mockResolvedValue(leaveType('CUSTOM') as never)
+  mockPendingCount.mockResolvedValue(0)
+  txFindUnique.mockResolvedValue(null)
+  txCreate.mockResolvedValue(leaveType('CUSTOM'))
+  txUpdate.mockResolvedValue(leaveType('CUSTOM'))
+  mockTransaction.mockImplementation(
+    async (callback) => callback(tx as never) as never
+  )
 })
 
 describe('PATCH /api/hr/leave-types/:id', () => {
@@ -125,7 +170,7 @@ describe('PATCH /api/hr/leave-types/:id', () => {
 
     expect(response.status).toBe(403)
     expect(mockFindUnique).not.toHaveBeenCalled()
-    expect(mockUpdate).not.toHaveBeenCalled()
+    expectNoMutation()
   })
 
   it('returns 400 for malformed JSON', async () => {
@@ -133,7 +178,25 @@ describe('PATCH /api/hr/leave-types/:id', () => {
 
     expect(response.status).toBe(400)
     expect(mockFindUnique).not.toHaveBeenCalled()
-    expect(mockUpdate).not.toHaveBeenCalled()
+    expectNoMutation()
+  })
+
+  it.each([
+    ['isPaid', false, /VL.*płatn/i],
+    ['requiresApproval', false, /VL.*akcept/i],
+    ['tracksBalance', false, /VL.*sald/i],
+  ])('protects VL field %s', async (field, value, message) => {
+    arrangeExisting(leaveType('VL'))
+
+    const response = await PATCH(
+      request('PATCH', { [field]: value }),
+      params('leave-type-vl')
+    )
+    const body = await response.json()
+
+    expect(response.status).toBe(422)
+    expect(body.error).toMatch(message)
+    expectNoMutation()
   })
 
   it.each([
@@ -152,7 +215,7 @@ describe('PATCH /api/hr/leave-types/:id', () => {
 
     expect(response.status).toBe(422)
     expect(body.error).toMatch(message)
-    expect(mockUpdate).not.toHaveBeenCalled()
+    expectNoMutation()
   })
 
   it('prevents SL from tracking a balance', async () => {
@@ -166,7 +229,7 @@ describe('PATCH /api/hr/leave-types/:id', () => {
 
     expect(response.status).toBe(422)
     expect(body.error).toMatch(/SL.*sald/i)
-    expect(mockUpdate).not.toHaveBeenCalled()
+    expectNoMutation()
   })
 
   it.each([
@@ -187,11 +250,58 @@ describe('PATCH /api/hr/leave-types/:id', () => {
 
     expect(response.status).toBe(422)
     expect(body.error).toMatch(message)
-    expect(mockUpdate).not.toHaveBeenCalled()
+    expectNoMutation()
   })
 
-  it('repairs the canonical VL parent during an unrelated VLD edit', async () => {
-    arrangeExisting(leaveType('VLD', { parentId: 'legacy-parent' }))
+  it.each([
+    ['VL', {
+      isPaid: true,
+      requiresApproval: true,
+      tracksBalance: true,
+    }],
+    ['UB', {
+      isPaid: false,
+      requiresApproval: true,
+      tracksBalance: false,
+      maxDaysPerYear: null,
+    }],
+    ['SL', {
+      tracksBalance: false,
+    }],
+  ])('repairs canonical %s behavior during an unrelated edit', async (code, behavior) => {
+    const canonical = leaveType(code as LeaveTypeCode, {
+      isPaid: false,
+      requiresApproval: false,
+      tracksBalance: true,
+      maxDaysPerYear: 12,
+    })
+    arrangeExisting(canonical)
+
+    const response = await PATCH(
+      request('PATCH', { name: 'Nowa nazwa' }),
+      params(canonical.id)
+    )
+
+    expect(response.status).toBe(200)
+    expect(txUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: canonical.id },
+      data: expect.objectContaining({
+        name: 'Nowa nazwa',
+        ...behavior,
+      }),
+    }))
+    if (code === 'VL') {
+      expect(txUpdate.mock.calls[0][0].data).not.toHaveProperty('maxDaysPerYear')
+    }
+  })
+
+  it('repairs all protected VLD behavior and canonical parent during an unrelated edit', async () => {
+    arrangeExisting(leaveType('VLD', {
+      requiresApproval: false,
+      tracksBalance: false,
+      maxDaysPerYear: 2,
+      parentId: 'legacy-parent',
+    }))
 
     const response = await PATCH(
       request('PATCH', { name: 'Urlop na żądanie - nowa nazwa' }),
@@ -199,12 +309,15 @@ describe('PATCH /api/hr/leave-types/:id', () => {
     )
 
     expect(response.status).toBe(200)
-    expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(txUpdate).toHaveBeenCalledWith(expect.objectContaining({
       where: { id: 'leave-type-vld' },
-      data: {
+      data: expect.objectContaining({
         name: 'Urlop na żądanie - nowa nazwa',
+        requiresApproval: true,
+        tracksBalance: true,
+        maxDaysPerYear: 4,
         parentId: 'leave-type-vl',
-      },
+      }),
     }))
   })
 
@@ -227,10 +340,10 @@ describe('PATCH /api/hr/leave-types/:id', () => {
 
     expect(response.status).toBe(503)
     expect(body.error).toMatch(/VLD.*VL/i)
-    expect(mockUpdate).not.toHaveBeenCalled()
+    expectNoMutation()
   })
 
-  it('resolves canonical VL before evaluating a VLD code rename', async () => {
+  it('rejects a VLD code rename before resolving canonical VL', async () => {
     const vld = leaveType('VLD')
     mockFindUnique.mockImplementation((async ({
       where,
@@ -245,9 +358,59 @@ describe('PATCH /api/hr/leave-types/:id', () => {
       request('PATCH', { code: 'OTHER' }),
       params('leave-type-vld')
     )
+    const body = await response.json()
 
-    expect(response.status).toBe(503)
-    expect(mockUpdate).not.toHaveBeenCalled()
+    expect(response.status).toBe(422)
+    expect(body.error).toMatch(/VLD.*kod/i)
+    expect(mockFindUnique).not.toHaveBeenCalledWith(expect.objectContaining({
+      where: { code: 'VL' },
+    }))
+    expectNoMutation()
+  })
+
+  it.each(['VL', 'VLD', 'SL', 'UB'])(
+    'rejects renaming a custom row into canonical code %s',
+    async (code) => {
+      arrangeExisting(leaveType('CUSTOM'))
+
+      const response = await PATCH(
+        request('PATCH', { code }),
+        params()
+      )
+      const body = await response.json()
+
+      expect(response.status).toBe(422)
+      expect(body.error).toMatch(new RegExp(code))
+      expectNoMutation()
+    }
+  )
+
+  it.each(['VL', 'VLD', 'SL', 'UB'])(
+    'rejects PATCH deactivation of canonical %s',
+    async (code) => {
+      const canonical = leaveType(code as LeaveTypeCode)
+      arrangeExisting(canonical)
+
+      const response = await PATCH(
+        request('PATCH', { isActive: false }),
+        params(canonical.id)
+      )
+
+      expect(response.status).toBe(422)
+      expectNoMutation()
+    }
+  )
+
+  it('rejects isActive in custom PATCH and requires DELETE', async () => {
+    arrangeExisting(leaveType('CUSTOM'))
+
+    const response = await PATCH(
+      request('PATCH', { isActive: false }),
+      params()
+    )
+
+    expect(response.status).toBe(400)
+    expectNoMutation()
   })
 
   it('allows a custom type to change balance tracking and use an existing parent', async () => {
@@ -262,7 +425,15 @@ describe('PATCH /api/hr/leave-types/:id', () => {
     )
 
     expect(response.status).toBe(200)
-    expect(mockUpdate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(mockTransaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { isolationLevel: 'Serializable' }
+    )
+    expect(txFindUnique).toHaveBeenCalledWith({
+      where: { id: 'leave-type-parent' },
+      select: { id: true, parentId: true },
+    })
+    expect(txUpdate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         tracksBalance: false,
         parentId: 'leave-type-parent',
@@ -281,8 +452,76 @@ describe('PATCH /api/hr/leave-types/:id', () => {
 
     expect(response.status).toBe(422)
     expect(body.error).toMatch(/nadrzędnym.*samego siebie/i)
-    expect(mockUpdate).not.toHaveBeenCalled()
+    expectNoMutation()
   })
+
+  it('rejects a non-root custom parent inside the transaction', async () => {
+    arrangeExisting(leaveType('CUSTOM'))
+    txFindUnique.mockResolvedValue(
+      leaveType('PARENT', { parentId: 'leave-type-vl' })
+    )
+
+    const response = await PATCH(
+      request('PATCH', { parentId: 'leave-type-parent' }),
+      params()
+    )
+    const body = await response.json()
+
+    expect(response.status).toBe(422)
+    expect(body.error).toMatch(/jeden poziom|główn/i)
+    expect(txUpdate).not.toHaveBeenCalled()
+  })
+
+  it('maps exhausted serializable retries to 409', async () => {
+    arrangeExisting(leaveType('CUSTOM'))
+    mockTransaction.mockRejectedValue(
+      Object.assign(new Error('Write conflict'), { code: 'P2034' })
+    )
+
+    const response = await PATCH(
+      request('PATCH', { name: 'Nowa nazwa' }),
+      params()
+    )
+
+    expect(response.status).toBe(409)
+    expect(mockTransaction).toHaveBeenCalledTimes(3)
+    expect(txUpdate).not.toHaveBeenCalled()
+  })
+
+  it('maps a code-targeted update P2002 race to 409', async () => {
+    arrangeExisting(leaveType('CUSTOM'))
+    txUpdate.mockRejectedValue(Object.assign(new Error('Unique constraint'), {
+      code: 'P2002',
+      meta: { modelName: 'LeaveType', target: ['code'] },
+    }))
+
+    const response = await PATCH(
+      request('PATCH', { code: 'NEW' }),
+      params()
+    )
+
+    expect(response.status).toBe(409)
+    expect(txUpdate).toHaveBeenCalledOnce()
+  })
+})
+
+describe('DELETE /api/hr/leave-types/:id', () => {
+  it.each(['VL', 'VLD', 'SL', 'UB'])(
+    'rejects deactivation of canonical %s without checking pending requests',
+    async (code) => {
+      const canonical = leaveType(code as LeaveTypeCode)
+      arrangeExisting(canonical)
+
+      const response = await DELETE(
+        request('DELETE'),
+        params(canonical.id)
+      )
+
+      expect(response.status).toBe(422)
+      expect(mockPendingCount).not.toHaveBeenCalled()
+      expectNoMutation()
+    }
+  )
 })
 
 describe('POST /api/hr/leave-types', () => {
@@ -290,10 +529,11 @@ describe('POST /api/hr/leave-types', () => {
     const response = await POST(request('POST', '{"name":'))
 
     expect(response.status).toBe(400)
-    expect(mockCreate).not.toHaveBeenCalled()
+    expectNoMutation()
   })
 
   it.each([
+    ['VL', { isPaid: false }, /VL.*płatn/i],
     ['SL', { tracksBalance: true }, /SL.*sald/i],
     ['UB', { isPaid: true, requiresApproval: true, tracksBalance: false }, /UB.*płatn/i],
     ['VLD', {
@@ -324,10 +564,39 @@ describe('POST /api/hr/leave-types', () => {
 
     expect(response.status).toBe(422)
     expect(body.error).toMatch(message)
-    expect(mockCreate).not.toHaveBeenCalled()
+    expectNoMutation()
   })
 
-  it('resolves canonical VL when creating a valid VLD type', async () => {
+  it.each([
+    ['VL', {
+      isPaid: true,
+      requiresApproval: true,
+      tracksBalance: true,
+    }],
+    ['SL', {
+      tracksBalance: false,
+    }],
+    ['UB', {
+      isPaid: false,
+      requiresApproval: true,
+      tracksBalance: false,
+      maxDaysPerYear: null,
+    }],
+  ])('applies canonical defaults when creating %s with omitted behavior', async (code, expected) => {
+    txCreate.mockResolvedValue(leaveType(code as LeaveTypeCode))
+
+    const response = await POST(request('POST', {
+      name: code,
+      code,
+    }))
+
+    expect(response.status).toBe(201)
+    expect(txCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining(expected),
+    }))
+  })
+
+  it('resolves canonical VL and defaults when creating VLD with omitted behavior', async () => {
     mockFindUnique.mockImplementation((async ({
       where,
     }: {
@@ -336,24 +605,71 @@ describe('POST /api/hr/leave-types', () => {
       if (where.code === 'VL') return leaveType('VL')
       return null
     }) as never)
-    mockCreate.mockResolvedValue(leaveType('VLD') as never)
+    txCreate.mockResolvedValue(leaveType('VLD'))
 
     const response = await POST(request('POST', {
       name: 'Urlop na żądanie',
       code: 'VLD',
-      color: '#8B5CF6',
-      isPaid: true,
-      requiresApproval: true,
-      tracksBalance: true,
-      maxDaysPerYear: 4,
     }))
 
     expect(response.status).toBe(201)
-    expect(mockCreate).toHaveBeenCalledWith(expect.objectContaining({
+    expect(txCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         code: 'VLD',
+        requiresApproval: true,
+        tracksBalance: true,
+        maxDaysPerYear: 4,
         parentId: 'leave-type-vl',
       }),
     }))
+  })
+
+  it('re-reads a custom parent and creates inside a Serializable transaction', async () => {
+    txFindUnique.mockResolvedValue(leaveType('PARENT'))
+
+    const response = await POST(request('POST', {
+      name: 'Custom',
+      code: 'CUSTOM',
+      parentId: 'leave-type-parent',
+    }))
+
+    expect(response.status).toBe(201)
+    expect(mockTransaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { isolationLevel: 'Serializable' }
+    )
+    expect(txFindUnique).toHaveBeenCalledWith({
+      where: { id: 'leave-type-parent' },
+      select: { id: true, parentId: true },
+    })
+    expect(txCreate).toHaveBeenCalledOnce()
+  })
+
+  it('maps a code-targeted create P2002 race to 409', async () => {
+    txCreate.mockRejectedValue(Object.assign(new Error('Unique constraint'), {
+      code: 'P2002',
+      meta: { modelName: 'LeaveType', target: ['code'] },
+    }))
+
+    const response = await POST(request('POST', {
+      name: 'Custom',
+      code: 'CUSTOM',
+    }))
+
+    expect(response.status).toBe(409)
+    expect(txCreate).toHaveBeenCalledOnce()
+  })
+
+  it('preserves a non-code P2002 create error', async () => {
+    const error = Object.assign(new Error('Different unique constraint'), {
+      code: 'P2002',
+      meta: { modelName: 'LeaveType', target: ['name'] },
+    })
+    txCreate.mockRejectedValue(error)
+
+    await expect(POST(request('POST', {
+      name: 'Custom',
+      code: 'CUSTOM',
+    }))).rejects.toBe(error)
   })
 })
