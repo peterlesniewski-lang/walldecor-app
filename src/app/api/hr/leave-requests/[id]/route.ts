@@ -3,7 +3,16 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { canViewEmployeeRecord } from '@/lib/hr/access'
-import { shouldTrackLeaveBalance } from '@/lib/hr/leave-balance-policy'
+import { resolveLeaveBalancePoolId } from '@/lib/hr/leave-balance-policy'
+
+class LeaveCancellationError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message)
+  }
+}
 
 export async function GET(
   req: NextRequest,
@@ -68,14 +77,18 @@ export async function DELETE(
     where: { id },
     include: {
       leaveType: {
-        select: { tracksBalance: true },
+        select: {
+          id: true,
+          code: true,
+          tracksBalance: true,
+          parentId: true,
+        },
       },
     },
   })
 
   if (!request) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
-  // Only the owner can cancel their own request
   if (request.employeeId !== session.user.employeeId) {
     const role = session.user.role
     if (role !== 'ADMIN') {
@@ -90,26 +103,54 @@ export async function DELETE(
     )
   }
 
-  // Cancel request + restore pendingDays in a transaction
-  await prisma.$transaction(async (tx) => {
-    await tx.leaveRequestNew.update({
-      where: { id },
-      data: { status: 'cancelled' },
-    })
+  const year = request.startDate.getUTCFullYear()
+  const balancePoolId = resolveLeaveBalancePoolId(request.leaveType, request)
 
-    // Restore pending days if balance-tracked
-    if (shouldTrackLeaveBalance(request.leaveType, request)) {
-      const year = request.startDate.getFullYear()
-      await tx.leaveBalanceNew.updateMany({
-        where: {
-          employeeId: request.employeeId,
-          leaveTypeId: request.leaveTypeId,
-          year,
-        },
-        data: { pendingDays: { decrement: request.days } },
+  try {
+    await prisma.$transaction(async (tx) => {
+      const transition = await tx.leaveRequestNew.updateMany({
+        where: { id, status: 'pending' },
+        data: { status: 'cancelled' },
       })
+
+      if (transition.count !== 1) {
+        throw new LeaveCancellationError(409, 'Wniosek został już przetworzony')
+      }
+
+      if (balancePoolId) {
+        const balance = await tx.leaveBalanceNew.findUnique({
+          where: {
+            employeeId_leaveTypeId_year: {
+              employeeId: request.employeeId,
+              leaveTypeId: balancePoolId,
+              year,
+            },
+          },
+        })
+
+        // Historical requests may outlive an erroneous or deleted balance row.
+        // Cancellation can still proceed because it only releases entitlement.
+        if (balance) {
+          if (balance.pendingDays < request.days) {
+            throw new LeaveCancellationError(
+              409,
+              'Saldo oczekujących dni jest niższe niż liczba dni wniosku'
+            )
+          }
+
+          await tx.leaveBalanceNew.update({
+            where: { id: balance.id },
+            data: { pendingDays: { decrement: request.days } },
+          })
+        }
+      }
+    }, { isolationLevel: 'Serializable' })
+  } catch (error) {
+    if (error instanceof LeaveCancellationError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
     }
-  })
+    throw error
+  }
 
   return NextResponse.json({ success: true })
 }

@@ -4,12 +4,51 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { leaveRequestCreateSchema } from '@/lib/hr/schemas'
 import { calculateWorkingDays } from '@/lib/hr/utils'
-import { shouldTrackLeaveBalance } from '@/lib/hr/leave-balance-policy'
+import {
+  isOnDemandLeave,
+  resolveLeaveBalancePoolId,
+} from '@/lib/hr/leave-balance-policy'
 import {
   canViewEmployeeRecord,
   getScopedEmployeeWhere,
   HR_NO_EMPLOYEE_ACCESS_ID,
 } from '@/lib/hr/access'
+
+type LeaveRequestErrorPayload = {
+  error: string
+  available?: number
+  requested?: number
+}
+
+class LeaveRequestDomainError extends Error {
+  constructor(
+    readonly status: number,
+    readonly payload: LeaveRequestErrorPayload
+  ) {
+    super(payload.error)
+  }
+}
+
+function isRetryableReservationConflict(error: unknown) {
+  if (!error || typeof error !== 'object' || !('code' in error)) return false
+
+  if (error.code === 'P2034') return true
+
+  return (
+    error.code === 'P2028' &&
+    error instanceof Error &&
+    error.message.includes('expired transaction')
+  )
+}
+
+async function runWithReservationRetry<T>(operation: () => Promise<T>) {
+  try {
+    return await operation()
+  } catch (error) {
+    if (!isRetryableReservationConflict(error)) throw error
+    return operation()
+  }
+}
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -115,15 +154,11 @@ export async function POST(req: NextRequest) {
     note,
   } = parsed.data
 
-  // EMPLOYEE can only submit for themselves
   const role = session.user.role
-  if (role === 'EMPLOYEE') {
-    if (session.user.employeeId !== employeeId) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-    }
+  if (role === 'EMPLOYEE' && session.user.employeeId !== employeeId) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  // Verify employee exists
   const employee = await prisma.employee.findUnique({ where: { id: employeeId } })
   if (!employee) return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
   if (role === 'MANAGER') {
@@ -138,63 +173,22 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Verify leave type exists
-  const leaveType = await prisma.leaveType.findUnique({ where: { id: leaveTypeId } })
+  const leaveType = await prisma.leaveType.findUnique({
+    where: { id: leaveTypeId },
+    select: {
+      id: true,
+      code: true,
+      tracksBalance: true,
+      parentId: true,
+    },
+  })
   if (!leaveType) return NextResponse.json({ error: 'Leave type not found' }, { status: 404 })
 
-  // Calculate working days
   const days = calculateWorkingDays(startDate, endDate)
   if (days <= 0) {
     return NextResponse.json({ error: 'Wybrany zakres nie zawiera dni roboczych' }, { status: 422 })
   }
 
-  const year = startDate.getFullYear()
-  const tracksBalance = shouldTrackLeaveBalance(leaveType, {
-    isRemoteWork,
-    isDelegation,
-  })
-
-  // Check balance availability only for leave types that consume an entitlement.
-  if (tracksBalance) {
-    const balance = await prisma.leaveBalanceNew.findUnique({
-      where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
-    })
-
-    if (!balance) {
-      return NextResponse.json({ error: 'Brak salda urlopowego dla tego typu urlopu' }, { status: 422 })
-    }
-
-    const available = balance.totalDays - balance.usedDays - balance.pendingDays
-    if (available < days) {
-      return NextResponse.json(
-        { error: 'Niewystarczające saldo urlopowe', available, requested: days },
-        { status: 422 }
-      )
-    }
-  }
-
-  // Validate isOnDemand: max 4/year
-  if (isOnDemand) {
-    const onDemandCount = await prisma.leaveRequestNew.count({
-      where: {
-        employeeId,
-        isOnDemand: true,
-        status: { notIn: ['cancelled', 'rejected'] },
-        startDate: {
-          gte: new Date(year, 0, 1),
-          lte: new Date(year, 11, 31, 23, 59, 59, 999),
-        },
-      },
-    })
-    if (onDemandCount >= 4) {
-      return NextResponse.json(
-        { error: 'Przekroczono limit urlopów na żądanie (max 4/rok)' },
-        { status: 422 }
-      )
-    }
-  }
-
-  // Overlap check
   const overlap = await prisma.leaveRequestNew.findFirst({
     where: {
       employeeId,
@@ -212,40 +206,108 @@ export async function POST(req: NextRequest) {
     )
   }
 
-  // Create request + update pending balance in a transaction
-  const [leaveRequest] = await prisma.$transaction(async (tx) => {
-    const request = await tx.leaveRequestNew.create({
-      data: {
-        employeeId,
-        leaveTypeId,
-        startDate,
-        endDate,
-        days,
-        isOnDemand,
-        isRemoteWork,
-        isDelegation,
-        substituteId,
-        notifySubstitute,
-        note,
-        status: 'pending',
-      },
-      include: {
-        leaveType: true,
-        employee: {
-          select: { id: true, firstName: true, lastName: true, email: true, position: true },
-        },
-      },
-    })
-
-    if (tracksBalance) {
-      await tx.leaveBalanceNew.update({
-        where: { employeeId_leaveTypeId_year: { employeeId, leaveTypeId, year } },
-        data: { pendingDays: { increment: days } },
-      })
-    }
-
-    return [request]
+  const year = startDate.getUTCFullYear()
+  const yearStart = new Date(Date.UTC(year, 0, 1))
+  const yearEnd = new Date(Date.UTC(year, 11, 31, 23, 59, 59, 999))
+  const balancePoolId = resolveLeaveBalancePoolId(leaveType, {
+    isRemoteWork,
+    isDelegation,
   })
+  const canonicalOnDemand = isOnDemandLeave(leaveType, { isOnDemand })
 
-  return NextResponse.json(leaveRequest, { status: 201 })
+  try {
+    const leaveRequest = await runWithReservationRetry(() => prisma.$transaction(async (tx) => {
+      const balance = balancePoolId
+        ? await tx.leaveBalanceNew.findUnique({
+            where: {
+              employeeId_leaveTypeId_year: {
+                employeeId,
+                leaveTypeId: balancePoolId,
+                year,
+              },
+            },
+          })
+        : null
+
+      if (balancePoolId && !balance) {
+        throw new LeaveRequestDomainError(422, {
+          error: 'Brak salda urlopowego dla tego typu urlopu',
+        })
+      }
+
+      if (balance) {
+        const available = balance.totalDays - balance.usedDays - balance.pendingDays
+        if (available < days) {
+          throw new LeaveRequestDomainError(422, {
+            error: 'Niewystarczające saldo urlopowe',
+            available,
+            requested: days,
+          })
+        }
+      }
+
+      if (canonicalOnDemand) {
+        const usedOnDemand = await tx.leaveRequestNew.aggregate({
+          where: {
+            employeeId,
+            status: { notIn: ['cancelled', 'rejected'] },
+            startDate: {
+              gte: yearStart,
+              lte: yearEnd,
+            },
+            OR: [
+              { isOnDemand: true },
+              { leaveType: { code: 'VLD' } },
+            ],
+          },
+          _sum: { days: true },
+        })
+
+        if ((usedOnDemand._sum.days ?? 0) + days > 4) {
+          throw new LeaveRequestDomainError(422, {
+            error: 'Przekroczono limit urlopu na żądanie (maks. 4 dni w roku)',
+          })
+        }
+      }
+
+      const request = await tx.leaveRequestNew.create({
+        data: {
+          employeeId,
+          leaveTypeId,
+          startDate,
+          endDate,
+          days,
+          isOnDemand: canonicalOnDemand,
+          isRemoteWork,
+          isDelegation,
+          substituteId,
+          notifySubstitute,
+          note,
+          status: 'pending',
+        },
+        include: {
+          leaveType: true,
+          employee: {
+            select: { id: true, firstName: true, lastName: true, email: true, position: true },
+          },
+        },
+      })
+
+      if (balance) {
+        await tx.leaveBalanceNew.update({
+          where: { id: balance.id },
+          data: { pendingDays: { increment: days } },
+        })
+      }
+
+      return request
+    }, { isolationLevel: 'Serializable' }))
+
+    return NextResponse.json(leaveRequest, { status: 201 })
+  } catch (error) {
+    if (error instanceof LeaveRequestDomainError) {
+      return NextResponse.json(error.payload, { status: error.status })
+    }
+    throw error
+  }
 }

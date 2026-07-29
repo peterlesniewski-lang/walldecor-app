@@ -4,11 +4,20 @@ import { z } from 'zod'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { canViewEmployeeRecord } from '@/lib/hr/access'
-import { shouldTrackLeaveBalance } from '@/lib/hr/leave-balance-policy'
+import { resolveLeaveBalancePoolId } from '@/lib/hr/leave-balance-policy'
 
 const rejectSchema = z.object({
   rejectionNote: z.string().min(1, 'Powód odrzucenia jest wymagany'),
 })
+
+class LeaveRejectionError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message)
+  }
+}
 
 export async function PATCH(
   req: NextRequest,
@@ -27,7 +36,16 @@ export async function PATCH(
   const leaveRequest = await prisma.leaveRequestNew.findUnique({
     where: { id },
     include: {
-      leaveType: true,
+      leaveType: {
+        select: {
+          id: true,
+          name: true,
+          color: true,
+          code: true,
+          tracksBalance: true,
+          parentId: true,
+        },
+      },
       employee: {
         select: {
           id: true,
@@ -62,55 +80,85 @@ export async function PATCH(
     return NextResponse.json({ error: 'Invalid input', details: parsed.error.flatten() }, { status: 400 })
   }
 
-  // Pobierz saldo aby zaktualizować pendingDays
-  const year = leaveRequest.startDate.getFullYear()
-  const tracksBalance = shouldTrackLeaveBalance(leaveRequest.leaveType, leaveRequest)
-  const balance = tracksBalance
-    ? await prisma.leaveBalanceNew.findUnique({
-        where: {
-          employeeId_leaveTypeId_year: {
-            employeeId: leaveRequest.employeeId,
-            leaveTypeId: leaveRequest.leaveTypeId,
-            year,
-          },
-        },
-      })
-    : null
+  const year = leaveRequest.startDate.getUTCFullYear()
+  const balancePoolId = resolveLeaveBalancePoolId(leaveRequest.leaveType, leaveRequest)
 
-  // 1 & 2. Transakcja: zaktualizuj wniosek + saldo
-  const updated = await prisma.$transaction(async (tx) => {
-    const updatedRequest = await tx.leaveRequestNew.update({
-      where: { id },
-      data: {
-        status: 'rejected',
-        rejectionNote: parsed.data.rejectionNote,
-      },
-      include: {
-        leaveType: { select: { id: true, name: true, color: true, code: true } },
-        employee: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            division: { select: { id: true, name: true } },
-          },
-        },
-      },
-    })
-
-    if (balance) {
-      await tx.leaveBalanceNew.update({
-        where: { id: balance.id },
+  const rejectRequest = () =>
+    prisma.$transaction(async (tx) => {
+      const transition = await tx.leaveRequestNew.updateMany({
+        where: { id, status: 'pending' },
         data: {
-          pendingDays: { decrement: leaveRequest.days },
+          status: 'rejected',
+          rejectionNote: parsed.data.rejectionNote,
         },
       })
+
+      if (transition.count !== 1) {
+        throw new LeaveRejectionError(409, 'Wniosek został już przetworzony')
+      }
+
+      if (balancePoolId) {
+        const balance = await tx.leaveBalanceNew.findUnique({
+          where: {
+            employeeId_leaveTypeId_year: {
+              employeeId: leaveRequest.employeeId,
+              leaveTypeId: balancePoolId,
+              year,
+            },
+          },
+        })
+
+        // Historical requests may outlive an erroneous or deleted balance row.
+        // Rejection can still proceed because it only releases entitlement.
+        if (balance) {
+          if (balance.pendingDays < leaveRequest.days) {
+            throw new LeaveRejectionError(
+              409,
+              'Saldo oczekujących dni jest niższe niż liczba dni wniosku'
+            )
+          }
+
+          await tx.leaveBalanceNew.update({
+            where: { id: balance.id },
+            data: {
+              pendingDays: { decrement: leaveRequest.days },
+            },
+          })
+        }
+      }
+
+      const updatedRequest = await tx.leaveRequestNew.findUnique({
+        where: { id },
+        include: {
+          leaveType: { select: { id: true, name: true, color: true, code: true } },
+          employee: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              division: { select: { id: true, name: true } },
+            },
+          },
+        },
+      })
+
+      if (!updatedRequest) {
+        throw new LeaveRejectionError(409, 'Wniosek został usunięty podczas odrzucania')
+      }
+
+      return updatedRequest
+    }, { isolationLevel: 'Serializable' })
+
+  let updated: Awaited<ReturnType<typeof rejectRequest>>
+  try {
+    updated = await rejectRequest()
+  } catch (error) {
+    if (error instanceof LeaveRejectionError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
     }
+    throw error
+  }
 
-    return updatedRequest
-  })
-
-  // 3. Utwórz powiadomienie dla pracownika
   const userId = leaveRequest.employee.userId
   if (userId) {
     await prisma.notification.create({
