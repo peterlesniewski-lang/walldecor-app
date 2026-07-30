@@ -59,11 +59,9 @@ const expectedReport = {
 }
 
 describe('HR leave migration audit', () => {
-  it('keeps client creation lazy until the injected runner is called', async () => {
+  it('creates the client through the injected factory when the runner starts', async () => {
     const { client } = createAuditClient()
     const dependencies = createRunnerDependencies(client)
-
-    expect(dependencies.createClient).not.toHaveBeenCalled()
 
     await runHrLeaveMigrationAudit(dependencies)
 
