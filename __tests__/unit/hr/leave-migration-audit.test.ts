@@ -40,6 +40,15 @@ function createRunnerDependencies(client: ReturnType<typeof createAuditClient>['
   }
 }
 
+function createDeferred<T>() {
+  let resolvePromise: (value: T) => void = () => undefined
+  const promise = new Promise<T>((resolve) => {
+    resolvePromise = resolve
+  })
+
+  return { promise, resolve: resolvePromise }
+}
+
 const expectedReport = {
   employees: 12,
   employeesWithConfig: 9,
@@ -128,6 +137,39 @@ describe('HR leave migration audit', () => {
     )
     expect(dependencies.writeError).not.toHaveBeenCalledWith(
       expect.stringContaining('sensitive query detail')
+    )
+    expect(dependencies.setExitCode).toHaveBeenCalledWith(1)
+    expect(auditClient.disconnect).toHaveBeenCalledOnce()
+  })
+
+  it('waits for every count to settle before reporting a query failure', async () => {
+    const auditClient = createAuditClient()
+    const pendingBalanceCount = createDeferred<number>()
+    auditClient.employeeCount.mockReset()
+      .mockRejectedValueOnce(new Error('sensitive query detail'))
+      .mockResolvedValueOnce(9)
+    auditClient.leaveBalanceCount.mockReset()
+      .mockReturnValueOnce(pendingBalanceCount.promise)
+      .mockResolvedValueOnce(2)
+    const dependencies = createRunnerDependencies(auditClient.client)
+    let completed = false
+
+    const runPromise = runHrLeaveMigrationAudit(dependencies).then(() => {
+      completed = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(completed).toBe(false)
+    expect(auditClient.disconnect).not.toHaveBeenCalled()
+    expect(dependencies.writeError).not.toHaveBeenCalled()
+    expect(dependencies.setExitCode).not.toHaveBeenCalled()
+
+    pendingBalanceCount.resolve(15)
+    await runPromise
+
+    expect(dependencies.writeJson).not.toHaveBeenCalled()
+    expect(dependencies.writeError).toHaveBeenCalledWith(
+      'HR leave migration audit failed.'
     )
     expect(dependencies.setExitCode).toHaveBeenCalledWith(1)
     expect(auditClient.disconnect).toHaveBeenCalledOnce()

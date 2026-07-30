@@ -28,7 +28,7 @@ export async function buildHrLeaveMigrationReport(
     vldBalancesIgnoredByNewPolicy,
     existingRequests,
     existingVldRequests,
-  ] = await Promise.all([
+  ] = (await Promise.allSettled([
     prisma.employee.count({ where: { active: true } }),
     prisma.employee.count({
       where: {
@@ -51,7 +51,10 @@ export async function buildHrLeaveMigrationReport(
         ],
       },
     }),
-  ])
+  ])).map((result) => {
+    if (result.status === 'rejected') throw result.reason
+    return result.value
+  })
 
   return {
     employees,
