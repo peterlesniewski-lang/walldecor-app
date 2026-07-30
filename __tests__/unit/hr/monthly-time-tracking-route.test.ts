@@ -18,6 +18,7 @@ vi.mock('@/lib/hr/time-tracking/range-loader', () => ({
 
 const mockGetServerSession = vi.mocked(getServerSession)
 const mockLoadRange = vi.mocked(loadTimeTrackingRange)
+const originalTimezone = process.env.TZ
 
 function session(role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE', employeeId: string | null = null) {
   return {
@@ -79,6 +80,11 @@ beforeEach(() => {
 
 afterEach(() => {
   vi.useRealTimers()
+  if (originalTimezone === undefined) {
+    delete process.env.TZ
+  } else {
+    process.env.TZ = originalTimezone
+  }
 })
 
 describe('GET /api/hr/time-tracking/monthly', () => {
@@ -109,16 +115,17 @@ describe('GET /api/hr/time-tracking/monthly', () => {
     expect(mockLoadRange).not.toHaveBeenCalled()
   })
 
-  it('defaults to the current local calendar month', async () => {
+  it('defaults to the Warsaw business month at a UTC month boundary', async () => {
+    process.env.TZ = 'UTC'
     vi.useFakeTimers()
-    vi.setSystemTime(new Date(2026, 6, 15, 12, 0, 0, 0))
+    vi.setSystemTime(new Date('2026-08-31T22:30:00.000Z'))
     mockGetServerSession.mockResolvedValue(session('ADMIN'))
 
     const response = await GET(request())
     const input = mockLoadRange.mock.calls[0][0]
 
     expect(response.status).toBe(200)
-    expect(await response.json()).toMatchObject({ month: '2026-07' })
+    expect(await response.json()).toMatchObject({ month: '2026-09' })
     expect([
       input.start.getFullYear(),
       input.start.getMonth() + 1,
@@ -126,7 +133,27 @@ describe('GET /api/hr/time-tracking/monthly', () => {
       input.end.getFullYear(),
       input.end.getMonth() + 1,
       input.end.getDate(),
-    ]).toEqual([2026, 7, 1, 2026, 7, 31])
+    ]).toEqual([2026, 9, 1, 2026, 9, 30])
+  })
+
+  it('loads supported years below 100 without Date constructor coercion', async () => {
+    process.env.TZ = 'UTC'
+    mockGetServerSession.mockResolvedValue(session('ADMIN'))
+
+    const response = await GET(request('month=0001-07'))
+    const input = mockLoadRange.mock.calls[0][0]
+
+    expect(response.status).toBe(200)
+    expect([
+      input.start.getFullYear(),
+      input.start.getMonth() + 1,
+      input.start.getDate(),
+      input.start.getHours(),
+      input.end.getFullYear(),
+      input.end.getMonth() + 1,
+      input.end.getDate(),
+      input.end.getHours(),
+    ]).toEqual([1, 7, 1, 0, 1, 7, 31, 23])
   })
 
   it('loads exactly the requested month with all filters and returns the monthly contract', async () => {
