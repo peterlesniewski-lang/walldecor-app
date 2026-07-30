@@ -642,6 +642,206 @@ describe('ManagerTimesheet navigation', () => {
       .toBe('employee-2')
     expect(fetchMock).toHaveBeenCalledOnce()
   })
+
+  it('selects the first visible employee only when employeeId is absent and writes it to the URL', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-07&divisionId=JAG'
+    render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+      />
+    )
+
+    expect(await screen.findByTestId('monthly-employee-mode')).toBeTruthy()
+    await waitFor(() => {
+      expect(navigation.push).toHaveBeenCalledWith(
+        '?view=month&mode=employee&month=2026-07&divisionId=JAG&employeeId=employee-1'
+      )
+    })
+  })
+
+  it('submits only dirty employee rows with browser-generated ISO timestamps', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    const fetchMock = vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (String(input) === '/api/hr/time-tracking/batch' && init?.method === 'POST') {
+        return jsonResponse({
+          saved: [{ date: '2026-07-02', entryId: 'entry-1' }],
+          failed: [],
+        })
+      }
+      return jsonResponse(monthlyData)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+        initialEmployeeId="employee-1"
+      />
+    )
+
+    const clockIn = await screen.findByLabelText('Wejście 2026-07-02')
+    await user.type(clockIn, '09:00')
+    await user.type(screen.getByLabelText('Wyjście 2026-07-02'), '17:00')
+    await user.click(screen.getByRole('button', { name: 'Zapisz zmiany (1)' }))
+
+    const batchCall = fetchMock.mock.calls.find(([input]) => (
+      String(input) === '/api/hr/time-tracking/batch'
+    ))
+    expect(batchCall).toBeTruthy()
+    const body = JSON.parse(String(batchCall?.[1]?.body))
+    expect(body.employeeId).toBe('employee-1')
+    expect(body.rows).toHaveLength(1)
+    expect(body.rows[0]).toMatchObject({
+      date: '2026-07-02',
+      breakMinutes: 0,
+      clockIn: '2026-07-02T07:00:00.000Z',
+      clockOut: '2026-07-02T15:00:00.000Z',
+    })
+    expect(new Date(body.rows[0].clockIn).toISOString()).toBe(body.rows[0].clockIn)
+    expect(new Date(body.rows[0].clockOut).toISOString()).toBe(body.rows[0].clockOut)
+  })
+
+  it('keeps failed rows dirty with inline errors after a partial save', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    const fetchMock = vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (String(input) === '/api/hr/time-tracking/batch' && init?.method === 'POST') {
+        return jsonResponse({
+          saved: [{ date: '2026-07-01', entryId: 'entry-1' }],
+          failed: [{ date: '2026-07-02', error: 'Konflikt' }],
+        })
+      }
+      return jsonResponse(monthlyData)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+        initialEmployeeId="employee-1"
+      />
+    )
+
+    await user.type(await screen.findByLabelText('Wejście 2026-07-01'), '08:00')
+    await user.type(screen.getByLabelText('Wyjście 2026-07-01'), '16:00')
+    await user.type(screen.getByLabelText('Wejście 2026-07-02'), '09:00')
+    await user.type(screen.getByLabelText('Wyjście 2026-07-02'), '17:00')
+    await user.click(screen.getByRole('button', { name: 'Zapisz zmiany (2)' }))
+
+    expect(await screen.findByText('Konflikt')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Zapisz zmiany (1)' })).toBeTruthy()
+  })
+
+  it('keeps approved leave, weekends, and holidays read-only in employee mode', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      ...monthlyData,
+      days: ['2026-07-02', '2026-07-05', '2026-07-06'],
+      saturdayWorkable: false,
+      holidays: [{
+        date: '2026-07-06',
+        name: 'Dzień wolny JAG',
+        divisionId: 'JAG',
+      }],
+      employees: [{
+        ...monthlyData.employees[0],
+        entries: {
+          '2026-07-02': {
+            status: 'leave',
+            leaveType: 'Urlop wypoczynkowy',
+            leaveCode: 'VL',
+          },
+        },
+      }],
+    })))
+    render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+        initialEmployeeId="employee-1"
+      />
+    )
+
+    expect(await screen.findByTestId('monthly-employee-mode')).toBeTruthy()
+    expect(screen.getByLabelText('Wejście 2026-07-02').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByLabelText('Wyjście 2026-07-02').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByLabelText('Wejście 2026-07-05').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByLabelText('Wyjście 2026-07-05').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByLabelText('Wejście 2026-07-06').hasAttribute('disabled')).toBe(true)
+    expect(screen.getByLabelText('Wyjście 2026-07-06').hasAttribute('disabled')).toBe(true)
+  })
+
+  it('guards month, mode, division, and employee changes while rows are dirty', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1&divisionId=JAG'
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      ...monthlyData,
+      employees: [...monthlyData.employees, secondEmployee],
+    })))
+    const confirmMock = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirmMock)
+    const user = userEvent.setup()
+    render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+        initialEmployeeId="employee-1"
+      />
+    )
+
+    await user.type(await screen.findByLabelText('Wejście 2026-07-02'), '09:00')
+    await user.click(screen.getByRole('button', { name: 'Następny miesiąc' }))
+    await user.click(screen.getByRole('button', { name: 'Zespół' }))
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Oddział' }), 'PUL')
+    await user.selectOptions(screen.getByRole('combobox', { name: 'Pracownik' }), 'employee-2')
+
+    expect(confirmMock).toHaveBeenCalledTimes(4)
+    expect(confirmMock).toHaveBeenCalledWith('Masz niezapisane zmiany. Odrzucić je?')
+    expect(navigation.push).not.toHaveBeenCalled()
+
+    confirmMock.mockReturnValue(true)
+    await user.click(screen.getByRole('button', { name: 'Następny miesiąc' }))
+    expect(navigation.push).toHaveBeenCalledWith(
+      '?view=month&mode=employee&month=2026-08&divisionId=JAG&employeeId=employee-1'
+    )
+  })
+
+  it('registers beforeunload protection only while employee rows are dirty', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    const addSpy = vi.spyOn(window, 'addEventListener')
+    const removeSpy = vi.spyOn(window, 'removeEventListener')
+    const user = userEvent.setup()
+    const { unmount } = render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+        initialEmployeeId="employee-1"
+      />
+    )
+
+    await user.type(await screen.findByLabelText('Wejście 2026-07-02'), '09:00')
+    expect(addSpy).toHaveBeenCalledWith('beforeunload', expect.any(Function))
+
+    const event = new Event('beforeunload', { cancelable: true })
+    window.dispatchEvent(event)
+    expect(event.defaultPrevented).toBe(true)
+
+    unmount()
+    expect(removeSpy).toHaveBeenCalledWith('beforeunload', expect.any(Function))
+  })
 })
 
 describe('MonthlyTeamGrid', () => {

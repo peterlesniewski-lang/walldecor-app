@@ -1,8 +1,9 @@
 'use client'
 
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { CalendarDays, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
+import { MonthlyEmployeeTable } from './monthly-employee-table'
 import { MonthlyTeamGrid } from './monthly-team-grid'
 import { TimeEntryEditModal } from './time-entry-edit-modal'
 import {
@@ -29,6 +30,7 @@ interface MonthlyTimesheetProps {
   initialMode: 'team' | 'employee'
   initialEmployeeId: string | null
   saturdayWorkable: boolean
+  onDirtyChange: (dirty: boolean) => void
 }
 
 interface MonthlyTimesheetData {
@@ -90,6 +92,7 @@ export function MonthlyTimesheet({
   initialMode,
   initialEmployeeId,
   saturdayWorkable,
+  onDirtyChange,
 }: MonthlyTimesheetProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -105,6 +108,7 @@ export function MonthlyTimesheet({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [editModal, setEditModal] = useState<EditModalState | null>(null)
+  const [hasDirtyRows, setHasDirtyRows] = useState(false)
   const requestSequenceRef = useRef(0)
   const requestControllerRef = useRef<AbortController | null>(null)
   const recoveryFocusRef = useRef<HTMLButtonElement>(null)
@@ -168,12 +172,43 @@ export function MonthlyTimesheet({
     }
   }, [refreshData])
 
-  const pushState = (updates: Record<string, string | null>) => {
+  useEffect(() => {
+    if (!hasDirtyRows) return
+
+    const handleBeforeUnload = (event: BeforeUnloadEvent) => {
+      event.preventDefault()
+      event.returnValue = ''
+    }
+    window.addEventListener('beforeunload', handleBeforeUnload)
+    return () => window.removeEventListener('beforeunload', handleBeforeUnload)
+  }, [hasDirtyRows])
+
+  useEffect(() => {
+    if (mode === 'employee') return
+    setHasDirtyRows(false)
+    onDirtyChange(false)
+  }, [mode, onDirtyChange])
+
+  const navigateState = useCallback((updates: Record<string, string | null>) => {
     router.push(buildMonthlyHref(
       new URLSearchParams(searchParams.toString()),
       { view: 'month', mode, month, ...updates }
     ))
+  }, [mode, month, router, searchParams])
+
+  const confirmDiscard = (): boolean => (
+    !hasDirtyRows || window.confirm('Masz niezapisane zmiany. Odrzucić je?')
+  )
+
+  const pushState = (updates: Record<string, string | null>) => {
+    if (!confirmDiscard()) return
+    navigateState(updates)
   }
+
+  const handleDirtyChange = useCallback((dirty: boolean) => {
+    setHasDirtyRows(dirty)
+    onDirtyChange(dirty)
+  }, [onDirtyChange])
 
   const changeDivision = (nextDivisionId: string) => {
     pushState({
@@ -184,10 +219,10 @@ export function MonthlyTimesheet({
 
   const currentScopeKey = `${month}|${divisionId}`
   const visibleData = dataScopeKey === currentScopeKey ? data : null
-  const employees = visibleData?.employees ?? []
+  const employees = useMemo(() => visibleData?.employees ?? [], [visibleData])
   const selectedEmployee = employeeId
     ? employees.find((employee) => employee.id === employeeId) ?? null
-    : null
+    : employees[0] ?? null
   const employeeUnavailable = (
     mode === 'employee' &&
     !!employeeId &&
@@ -198,6 +233,20 @@ export function MonthlyTimesheet({
   )
   const effectiveSaturdayWorkable = visibleData?.saturdayWorkable ?? saturdayWorkable
   const teamDays = visibleData?.days ?? buildMonthDateKeys(month)
+
+  useEffect(() => {
+    if (
+      mode !== 'employee' ||
+      employeeId ||
+      loading ||
+      error ||
+      !visibleData ||
+      employees.length === 0
+    ) {
+      return
+    }
+    navigateState({ employeeId: employees[0].id })
+  }, [employeeId, employees, error, loading, mode, navigateState, visibleData])
 
   return (
     <div
@@ -314,18 +363,49 @@ export function MonthlyTimesheet({
           )}
         </div>
       ) : (
-        <div className="flex min-h-80 items-center justify-center overflow-hidden rounded-lg border border-[var(--wd-border)] bg-white">
+        <div className="relative min-h-80" aria-busy={loading}>
+          {selectedEmployee && visibleData && (
+            <MonthlyEmployeeTable
+              employee={selectedEmployee}
+              days={visibleData.days}
+              holidays={visibleData.holidays}
+              saturdayWorkable={effectiveSaturdayWorkable}
+              onSaved={refreshAfterMutation}
+              onOpenEntry={(date, entry) => setEditModal({
+                employeeId: selectedEmployee.id,
+                employeeName: `${selectedEmployee.firstName} ${selectedEmployee.lastName}`,
+                date,
+                entry,
+              })}
+              onDirtyChange={handleDirtyChange}
+            />
+          )}
+
+          {!loading && !error && !employeeUnavailable && !selectedEmployee && (
+            <div className="flex min-h-80 items-center justify-center rounded-lg border border-[var(--wd-border)] bg-white px-6 text-center text-sm text-[var(--muted-foreground)]">
+              Brak pracowników do wyświetlenia
+            </div>
+          )}
+
+          {!loading && !error && employeeUnavailable && (
+            <div className="flex min-h-80 items-center justify-center rounded-lg border border-[var(--wd-border)] bg-white px-6 text-center text-sm text-[var(--muted-foreground)]">
+              Wybierz pracownika z bieżącego zakresu
+            </div>
+          )}
+
           {loading && (
-            <div role="status" aria-label="Ładowanie ewidencji miesięcznej">
-              <div
-                className="h-6 w-6 animate-spin rounded-full border-2 border-t-transparent"
-                style={{ borderColor: 'var(--wd-sand)', borderTopColor: 'transparent' }}
-              />
+            <div className="absolute inset-0 z-40 flex min-h-80 items-center justify-center rounded-lg bg-white/75">
+              <div role="status" aria-label="Ładowanie ewidencji miesięcznej">
+                <div
+                  className="h-6 w-6 animate-spin rounded-full border-2 border-t-transparent"
+                  style={{ borderColor: 'var(--wd-sand)', borderTopColor: 'transparent' }}
+                />
+              </div>
             </div>
           )}
 
           {!loading && error && (
-            <div role="alert" className="flex flex-col items-center gap-3 px-6 text-center">
+            <div role="alert" className="absolute inset-0 z-40 flex min-h-80 flex-col items-center justify-center gap-3 rounded-lg border border-[var(--wd-border)] bg-white/90 px-6 text-center">
               <p className="text-sm text-red-700">{error}</p>
               <button
                 ref={recoveryFocusRef}

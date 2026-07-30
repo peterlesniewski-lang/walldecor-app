@@ -1,5 +1,6 @@
 'use client'
 
+import { useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { currentMonthParam, parseMonthParam } from '@/lib/hr/time-tracking/month'
 import { MonthlyTimesheet } from './monthly-timesheet'
@@ -100,6 +101,7 @@ export function ManagerTimesheet({
 }: ManagerTimesheetProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
+  const [hasMonthlyDirtyRows, setHasMonthlyDirtyRows] = useState(false)
 
   const viewParam = searchParams.get('view')
   const view: TimesheetView = viewParam === 'week' || viewParam === 'month'
@@ -115,6 +117,12 @@ export function ManagerTimesheet({
 
   const changeView = (nextView: TimesheetView) => {
     if (nextView === view) return
+    if (
+      hasMonthlyDirtyRows &&
+      !window.confirm('Masz niezapisane zmiany. Odrzucić je?')
+    ) {
+      return
+    }
     if (nextView === 'month') {
       router.push(buildTimesheetHref(
         new URLSearchParams(searchParams.toString()),
@@ -133,6 +141,12 @@ export function ManagerTimesheet({
 
   const changeMode = (nextMode: MonthlyMode) => {
     if (nextMode === mode) return
+    if (
+      hasMonthlyDirtyRows &&
+      !window.confirm('Masz niezapisane zmiany. Odrzucić je?')
+    ) {
+      return
+    }
     router.push(buildTimesheetHref(
       new URLSearchParams(searchParams.toString()),
       { view: 'month', mode: nextMode, month },
@@ -181,6 +195,7 @@ export function ManagerTimesheet({
           initialMode={mode}
           initialEmployeeId={searchParams.get('employeeId') ?? initialEmployeeId}
           saturdayWorkable={saturdayWorkable}
+          onDirtyChange={setHasMonthlyDirtyRows}
         />
       )}
     </div>
