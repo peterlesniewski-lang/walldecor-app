@@ -122,4 +122,30 @@ describe('validateTimeMutationRow', () => {
       error: 'Przerwa nie może być dłuższa niż czas pracy',
     })
   })
+
+  it('uses 60 elapsed minutes across the Warsaw spring DST jump', () => {
+    expect(validateTimeMutationRow({
+      date: '2026-03-29',
+      clockIn: '2026-03-29T00:30:00.000Z',
+      clockOut: '2026-03-29T01:30:00.000Z',
+      breakMinutes: 0,
+    })).toEqual({
+      valid: true,
+      totalMinutes: 60,
+      breakMinutes: 0,
+    })
+  })
+
+  it('uses 120 elapsed minutes across the Warsaw fall DST overlap', () => {
+    expect(validateTimeMutationRow({
+      date: '2026-10-25',
+      clockIn: '2026-10-25T00:30:00.000Z',
+      clockOut: '2026-10-25T02:30:00.000Z',
+      breakMinutes: 0,
+    })).toEqual({
+      valid: true,
+      totalMinutes: 120,
+      breakMinutes: 0,
+    })
+  })
 })

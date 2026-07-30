@@ -10,12 +10,19 @@ import {
 } from '@/lib/hr/business-date'
 import { timeEntryBatchMutationSchema } from '@/lib/hr/schemas'
 import { validateTimeMutationRow } from '@/lib/hr/time-tracking/batch-policy'
+import { calculateOvertimeMinutes } from '@/lib/hr/utils'
+import {
+  runSerializableTransactionWithRetry,
+  SerializableTransactionConflictError,
+} from '@/lib/hr/serializable-transaction'
 
 const DUPLICATE_DATE_ERROR = 'Data występuje w żądaniu więcej niż raz'
 const ENTRY_OWNERSHIP_ERROR = 'Wpis nie istnieje lub nie należy do wybranego pracownika'
 const ENTRY_DATE_ERROR = 'Wskazany wpis należy do innej daty'
 const ENTRY_EXISTS_ERROR = 'Wpis dla tego pracownika i dnia już istnieje'
 const APPROVED_LEAVE_ERROR = 'Zatwierdzony urlop blokuje utworzenie wpisu dla tego dnia'
+const SERIALIZABLE_CONFLICT_ERROR =
+  'Zmiany czasu pracy nie zostały zapisane z powodu równoczesnej zmiany. Spróbuj ponownie.'
 
 type BatchRow = {
   entryId?: string
@@ -33,6 +40,7 @@ type ValidRow = {
   canonicalDate: Date
   totalMinutes: number
   breakMinutes: number
+  overtimeMinutes: number
 }
 
 type SavedRow = {
@@ -47,11 +55,29 @@ class TimeEntryUniqueConflictError extends Error {
   }
 }
 
-function isUniqueConstraintError(error: unknown): boolean {
+function isTimeEntryDateUniqueConstraintError(error: unknown): boolean {
+  if (
+    typeof error !== 'object' ||
+    error === null ||
+    !('code' in error) ||
+    error.code !== 'P2002' ||
+    !('meta' in error) ||
+    typeof error.meta !== 'object' ||
+    error.meta === null
+  ) {
+    return false
+  }
+
+  const meta = error.meta
+  if (!('modelName' in meta) || meta.modelName !== 'TimeEntry') return false
+  if (!('target' in meta)) return false
+
+  const target = meta.target
   return (
-    error instanceof Error &&
-    'code' in error &&
-    error.code === 'P2002'
+    Array.isArray(target) &&
+    target.length === 2 &&
+    target[0] === 'employeeId' &&
+    target[1] === 'date'
   )
 }
 
@@ -75,9 +101,16 @@ function getRequestedDateRange(dates: string[]): { gte: Date; lte: Date } {
 }
 
 function leaveOverlapsDate(
-  leave: { startDate: Date; endDate: Date },
+  leave: {
+    startDate: Date
+    endDate: Date
+    isRemoteWork: boolean
+    isDelegation: boolean
+  },
   date: string
 ): boolean {
+  if (leave.isRemoteWork || leave.isDelegation) return false
+
   const startDate = getWarsawBusinessDate(leave.startDate).isoDate
   const endDate = getWarsawBusinessDate(leave.endDate).isoDate
   return startDate <= date && date <= endDate
@@ -92,50 +125,95 @@ async function saveValidRows(
 
   while (pendingRows.length > 0) {
     try {
-      return await prisma.$transaction(async (tx) => {
-        const saved: SavedRow[] = []
+      const result = await runSerializableTransactionWithRetry(() =>
+        prisma.$transaction(async (tx) => {
+          const createRows = pendingRows.filter((candidate) => !candidate.row.entryId)
+          const createDateRange =
+            createRows.length > 0
+              ? getRequestedDateRange(createRows.map((candidate) => candidate.row.date))
+              : null
+          const approvedLeaves = createDateRange
+            ? await tx.leaveRequestNew.findMany({
+                where: {
+                  employeeId,
+                  status: 'approved',
+                  isRemoteWork: false,
+                  isDelegation: false,
+                  startDate: { lte: createDateRange.lte },
+                  endDate: { gte: createDateRange.gte },
+                },
+                select: {
+                  startDate: true,
+                  endDate: true,
+                  isRemoteWork: true,
+                  isDelegation: true,
+                },
+              })
+            : []
+          const saved: SavedRow[] = []
+          const leaveFailures: Array<{ index: number; error: string }> = []
 
-        for (const candidate of pendingRows) {
-          const data = {
-            date: candidate.canonicalDate,
-            clockIn: candidate.clockIn,
-            clockOut: candidate.clockOut,
-            totalMinutes: candidate.totalMinutes,
-            breakMinutes: candidate.breakMinutes,
-            source: 'bulk',
-          }
-
-          try {
-            const entry = candidate.row.entryId
-              ? await tx.timeEntry.update({
-                  where: { id: candidate.row.entryId },
-                  data,
-                  select: { id: true },
-                })
-              : await tx.timeEntry.create({
-                  data: {
-                    employeeId,
-                    ...data,
-                    status: 'pending',
-                  },
-                  select: { id: true },
-                })
-
-            saved.push({
-              index: candidate.index,
-              date: candidate.row.date,
-              entryId: entry.id,
-            })
-          } catch (error) {
-            if (isUniqueConstraintError(error)) {
-              throw new TimeEntryUniqueConflictError(candidate.index)
+          for (const candidate of pendingRows) {
+            if (
+              !candidate.row.entryId &&
+              approvedLeaves.some((leave) =>
+                leaveOverlapsDate(leave, candidate.row.date)
+              )
+            ) {
+              leaveFailures.push({
+                index: candidate.index,
+                error: APPROVED_LEAVE_ERROR,
+              })
+              continue
             }
-            throw error
-          }
-        }
 
-        return saved
-      })
+            const data = {
+              date: candidate.canonicalDate,
+              clockIn: candidate.clockIn,
+              clockOut: candidate.clockOut,
+              totalMinutes: candidate.totalMinutes,
+              breakMinutes: candidate.breakMinutes,
+              overtimeMinutes: candidate.overtimeMinutes,
+              source: 'bulk',
+            }
+
+            try {
+              const entry = candidate.row.entryId
+                ? await tx.timeEntry.update({
+                    where: { id: candidate.row.entryId },
+                    data,
+                    select: { id: true },
+                  })
+                : await tx.timeEntry.create({
+                    data: {
+                      employeeId,
+                      ...data,
+                      status: 'pending',
+                    },
+                    select: { id: true },
+                  })
+
+              saved.push({
+                index: candidate.index,
+                date: candidate.row.date,
+                entryId: entry.id,
+              })
+            } catch (error) {
+              if (isTimeEntryDateUniqueConstraintError(error)) {
+                throw new TimeEntryUniqueConflictError(candidate.index)
+              }
+              throw error
+            }
+          }
+
+          return { saved, leaveFailures }
+        }, { isolationLevel: 'Serializable' })
+      )
+
+      for (const failure of result.leaveFailures) {
+        failedByIndex.set(failure.index, failure.error)
+      }
+      return result.saved
     } catch (error) {
       if (!(error instanceof TimeEntryUniqueConflictError)) throw error
 
@@ -170,25 +248,36 @@ export async function POST(req: NextRequest) {
   }
 
   const { employeeId, rows } = parsed.data
-  const targetEmployee = await prisma.employee.findUnique({
-    where: { id: employeeId },
-    select: { id: true, divisionId: true, active: true },
-  })
-  if (!targetEmployee) {
-    return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
-  }
-
-  const viewerEmployee =
+  const [targetEmployee, viewerEmployee] = await Promise.all([
+    prisma.employee.findUnique({
+      where: { id: employeeId },
+      select: { id: true, divisionId: true, active: true },
+    }),
     session.user.role === 'MANAGER' && session.user.employeeId
-      ? await prisma.employee.findUnique({
+      ? prisma.employee.findUnique({
           where: { id: session.user.employeeId },
           select: { id: true, divisionId: true, active: true },
         })
-      : null
+      : Promise.resolve(null),
+  ])
+  if (!targetEmployee) {
+    return session.user.role === 'MANAGER'
+      ? NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      : NextResponse.json({ error: 'Employee not found' }, { status: 404 })
+  }
 
   if (!canViewEmployeeRecord(session, targetEmployee, viewerEmployee)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
+
+  const timeRule = targetEmployee.divisionId
+    ? await prisma.timeTrackingRule.findFirst({
+        where: { divisionId: targetEmployee.divisionId },
+        orderBy: { id: 'asc' },
+        select: { dailyHours: true },
+      })
+    : null
+  const dailyThresholdHours = timeRule?.dailyHours ?? 8
 
   const dateCounts = getCounts(rows.map((row) => row.date))
   const requestedDateRange = getRequestedDateRange(rows.map((row) => row.date))
@@ -196,38 +285,24 @@ export async function POST(req: NextRequest) {
     .map((row) => row.entryId)
     .filter((entryId): entryId is string => entryId !== undefined)
 
-  const [existingEntries, approvedLeaves] = await Promise.all([
-    prisma.timeEntry.findMany({
-      where: {
-        OR: [
-          ...(referencedEntryIds.length > 0
-            ? [{ id: { in: referencedEntryIds } }]
-            : []),
-          {
-            employeeId,
-            date: requestedDateRange,
-          },
-        ],
-      },
-      select: {
-        id: true,
-        employeeId: true,
-        date: true,
-      },
-    }),
-    prisma.leaveRequestNew.findMany({
-      where: {
-        employeeId,
-        status: 'approved',
-        startDate: { lte: requestedDateRange.lte },
-        endDate: { gte: requestedDateRange.gte },
-      },
-      select: {
-        startDate: true,
-        endDate: true,
-      },
-    }),
-  ])
+  const existingEntries = await prisma.timeEntry.findMany({
+    where: {
+      OR: [
+        ...(referencedEntryIds.length > 0
+          ? [{ id: { in: referencedEntryIds } }]
+          : []),
+        {
+          employeeId,
+          date: requestedDateRange,
+        },
+      ],
+    },
+    select: {
+      id: true,
+      employeeId: true,
+      date: true,
+    },
+  })
 
   const entriesById = new Map(existingEntries.map((entry) => [entry.id, entry]))
   const entriesByDate = new Map<string, typeof existingEntries>()
@@ -273,13 +348,10 @@ export async function POST(req: NextRequest) {
         failedByIndex.set(index, ENTRY_EXISTS_ERROR)
         return
       }
-      if (approvedLeaves.some((leave) => leaveOverlapsDate(leave, row.date))) {
-        failedByIndex.set(index, APPROVED_LEAVE_ERROR)
-        return
-      }
     }
 
     const clockIn = new Date(row.clockIn)
+    const netMinutes = validation.totalMinutes - validation.breakMinutes
     validRows.push({
       index,
       row,
@@ -288,10 +360,22 @@ export async function POST(req: NextRequest) {
       canonicalDate: toWarsawBusinessDateUtcMidnight(clockIn),
       totalMinutes: validation.totalMinutes,
       breakMinutes: validation.breakMinutes,
+      overtimeMinutes: calculateOvertimeMinutes(netMinutes, dailyThresholdHours),
     })
   })
 
-  const savedRows = await saveValidRows(employeeId, validRows, failedByIndex)
+  let savedRows: SavedRow[]
+  try {
+    savedRows = await saveValidRows(employeeId, validRows, failedByIndex)
+  } catch (error) {
+    if (error instanceof SerializableTransactionConflictError) {
+      return NextResponse.json(
+        { error: SERIALIZABLE_CONFLICT_ERROR },
+        { status: 409 }
+      )
+    }
+    throw error
+  }
   const saved = savedRows
     .sort((left, right) => left.index - right.index)
     .map(({ date, entryId }) => ({ date, entryId }))

@@ -6,6 +6,7 @@ import { POST } from '@/app/api/hr/time-tracking/batch/route'
 
 const transactionTimeEntryCreate = vi.hoisted(() => vi.fn())
 const transactionTimeEntryUpdate = vi.hoisted(() => vi.fn())
+const transactionLeaveRequestFindMany = vi.hoisted(() => vi.fn())
 
 vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
@@ -23,6 +24,9 @@ vi.mock('@/lib/prisma', () => ({
     timeEntry: {
       findMany: vi.fn(),
     },
+    timeTrackingRule: {
+      findFirst: vi.fn(),
+    },
     leaveRequestNew: {
       findMany: vi.fn(),
     },
@@ -33,6 +37,7 @@ vi.mock('@/lib/prisma', () => ({
 const mockGetServerSession = vi.mocked(getServerSession)
 const mockEmployeeFindUnique = vi.mocked(prisma.employee.findUnique)
 const mockTimeEntryFindMany = vi.mocked(prisma.timeEntry.findMany)
+const mockTimeRuleFindFirst = vi.mocked(prisma.timeTrackingRule.findFirst)
 const mockLeaveRequestFindMany = vi.mocked(prisma.leaveRequestNew.findMany)
 const mockTransaction = vi.mocked(prisma.$transaction)
 
@@ -72,21 +77,32 @@ function employee(id: string, divisionId = 'JAG') {
   return { id, divisionId, active: true }
 }
 
-beforeEach(() => {
-  vi.clearAllMocks()
-  mockEmployeeFindUnique.mockResolvedValue(employee('employee-1') as never)
-  mockTimeEntryFindMany.mockResolvedValue([])
-  mockLeaveRequestFindMany.mockResolvedValue([])
-  transactionTimeEntryCreate.mockImplementation(async ({ data }) => ({
-    id: `created-${data.date.toISOString().slice(0, 10)}`,
-  }))
-  transactionTimeEntryUpdate.mockImplementation(async ({ where }) => ({ id: where.id }))
-  mockTransaction.mockImplementation(async (callback) => callback({
+function transactionClient() {
+  return {
     timeEntry: {
       create: transactionTimeEntryCreate,
       update: transactionTimeEntryUpdate,
     },
-  } as never))
+    leaveRequestNew: {
+      findMany: transactionLeaveRequestFindMany,
+    },
+  }
+}
+
+beforeEach(() => {
+  vi.resetAllMocks()
+  mockEmployeeFindUnique.mockResolvedValue(employee('employee-1') as never)
+  mockTimeEntryFindMany.mockResolvedValue([])
+  mockTimeRuleFindFirst.mockResolvedValue(null)
+  mockLeaveRequestFindMany.mockResolvedValue([])
+  transactionLeaveRequestFindMany.mockResolvedValue([])
+  transactionTimeEntryCreate.mockImplementation(async ({ data }) => ({
+    id: `created-${data.date.toISOString().slice(0, 10)}`,
+  }))
+  transactionTimeEntryUpdate.mockImplementation(async ({ where }) => ({ id: where.id }))
+  mockTransaction.mockImplementation(async (callback) =>
+    callback(transactionClient() as never)
+  )
 })
 
 describe('POST /api/hr/time-tracking/batch', () => {
@@ -110,6 +126,29 @@ describe('POST /api/hr/time-tracking/batch', () => {
 
     expect(response.status).toBe(403)
     expect(mockTransaction).not.toHaveBeenCalled()
+  })
+
+  it('returns the same 403 to a manager for a missing employee', async () => {
+    mockGetServerSession.mockResolvedValue(session('MANAGER', 'manager-1'))
+    mockEmployeeFindUnique
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce(employee('manager-1', 'JAG') as never)
+
+    const response = await POST(request([row('2026-07-02')], 'missing-employee'))
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({ error: 'Forbidden' })
+    expect(mockTransaction).not.toHaveBeenCalled()
+  })
+
+  it('retains 404 for an admin targeting a missing employee', async () => {
+    mockGetServerSession.mockResolvedValue(session('ADMIN'))
+    mockEmployeeFindUnique.mockResolvedValueOnce(null)
+
+    const response = await POST(request([row('2026-07-02')], 'missing-employee'))
+
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({ error: 'Employee not found' })
   })
 
   it('rejects batch sizes outside 1..31 and non-canonical dates', async () => {
@@ -246,6 +285,7 @@ describe('POST /api/hr/time-tracking/batch', () => {
         clockOut: new Date('2026-07-02T16:00:00.000Z'),
         totalMinutes: 480,
         breakMinutes: 30,
+        overtimeMinutes: 0,
         source: 'bulk',
       },
       select: { id: true },
@@ -258,12 +298,69 @@ describe('POST /api/hr/time-tracking/batch', () => {
         clockOut: new Date('2026-07-03T16:00:00.000Z'),
         totalMinutes: 480,
         breakMinutes: 45,
+        overtimeMinutes: 0,
         source: 'bulk',
         status: 'pending',
       },
       select: { id: true },
     })
     expect(transactionTimeEntryUpdate.mock.calls[0][0].data).not.toHaveProperty('status')
+    expect(mockTransaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { isolationLevel: 'Serializable' }
+    )
+  })
+
+  it('calculates create overtime from net minutes using the deterministic division rule', async () => {
+    mockGetServerSession.mockResolvedValue(session('ADMIN'))
+    mockTimeRuleFindFirst.mockResolvedValue({ dailyHours: 7.5 } as never)
+
+    const response = await POST(request([
+      row('2026-07-02', {
+        clockOut: '2026-07-02T17:00:00.000Z',
+        breakMinutes: 30,
+      }),
+    ]))
+
+    expect(response.status).toBe(200)
+    expect(mockTimeRuleFindFirst).toHaveBeenCalledWith({
+      where: { divisionId: 'JAG' },
+      orderBy: { id: 'asc' },
+      select: { dailyHours: true },
+    })
+    expect(transactionTimeEntryCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        totalMinutes: 540,
+        breakMinutes: 30,
+        overtimeMinutes: 60,
+      }),
+    }))
+  })
+
+  it('recalculates update overtime from net minutes with the default eight-hour rule', async () => {
+    mockGetServerSession.mockResolvedValue(session('ADMIN'))
+    mockTimeEntryFindMany.mockResolvedValue([{
+      id: 'entry-1',
+      employeeId: 'employee-1',
+      date: new Date('2026-07-02T00:00:00.000Z'),
+    }] as never)
+
+    const response = await POST(request([
+      row('2026-07-02', {
+        entryId: 'entry-1',
+        clockOut: '2026-07-02T18:00:00.000Z',
+        breakMinutes: 60,
+      }),
+    ]))
+
+    expect(response.status).toBe(200)
+    expect(transactionTimeEntryUpdate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        totalMinutes: 600,
+        breakMinutes: 60,
+        overtimeMinutes: 60,
+      }),
+    }))
   })
 
   it('validates every row and saves the valid subset in one transaction', async () => {
@@ -296,9 +393,11 @@ describe('POST /api/hr/time-tracking/batch', () => {
       date: new Date('2026-07-02T00:00:00.000Z'),
       status: 'approved',
     }] as never)
-    mockLeaveRequestFindMany.mockResolvedValue([{
+    transactionLeaveRequestFindMany.mockResolvedValue([{
       startDate: new Date('2026-07-02T00:00:00.000Z'),
       endDate: new Date('2026-07-03T00:00:00.000Z'),
+      isRemoteWork: false,
+      isDelegation: false,
     }] as never)
 
     const response = await POST(request([
@@ -313,15 +412,55 @@ describe('POST /api/hr/time-tracking/batch', () => {
         error: 'Zatwierdzony urlop blokuje utworzenie wpisu dla tego dnia',
       }],
     })
+    expect(mockLeaveRequestFindMany).not.toHaveBeenCalled()
+    expect(transactionLeaveRequestFindMany).toHaveBeenCalledWith({
+      where: {
+        employeeId: 'employee-1',
+        status: 'approved',
+        isRemoteWork: false,
+        isDelegation: false,
+        startDate: { lte: new Date('2026-07-04T23:59:59.999Z') },
+        endDate: { gte: new Date('2026-07-02T00:00:00.000Z') },
+      },
+      select: {
+        startDate: true,
+        endDate: true,
+        isRemoteWork: true,
+        isDelegation: true,
+      },
+    })
     expect(transactionTimeEntryUpdate).toHaveBeenCalledTimes(1)
     expect(transactionTimeEntryCreate).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['remote work', { isRemoteWork: true, isDelegation: false }],
+    ['delegation', { isRemoteWork: false, isDelegation: true }],
+  ])('allows worked-time creation for approved %s metadata', async (_label, metadata) => {
+    mockGetServerSession.mockResolvedValue(session('ADMIN'))
+    transactionLeaveRequestFindMany.mockResolvedValue([{
+      startDate: new Date('2026-07-02T00:00:00.000Z'),
+      endDate: new Date('2026-07-02T00:00:00.000Z'),
+      ...metadata,
+    }] as never)
+
+    const response = await POST(request([row('2026-07-02')]))
+
+    expect(await response.json()).toEqual({
+      saved: [{ date: '2026-07-02', entryId: 'created-2026-07-02' }],
+      failed: [],
+    })
+    expect(transactionTimeEntryCreate).toHaveBeenCalledTimes(1)
   })
 
   it('maps a uniqueness race to one row failure and retries valid rows atomically', async () => {
     mockGetServerSession.mockResolvedValue(session('ADMIN'))
     const uniqueError = Object.assign(new Error('Unique constraint failed'), {
       code: 'P2002',
-      meta: { target: ['employeeId', 'date'] },
+      meta: {
+        modelName: 'TimeEntry',
+        target: ['employeeId', 'date'],
+      },
     })
     transactionTimeEntryCreate.mockImplementation(async ({ data }) => {
       const date = data.date.toISOString().slice(0, 10)
@@ -342,5 +481,61 @@ describe('POST /api/hr/time-tracking/batch', () => {
       }],
     })
     expect(mockTransaction).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([
+    ['another model', {
+      modelName: 'Project',
+      target: ['employeeId', 'date'],
+    }],
+    ['another TimeEntry target', {
+      modelName: 'TimeEntry',
+      target: ['id'],
+    }],
+  ])('rethrows P2002 for %s', async (_label, meta) => {
+    mockGetServerSession.mockResolvedValue(session('ADMIN'))
+    const unrelatedError = Object.assign(new Error('Different unique constraint'), {
+      code: 'P2002',
+      meta,
+    })
+    transactionTimeEntryCreate.mockRejectedValue(unrelatedError)
+
+    await expect(POST(request([row('2026-07-02')]))).rejects.toBe(unrelatedError)
+  })
+
+  it.each([
+    ['P2034', 'Write conflict'],
+    ['P2028', 'Transaction already closed because of an expired transaction'],
+  ])('retries retryable %s transaction failures', async (code, message) => {
+    mockGetServerSession.mockResolvedValue(session('ADMIN'))
+    const conflict = Object.assign(new Error(message), { code })
+    mockTransaction
+      .mockRejectedValueOnce(conflict)
+      .mockImplementationOnce(async (callback) =>
+        callback(transactionClient() as never)
+      )
+
+    const response = await POST(request([row('2026-07-02')]))
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual({
+      saved: [{ date: '2026-07-02', entryId: 'created-2026-07-02' }],
+      failed: [],
+    })
+    expect(mockTransaction).toHaveBeenCalledTimes(2)
+  })
+
+  it('returns a controlled 409 after serializable retries are exhausted', async () => {
+    mockGetServerSession.mockResolvedValue(session('ADMIN'))
+    const conflict = Object.assign(new Error('Write conflict'), { code: 'P2034' })
+    mockTransaction.mockRejectedValue(conflict)
+
+    const response = await POST(request([row('2026-07-02')]))
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({
+      error: 'Zmiany czasu pracy nie zostały zapisane z powodu równoczesnej zmiany. Spróbuj ponownie.',
+    })
+    expect(mockTransaction).toHaveBeenCalledTimes(3)
   })
 })
