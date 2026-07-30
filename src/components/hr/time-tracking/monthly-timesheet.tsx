@@ -31,6 +31,7 @@ interface MonthlyTimesheetProps {
   initialEmployeeId: string | null
   saturdayWorkable: boolean
   onDirtyChange: (dirty: boolean) => void
+  onBusyChange: (busy: boolean) => void
 }
 
 interface MonthlyTimesheetData {
@@ -93,6 +94,7 @@ export function MonthlyTimesheet({
   initialEmployeeId,
   saturdayWorkable,
   onDirtyChange,
+  onBusyChange,
 }: MonthlyTimesheetProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -109,9 +111,19 @@ export function MonthlyTimesheet({
   const [error, setError] = useState<string | null>(null)
   const [editModal, setEditModal] = useState<EditModalState | null>(null)
   const [hasDirtyRows, setHasDirtyRows] = useState(false)
+  const [mutationBusy, setMutationBusy] = useState(false)
+  const [discardToken, setDiscardToken] = useState(0)
   const requestSequenceRef = useRef(0)
   const requestControllerRef = useRef<AbortController | null>(null)
   const recoveryFocusRef = useRef<HTMLButtonElement>(null)
+  const acceptedUrlRef = useRef<string | null>(
+    typeof window === 'undefined'
+      ? null
+      : `${window.location.pathname}${window.location.search}${window.location.hash}`
+  )
+  const acceptedHistoryStateRef = useRef<unknown>(
+    typeof window === 'undefined' ? null : window.history.state
+  )
 
   const refreshData = useCallback(async (): Promise<boolean> => {
     const requestScopeKey = `${month}|${divisionId}`
@@ -173,7 +185,7 @@ export function MonthlyTimesheet({
   }, [refreshData])
 
   useEffect(() => {
-    if (!hasDirtyRows) return
+    if (!hasDirtyRows && !mutationBusy) return
 
     const handleBeforeUnload = (event: BeforeUnloadEvent) => {
       event.preventDefault()
@@ -181,13 +193,58 @@ export function MonthlyTimesheet({
     }
     window.addEventListener('beforeunload', handleBeforeUnload)
     return () => window.removeEventListener('beforeunload', handleBeforeUnload)
-  }, [hasDirtyRows])
+  }, [hasDirtyRows, mutationBusy])
+
+  useEffect(() => {
+    if (hasDirtyRows || mutationBusy) return
+    acceptedUrlRef.current =
+      `${window.location.pathname}${window.location.search}${window.location.hash}`
+    acceptedHistoryStateRef.current = window.history.state
+  }, [hasDirtyRows, mutationBusy, searchParams])
+
+  useEffect(() => {
+    if (!hasDirtyRows && !mutationBusy) return
+
+    const restoreAcceptedUrl = (event: PopStateEvent) => {
+      event.stopImmediatePropagation()
+      const acceptedUrl = acceptedUrlRef.current
+      if (!acceptedUrl) return
+      window.history.pushState(acceptedHistoryStateRef.current, '', acceptedUrl)
+    }
+
+    const handlePopState = (event: PopStateEvent) => {
+      if (mutationBusy) {
+        restoreAcceptedUrl(event)
+        return
+      }
+
+      if (
+        hasDirtyRows &&
+        !window.confirm('Masz niezapisane zmiany. Odrzucić je?')
+      ) {
+        restoreAcceptedUrl(event)
+        return
+      }
+
+      acceptedUrlRef.current =
+        `${window.location.pathname}${window.location.search}${window.location.hash}`
+      acceptedHistoryStateRef.current = event.state
+      setHasDirtyRows(false)
+      onDirtyChange(false)
+      setDiscardToken((current) => current + 1)
+    }
+
+    window.addEventListener('popstate', handlePopState, true)
+    return () => window.removeEventListener('popstate', handlePopState, true)
+  }, [hasDirtyRows, mutationBusy, onDirtyChange])
 
   useEffect(() => {
     if (mode === 'employee') return
     setHasDirtyRows(false)
+    setMutationBusy(false)
     onDirtyChange(false)
-  }, [mode, onDirtyChange])
+    onBusyChange(false)
+  }, [mode, onBusyChange, onDirtyChange])
 
   const navigateState = useCallback((updates: Record<string, string | null>) => {
     router.push(buildMonthlyHref(
@@ -197,7 +254,8 @@ export function MonthlyTimesheet({
   }, [mode, month, router, searchParams])
 
   const confirmDiscard = (): boolean => (
-    !hasDirtyRows || window.confirm('Masz niezapisane zmiany. Odrzucić je?')
+    !mutationBusy &&
+    (!hasDirtyRows || window.confirm('Masz niezapisane zmiany. Odrzucić je?'))
   )
 
   const pushState = (updates: Record<string, string | null>) => {
@@ -209,6 +267,11 @@ export function MonthlyTimesheet({
     setHasDirtyRows(dirty)
     onDirtyChange(dirty)
   }, [onDirtyChange])
+
+  const handleBusyChange = useCallback((busy: boolean) => {
+    setMutationBusy(busy)
+    onBusyChange(busy)
+  }, [onBusyChange])
 
   const changeDivision = (nextDivisionId: string) => {
     pushState({
@@ -252,14 +315,16 @@ export function MonthlyTimesheet({
     <div
       data-testid="monthly-mode-shell"
       data-saturday-workable={effectiveSaturdayWorkable}
+      aria-busy={loading || mutationBusy}
       className="space-y-4"
     >
       <div className="flex flex-wrap items-center gap-3">
         <select
           aria-label="Oddział"
           value={divisionId}
+          disabled={mutationBusy}
           onChange={(event) => changeDivision(event.target.value)}
-          className="h-9 min-w-44 rounded-md border border-[var(--wd-border)] bg-white px-3 text-sm text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1"
+          className="h-9 min-w-44 rounded-md border border-[var(--wd-border)] bg-white px-3 text-sm text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:bg-[var(--wd-surface-2)] disabled:text-[var(--muted-foreground)]"
         >
           <option value="">Wszystkie oddziały</option>
           {divisions.map((division) => (
@@ -271,8 +336,9 @@ export function MonthlyTimesheet({
           <select
             aria-label="Pracownik"
             value={selectedEmployee?.id ?? ''}
+            disabled={mutationBusy}
             onChange={(event) => pushState({ employeeId: event.target.value || null })}
-            className="h-9 min-w-52 rounded-md border border-[var(--wd-border)] bg-white px-3 text-sm text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1"
+            className="h-9 min-w-52 rounded-md border border-[var(--wd-border)] bg-white px-3 text-sm text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:bg-[var(--wd-surface-2)] disabled:text-[var(--muted-foreground)]"
           >
             <option value="">Wybierz pracownika</option>
             {employees.map((employee) => (
@@ -288,8 +354,9 @@ export function MonthlyTimesheet({
             type="button"
             aria-label="Poprzedni miesiąc"
             title="Poprzedni miesiąc"
+            disabled={mutationBusy}
             onClick={() => pushState({ month: getAdjacentMonth(month, -1) })}
-            className="grid h-full w-9 place-items-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--wd-dark)]"
+            className="grid h-full w-9 place-items-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--wd-dark)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
@@ -300,8 +367,9 @@ export function MonthlyTimesheet({
             type="button"
             aria-label="Następny miesiąc"
             title="Następny miesiąc"
+            disabled={mutationBusy}
             onClick={() => pushState({ month: getAdjacentMonth(month, 1) })}
-            className="grid h-full w-9 place-items-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--wd-dark)]"
+            className="grid h-full w-9 place-items-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--wd-dark)] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
@@ -309,8 +377,9 @@ export function MonthlyTimesheet({
 
         <button
           type="button"
+          disabled={mutationBusy}
           onClick={() => pushState({ month: currentMonthParam() })}
-          className="flex h-9 items-center gap-1.5 rounded-md border border-[var(--wd-border)] px-3 text-sm font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1"
+          className="flex h-9 items-center gap-1.5 rounded-md border border-[var(--wd-border)] px-3 text-sm font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
         >
           <CalendarDays className="h-3.5 w-3.5" />
           Bieżący miesiąc
@@ -371,13 +440,18 @@ export function MonthlyTimesheet({
               holidays={visibleData.holidays}
               saturdayWorkable={effectiveSaturdayWorkable}
               onSaved={refreshAfterMutation}
-              onOpenEntry={(date, entry) => setEditModal({
-                employeeId: selectedEmployee.id,
-                employeeName: `${selectedEmployee.firstName} ${selectedEmployee.lastName}`,
-                date,
-                entry,
-              })}
+              onOpenEntry={(date, entry) => {
+                if (mutationBusy) return
+                setEditModal({
+                  employeeId: selectedEmployee.id,
+                  employeeName: `${selectedEmployee.firstName} ${selectedEmployee.lastName}`,
+                  date,
+                  entry,
+                })
+              }}
               onDirtyChange={handleDirtyChange}
+              onBusyChange={handleBusyChange}
+              resetToken={discardToken}
             />
           )}
 

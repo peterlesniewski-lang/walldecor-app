@@ -18,6 +18,8 @@ interface MonthlyEmployeeTableProps {
   onSaved: () => Promise<void>
   onOpenEntry: (date: string, entry: TimeTrackingDayEntry | null) => void
   onDirtyChange: (dirty: boolean) => void
+  onBusyChange: (busy: boolean) => void
+  resetToken: number
 }
 
 interface DraftRow {
@@ -164,6 +166,8 @@ export function MonthlyEmployeeTable({
   onSaved,
   onOpenEntry,
   onDirtyChange,
+  onBusyChange,
+  resetToken,
 }: MonthlyEmployeeTableProps) {
   const [dirtyRows, setDirtyRows] = useState<Map<string, DraftRow>>(new Map())
   const [saving, setSaving] = useState(false)
@@ -177,13 +181,18 @@ export function MonthlyEmployeeTable({
   useEffect(() => {
     setDirtyRows(new Map())
     setSaveError(null)
-  }, [scopeKey])
+  }, [resetToken, scopeKey])
 
   useEffect(() => {
     onDirtyChange(dirtyRows.size > 0)
   }, [dirtyRows.size, onDirtyChange])
 
   useEffect(() => () => onDirtyChange(false), [onDirtyChange])
+
+  useEffect(() => {
+    onBusyChange(saving)
+    return () => onBusyChange(false)
+  }, [onBusyChange, saving])
 
   const updateRow = (
     day: string,
@@ -320,7 +329,7 @@ export function MonthlyEmployeeTable({
       <div className="overflow-x-auto rounded-lg border border-[var(--wd-border)] bg-white">
         <table
           aria-label="Miesięczna ewidencja wybranego pracownika"
-          className="w-full min-w-[760px] table-fixed border-collapse text-xs"
+          className="w-full min-w-[920px] table-fixed border-collapse text-xs"
         >
           <colgroup>
             <col className="w-[128px]" />
@@ -329,7 +338,7 @@ export function MonthlyEmployeeTable({
             <col className="w-[112px]" />
             <col className="w-[76px]" />
             <col className="w-[88px]" />
-            <col />
+            <col className="w-[240px]" />
             <col className="w-[48px]" />
           </colgroup>
           <thead>
@@ -362,7 +371,7 @@ export function MonthlyEmployeeTable({
                 <tr
                   key={day}
                   data-testid={`monthly-employee-row-${day}`}
-                  className="h-20 border-b border-[var(--wd-border)] last:border-b-0"
+                  className="h-24 border-b border-[var(--wd-border)] last:border-b-0"
                 >
                   <th scope="row" className="px-3 text-left">
                     <span className="block font-medium text-[var(--wd-text-primary)]">
@@ -392,6 +401,10 @@ export function MonthlyEmployeeTable({
                     <input
                       type="time"
                       aria-label={`Wejście ${day}`}
+                      aria-invalid={Boolean(draft.error)}
+                      aria-describedby={draft.error
+                        ? `monthly-employee-error-${day}`
+                        : undefined}
                       value={draft.clockIn}
                       disabled={readOnly || saving}
                       onChange={(event) => updateRow(day, 'clockIn', event.target.value)}
@@ -402,6 +415,10 @@ export function MonthlyEmployeeTable({
                     <input
                       type="time"
                       aria-label={`Wyjście ${day}`}
+                      aria-invalid={Boolean(draft.error)}
+                      aria-describedby={draft.error
+                        ? `monthly-employee-error-${day}`
+                        : undefined}
                       value={draft.clockOut}
                       disabled={readOnly || saving}
                       onChange={(event) => updateRow(day, 'clockOut', event.target.value)}
@@ -415,12 +432,14 @@ export function MonthlyEmployeeTable({
                     {netMinutes === null ? '—' : formatDuration(netMinutes)}
                   </td>
                   <td className="px-3">
-                    <div
+                    <p
+                      id={`monthly-employee-error-${day}`}
                       aria-live="polite"
-                      className="flex h-10 items-center text-xs text-red-700"
+                      title={draft.error ?? undefined}
+                      className="line-clamp-2 min-h-8 break-words text-xs leading-4 text-red-700"
                     >
                       {draft.error}
-                    </div>
+                    </p>
                   </td>
                   <td className="px-1 text-center">
                     {entry?.id && (
@@ -428,8 +447,9 @@ export function MonthlyEmployeeTable({
                         type="button"
                         aria-label={`Szczegóły wpisu ${day}`}
                         title="Szczegóły wpisu"
+                        disabled={saving}
                         onClick={() => onOpenEntry(day, entry)}
-                        className="inline-grid h-9 w-9 place-items-center rounded text-[var(--muted-foreground)] transition-colors hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1"
+                        className="inline-grid h-9 w-9 place-items-center rounded text-[var(--muted-foreground)] transition-colors hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
                       >
                         <MoreHorizontal className="h-4 w-4" aria-hidden="true" />
                       </button>

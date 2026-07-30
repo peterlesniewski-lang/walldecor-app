@@ -743,6 +743,166 @@ describe('ManagerTimesheet navigation', () => {
     expect(screen.getByRole('button', { name: 'Zapisz zmiany (1)' })).toBeTruthy()
   })
 
+  it('keeps inline errors inside a stable column and associates them with both time inputs', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    const longError = 'Godzina wyjścia musi być późniejsza niż wejścia dla wybranego dnia roboczego'
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (String(input) === '/api/hr/time-tracking/batch' && init?.method === 'POST') {
+        return jsonResponse({
+          saved: [],
+          failed: [{ date: '2026-07-02', error: longError }],
+        })
+      }
+      return jsonResponse(monthlyData)
+    }))
+    const user = userEvent.setup()
+    render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+        initialEmployeeId="employee-1"
+      />
+    )
+
+    await user.type(await screen.findByLabelText('Wejście 2026-07-02'), '17:00')
+    await user.type(screen.getByLabelText('Wyjście 2026-07-02'), '09:00')
+    await user.click(screen.getByRole('button', { name: 'Zapisz zmiany (1)' }))
+
+    const error = await screen.findByText(longError)
+    const clockIn = screen.getByLabelText('Wejście 2026-07-02')
+    const clockOut = screen.getByLabelText('Wyjście 2026-07-02')
+    expect(error.id).toBe('monthly-employee-error-2026-07-02')
+    expect(error.className).toContain('line-clamp-2')
+    expect(error.getAttribute('title')).toBe(longError)
+    expect(clockIn.getAttribute('aria-invalid')).toBe('true')
+    expect(clockOut.getAttribute('aria-invalid')).toBe('true')
+    expect(clockIn.getAttribute('aria-describedby')).toBe(error.id)
+    expect(clockOut.getAttribute('aria-describedby')).toBe(error.id)
+    expect(screen.getByRole('table').className).toContain('min-w-[920px]')
+    expect(screen.getByTestId('monthly-employee-row-2026-07-02').className).toContain('h-24')
+  })
+
+  it('blocks scope navigation and entry details through POST and the following refresh', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1&divisionId=JAG'
+    window.history.replaceState(
+      { page: 'current' },
+      '',
+      '/hr/time-tracking?view=month&mode=employee&month=2026-07&employeeId=employee-1&divisionId=JAG'
+    )
+    const confirmMock = vi.fn()
+    vi.stubGlobal('confirm', confirmMock)
+    const batch = deferred<Response>()
+    const refresh = deferred<Response>()
+    let monthlyRequestCount = 0
+    const entry = {
+      id: 'entry-1',
+      clockIn: '2026-07-02T06:00:00.000Z',
+      clockOut: '2026-07-02T14:00:00.000Z',
+      totalMinutes: 480,
+      breakMinutes: 0,
+      status: 'pending',
+    }
+    const dataWithEntry = {
+      ...monthlyData,
+      employees: [{
+        ...monthlyData.employees[0],
+        entries: { '2026-07-02': entry },
+      }],
+    }
+    const fetchMock = vi.fn((
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (String(input) === '/api/hr/time-tracking/batch' && init?.method === 'POST') {
+        return batch.promise
+      }
+      if (String(input).includes('/api/hr/time-tracking/monthly')) {
+        monthlyRequestCount += 1
+        return monthlyRequestCount === 1
+          ? Promise.resolve(jsonResponse(dataWithEntry))
+          : refresh.promise
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+        initialEmployeeId="employee-1"
+      />
+    )
+
+    fireEvent.change(await screen.findByLabelText('Wejście 2026-07-02'), {
+      target: { value: '09:00' },
+    })
+    await user.click(screen.getByRole('button', { name: 'Zapisz zmiany (1)' }))
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.filter(([input]) => (
+        String(input) === '/api/hr/time-tracking/batch'
+      ))).toHaveLength(1)
+    })
+
+    const expectBusyControls = () => {
+      expect(screen.getByTestId('monthly-mode-shell').getAttribute('aria-busy')).toBe('true')
+      expect(screen.getByRole('button', { name: 'Zespół' }).hasAttribute('disabled')).toBe(true)
+      expect(screen.getByRole('button', { name: 'Następny miesiąc' }).hasAttribute('disabled')).toBe(true)
+      expect(screen.getByRole('combobox', { name: 'Oddział' }).hasAttribute('disabled')).toBe(true)
+      expect(screen.getByRole('combobox', { name: 'Pracownik' }).hasAttribute('disabled')).toBe(true)
+      expect(screen.getByRole('button', {
+        name: 'Szczegóły wpisu 2026-07-02',
+      }).hasAttribute('disabled')).toBe(true)
+    }
+    expectBusyControls()
+
+    window.history.pushState(
+      { page: 'target' },
+      '',
+      '/hr/time-tracking?view=month&mode=team&month=2026-08'
+    )
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate', {
+        state: { page: 'target' },
+      }))
+    })
+    expect(window.location.search).toBe(
+      '?view=month&mode=employee&month=2026-07&employeeId=employee-1&divisionId=JAG'
+    )
+    expect(confirmMock).not.toHaveBeenCalled()
+
+    await user.click(screen.getByRole('button', { name: 'Zapisz zmiany (1)' }))
+    expect(fetchMock.mock.calls.filter(([input]) => (
+      String(input) === '/api/hr/time-tracking/batch'
+    ))).toHaveLength(1)
+
+    await act(async () => {
+      batch.resolve(jsonResponse({
+        saved: [{ date: '2026-07-02', entryId: 'entry-1' }],
+        failed: [],
+      }))
+      await batch.promise
+    })
+    await waitFor(() => expect(monthlyRequestCount).toBe(2))
+    expectBusyControls()
+
+    await act(async () => {
+      refresh.resolve(jsonResponse(dataWithEntry))
+      await refresh.promise
+    })
+    await waitFor(() => {
+      expect(screen.getByTestId('monthly-mode-shell').getAttribute('aria-busy')).toBe('false')
+    })
+    expect(screen.getByRole('button', { name: 'Zespół' }).hasAttribute('disabled')).toBe(false)
+    expect(navigation.push).not.toHaveBeenCalled()
+    expect(screen.queryByRole('dialog')).toBeNull()
+  })
+
   it('keeps approved leave, weekends, and holidays read-only in employee mode', async () => {
     navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1'
     vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
@@ -841,6 +1001,82 @@ describe('ManagerTimesheet navigation', () => {
 
     unmount()
     expect(removeSpy).toHaveBeenCalledWith('beforeunload', expect.any(Function))
+  })
+
+  it('restores the current URL and keeps dirty rows when popstate is cancelled', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    window.history.replaceState(
+      { page: 'current' },
+      '',
+      '/hr/time-tracking?view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    )
+    const confirmMock = vi.fn(() => false)
+    vi.stubGlobal('confirm', confirmMock)
+    const user = userEvent.setup()
+    render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+        initialEmployeeId="employee-1"
+      />
+    )
+
+    await user.type(await screen.findByLabelText('Wejście 2026-07-02'), '09:00')
+    window.history.pushState(
+      { page: 'target' },
+      '',
+      '/hr/time-tracking?view=month&mode=employee&month=2026-08&employeeId=employee-1'
+    )
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate', {
+        state: { page: 'target' },
+      }))
+    })
+
+    expect(confirmMock).toHaveBeenCalledWith('Masz niezapisane zmiany. Odrzucić je?')
+    expect(window.location.search).toBe(
+      '?view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    )
+    expect(screen.getByRole('button', { name: 'Zapisz zmiany (1)' })).toBeTruthy()
+  })
+
+  it('allows popstate and discards dirty rows after confirmation', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    window.history.replaceState(
+      { page: 'current' },
+      '',
+      '/hr/time-tracking?view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    )
+    const confirmMock = vi.fn(() => true)
+    vi.stubGlobal('confirm', confirmMock)
+    const user = userEvent.setup()
+    render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+        initialEmployeeId="employee-1"
+      />
+    )
+
+    await user.type(await screen.findByLabelText('Wejście 2026-07-02'), '09:00')
+    window.history.pushState(
+      { page: 'target' },
+      '',
+      '/hr/time-tracking?view=month&mode=employee&month=2026-08&employeeId=employee-1'
+    )
+    act(() => {
+      window.dispatchEvent(new PopStateEvent('popstate', {
+        state: { page: 'target' },
+      }))
+    })
+
+    expect(confirmMock).toHaveBeenCalledWith('Masz niezapisane zmiany. Odrzucić je?')
+    expect(window.location.search).toBe(
+      '?view=month&mode=employee&month=2026-08&employeeId=employee-1'
+    )
+    expect(await screen.findByRole('button', { name: 'Zapisz zmiany (0)' })).toBeTruthy()
   })
 })
 

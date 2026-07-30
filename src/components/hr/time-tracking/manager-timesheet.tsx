@@ -55,11 +55,13 @@ function SegmentedControl<T extends string>({
   value,
   options,
   onChange,
+  disabled = false,
 }: {
   label: string
   value: T
   options: Array<{ value: T; label: string }>
   onChange: (value: T) => void
+  disabled?: boolean
 }) {
   return (
     <div
@@ -74,8 +76,9 @@ function SegmentedControl<T extends string>({
             key={option.value}
             type="button"
             aria-pressed={selected}
+            disabled={disabled}
             onClick={() => onChange(option.value)}
-            className={`min-w-[5.5rem] rounded px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1 ${
+            className={`min-w-[5.5rem] rounded px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50 ${
               selected
                 ? 'bg-white text-[var(--wd-text-primary)] shadow-sm'
                 : 'text-[var(--muted-foreground)] hover:text-[var(--wd-text-primary)]'
@@ -102,6 +105,7 @@ export function ManagerTimesheet({
   const router = useRouter()
   const searchParams = useSearchParams()
   const [hasMonthlyDirtyRows, setHasMonthlyDirtyRows] = useState(false)
+  const [monthlyMutationBusy, setMonthlyMutationBusy] = useState(false)
 
   const viewParam = searchParams.get('view')
   const view: TimesheetView = viewParam === 'week' || viewParam === 'month'
@@ -117,6 +121,7 @@ export function ManagerTimesheet({
 
   const changeView = (nextView: TimesheetView) => {
     if (nextView === view) return
+    if (monthlyMutationBusy) return
     if (
       hasMonthlyDirtyRows &&
       !window.confirm('Masz niezapisane zmiany. Odrzucić je?')
@@ -141,6 +146,7 @@ export function ManagerTimesheet({
 
   const changeMode = (nextMode: MonthlyMode) => {
     if (nextMode === mode) return
+    if (monthlyMutationBusy) return
     if (
       hasMonthlyDirtyRows &&
       !window.confirm('Masz niezapisane zmiany. Odrzucić je?')
@@ -165,6 +171,7 @@ export function ManagerTimesheet({
             { value: 'month', label: 'Miesiąc' },
           ]}
           onChange={changeView}
+          disabled={monthlyMutationBusy}
         />
 
         {view === 'month' && (
@@ -176,6 +183,7 @@ export function ManagerTimesheet({
               { value: 'employee', label: 'Pracownik' },
             ]}
             onChange={changeMode}
+            disabled={monthlyMutationBusy}
           />
         )}
       </div>
@@ -196,6 +204,7 @@ export function ManagerTimesheet({
           initialEmployeeId={searchParams.get('employeeId') ?? initialEmployeeId}
           saturdayWorkable={saturdayWorkable}
           onDirtyChange={setHasMonthlyDirtyRows}
+          onBusyChange={setMonthlyMutationBusy}
         />
       )}
     </div>
