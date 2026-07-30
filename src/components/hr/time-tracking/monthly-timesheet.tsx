@@ -337,7 +337,7 @@ export function MonthlyTimesheet({
           entry={editModal.entry}
           userRole={userRole}
           onClose={() => setEditModal(null)}
-          onSaved={() => void refreshData()}
+          onSaved={refreshData}
         />
       )}
     </div>

@@ -809,7 +809,7 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWork
           entry={editModal.entry}
           userRole={userRole}
           onClose={() => setEditModal(null)}
-          onSaved={() => void fetchData()}
+          onSaved={fetchData}
         />
       )}
 

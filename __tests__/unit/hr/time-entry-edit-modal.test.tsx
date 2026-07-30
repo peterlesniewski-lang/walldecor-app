@@ -233,4 +233,66 @@ describe('TimeEntryEditModal', () => {
     await waitFor(() => expect(focusSpy).toHaveBeenCalledTimes(1))
     expect(document.activeElement).toBe(opener)
   })
+
+  it.each([
+    ['save', 'Zapisz', 'PATCH', '/api/hr/time-tracking/entry-1'],
+    ['delete', 'Usuń wpis', 'DELETE', '/api/hr/time-tracking/entry-1'],
+    ['approve', 'Zatwierdź', 'PATCH', '/api/hr/time-tracking/entry-1/approve'],
+    ['reject', 'Odrzuć', 'PATCH', '/api/hr/time-tracking/entry-1/reject'],
+  ])('keeps %s pending until the async refresh completes', async (
+    _operation,
+    buttonName,
+    method,
+    endpoint
+  ) => {
+    const refresh = deferred<void>()
+    const onClose = vi.fn()
+    const onSaved = vi.fn(() => refresh.promise)
+    const fetchMock = vi.fn((
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (init?.method) return Promise.resolve(jsonResponse({ ok: true }))
+      return Promise.resolve(jsonResponse({
+        clockIn: localIso(8),
+        clockOut: localIso(16),
+        notes: 'Dyżur',
+      }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    const user = userEvent.setup()
+    render(
+      <TimeEntryEditModal
+        {...baseProps}
+        onClose={onClose}
+        onSaved={onSaved}
+      />
+    )
+
+    const dialog = screen.getByRole('dialog', { name: 'Edytuj wpis' })
+    await waitFor(() => {
+      expect((within(dialog).getByRole('button', { name: buttonName }) as HTMLButtonElement).disabled)
+        .toBe(false)
+    })
+    await user.click(within(dialog).getByRole('button', { name: buttonName }))
+
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([input, init]) => (
+        String(input) === endpoint && init?.method === method
+      ))).toBe(true)
+      expect(onSaved).toHaveBeenCalledOnce()
+    })
+    expect(onClose).not.toHaveBeenCalled()
+
+    await user.keyboard('{Escape}')
+    expect(onClose).not.toHaveBeenCalled()
+    expect(screen.getByRole('dialog', { name: 'Edytuj wpis' })).toBe(dialog)
+
+    await act(async () => {
+      refresh.resolve()
+      await refresh.promise
+    })
+    await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
+  })
 })

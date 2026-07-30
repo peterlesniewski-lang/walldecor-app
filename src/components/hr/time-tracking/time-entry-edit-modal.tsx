@@ -28,7 +28,7 @@ interface TimeEntryEditModalProps {
   entry: DayEntry | null
   userRole: 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
   onClose: () => void
-  onSaved: () => void
+  onSaved: () => void | Promise<void>
 }
 
 function toTimeStr(iso: string | undefined | null): string {
@@ -171,7 +171,7 @@ export function TimeEntryEditModal({
         }
       }
 
-      onSaved()
+      await onSaved()
       onClose()
     } catch {
       setError('Błąd połączenia')
@@ -191,7 +191,7 @@ export function TimeEntryEditModal({
         setError(d.error ?? 'Błąd zatwierdzenia')
         return
       }
-      onSaved()
+      await onSaved()
       onClose()
     } catch {
       setError('Błąd połączenia')
@@ -211,7 +211,7 @@ export function TimeEntryEditModal({
         setError(d.error ?? 'Błąd odrzucenia')
         return
       }
-      onSaved()
+      await onSaved()
       onClose()
     } catch {
       setError('Błąd połączenia')
@@ -232,7 +232,7 @@ export function TimeEntryEditModal({
         setError(d.error ?? 'Błąd usuwania')
         return
       }
-      onSaved()
+      await onSaved()
       onClose()
     } catch {
       setError('Błąd połączenia')
