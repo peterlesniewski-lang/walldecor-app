@@ -12,6 +12,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
+import type { Session } from 'next-auth'
 import { PrismaClient } from '@/generated/prisma'
 import { getWarsawBusinessDate } from '@/lib/hr/business-date'
 
@@ -35,6 +36,12 @@ let createTimeEntryFillHandler:
   typeof import('@/app/api/hr/time-tracking/monthly/fill/route').createTimeEntryFillHandler
 let createLeaveApprovalHandler:
   typeof import('@/app/api/hr/leave-requests/[id]/approve/route').createLeaveApprovalHandler
+let createManualTimeEntryHandler:
+  typeof import('@/app/api/hr/time-tracking/route').createManualTimeEntryHandler
+let createClockInHandler:
+  typeof import('@/app/api/hr/time-tracking/clock-in/route').createClockInHandler
+let createBulkTimeEntryHandler:
+  typeof import('@/app/api/hr/time-tracking/bulk/route').createBulkTimeEntryHandler
 
 function createClient() {
   return new PrismaClient({
@@ -84,6 +91,133 @@ function row(date: string, overrides: Record<string, unknown> = {}) {
     clockOut: `${date}T16:00:00.000Z`,
     breakMinutes: 30,
     ...overrides,
+  }
+}
+
+async function insertPendingLeave(id: string, date: string) {
+  const storedDate = new Date(`${date}T00:00:00.000Z`)
+  await prisma.$executeRawUnsafe(
+    `
+      INSERT INTO "LeaveRequestNew" (
+        "id",
+        "employeeId",
+        "leaveTypeId",
+        "startDate",
+        "endDate",
+        "days",
+        "status",
+        "isRemoteWork",
+        "isDelegation",
+        "createdAt",
+        "updatedAt"
+      )
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `,
+    id,
+    'employee-1',
+    'leave-type-ub',
+    storedDate,
+    storedDate,
+    1,
+    'pending',
+    false,
+    false,
+    new Date('2026-07-01T00:00:00.000Z'),
+    new Date('2026-07-01T00:00:00.000Z')
+  )
+}
+
+async function assertWriterApprovalRace({
+  leaveId,
+  date,
+  writerSession,
+  createWriter,
+  writerRequest,
+}: {
+  leaveId: string
+  date: string
+  writerSession: Session
+  createWriter: (
+    db: PrismaClient,
+    getSession: () => Promise<Session | null>
+  ) => (req: NextRequest) => Promise<Response>
+  writerRequest: NextRequest
+}) {
+  await insertPendingLeave(leaveId, date)
+
+  const approvalClient = createClient()
+  const writerClient = createClient()
+  const startTogether = createOneShotGate(2)
+  const adminSession: Session = {
+    user: {
+      id: 'admin-user',
+      name: 'Admin',
+      email: 'admin@test.pl',
+      role: 'ADMIN',
+      employeeId: null,
+    },
+    expires: '',
+  }
+
+  await Promise.all([
+    approvalClient.$queryRawUnsafe('PRAGMA busy_timeout = 1000'),
+    writerClient.$queryRawUnsafe('PRAGMA busy_timeout = 1000'),
+  ])
+
+  const approveLeave = createLeaveApprovalHandler({
+    prisma: approvalClient,
+    getSession: async () => {
+      await startTogether()
+      return adminSession
+    },
+  })
+  const writeTime = createWriter(writerClient, async () => {
+    await startTogether()
+    return writerSession
+  })
+
+  try {
+    const [approvalResponse, writerResponse] = await Promise.all([
+      approveLeave(
+        new NextRequest(
+          `http://localhost/api/hr/leave-requests/${leaveId}/approve`,
+          { method: 'PATCH' }
+        ),
+        { params: Promise.resolve({ id: leaveId }) }
+      ),
+      writeTime(writerRequest),
+    ])
+    const [leave, timeEntries] = await Promise.all([
+      prisma.leaveRequestNew.findUniqueOrThrow({
+        where: { id: leaveId },
+        select: { status: true },
+      }),
+      prisma.timeEntry.findMany({
+        where: { employeeId: 'employee-1' },
+        select: { date: true },
+      }),
+    ])
+    const logicalDayEntries = timeEntries.filter(
+      (entry) => getWarsawBusinessDate(entry.date).isoDate === date
+    )
+
+    expect([200, 409]).toContain(approvalResponse.status)
+    expect([200, 201, 409]).toContain(writerResponse.status)
+    expect([
+      { leaveStatus: 'approved', entryCount: 0 },
+      { leaveStatus: 'pending', entryCount: 1 },
+    ]).toContainEqual({
+      leaveStatus: leave.status,
+      entryCount: logicalDayEntries.length,
+    })
+    expect(
+      leave.status === 'approved' && logicalDayEntries.length > 0
+    ).toBe(false)
+  } finally {
+    await Promise.all([
+      approvalClient.$disconnect(),
+      writerClient.$disconnect(),
+    ])
   }
 }
 
@@ -182,6 +316,15 @@ async function createSchema() {
     ON "TimeEntry"("employeeId", "date")
   `)
   await prisma.$executeRawUnsafe(`
+    CREATE TABLE "Break" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "timeEntryId" TEXT NOT NULL,
+      "startTime" DATETIME NOT NULL,
+      "endTime" DATETIME,
+      "type" TEXT NOT NULL DEFAULT 'break'
+    )
+  `)
+  await prisma.$executeRawUnsafe(`
     CREATE TABLE "CustomHoliday" (
       "id" TEXT NOT NULL PRIMARY KEY,
       "name" TEXT NOT NULL,
@@ -189,6 +332,18 @@ async function createSchema() {
       "divisionId" TEXT,
       "isRecurring" BOOLEAN NOT NULL DEFAULT false,
       "country" TEXT NOT NULL DEFAULT 'PL'
+    )
+  `)
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE "Notification" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "userId" TEXT NOT NULL,
+      "type" TEXT NOT NULL,
+      "title" TEXT NOT NULL,
+      "message" TEXT NOT NULL,
+      "link" TEXT,
+      "isRead" BOOLEAN NOT NULL DEFAULT false,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
     )
   `)
 }
@@ -210,6 +365,15 @@ beforeAll(async () => {
   ;({
     createTimeEntryFillHandler,
   } = await import('@/app/api/hr/time-tracking/monthly/fill/route'))
+  ;({
+    createManualTimeEntryHandler,
+  } = await import('@/app/api/hr/time-tracking/route'))
+  ;({
+    createClockInHandler,
+  } = await import('@/app/api/hr/time-tracking/clock-in/route'))
+  ;({
+    createBulkTimeEntryHandler,
+  } = await import('@/app/api/hr/time-tracking/bulk/route'))
 })
 
 beforeEach(async () => {
@@ -371,6 +535,119 @@ describe('time tracking batch transaction integration', () => {
     ]))).rejects.toThrow()
 
     expect(await prisma.timeEntry.count()).toBe(0)
+  })
+
+  it.each([
+    {
+      name: 'manual writer',
+      leaveId: 'leave-manual-concurrent',
+      date: '2026-07-08',
+      writerSession: {
+        user: {
+          id: 'admin-user',
+          name: 'Admin',
+          email: 'admin@test.pl',
+          role: 'ADMIN',
+          employeeId: null,
+        },
+        expires: '',
+      } satisfies Session,
+      prepare: async () => undefined,
+      createWriter: (
+        db: PrismaClient,
+        getSession: () => Promise<Session | null>
+      ) => createManualTimeEntryHandler({ prisma: db, getSession }),
+      writerRequest: new NextRequest('http://localhost/api/hr/time-tracking', {
+        method: 'POST',
+        body: JSON.stringify({
+          employeeId: 'employee-1',
+          date: '2026-07-08',
+          clockIn: '2026-07-08T06:00:00.000Z',
+          clockOut: '2026-07-08T14:00:00.000Z',
+        }),
+      }),
+    },
+    {
+      name: 'clock-in writer',
+      leaveId: 'leave-clock-concurrent',
+      date: '2026-07-09',
+      writerSession: {
+        user: {
+          id: 'employee-user',
+          name: 'Employee',
+          email: 'employee@test.pl',
+          role: 'EMPLOYEE',
+          employeeId: 'employee-1',
+        },
+        expires: '',
+      } satisfies Session,
+      prepare: async () => {
+        await prisma.$executeRawUnsafe(
+          'UPDATE "Employee" SET "userId" = ? WHERE "id" = ?',
+          'employee-user',
+          'employee-1'
+        )
+      },
+      createWriter: (
+        db: PrismaClient,
+        getSession: () => Promise<Session | null>
+      ) => createClockInHandler({
+        prisma: db,
+        getSession,
+        now: () => new Date('2026-07-09T06:00:00.000Z'),
+      }),
+      writerRequest: new NextRequest('http://localhost/api/hr/time-tracking/clock-in', {
+        method: 'POST',
+        body: JSON.stringify({}),
+      }),
+    },
+    {
+      name: 'legacy bulk writer',
+      leaveId: 'leave-bulk-concurrent',
+      date: '2026-07-10',
+      writerSession: {
+        user: {
+          id: 'admin-user',
+          name: 'Admin',
+          email: 'admin@test.pl',
+          role: 'ADMIN',
+          employeeId: null,
+        },
+        expires: '',
+      } satisfies Session,
+      prepare: async () => undefined,
+      createWriter: (
+        db: PrismaClient,
+        getSession: () => Promise<Session | null>
+      ) => createBulkTimeEntryHandler({ prisma: db, getSession }),
+      writerRequest: new NextRequest('http://localhost/api/hr/time-tracking/bulk', {
+        method: 'POST',
+        body: JSON.stringify({
+          employeeIds: ['employee-1'],
+          startDate: '2026-07-10',
+          endDate: '2026-07-10',
+          clockInUtc: '2026-07-10T06:00:00.000Z',
+          clockOutUtc: '2026-07-10T14:00:00.000Z',
+          skipWeekends: false,
+        }),
+      }),
+    },
+  ])('runs actual approve and $name concurrently without committing both states', async ({
+    leaveId,
+    date,
+    writerSession,
+    prepare,
+    createWriter,
+    writerRequest,
+  }) => {
+    await prepare()
+    await assertWriterApprovalRace({
+      leaveId,
+      date,
+      writerSession,
+      createWriter,
+      writerRequest,
+    })
   })
 
   it('runs actual approve and batch handlers concurrently without committing both states', async () => {

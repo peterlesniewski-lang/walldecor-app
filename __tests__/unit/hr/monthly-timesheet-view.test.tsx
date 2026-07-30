@@ -1667,6 +1667,63 @@ describe('MonthlyTeamGrid', () => {
 })
 
 describe('WeeklyTimesheet navigation', () => {
+  it('keeps pure approved leave read-only but allows correction when time and leave coexist', async () => {
+    vi.stubGlobal('fetch', vi.fn(async () => jsonResponse({
+      weekStart: '2026-07-20',
+      weekEnd: '2026-07-26',
+      days: ['2026-07-20', '2026-07-21'],
+      employees: [{
+        id: 'employee-1',
+        firstName: 'Anna',
+        lastName: 'Kowalska',
+        divisionId: 'JAG',
+        divisionName: 'Jagiellońska',
+        avatarUrl: null,
+        entries: {
+          '2026-07-20': {
+            status: 'leave',
+            leaveType: 'Urlop wypoczynkowy',
+            leaveColor: '#16A34A',
+          },
+          '2026-07-21': {
+            id: 'entry-with-leave',
+            clockIn: '2026-07-21T06:00:00.000Z',
+            clockOut: '2026-07-21T13:00:00.000Z',
+            totalMinutes: 420,
+            status: 'approved',
+            leaveType: 'Urlop bezpłatny',
+            leaveColor: '#64748B',
+          },
+        },
+      }],
+      dailyTotals: {
+        '2026-07-20': 0,
+        '2026-07-21': 420,
+      },
+    })))
+    const user = userEvent.setup()
+    render(
+      <WeeklyTimesheet
+        userRole="ADMIN"
+        divisions={divisions}
+        initialWeek="2026-W30"
+        saturdayWorkable
+      />
+    )
+
+    const leaveCell = (await screen.findByText('Urlop w…')).closest('td')
+    expect(leaveCell).toBeTruthy()
+    await user.click(leaveCell!)
+    expect(screen.queryByRole('dialog')).toBeNull()
+
+    const correctionCell = screen.getAllByText('7h')
+      .map((element) => element.closest('td'))
+      .find((cell) => cell?.textContent?.includes('Urlop'))
+    expect(correctionCell).toBeTruthy()
+    await user.click(correctionCell!)
+    expect(await screen.findByRole('dialog')).toBeTruthy()
+  })
+
   it('retains view=week and monthly state when changing week', async () => {
     navigation.search = 'view=week&week=2026-W30&mode=employee&month=2026-07&employeeId=employee-1&divisionId=JAG'
     const user = userEvent.setup()

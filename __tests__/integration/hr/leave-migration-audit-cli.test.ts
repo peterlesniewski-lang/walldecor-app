@@ -9,9 +9,67 @@ const expectedReport = {
   employees: 3,
   employeesWithConfig: 2,
   vacationBalances: 2,
-  vldBalancesIgnoredByNewPolicy: 1,
   existingRequests: 3,
-  existingVldRequests: 2,
+  vld: {
+    balances: {
+      count: 1,
+      totalDays: 4,
+      usedDays: 2,
+      pendingDays: 1,
+      transferredCount: 0,
+      transferredUsedDays: 0,
+      transferredPendingDays: 0,
+    },
+    balancesWithoutVl: {
+      count: 1,
+      totalDays: 4,
+      usedDays: 2,
+      pendingDays: 1,
+    },
+    requests: {
+      count: 2,
+      days: 3,
+      byStatus: {
+        pending: { count: 1, days: 1 },
+        approved: { count: 1, days: 2 },
+        rejected: { count: 0, days: 0 },
+        cancelled: { count: 0, days: 0 },
+        other: { count: 0, days: 0 },
+      },
+    },
+    pendingRequestsNotProcessable: {
+      count: 1,
+      days: 1,
+      groups: [
+        {
+          employeeId: 'employee-3',
+          year: 2026,
+          requestCount: 1,
+          requestDays: 1,
+          reasons: ['MISSING_VL_BALANCE'],
+        },
+      ],
+    },
+  },
+  blockers: [
+    {
+      code: 'ACTIVE_EMPLOYEE_WITHOUT_ENTITLEMENT_CONFIG',
+      count: 1,
+    },
+    {
+      code: 'VLD_BALANCE_WITHOUT_VL',
+      count: 1,
+      totalDays: 4,
+      usedDays: 2,
+      pendingDays: 1,
+    },
+    {
+      code: 'PENDING_VLD_REQUEST_NOT_PROCESSABLE',
+      count: 1,
+      days: 1,
+    },
+  ],
+  readyForProduction: false,
 }
 
 let tempDir = ''
@@ -41,20 +99,35 @@ async function createAuditDatabase(databasePath: string) {
     await prisma.$executeRawUnsafe(`
       CREATE TABLE "LeaveType" (
         "id" TEXT NOT NULL PRIMARY KEY,
-        "code" TEXT NOT NULL UNIQUE
+        "code" TEXT NOT NULL UNIQUE,
+        "parentId" TEXT
       )
     `)
     await prisma.$executeRawUnsafe(`
       CREATE TABLE "LeaveBalanceNew" (
         "id" TEXT NOT NULL PRIMARY KEY,
-        "leaveTypeId" TEXT NOT NULL
+        "employeeId" TEXT NOT NULL,
+        "leaveTypeId" TEXT NOT NULL,
+        "year" INTEGER NOT NULL,
+        "totalDays" REAL NOT NULL,
+        "usedDays" REAL NOT NULL,
+        "pendingDays" REAL NOT NULL
       )
     `)
     await prisma.$executeRawUnsafe(`
       CREATE TABLE "LeaveRequestNew" (
         "id" TEXT NOT NULL PRIMARY KEY,
+        "employeeId" TEXT NOT NULL,
         "leaveTypeId" TEXT NOT NULL,
+        "startDate" DATETIME NOT NULL,
+        "days" REAL NOT NULL,
+        "status" TEXT NOT NULL,
         "isOnDemand" BOOLEAN NOT NULL DEFAULT false
+      )
+    `)
+    await prisma.$executeRawUnsafe(`
+      CREATE TABLE "LeaveBalanceCorrection" (
+        "id" TEXT NOT NULL PRIMARY KEY
       )
     `)
     await prisma.$executeRawUnsafe(`
@@ -71,22 +144,31 @@ async function createAuditDatabase(databasePath: string) {
         ('config-4', 'employee-4')
     `)
     await prisma.$executeRawUnsafe(`
-      INSERT INTO "LeaveType" ("id", "code") VALUES
-        ('leave-type-vl', 'VL'),
-        ('leave-type-vld', 'VLD')
+      INSERT INTO "LeaveType" ("id", "code", "parentId") VALUES
+        ('leave-type-vl', 'VL', NULL),
+        ('leave-type-vld', 'VLD', 'leave-type-vl')
     `)
     await prisma.$executeRawUnsafe(`
-      INSERT INTO "LeaveBalanceNew" ("id", "leaveTypeId") VALUES
-        ('balance-vl-1', 'leave-type-vl'),
-        ('balance-vl-2', 'leave-type-vl'),
-        ('balance-vld-1', 'leave-type-vld')
+      INSERT INTO "LeaveBalanceNew"
+        ("id", "employeeId", "leaveTypeId", "year",
+         "totalDays", "usedDays", "pendingDays")
+      VALUES
+        ('balance-vl-1', 'employee-1', 'leave-type-vl', 2026, 20, 3, 1),
+        ('balance-vl-2', 'employee-2', 'leave-type-vl', 2026, 20, 2, 0),
+        ('balance-vld-1', 'employee-3', 'leave-type-vld', 2026, 4, 2, 1)
     `)
-    await prisma.$executeRawUnsafe(`
-      INSERT INTO "LeaveRequestNew" ("id", "leaveTypeId", "isOnDemand") VALUES
-        ('request-vld', 'leave-type-vld', false),
-        ('request-demand', 'leave-type-vl', true),
-        ('request-vl', 'leave-type-vl', false)
-    `)
+    await prisma.$executeRawUnsafe(
+      `INSERT INTO "LeaveRequestNew"
+        ("id", "employeeId", "leaveTypeId", "startDate",
+         "days", "status", "isOnDemand")
+       VALUES
+        ('request-vld', 'employee-3', 'leave-type-vld', ?, 1, 'pending', false),
+        ('request-demand', 'employee-1', 'leave-type-vl', ?, 2, 'approved', true),
+        ('request-vl', 'employee-2', 'leave-type-vl', ?, 1, 'approved', false)`,
+      new Date('2026-07-07T00:00:00.000Z'),
+      new Date('2026-06-05T00:00:00.000Z'),
+      new Date('2026-05-04T00:00:00.000Z')
+    )
   } finally {
     await prisma.$disconnect()
   }

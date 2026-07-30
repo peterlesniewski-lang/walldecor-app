@@ -44,6 +44,107 @@ CREATE INDEX "LeaveBalanceCorrection_balanceId_createdAt_idx" ON "LeaveBalanceCo
 -- CreateIndex
 CREATE INDEX "LeaveBalanceCorrection_employeeId_year_idx" ON "LeaveBalanceCorrection"("employeeId", "year");
 
+-- VLD_HISTORY_MERGE_BEGIN
+-- VLD is a way of using the VL entitlement, not a separate entitlement pool.
+-- A deterministic correction ID makes this transfer auditable and idempotent.
+UPDATE "LeaveType"
+SET "parentId" = (
+    SELECT "id"
+    FROM "LeaveType"
+    WHERE "code" = 'VL'
+)
+WHERE "code" = 'VLD'
+  AND EXISTS (
+      SELECT 1
+      FROM "LeaveType"
+      WHERE "code" = 'VL'
+  );
+
+INSERT INTO "LeaveBalanceCorrection" (
+    "id",
+    "balanceId",
+    "employeeId",
+    "leaveTypeId",
+    "year",
+    "reason",
+    "actorId",
+    "beforeJson",
+    "afterJson"
+)
+SELECT
+    'migration:vld-to-vl:v1:' || "vldBalance"."id",
+    "vlBalance"."id",
+    "vlBalance"."employeeId",
+    "vlBalance"."leaveTypeId",
+    "vlBalance"."year",
+    'Migracja historycznego salda VLD do wspólnej puli VL',
+    'system:hr-leave-vld-merge:v1',
+    json_object(
+        'totalDays', "vlBalance"."totalDays",
+        'usedDays', "vlBalance"."usedDays",
+        'pendingDays', "vlBalance"."pendingDays",
+        'carriedOver', "vlBalance"."carriedOver",
+        'sourceVldBalanceId', "vldBalance"."id",
+        'transferredUsedDays', "vldBalance"."usedDays",
+        'transferredPendingDays', "vldBalance"."pendingDays"
+    ),
+    json_object(
+        'totalDays', MAX(
+            "vlBalance"."totalDays",
+            "vlBalance"."usedDays" + "vldBalance"."usedDays"
+                + "vlBalance"."pendingDays" + "vldBalance"."pendingDays"
+        ),
+        'usedDays', "vlBalance"."usedDays" + "vldBalance"."usedDays",
+        'pendingDays', "vlBalance"."pendingDays" + "vldBalance"."pendingDays",
+        'carriedOver', "vlBalance"."carriedOver",
+        'sourceVldBalanceId', "vldBalance"."id",
+        'transferredUsedDays', "vldBalance"."usedDays",
+        'transferredPendingDays', "vldBalance"."pendingDays"
+    )
+FROM "LeaveBalanceNew" AS "vldBalance"
+JOIN "LeaveType" AS "vldType"
+    ON "vldType"."id" = "vldBalance"."leaveTypeId"
+   AND "vldType"."code" = 'VLD'
+JOIN "LeaveBalanceNew" AS "vlBalance"
+    ON "vlBalance"."employeeId" = "vldBalance"."employeeId"
+   AND "vlBalance"."year" = "vldBalance"."year"
+JOIN "LeaveType" AS "vlType"
+    ON "vlType"."id" = "vlBalance"."leaveTypeId"
+   AND "vlType"."code" = 'VL'
+WHERE NOT EXISTS (
+    SELECT 1
+    FROM "LeaveBalanceCorrection" AS "existingCorrection"
+    WHERE "existingCorrection"."id" =
+        'migration:vld-to-vl:v1:' || "vldBalance"."id"
+);
+
+UPDATE "LeaveBalanceNew" AS "vlBalance"
+SET
+    "totalDays" = json_extract("correction"."afterJson", '$.totalDays'),
+    "usedDays" = json_extract("correction"."afterJson", '$.usedDays'),
+    "pendingDays" = json_extract("correction"."afterJson", '$.pendingDays')
+FROM "LeaveBalanceNew" AS "vldBalance"
+JOIN "LeaveType" AS "vldType"
+    ON "vldType"."id" = "vldBalance"."leaveTypeId"
+   AND "vldType"."code" = 'VLD'
+JOIN "LeaveBalanceCorrection" AS "correction"
+    ON "correction"."id" =
+       'migration:vld-to-vl:v1:' || "vldBalance"."id"
+WHERE "vlBalance"."employeeId" = "vldBalance"."employeeId"
+  AND "vlBalance"."year" = "vldBalance"."year"
+  AND "vlBalance"."leaveTypeId" = (
+      SELECT "id"
+      FROM "LeaveType"
+      WHERE "code" = 'VL'
+  )
+  AND "vlBalance"."totalDays" =
+      json_extract("correction"."beforeJson", '$.totalDays')
+  AND "vlBalance"."usedDays" =
+      json_extract("correction"."beforeJson", '$.usedDays')
+  AND "vlBalance"."pendingDays" =
+      json_extract("correction"."beforeJson", '$.pendingDays');
+-- VLD_HISTORY_MERGE_END
+
 INSERT INTO "LeaveType" (
     "id",
     "name",

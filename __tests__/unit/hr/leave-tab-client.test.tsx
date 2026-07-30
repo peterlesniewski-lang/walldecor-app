@@ -134,16 +134,10 @@ describe('LeaveTabClient balance permissions', () => {
     expect(screen.getByRole('dialog')).toBeTruthy()
   })
 
-  it('keeps the add balance POST unchanged and does not add a reason', async () => {
-    const fetchMock = vi.fn(async (input: string | URL | Request, init?: RequestInit) => {
-      if (String(input) === '/api/hr/leave-types') return jsonResponse([leaveType])
-      if (String(input) === '/api/hr/leave-balances' && init?.method === 'POST') {
-        return jsonResponse({ id: 'balance-new' }, 201)
-      }
-      throw new Error(`Unexpected fetch: ${String(input)}`)
-    })
+  it('directs admins to entitlement setup instead of exposing direct balance creation', () => {
+    const fetchMock = vi.fn()
     vi.stubGlobal('fetch', fetchMock)
-    const user = userEvent.setup()
+
     render(
       <LeaveTabClient
         employeeId="employee-1"
@@ -153,20 +147,22 @@ describe('LeaveTabClient balance permissions', () => {
       />
     )
 
-    await user.click(screen.getByRole('button', { name: 'Dodaj saldo' }))
-    await user.selectOptions(await screen.findByLabelText('Typ urlopu'), leaveType.id)
-    await user.type(screen.getByLabelText('Dni urlopowe (łącznie)'), '26')
-    await user.click(screen.getByRole('button', { name: 'Dodaj' }))
+    expect(screen.queryByRole('button', { name: 'Dodaj saldo' })).toBeNull()
+    expect(screen.getByText(/wymiar urlopu/i)).toBeTruthy()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
 
-    await waitFor(() => {
-      expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'POST')).toBe(true)
-    })
-    const postCall = fetchMock.mock.calls.find(([, init]) => init?.method === 'POST')!
-    expect(JSON.parse(String(postCall[1]?.body))).toEqual({
-      employeeId: 'employee-1',
-      leaveTypeId: 'leave-type-vl',
-      year: new Date().getFullYear(),
-      totalDays: 26,
-    })
+  it('keeps audited correction available without a direct-add control', () => {
+    render(
+      <LeaveTabClient
+        employeeId="employee-1"
+        balances={[balance]}
+        requests={[]}
+        canEditBalance
+      />
+    )
+
+    expect(screen.queryByRole('button', { name: 'Dodaj saldo' })).toBeNull()
+    expect(screen.getByTitle('Edytuj saldo')).toBeTruthy()
   })
 })

@@ -109,13 +109,13 @@ function patchRequest(body: Record<string, unknown>) {
   )
 }
 
-function createRequest() {
+function createRequest(leaveTypeId = currentBalance.leaveTypeId) {
   return new NextRequest('http://localhost/api/hr/leave-balances', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
       employeeId: currentBalance.employeeId,
-      leaveTypeId: currentBalance.leaveTypeId,
+      leaveTypeId,
       year: currentBalance.year,
       totalDays: currentBalance.totalDays,
     }),
@@ -465,31 +465,22 @@ describe('/api/hr/leave-balances collection access', () => {
     expect(mockBalanceCreate).not.toHaveBeenCalled()
   })
 
-  it('keeps the normal creation path available to admins', async () => {
-    mockBalanceFindUnique.mockResolvedValue(null)
+  it.each([
+    ['VL', 'leave-type-vl'],
+    ['VLD', 'leave-type-vld'],
+    ['SL', 'leave-type-sl'],
+    ['UB', 'leave-type-ub'],
+  ])('blocks direct %s balance creation for admins before database access', async (_code, leaveTypeId) => {
+    const response = await createLeaveBalance(createRequest(leaveTypeId))
+    const body = await response.json()
 
-    const response = await createLeaveBalance(createRequest())
-
-    expect(response.status).toBe(201)
-    expect(mockBalanceCreate).toHaveBeenCalledWith({
-      data: {
-        employeeId: currentBalance.employeeId,
-        leaveTypeId: currentBalance.leaveTypeId,
-        year: currentBalance.year,
-        totalDays: currentBalance.totalDays,
-      },
-      include: {
-        leaveType: true,
-        employee: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            email: true,
-          },
-        },
-      },
-    })
+    expect(response.status).toBe(405)
+    expect(response.headers.get('allow')).toBe('GET')
+    expect(body.error).toContain('Direct balance creation is disabled')
+    expect(mockEmployeeFindUnique).not.toHaveBeenCalled()
+    expect(mockLeaveTypeFindUnique).not.toHaveBeenCalled()
+    expect(mockBalanceFindUnique).not.toHaveBeenCalled()
+    expect(mockBalanceCreate).not.toHaveBeenCalled()
   })
 
   it('preserves manager GET scoping to the linked division', async () => {

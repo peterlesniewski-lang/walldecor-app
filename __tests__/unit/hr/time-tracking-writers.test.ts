@@ -26,6 +26,10 @@ vi.mock('@/lib/prisma', () => ({
       findMany: vi.fn(),
       create: vi.fn(),
     },
+    leaveRequestNew: {
+      findMany: vi.fn(),
+    },
+    $transaction: vi.fn(),
   },
 }))
 
@@ -35,6 +39,8 @@ const mockEmployeeFindMany = vi.mocked(prisma.employee.findMany)
 const mockTimeEntryFindFirst = vi.mocked(prisma.timeEntry.findFirst)
 const mockTimeEntryFindMany = vi.mocked(prisma.timeEntry.findMany)
 const mockTimeEntryCreate = vi.mocked(prisma.timeEntry.create)
+const mockLeaveRequestFindMany = vi.mocked(prisma.leaveRequestNew.findMany)
+const mockTransaction = vi.mocked(prisma.$transaction)
 
 function session(role: 'ADMIN' | 'EMPLOYEE') {
   return {
@@ -71,6 +77,8 @@ beforeEach(() => {
   mockTimeEntryFindFirst.mockResolvedValue(null)
   mockTimeEntryFindMany.mockResolvedValue([])
   mockTimeEntryCreate.mockResolvedValue({ id: 'entry-1' } as never)
+  mockLeaveRequestFindMany.mockResolvedValue([])
+  mockTransaction.mockImplementation(async (callback) => callback(prisma as never) as never)
 })
 
 afterEach(() => {
@@ -112,6 +120,33 @@ describe('time entry writer business dates', () => {
       error: 'Entry already exists for this employee on this date',
     })
     expect(mockTimeEntryCreate).not.toHaveBeenCalled()
+  })
+
+  it('blocks manual creation on approved leave but ignores remote work and delegation', async () => {
+    mockGetServerSession.mockResolvedValue(session('ADMIN'))
+    mockLeaveRequestFindMany.mockResolvedValue([{
+      startDate: new Date('2026-07-02T00:00:00.000Z'),
+      endDate: new Date('2026-07-02T00:00:00.000Z'),
+      isRemoteWork: false,
+      isDelegation: false,
+    }] as never)
+
+    const blocked = await createManualTimeEntry(manualRequest())
+
+    expect(blocked.status).toBe(409)
+    expect(mockTimeEntryCreate).not.toHaveBeenCalled()
+
+    mockLeaveRequestFindMany.mockResolvedValue([{
+      startDate: new Date('2026-07-02T00:00:00.000Z'),
+      endDate: new Date('2026-07-02T00:00:00.000Z'),
+      isRemoteWork: true,
+      isDelegation: false,
+    }] as never)
+
+    const allowed = await createManualTimeEntry(manualRequest())
+
+    expect(allowed.status).toBe(201)
+    expect(mockTimeEntryCreate).toHaveBeenCalledTimes(1)
   })
 
   it('stores clock-in at UTC midnight of the current Warsaw business date', async () => {
@@ -161,6 +196,27 @@ describe('time entry writer business dates', () => {
     expect(mockTimeEntryCreate).not.toHaveBeenCalled()
   })
 
+  it('blocks clock-in on approved leave', async () => {
+    vi.useFakeTimers()
+    vi.setSystemTime(new Date('2026-07-01T22:30:00.000Z'))
+    mockGetServerSession.mockResolvedValue(session('EMPLOYEE'))
+    mockEmployeeFindFirst.mockResolvedValue({ id: 'employee-1' } as never)
+    mockLeaveRequestFindMany.mockResolvedValue([{
+      startDate: new Date('2026-07-02T00:00:00.000Z'),
+      endDate: new Date('2026-07-02T00:00:00.000Z'),
+      isRemoteWork: false,
+      isDelegation: false,
+    }] as never)
+
+    const response = await clockIn(new NextRequest('http://localhost/api/hr/time-tracking/clock-in', {
+      method: 'POST',
+      body: JSON.stringify({}),
+    }))
+
+    expect(response.status).toBe(409)
+    expect(mockTimeEntryCreate).not.toHaveBeenCalled()
+  })
+
   it('skips bulk creation when a legacy row maps to the Warsaw business date', async () => {
     mockGetServerSession.mockResolvedValue(session('ADMIN'))
     mockEmployeeFindMany.mockResolvedValue([{ id: 'employee-1' }] as never)
@@ -192,6 +248,35 @@ describe('time entry writer business dates', () => {
       },
       select: { id: true, date: true },
     })
+    expect(mockTimeEntryCreate).not.toHaveBeenCalled()
+  })
+
+  it('skips bulk creation on approved leave', async () => {
+    mockGetServerSession.mockResolvedValue(session('ADMIN'))
+    mockEmployeeFindMany.mockResolvedValue([{ id: 'employee-1' }] as never)
+    mockLeaveRequestFindMany.mockResolvedValue([{
+      startDate: new Date('2026-07-02T00:00:00.000Z'),
+      endDate: new Date('2026-07-02T00:00:00.000Z'),
+      isRemoteWork: false,
+      isDelegation: false,
+    }] as never)
+
+    const response = await createBulkTimeEntries(
+      new NextRequest('http://localhost/api/hr/time-tracking/bulk', {
+        method: 'POST',
+        body: JSON.stringify({
+          employeeIds: ['employee-1'],
+          startDate: '2026-07-02',
+          endDate: '2026-07-02',
+          clockInUtc: '2026-07-02T08:00:00.000Z',
+          clockOutUtc: '2026-07-02T16:00:00.000Z',
+          skipWeekends: false,
+        }),
+      })
+    )
+
+    expect(response.status).toBe(201)
+    expect(await response.json()).toEqual({ created: 0, skipped: 1 })
     expect(mockTimeEntryCreate).not.toHaveBeenCalled()
   })
 })

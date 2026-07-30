@@ -4,21 +4,104 @@ import {
   runHrLeaveMigrationAudit,
 } from '../../../scripts/audit-hr-leave-migration'
 
+const balances = [
+  ...Array.from({ length: 15 }, (_, index) => ({
+    id: `vl-${index + 1}`,
+    employeeId: `employee-${index + 1}`,
+    year: 2026,
+    totalDays: 20,
+    usedDays: index < 2 ? 2 : 0,
+    pendingDays: index < 2 ? 1 : 0,
+    leaveType: { code: 'VL' },
+  })),
+  {
+    id: 'vld-1',
+    employeeId: 'employee-1',
+    year: 2026,
+    totalDays: 4,
+    usedDays: 2,
+    pendingDays: 1,
+    leaveType: { code: 'VLD' },
+  },
+  {
+    id: 'vld-2',
+    employeeId: 'employee-2',
+    year: 2026,
+    totalDays: 4,
+    usedDays: 1,
+    pendingDays: 1,
+    leaveType: { code: 'VLD' },
+  },
+]
+
+const requests = [
+  {
+    id: 'request-pending',
+    employeeId: 'employee-1',
+    startDate: new Date('2026-07-01T00:00:00.000Z'),
+    days: 1,
+    status: 'pending',
+    isOnDemand: false,
+    leaveType: { code: 'VLD' },
+  },
+  {
+    id: 'request-approved',
+    employeeId: 'employee-2',
+    startDate: new Date('2026-06-01T00:00:00.000Z'),
+    days: 1,
+    status: 'approved',
+    isOnDemand: true,
+    leaveType: { code: 'VL' },
+  },
+  {
+    id: 'request-rejected',
+    employeeId: 'employee-2',
+    startDate: new Date('2026-05-01T00:00:00.000Z'),
+    days: 1,
+    status: 'rejected',
+    isOnDemand: false,
+    leaveType: { code: 'VLD' },
+  },
+  {
+    id: 'request-cancelled',
+    employeeId: 'employee-1',
+    startDate: new Date('2026-04-01T00:00:00.000Z'),
+    days: 1,
+    status: 'cancelled',
+    isOnDemand: true,
+    leaveType: { code: 'VL' },
+  },
+]
+
 function createAuditClient() {
   const employeeCount = vi.fn()
     .mockResolvedValueOnce(12)
     .mockResolvedValueOnce(9)
-  const leaveBalanceCount = vi.fn()
-    .mockResolvedValueOnce(15)
-    .mockResolvedValueOnce(2)
-  const leaveRequestCount = vi.fn()
-    .mockResolvedValueOnce(31)
-    .mockResolvedValueOnce(4)
+  const leaveBalanceFindMany = vi.fn().mockResolvedValue(balances)
+  const leaveRequestCount = vi.fn().mockResolvedValue(31)
+  const leaveRequestFindMany = vi.fn().mockResolvedValue(requests)
+  const correctionFindMany = vi.fn().mockResolvedValue([
+    { id: 'migration:vld-to-vl:v1:vld-1' },
+    { id: 'migration:vld-to-vl:v1:vld-2' },
+  ])
+  const leaveTypeFindMany = vi.fn().mockResolvedValue([
+    { id: 'leave-type-vl', code: 'VL', parentId: null },
+    {
+      id: 'leave-type-vld',
+      code: 'VLD',
+      parentId: 'leave-type-vl',
+    },
+  ])
   const disconnect = vi.fn().mockResolvedValue(undefined)
   const client = {
     employee: { count: employeeCount },
-    leaveBalanceNew: { count: leaveBalanceCount },
-    leaveRequestNew: { count: leaveRequestCount },
+    leaveBalanceNew: { findMany: leaveBalanceFindMany },
+    leaveRequestNew: {
+      count: leaveRequestCount,
+      findMany: leaveRequestFindMany,
+    },
+    leaveBalanceCorrection: { findMany: correctionFindMany },
+    leaveType: { findMany: leaveTypeFindMany },
     $disconnect: disconnect,
   }
 
@@ -26,12 +109,17 @@ function createAuditClient() {
     client,
     disconnect,
     employeeCount,
-    leaveBalanceCount,
+    leaveBalanceFindMany,
     leaveRequestCount,
+    leaveRequestFindMany,
+    correctionFindMany,
+    leaveTypeFindMany,
   }
 }
 
-function createRunnerDependencies(client: ReturnType<typeof createAuditClient>['client']) {
+function createRunnerDependencies(
+  client: ReturnType<typeof createAuditClient>['client']
+) {
   return {
     createClient: vi.fn(() => client),
     writeJson: vi.fn(),
@@ -53,9 +141,47 @@ const expectedReport = {
   employees: 12,
   employeesWithConfig: 9,
   vacationBalances: 15,
-  vldBalancesIgnoredByNewPolicy: 2,
   existingRequests: 31,
-  existingVldRequests: 4,
+  vld: {
+    balances: {
+      count: 2,
+      totalDays: 8,
+      usedDays: 3,
+      pendingDays: 2,
+      transferredCount: 2,
+      transferredUsedDays: 3,
+      transferredPendingDays: 2,
+    },
+    balancesWithoutVl: {
+      count: 0,
+      totalDays: 0,
+      usedDays: 0,
+      pendingDays: 0,
+    },
+    requests: {
+      count: 4,
+      days: 4,
+      byStatus: {
+        pending: { count: 1, days: 1 },
+        approved: { count: 1, days: 1 },
+        rejected: { count: 1, days: 1 },
+        cancelled: { count: 1, days: 1 },
+        other: { count: 0, days: 0 },
+      },
+    },
+    pendingRequestsNotProcessable: {
+      count: 0,
+      days: 0,
+      groups: [],
+    },
+  },
+  blockers: [
+    {
+      code: 'ACTIVE_EMPLOYEE_WITHOUT_ENTITLEMENT_CONFIG',
+      count: 3,
+    },
+  ],
+  readyForProduction: false,
 }
 
 describe('HR leave migration audit', () => {
@@ -76,13 +202,16 @@ describe('HR leave migration audit', () => {
     expect(report).toEqual(expectedReport)
   })
 
-  it('runs exact count queries, writes pretty JSON, and disconnects once', async () => {
+  it('runs exact queries, writes pretty JSON, and disconnects once', async () => {
     const {
       client,
       disconnect,
       employeeCount,
-      leaveBalanceCount,
+      leaveBalanceFindMany,
       leaveRequestCount,
+      leaveRequestFindMany,
+      correctionFindMany,
+      leaveTypeFindMany,
     } = createAuditClient()
     const dependencies = createRunnerDependencies(client)
 
@@ -97,22 +226,22 @@ describe('HR leave migration audit', () => {
         },
       }],
     ])
-    expect(leaveBalanceCount.mock.calls).toEqual([
-      [{ where: { leaveType: { code: 'VL' } } }],
-      [{ where: { leaveType: { code: 'VLD' } } }],
-    ])
-    expect(leaveRequestCount.mock.calls).toEqual([
-      [],
-      [{
-        where: {
-          OR: [
-            { isOnDemand: true },
-            { leaveType: { code: 'VLD' } },
-          ],
-        },
-      }],
-    ])
-    expect(dependencies.writeJson).toHaveBeenCalledOnce()
+    expect(leaveBalanceFindMany).toHaveBeenCalledWith({
+      where: { leaveType: { code: { in: ['VL', 'VLD'] } } },
+      select: {
+        id: true,
+        employeeId: true,
+        year: true,
+        totalDays: true,
+        usedDays: true,
+        pendingDays: true,
+        leaveType: { select: { code: true } },
+      },
+    })
+    expect(leaveRequestCount).toHaveBeenCalledWith()
+    expect(leaveRequestFindMany).toHaveBeenCalledOnce()
+    expect(correctionFindMany).toHaveBeenCalledOnce()
+    expect(leaveTypeFindMany).toHaveBeenCalledOnce()
     expect(dependencies.writeJson).toHaveBeenCalledWith(
       JSON.stringify(expectedReport, null, 2)
     )
@@ -125,6 +254,7 @@ describe('HR leave migration audit', () => {
     const auditClient = createAuditClient()
     auditClient.employeeCount.mockReset()
       .mockRejectedValueOnce(new Error('sensitive query detail'))
+      .mockResolvedValueOnce(9)
     const dependencies = createRunnerDependencies(auditClient.client)
 
     await runHrLeaveMigrationAudit(dependencies)
@@ -140,15 +270,14 @@ describe('HR leave migration audit', () => {
     expect(auditClient.disconnect).toHaveBeenCalledOnce()
   })
 
-  it('waits for every count to settle before reporting a query failure', async () => {
+  it('waits for every query to settle before reporting a failure', async () => {
     const auditClient = createAuditClient()
-    const pendingBalanceCount = createDeferred<number>()
+    const pendingBalances = createDeferred<typeof balances>()
     auditClient.employeeCount.mockReset()
       .mockRejectedValueOnce(new Error('sensitive query detail'))
       .mockResolvedValueOnce(9)
-    auditClient.leaveBalanceCount.mockReset()
-      .mockReturnValueOnce(pendingBalanceCount.promise)
-      .mockResolvedValueOnce(2)
+    auditClient.leaveBalanceFindMany.mockReset()
+      .mockReturnValueOnce(pendingBalances.promise)
     const dependencies = createRunnerDependencies(auditClient.client)
     let completed = false
 
@@ -162,7 +291,7 @@ describe('HR leave migration audit', () => {
     expect(dependencies.writeError).not.toHaveBeenCalled()
     expect(dependencies.setExitCode).not.toHaveBeenCalled()
 
-    pendingBalanceCount.resolve(15)
+    pendingBalances.resolve(balances)
     await runPromise
 
     expect(dependencies.writeJson).not.toHaveBeenCalled()

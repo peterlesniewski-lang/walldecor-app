@@ -200,6 +200,27 @@ describe('HR operational access scoping', () => {
     expect(mockTimeEntryCreate).not.toHaveBeenCalled()
   })
 
+  it('does not let managers distinguish a missing employee from one outside their division', async () => {
+    mockGetServerSession.mockResolvedValue(session('MANAGER', 'manager-1'))
+    mockEmployeeFindUnique
+      .mockResolvedValueOnce({ id: 'manager-1', divisionId: 'JAG', active: true })
+      .mockResolvedValueOnce(null)
+
+    const response = await createTimeEntry(new NextRequest('http://localhost/api/hr/time-tracking', {
+      method: 'POST',
+      body: JSON.stringify({
+        employeeId: 'missing-employee',
+        date: '2026-07-02',
+        clockIn: '2026-07-02T08:00:00.000Z',
+        clockOut: '2026-07-02T16:00:00.000Z',
+      }),
+    }))
+
+    expect(response.status).toBe(403)
+    expect(await response.json()).toEqual({ error: 'Forbidden' })
+    expect(mockTimeEntryCreate).not.toHaveBeenCalled()
+  })
+
   it('blocks bulk time entries when any selected employee is outside the manager division', async () => {
     mockGetServerSession.mockResolvedValue(session('MANAGER', 'manager-1'))
     mockEmployeeFindUnique.mockResolvedValue({ id: 'manager-1', divisionId: 'JAG', active: true })

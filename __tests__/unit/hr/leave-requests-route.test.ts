@@ -104,6 +104,17 @@ const employeeSession = {
   expires: '',
 }
 
+const managerSession = {
+  user: {
+    id: 'manager-user',
+    name: 'Manager',
+    email: 'manager@test.pl',
+    role: 'MANAGER',
+    employeeId: 'manager-employee',
+  },
+  expires: '',
+}
+
 const employee = {
   id: 'employee-1',
   firstName: 'Jan',
@@ -608,6 +619,27 @@ describe('POST /api/hr/leave-requests', () => {
 })
 
 describe('PATCH /api/hr/leave-requests/[id]/approve', () => {
+  it('does not let managers distinguish a missing request from one outside their division', async () => {
+    mockGetServerSession.mockResolvedValue(managerSession as never)
+    mockEmployeeFindUnique.mockResolvedValue({
+      id: 'manager-employee',
+      divisionId: 'division-manager',
+      active: true,
+    } as never)
+
+    mockRequestFindUnique.mockResolvedValue(null)
+    const missing = await approveLeave(request('PATCH'), params('missing-request'))
+
+    arrangeLifecycle(leaveType('UB'))
+    const outside = await approveLeave(request('PATCH'), params())
+
+    expect(missing.status).toBe(403)
+    expect(await missing.json()).toEqual({ error: 'Forbidden' })
+    expect(outside.status).toBe(403)
+    expect(await outside.json()).toEqual({ error: 'Forbidden' })
+    expect(mockTransaction).not.toHaveBeenCalled()
+  })
+
   it('blocks normal leave approval when worked time exists on a covered Warsaw date', async () => {
     arrangeLifecycle(leaveType('VL'))
     txTimeEntryFindMany.mockResolvedValue([{

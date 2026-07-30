@@ -218,8 +218,17 @@ function EntryCell({
 
   return (
     <td
-      onClick={canSelect && onToggleSelect && entry.id ? () => onToggleSelect(entry.id!) : onClick}
-      className="align-middle cursor-pointer transition-colors hover:brightness-95"
+      onClick={
+        isLeave
+          ? undefined
+          : canSelect && onToggleSelect && entry.id
+            ? () => onToggleSelect(entry.id!)
+            : onClick
+      }
+      aria-disabled={isLeave || undefined}
+      className={`align-middle transition-colors ${
+        isLeave ? 'cursor-default' : 'cursor-pointer hover:brightness-95'
+      }`}
       style={{
         background: selected
           ? 'rgba(234,88,12,0.12)'
