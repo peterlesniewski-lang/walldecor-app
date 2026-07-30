@@ -1,9 +1,16 @@
 'use client'
 
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useEffect, useCallback, useRef } from 'react'
 import { useSession } from 'next-auth/react'
 import { PieChart, Loader2, Pencil, X, Check, RefreshCw } from 'lucide-react'
 import { AdminLeaveButton } from '@/components/hr/leave/admin-leave-button'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -199,12 +206,15 @@ function CarryoverModal({
   open,
   onClose,
   onDone,
+  returnFocusRef,
 }: {
   open: boolean
   onClose: () => void
   onDone: () => void
+  returnFocusRef: React.RefObject<HTMLElement | null>
 }) {
   const currentYear = new Date().getFullYear()
+  const initialFocusRef = useRef<HTMLInputElement>(null)
   const [fromYear, setFromYear] = useState(String(currentYear - 1))
   const [toYear, setToYear] = useState(String(currentYear))
   const [maxDays, setMaxDays] = useState('')
@@ -229,16 +239,6 @@ function CarryoverModal({
       setReason('')
     }
   }, [open])
-
-  useEffect(() => {
-    if (!open) return
-
-    const handleKeyDown = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose()
-    }
-    document.addEventListener('keydown', handleKeyDown)
-    return () => document.removeEventListener('keydown', handleKeyDown)
-  }, [onClose, open])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
@@ -296,52 +296,40 @@ function CarryoverModal({
     }
   }
 
-  if (!open) return null
-
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <button
-        type="button"
-        tabIndex={-1}
-        aria-label="Zamknij okno przeniesienia"
-        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
-        onClick={onClose}
-      />
-
-      <div
-        role="dialog"
-        aria-modal="true"
-        aria-labelledby="carryover-dialog-title"
-        className="relative w-full max-w-md rounded-lg shadow-2xl"
-        style={{ background: 'var(--wd-white)', border: '1px solid var(--wd-border)' }}
+    <Dialog
+      open={open}
+      onOpenChange={(nextOpen) => {
+        if (!nextOpen) onClose()
+      }}
+    >
+      <DialogContent
+        onOpenAutoFocus={(event) => {
+          event.preventDefault()
+          initialFocusRef.current?.focus()
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          returnFocusRef.current?.focus()
+        }}
+        className="max-w-md gap-0 overflow-hidden border-[var(--wd-border)] bg-[var(--wd-white)] p-0 shadow-2xl"
       >
-        <div
-          className="flex items-center justify-between px-5 py-4 border-b"
+        <DialogHeader
+          className="border-b px-5 py-4 pr-12"
           style={{ borderColor: 'var(--wd-border)' }}
         >
           <div className="flex items-center gap-2">
             <RefreshCw size={16} className="text-[var(--wd-text-muted)]" />
-            <h2
-              id="carryover-dialog-title"
-              className="font-semibold text-[var(--wd-text-primary)]"
-            >
+            <DialogTitle className="text-base font-semibold text-[var(--wd-text-primary)]">
               Przeniesienie dni na nowy rok
-            </h2>
+            </DialogTitle>
           </div>
-          <button
-            type="button"
-            onClick={onClose}
-            aria-label="Zamknij"
-            className="p-1 rounded-md hover:bg-[var(--wd-surface-2)] text-[var(--wd-text-muted)] transition-colors"
-          >
-            <X size={16} />
-          </button>
-        </div>
+        </DialogHeader>
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
-          <p className="text-xs leading-5 text-[var(--wd-text-muted)]">
+          <DialogDescription className="text-xs leading-5 text-[var(--wd-text-muted)]">
             Operacja dotyczy wyłącznie urlopu wypoczynkowego (VL).
-          </p>
+          </DialogDescription>
 
           <div className="grid grid-cols-2 gap-3">
             <div>
@@ -352,6 +340,7 @@ function CarryoverModal({
                 Z roku
               </label>
               <input
+                ref={initialFocusRef}
                 id="carryover-from-year"
                 type="number"
                 value={fromYear}
@@ -489,8 +478,8 @@ function CarryoverModal({
             )}
           </div>
         </form>
-      </div>
-    </div>
+      </DialogContent>
+    </Dialog>
   )
 }
 
@@ -508,6 +497,7 @@ export default function LeaveBalancesPage() {
   const [selectedYear, setSelectedYear] = useState(String(currentYear))
   const [editingId, setEditingId] = useState<string | null>(null)
   const [carryoverOpen, setCarryoverOpen] = useState(false)
+  const carryoverReturnFocusRef = useRef<HTMLElement | null>(null)
 
   const fetchBalances = useCallback(async () => {
     setLoading(true)
@@ -565,7 +555,10 @@ export default function LeaveBalancesPage() {
           {isAdmin && <AdminLeaveButton onSuccess={fetchBalances} />}
           {isAdmin && (
             <button
-              onClick={() => setCarryoverOpen(true)}
+              onClick={(event) => {
+                carryoverReturnFocusRef.current = event.currentTarget
+                setCarryoverOpen(true)
+              }}
               className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-[var(--wd-border)] bg-white text-[var(--wd-text-primary)] hover:bg-[var(--wd-surface-2)] transition-colors"
             >
               <RefreshCw size={14} />
@@ -771,6 +764,7 @@ export default function LeaveBalancesPage() {
           open={carryoverOpen}
           onClose={() => setCarryoverOpen(false)}
           onDone={fetchBalances}
+          returnFocusRef={carryoverReturnFocusRef}
         />
       )}
     </div>

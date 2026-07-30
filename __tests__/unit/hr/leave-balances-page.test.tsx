@@ -190,6 +190,43 @@ describe('LeaveBalancesPage', () => {
     expect(screen.queryByRole('columnheader', { name: 'Akcje' })).toBeNull()
   })
 
+  it('contains focus, closes on Escape, and restores focus to the carryover trigger', async () => {
+    mockUseSession.mockReturnValue({
+      data: session('ADMIN'),
+      status: 'authenticated',
+      update: vi.fn(),
+    })
+    installFetchMock()
+    const user = userEvent.setup()
+    render(<LeaveBalancesPage />)
+
+    const trigger = await screen.findByRole('button', {
+      name: 'Przenieś na nowy rok',
+    })
+    await user.click(trigger)
+
+    const dialog = screen.getByRole('dialog', {
+      name: 'Przeniesienie dni na nowy rok',
+    })
+    const firstField = within(dialog).getByLabelText('Z roku')
+
+    await waitFor(() => {
+      expect(document.activeElement).toBe(firstField)
+    })
+
+    await user.tab({ shift: true })
+    expect(dialog.contains(document.activeElement)).toBe(true)
+
+    await user.keyboard('{Escape}')
+
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog', {
+        name: 'Przeniesienie dni na nowy rok',
+      })).toBeNull()
+    })
+    expect(document.activeElement).toBe(trigger)
+  })
+
   it('requires and sends an inline correction reason without editing the year', async () => {
     mockUseSession.mockReturnValue({
       data: session('ADMIN'),
