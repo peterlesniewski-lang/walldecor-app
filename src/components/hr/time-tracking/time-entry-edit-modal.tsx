@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
 import { CheckCircle, Loader2, RefreshCw, Save, Trash2, XCircle } from 'lucide-react'
 import { formatDuration } from '@/lib/hr/utils'
 import {
@@ -29,6 +29,7 @@ interface TimeEntryEditModalProps {
   userRole: 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
   onClose: () => void
   onSaved: () => void | Promise<void>
+  recoveryFocusRef?: RefObject<HTMLElement | null>
 }
 
 function toTimeStr(iso: string | undefined | null): string {
@@ -50,6 +51,7 @@ export function TimeEntryEditModal({
   userRole,
   onClose,
   onSaved,
+  recoveryFocusRef,
 }: TimeEntryEditModalProps) {
   const [clockIn, setClockIn] = useState(toTimeStr(entry?.clockIn))
   const [clockOut, setClockOut] = useState(toTimeStr(entry?.clockOut))
@@ -61,6 +63,7 @@ export function TimeEntryEditModal({
   const [error, setError] = useState<string | null>(null)
   const [hydrating, setHydrating] = useState(Boolean(entry?.id))
   const returnFocusRef = useRef<HTMLElement | null>(null)
+  const recoveryCloseRequestedRef = useRef(false)
   if (returnFocusRef.current === null && typeof document !== 'undefined') {
     returnFocusRef.current = document.activeElement as HTMLElement | null
   }
@@ -122,7 +125,11 @@ export function TimeEntryEditModal({
   const passiveDismissalBlocked = mutationPending || refreshFailed
 
   const restoreFocus = () => {
-    const target = returnFocusRef.current
+    const target = (
+      recoveryCloseRequestedRef.current
+        ? recoveryFocusRef?.current
+        : null
+    ) ?? returnFocusRef.current
     queueMicrotask(() => target?.focus())
   }
 
@@ -269,7 +276,10 @@ export function TimeEntryEditModal({
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open && !mutationPending) onClose()
+        if (!open && !mutationPending) {
+          recoveryCloseRequestedRef.current = refreshFailed
+          onClose()
+        }
       }}
     >
       <DialogContent

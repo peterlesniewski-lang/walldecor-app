@@ -107,6 +107,7 @@ export function MonthlyTimesheet({
   const [editModal, setEditModal] = useState<EditModalState | null>(null)
   const requestSequenceRef = useRef(0)
   const requestControllerRef = useRef<AbortController | null>(null)
+  const recoveryFocusRef = useRef<HTMLButtonElement>(null)
 
   const refreshData = useCallback(async (): Promise<boolean> => {
     const requestScopeKey = `${month}|${divisionId}`
@@ -301,6 +302,7 @@ export function MonthlyTimesheet({
             >
               <p className="text-sm text-red-700">{error}</p>
               <button
+                ref={recoveryFocusRef}
                 type="button"
                 onClick={() => void refreshData()}
                 className="flex h-9 items-center gap-1.5 rounded-md border border-[var(--wd-border)] px-3 text-sm font-medium text-[var(--wd-text-primary)] transition-colors hover:bg-[var(--wd-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1"
@@ -326,6 +328,7 @@ export function MonthlyTimesheet({
             <div role="alert" className="flex flex-col items-center gap-3 px-6 text-center">
               <p className="text-sm text-red-700">{error}</p>
               <button
+                ref={recoveryFocusRef}
                 type="button"
                 onClick={() => void refreshData()}
                 className="flex h-9 items-center gap-1.5 rounded-md border border-[var(--wd-border)] px-3 text-sm font-medium text-[var(--wd-text-primary)] transition-colors hover:bg-[var(--wd-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1"
@@ -347,6 +350,7 @@ export function MonthlyTimesheet({
           userRole={userRole}
           onClose={() => setEditModal(null)}
           onSaved={refreshAfterMutation}
+          recoveryFocusRef={recoveryFocusRef}
         />
       )}
     </div>
