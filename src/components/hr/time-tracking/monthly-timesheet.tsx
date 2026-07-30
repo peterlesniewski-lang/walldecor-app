@@ -3,8 +3,10 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { CalendarDays, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
+import { MonthlyTeamGrid } from './monthly-team-grid'
 import { TimeEntryEditModal } from './time-entry-edit-modal'
 import {
+  buildMonthDateKeys,
   currentMonthParam,
   getAdjacentMonth,
   parseMonthParam,
@@ -99,6 +101,7 @@ export function MonthlyTimesheet({
   const employeeId = searchParams.get('employeeId') ?? initialEmployeeId ?? ''
 
   const [data, setData] = useState<MonthlyTimesheetData | null>(null)
+  const [dataScopeKey, setDataScopeKey] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [editModal, setEditModal] = useState<EditModalState | null>(null)
@@ -106,6 +109,7 @@ export function MonthlyTimesheet({
   const requestControllerRef = useRef<AbortController | null>(null)
 
   const refreshData = useCallback(async () => {
+    const requestScopeKey = `${month}|${divisionId}`
     const requestSequence = requestSequenceRef.current + 1
     requestSequenceRef.current = requestSequence
     requestControllerRef.current?.abort()
@@ -114,7 +118,6 @@ export function MonthlyTimesheet({
 
     setLoading(true)
     setError(null)
-    setData(null)
 
     const isCurrentRequest = () => (
       !controller.signal.aborted && requestSequenceRef.current === requestSequence
@@ -132,9 +135,9 @@ export function MonthlyTimesheet({
       const nextData = await response.json() as MonthlyTimesheetData
       if (!isCurrentRequest()) return
       setData(nextData)
+      setDataScopeKey(requestScopeKey)
     } catch {
       if (!isCurrentRequest()) return
-      setData(null)
       setError('Nie udało się pobrać ewidencji. Spróbuj ponownie.')
     } finally {
       if (isCurrentRequest()) {
@@ -169,7 +172,9 @@ export function MonthlyTimesheet({
     })
   }
 
-  const employees = data?.employees ?? []
+  const currentScopeKey = `${month}|${divisionId}`
+  const visibleData = dataScopeKey === currentScopeKey ? data : null
+  const employees = visibleData?.employees ?? []
   const selectedEmployee = employeeId
     ? employees.find((employee) => employee.id === employeeId) ?? null
     : null
@@ -178,14 +183,16 @@ export function MonthlyTimesheet({
     !!employeeId &&
     !loading &&
     !error &&
-    !!data &&
+    !!visibleData &&
     !selectedEmployee
   )
+  const effectiveSaturdayWorkable = visibleData?.saturdayWorkable ?? saturdayWorkable
+  const teamDays = visibleData?.days ?? buildMonthDateKeys(month)
 
   return (
     <div
       data-testid="monthly-mode-shell"
-      data-saturday-workable={data?.saturdayWorkable ?? saturdayWorkable}
+      data-saturday-workable={effectiveSaturdayWorkable}
       className="space-y-4"
     >
       <div className="flex flex-wrap items-center gap-3">
@@ -257,30 +264,70 @@ export function MonthlyTimesheet({
         </p>
       )}
 
-      <div className="flex min-h-80 items-center justify-center overflow-hidden rounded-lg border border-[var(--wd-border)] bg-white">
-        {loading && (
-          <div role="status" aria-label="Ładowanie ewidencji miesięcznej">
-            <div
-              className="h-6 w-6 animate-spin rounded-full border-2 border-t-transparent"
-              style={{ borderColor: 'var(--wd-sand)', borderTopColor: 'transparent' }}
-            />
-          </div>
-        )}
+      {mode === 'team' ? (
+        <div className="relative" aria-busy={loading}>
+          <MonthlyTeamGrid
+            days={teamDays}
+            employees={visibleData?.employees ?? []}
+            holidays={visibleData?.holidays ?? []}
+            saturdayWorkable={effectiveSaturdayWorkable}
+            onEditCell={setEditModal}
+          />
 
-        {!loading && error && (
-          <div role="alert" className="flex flex-col items-center gap-3 px-6 text-center">
-            <p className="text-sm text-red-700">{error}</p>
-            <button
-              type="button"
-              onClick={() => void refreshData()}
-              className="flex h-9 items-center gap-1.5 rounded-md border border-[var(--wd-border)] px-3 text-sm font-medium text-[var(--wd-text-primary)] transition-colors hover:bg-[var(--wd-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1"
+          {loading && (
+            <div className="absolute inset-0 z-40 flex min-h-80 items-center justify-center rounded-lg bg-white/75">
+              <div role="status" aria-label="Ładowanie ewidencji miesięcznej">
+                <div
+                  className="h-6 w-6 animate-spin rounded-full border-2 border-t-transparent"
+                  style={{ borderColor: 'var(--wd-sand)', borderTopColor: 'transparent' }}
+                />
+              </div>
+            </div>
+          )}
+
+          {!loading && error && (
+            <div
+              role="alert"
+              className="absolute inset-0 z-40 flex min-h-80 flex-col items-center justify-center gap-3 rounded-lg bg-white/90 px-6 text-center"
             >
-              <RefreshCw className="h-3.5 w-3.5" />
-              Spróbuj ponownie
-            </button>
-          </div>
-        )}
-      </div>
+              <p className="text-sm text-red-700">{error}</p>
+              <button
+                type="button"
+                onClick={() => void refreshData()}
+                className="flex h-9 items-center gap-1.5 rounded-md border border-[var(--wd-border)] px-3 text-sm font-medium text-[var(--wd-text-primary)] transition-colors hover:bg-[var(--wd-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Spróbuj ponownie
+              </button>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="flex min-h-80 items-center justify-center overflow-hidden rounded-lg border border-[var(--wd-border)] bg-white">
+          {loading && (
+            <div role="status" aria-label="Ładowanie ewidencji miesięcznej">
+              <div
+                className="h-6 w-6 animate-spin rounded-full border-2 border-t-transparent"
+                style={{ borderColor: 'var(--wd-sand)', borderTopColor: 'transparent' }}
+              />
+            </div>
+          )}
+
+          {!loading && error && (
+            <div role="alert" className="flex flex-col items-center gap-3 px-6 text-center">
+              <p className="text-sm text-red-700">{error}</p>
+              <button
+                type="button"
+                onClick={() => void refreshData()}
+                className="flex h-9 items-center gap-1.5 rounded-md border border-[var(--wd-border)] px-3 text-sm font-medium text-[var(--wd-text-primary)] transition-colors hover:bg-[var(--wd-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                Spróbuj ponownie
+              </button>
+            </div>
+          )}
+        </div>
+      )}
 
       {editModal && (
         <TimeEntryEditModal

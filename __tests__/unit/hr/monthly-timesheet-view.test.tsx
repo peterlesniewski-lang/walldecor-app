@@ -1,8 +1,11 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { ManagerTimesheet } from '@/components/hr/time-tracking/manager-timesheet'
+import { MonthlyTeamGrid } from '@/components/hr/time-tracking/monthly-team-grid'
 import { WeeklyTimesheet } from '@/components/hr/time-tracking/weekly-timesheet'
+import { buildMonthDateKeys } from '@/lib/hr/time-tracking/month'
+import type { TimeTrackingEmployeeRow } from '@/lib/hr/time-tracking/types'
 
 const navigation = vi.hoisted(() => ({
   push: vi.fn(),
@@ -68,6 +71,52 @@ const weeklyData = {
   employees: [],
   dailyTotals: {},
 }
+
+const monthlyGridDays = buildMonthDateKeys('2026-07')
+const monthlyGridEmployees: TimeTrackingEmployeeRow[] = [
+  {
+    id: 'employee-1',
+    firstName: 'Jan',
+    lastName: 'Kowalski',
+    divisionId: 'JAG',
+    divisionName: 'Jagiellońska',
+    avatarUrl: null,
+    entries: {
+      '2026-07-01': {
+        id: 'entry-approved',
+        totalMinutes: 480,
+        status: 'approved',
+      },
+      '2026-07-02': {
+        status: 'leave',
+        leaveType: 'Urlop wypoczynkowy',
+        leaveCode: 'VL',
+        leaveColor: '#16A34A',
+      },
+      '2026-07-03': {
+        id: 'entry-with-leave',
+        totalMinutes: 420,
+        status: 'pending',
+        leaveType: 'Urlop bezpłatny',
+        leaveCode: 'UB',
+        leaveColor: '#64748B',
+      },
+    },
+  },
+  {
+    id: 'employee-2',
+    firstName: 'Ewa',
+    lastName: 'Nowak',
+    divisionId: 'PUL',
+    divisionName: 'Puławska',
+    avatarUrl: null,
+    entries: {},
+  },
+]
+
+const monthlyGridHolidays = [
+  { date: '2026-07-06', name: 'Dzień wolny JAG', divisionId: 'JAG' },
+]
 
 function jsonResponse(data: unknown, status = 200) {
   return new Response(JSON.stringify(data), {
@@ -259,6 +308,52 @@ describe('ManagerTimesheet navigation', () => {
     })
   })
 
+  it('uses the target month dimensions while a new team scope is loading', async () => {
+    const july = deferred<Response>()
+    const february = deferred<Response>()
+    const fetchMock = vi.fn((input: string | URL | Request) => (
+      String(input).includes('month=2027-02') ? february.promise : july.promise
+    ))
+    vi.stubGlobal('fetch', fetchMock)
+    navigation.search = 'view=month&mode=team&month=2026-07'
+    const view = () => (
+      <ManagerTimesheet {...managerProps} initialView="month" />
+    )
+    const { rerender } = render(view())
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledOnce())
+
+    await act(async () => {
+      july.resolve(jsonResponse({
+        ...monthlyData,
+        days: buildMonthDateKeys('2026-07'),
+      }))
+    })
+    expect(await screen.findByText('Kowalska A.')).toBeTruthy()
+    expect(screen.getAllByRole('columnheader')).toHaveLength(33)
+
+    navigation.search = 'view=month&mode=team&month=2027-02'
+    rerender(view())
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+
+    expect(screen.getAllByRole('columnheader')).toHaveLength(30)
+    expect(screen.queryByText('Kowalska A.')).toBeNull()
+    expect(screen.getByRole('status', {
+      name: 'Ładowanie ewidencji miesięcznej',
+    })).toBeTruthy()
+
+    await act(async () => {
+      february.resolve(jsonResponse({
+        ...monthlyData,
+        month: '2027-02',
+        monthStart: '2027-02-01',
+        monthEnd: '2027-02-28',
+        days: buildMonthDateKeys('2027-02'),
+        employees: [secondEmployee],
+      }))
+    })
+    expect(await screen.findByText('Nowak P.')).toBeTruthy()
+  })
+
   it('aborts a pending monthly request on unmount', async () => {
     const pending = deferred<Response>()
     const fetchMock = vi.fn(() => pending.promise)
@@ -295,6 +390,45 @@ describe('ManagerTimesheet navigation', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 
+  it('opens the existing modal from team mode and refreshes after save', async () => {
+    navigation.search = 'view=month&mode=team&month=2026-07'
+    const fetchMock = vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (init?.method === 'POST') return jsonResponse({ id: 'entry-created' })
+      return jsonResponse({
+        ...monthlyData,
+        days: buildMonthDateKeys('2026-07'),
+      })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<ManagerTimesheet {...managerProps} initialView="month" />)
+
+    expect(await screen.findByTestId('monthly-team-grid')).toBeTruthy()
+    await user.click(screen.getByRole('button', {
+      name: 'Anna Kowalska, 2026-07-01: brak wpisu',
+    }))
+
+    const dialog = screen.getByRole('dialog', { name: 'Dodaj wpis' })
+    expect(within(dialog).getByText(/Anna Kowalska/)).toBeTruthy()
+    fireEvent.change(within(dialog).getByLabelText('Wejście'), {
+      target: { value: '08:00' },
+    })
+    fireEvent.change(within(dialog).getByLabelText('Wyjście'), {
+      target: { value: '16:00' },
+    })
+    await user.click(within(dialog).getByRole('button', { name: 'Zapisz' }))
+
+    await waitFor(() => {
+      const monthlyRequests = fetchMock.mock.calls.filter(([input]) => (
+        String(input).includes('/api/hr/time-tracking/monthly')
+      ))
+      expect(monthlyRequests).toHaveLength(2)
+    })
+  })
+
   it('updates client selection on simulated back-forward URL changes without refetching the roster', async () => {
     navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1'
     const fetchMock = vi.fn(async () => jsonResponse({
@@ -320,6 +454,75 @@ describe('ManagerTimesheet navigation', () => {
     expect((screen.getByRole('combobox', { name: 'Pracownik' }) as HTMLSelectElement).value)
       .toBe('employee-2')
     expect(fetchMock).toHaveBeenCalledOnce()
+  })
+})
+
+describe('MonthlyTeamGrid', () => {
+  it('renders a stable 31-day grid with compact team states', () => {
+    render(
+      <MonthlyTeamGrid
+        days={monthlyGridDays}
+        employees={monthlyGridEmployees}
+        holidays={monthlyGridHolidays}
+        saturdayWorkable={false}
+        onEditCell={vi.fn()}
+      />
+    )
+
+    const grid = screen.getByTestId('monthly-team-grid')
+    const table = screen.getByRole('table')
+
+    expect(screen.getAllByRole('columnheader')).toHaveLength(33)
+    expect(screen.getByText('Kowalski J.')).toBeTruthy()
+    expect(screen.getByText('UB')).toBeTruthy()
+    expect(screen.getByText('Święto')).toBeTruthy()
+    expect(screen.getByTestId('monthly-employee-header').className).toContain('sticky')
+    expect(screen.getByTestId('monthly-employee-cell-employee-1').className).toContain('sticky')
+    expect(grid.className).toContain('overflow-x-auto')
+    expect(table.getAttribute('style')).toContain('table-layout: fixed')
+    expect(table.getAttribute('style')).toContain('width:')
+    expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
+    expect(screen.getByTitle('Zatwierdzony')).toBeTruthy()
+    expect(screen.getByTitle('Oczekujący')).toBeTruthy()
+    expect(screen.getByText('15h')).toBeTruthy()
+  })
+
+  it('uses division-aware holidays and sends the exact editable-cell payload', async () => {
+    const onEditCell = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <MonthlyTeamGrid
+        days={monthlyGridDays}
+        employees={monthlyGridEmployees}
+        holidays={monthlyGridHolidays}
+        saturdayWorkable={false}
+        onEditCell={onEditCell}
+      />
+    )
+
+    await user.click(screen.getByRole('button', {
+      name: 'Ewa Nowak, 2026-07-06: brak wpisu',
+    }))
+
+    expect(onEditCell).toHaveBeenLastCalledWith({
+      employeeId: 'employee-2',
+      employeeName: 'Ewa Nowak',
+      date: '2026-07-06',
+      entry: null,
+    })
+
+    await user.click(screen.getByTestId('monthly-cell-employee-1-2026-07-02'))
+    expect(onEditCell).toHaveBeenCalledTimes(1)
+
+    await user.click(screen.getByRole('button', {
+      name: 'Jan Kowalski, 2026-07-03: 7h, oczekujący, UB',
+    }))
+    expect(onEditCell).toHaveBeenLastCalledWith({
+      employeeId: 'employee-1',
+      employeeName: 'Jan Kowalski',
+      date: '2026-07-03',
+      entry: monthlyGridEmployees[0].entries['2026-07-03'],
+    })
   })
 })
 
