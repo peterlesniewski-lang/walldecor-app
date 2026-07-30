@@ -113,7 +113,8 @@ export function TimeEntryEditModal({
   const canApproveReject = userRole === 'ADMIN' || userRole === 'MANAGER'
   const canDelete = userRole === 'ADMIN'
   const hasEntry = !!entry?.id
-  const controlsDisabled = hydrating || loading || deleteLoading
+  const mutationPending = loading || deleteLoading
+  const controlsDisabled = hydrating || mutationPending
 
   const restoreFocus = () => {
     const target = returnFocusRef.current
@@ -244,14 +245,17 @@ export function TimeEntryEditModal({
     <Dialog
       open
       onOpenChange={(open) => {
-        if (!open) {
-          onClose()
-          restoreFocus()
-        }
+        if (!open && !mutationPending) onClose()
       }}
     >
       <DialogContent
         aria-modal="true"
+        onEscapeKeyDown={(event) => {
+          if (mutationPending) event.preventDefault()
+        }}
+        onPointerDownOutside={(event) => {
+          if (mutationPending) event.preventDefault()
+        }}
         onCloseAutoFocus={(event) => {
           event.preventDefault()
           restoreFocus()

@@ -161,4 +161,76 @@ describe('TimeEntryEditModal', () => {
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(document.activeElement).toBe(opener)
   })
+
+  it('blocks every dismissal path during a pending save and keeps a failed mutation visible', async () => {
+    const patch = deferred<Response>()
+    const fetchMock = vi.fn((
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (init?.method === 'PATCH') return patch.promise
+      return Promise.resolve(jsonResponse({
+        clockIn: localIso(8),
+        clockOut: localIso(16),
+        notes: 'Dyżur',
+      }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+
+    function ModalHarness() {
+      const [open, setOpen] = useState(false)
+      return (
+        <>
+          <button type="button" onClick={() => setOpen(true)}>Otwórz edycję</button>
+          {open && (
+            <TimeEntryEditModal
+              {...baseProps}
+              onClose={() => setOpen(false)}
+            />
+          )}
+        </>
+      )
+    }
+
+    const user = userEvent.setup()
+    render(<ModalHarness />)
+    const opener = screen.getByRole('button', { name: 'Otwórz edycję' })
+    await user.click(opener)
+    const dialog = screen.getByRole('dialog', { name: 'Edytuj wpis' })
+    await waitFor(() => {
+      expect((within(dialog).getByRole('button', { name: 'Zapisz' }) as HTMLButtonElement).disabled)
+        .toBe(false)
+    })
+
+    await user.click(within(dialog).getByRole('button', { name: 'Zapisz' }))
+    await waitFor(() => {
+      expect(fetchMock.mock.calls.some(([, init]) => init?.method === 'PATCH')).toBe(true)
+    })
+
+    await user.keyboard('{Escape}')
+    expect(screen.getByRole('dialog', { name: 'Edytuj wpis' })).toBe(dialog)
+
+    await user.click(within(dialog).getByRole('button', { name: 'Zamknij' }))
+    expect(screen.getByRole('dialog', { name: 'Edytuj wpis' })).toBe(dialog)
+
+    const overlay = dialog.previousElementSibling
+    expect(overlay).not.toBeNull()
+    fireEvent.pointerDown(overlay as Element)
+    fireEvent.click(overlay as Element)
+    expect(screen.getByRole('dialog', { name: 'Edytuj wpis' })).toBe(dialog)
+
+    await act(async () => {
+      patch.resolve(jsonResponse({ error: 'Nie można zapisać wpisu' }, 500))
+    })
+    expect((await within(dialog).findByRole('alert')).textContent).toContain(
+      'Nie można zapisać wpisu'
+    )
+
+    const focusSpy = vi.spyOn(opener, 'focus')
+    await user.click(within(dialog).getByRole('button', { name: 'Zamknij' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(focusSpy).toHaveBeenCalledTimes(1))
+    expect(document.activeElement).toBe(opener)
+  })
 })
