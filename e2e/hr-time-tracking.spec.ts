@@ -309,6 +309,30 @@ test.describe('Monthly time tracking', () => {
     await weeklyDivision.selectOption(DIVISION_A_ID)
     await expect(page).toHaveURL(new RegExp(`divisionId=${DIVISION_A_ID}`))
 
+    const weeklyEmployeeRow = page
+      .getByRole('main')
+      .getByRole('row')
+      .filter({ hasText: 'Tester A.' })
+    const approvedEntry = weeklyEmployeeRow.getByText('8h', { exact: true }).nth(1)
+    await approvedEntry.click()
+
+    const weeklyEntryDialog = page.getByRole('dialog')
+    await expect(weeklyEntryDialog.getByRole('heading', { name: 'Edytuj wpis' })).toBeVisible()
+    await weeklyEntryDialog.getByLabel('Notatka').fill('QA weekly edit')
+
+    const weeklyPatchPromise = page.waitForResponse((response) => (
+      response.request().method() === 'PATCH' &&
+      new URL(response.url()).pathname === '/api/hr/time-tracking/e2e-entry-a-02'
+    ))
+    await weeklyEntryDialog.getByRole('button', { name: 'Zapisz', exact: true }).click()
+    const weeklyPatchResponse = await weeklyPatchPromise
+    expect(weeklyPatchResponse.ok()).toBe(true)
+    await expect(weeklyEntryDialog).toBeHidden()
+
+    await weeklyEmployeeRow.getByText('8h', { exact: true }).nth(1).click()
+    await expect(weeklyEntryDialog.getByLabel('Notatka')).toHaveValue('QA weekly edit')
+    await weeklyEntryDialog.getByRole('button', { name: 'Zamknij' }).click()
+
     await page.getByRole('button', { name: 'Miesiąc', exact: true }).click()
     await expect(page).toHaveURL(new RegExp(`view=month.*divisionId=${DIVISION_A_ID}`))
     await expect(page.getByLabel('Oddział')).toHaveValue(DIVISION_A_ID)
@@ -316,7 +340,9 @@ test.describe('Monthly time tracking', () => {
     const grid = page.getByRole('main').getByTestId('monthly-team-grid')
     await expect(grid).toBeVisible()
     await expect(grid.locator('th[id^="monthly-day-"]')).toHaveCount(31)
+    await expect(grid.locator('#monthly-total-column')).toHaveText('Łącznie')
     await expect(grid.locator('[data-testid^="monthly-employee-cell-"]')).toHaveCount(2)
+    await expect(grid.getByTestId(`monthly-total-${EMPLOYEE_A_ID}`)).toHaveText('16h')
     await expect(page.getByTestId(`monthly-cell-${EMPLOYEE_A_ID}-2026-07-06`)).toContainText('E2E_VL')
     await expect(page.getByTestId(`monthly-cell-${EMPLOYEE_A_ID}-2026-07-10`)).toContainText('Święto')
 
