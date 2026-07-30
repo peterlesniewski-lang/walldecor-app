@@ -4,6 +4,10 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { timeEntryBulkCreateSchema } from '@/lib/hr/schemas'
 import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
+import {
+  getWarsawBusinessDate,
+  getWarsawBusinessDateQueryRange,
+} from '@/lib/hr/business-date'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -79,16 +83,24 @@ export async function POST(req: NextRequest) {
 
     // UTC midnight for the day — used as the `date` field
     const dayDate = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth(), cur.getUTCDate()))
+    const businessDate = getWarsawBusinessDate(dayDate)
+    const businessDateQueryRange = getWarsawBusinessDateQueryRange(dayDate)
 
     // Apply the same UTC time to this specific day
     const clockInDt = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth(), cur.getUTCDate(), inUtcH, inUtcM))
     const clockOutDt = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth(), cur.getUTCDate(), outUtcH, outUtcM))
 
     for (const employeeId of employeeIds) {
-      const existing = await prisma.timeEntry.findFirst({
-        where: { employeeId, date: dayDate },
+      const existingCandidates = await prisma.timeEntry.findMany({
+        where: {
+          employeeId,
+          date: businessDateQueryRange,
+        },
+        select: { id: true, date: true },
       })
-      if (existing) {
+      if (existingCandidates.some((entry) =>
+        getWarsawBusinessDate(entry.date).isoDate === businessDate.isoDate
+      )) {
         skipped.push(`${employeeId}:${startDate}`)
         continue
       }

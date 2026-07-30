@@ -4,6 +4,7 @@ import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
 import { POST as createManualTimeEntry } from '@/app/api/hr/time-tracking/route'
 import { POST as clockIn } from '@/app/api/hr/time-tracking/clock-in/route'
+import { POST as createBulkTimeEntries } from '@/app/api/hr/time-tracking/bulk/route'
 
 vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
@@ -18,6 +19,7 @@ vi.mock('@/lib/prisma', () => ({
     employee: {
       findFirst: vi.fn(),
       findUnique: vi.fn(),
+      findMany: vi.fn(),
     },
     timeEntry: {
       findFirst: vi.fn(),
@@ -29,6 +31,7 @@ vi.mock('@/lib/prisma', () => ({
 
 const mockGetServerSession = vi.mocked(getServerSession)
 const mockEmployeeFindFirst = vi.mocked(prisma.employee.findFirst)
+const mockEmployeeFindMany = vi.mocked(prisma.employee.findMany)
 const mockTimeEntryFindFirst = vi.mocked(prisma.timeEntry.findFirst)
 const mockTimeEntryFindMany = vi.mocked(prisma.timeEntry.findMany)
 const mockTimeEntryCreate = vi.mocked(prisma.timeEntry.create)
@@ -155,6 +158,40 @@ describe('time entry writer business dates', () => {
 
     expect(response.status).toBe(409)
     expect(await response.json()).toEqual({ error: 'Entry already exists for today' })
+    expect(mockTimeEntryCreate).not.toHaveBeenCalled()
+  })
+
+  it('skips bulk creation when a legacy row maps to the Warsaw business date', async () => {
+    mockGetServerSession.mockResolvedValue(session('ADMIN'))
+    mockEmployeeFindMany.mockResolvedValue([{ id: 'employee-1' }] as never)
+    mockTimeEntryFindMany.mockResolvedValue([{
+      id: 'legacy-entry',
+      date: new Date('2026-07-01T22:00:00.000Z'),
+    }] as never)
+
+    const response = await createBulkTimeEntries(
+      new NextRequest('http://localhost/api/hr/time-tracking/bulk', {
+        method: 'POST',
+        body: JSON.stringify({
+          employeeIds: ['employee-1'],
+          startDate: '2026-07-02',
+          endDate: '2026-07-02',
+          clockInUtc: '2026-07-02T08:00:00.000Z',
+          clockOutUtc: '2026-07-02T16:00:00.000Z',
+          skipWeekends: false,
+        }),
+      })
+    )
+
+    expect(response.status).toBe(201)
+    expect(await response.json()).toEqual({ created: 0, skipped: 1 })
+    expect(mockTimeEntryFindMany).toHaveBeenCalledWith({
+      where: {
+        employeeId: 'employee-1',
+        date: expectedLogicalDayQuery,
+      },
+      select: { id: true, date: true },
+    })
     expect(mockTimeEntryCreate).not.toHaveBeenCalled()
   })
 })
