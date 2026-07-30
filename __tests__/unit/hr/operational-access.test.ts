@@ -100,6 +100,84 @@ describe('HR operational access scoping', () => {
     expect(mockEmployeeFindMany).not.toHaveBeenCalled()
   })
 
+  it('preserves the exact weekly response shape without loader-only entry fields', async () => {
+    mockGetServerSession.mockResolvedValue(session('ADMIN'))
+    mockEmployeeFindMany.mockResolvedValue([{
+      id: 'employee-1',
+      firstName: 'Anna',
+      lastName: 'Kowalska',
+      divisionId: 'JAG',
+      avatarUrl: null,
+      division: { name: 'Jagiellonska' },
+    }] as never)
+    mockTimeEntryFindMany.mockResolvedValue([{
+      id: 'entry-1',
+      employeeId: 'employee-1',
+      date: new Date('2026-07-02T00:00:00.000Z'),
+      clockIn: new Date('2026-07-02T09:00:00.000Z'),
+      clockOut: new Date('2026-07-02T17:00:00.000Z'),
+      totalMinutes: 480,
+      breakMinutes: 30,
+      status: 'pending',
+    }] as never)
+    mockLeaveRequestFindMany.mockResolvedValue([{
+      employeeId: 'employee-1',
+      startDate: new Date('2026-07-02T00:00:00.000Z'),
+      endDate: new Date('2026-07-02T00:00:00.000Z'),
+      leaveType: {
+        name: 'Urlop bezplatny',
+        code: 'UB',
+        color: '#64748B',
+      },
+    }] as never)
+
+    const response = await getWeeklyTimeTracking(
+      new NextRequest('http://localhost/api/hr/time-tracking/weekly?week=2026-W27')
+    )
+
+    expect(await response.json()).toEqual({
+      weekStart: '2026-06-29',
+      weekEnd: '2026-07-05',
+      days: [
+        '2026-06-29',
+        '2026-06-30',
+        '2026-07-01',
+        '2026-07-02',
+        '2026-07-03',
+        '2026-07-04',
+        '2026-07-05',
+      ],
+      employees: [{
+        id: 'employee-1',
+        firstName: 'Anna',
+        lastName: 'Kowalska',
+        divisionId: 'JAG',
+        divisionName: 'Jagiellonska',
+        avatarUrl: null,
+        entries: {
+          '2026-07-02': {
+            id: 'entry-1',
+            clockIn: '2026-07-02T09:00:00.000Z',
+            clockOut: '2026-07-02T17:00:00.000Z',
+            totalMinutes: 480,
+            status: 'pending',
+            leaveType: 'Urlop bezplatny',
+            leaveColor: '#64748B',
+          },
+        },
+      }],
+      dailyTotals: {
+        '2026-06-29': 0,
+        '2026-06-30': 0,
+        '2026-07-01': 0,
+        '2026-07-02': 480,
+        '2026-07-03': 0,
+        '2026-07-04': 0,
+        '2026-07-05': 0,
+      },
+    })
+  })
+
   it('blocks managers from creating a manual time entry outside their division', async () => {
     mockGetServerSession.mockResolvedValue(session('MANAGER', 'manager-1'))
     mockEmployeeFindUnique

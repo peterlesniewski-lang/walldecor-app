@@ -2,6 +2,23 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { loadTimeTrackingRange } from '@/lib/hr/time-tracking/range-loader'
+import type { TimeTrackingDayEntry } from '@/lib/hr/time-tracking/types'
+
+type WeeklyTimeTrackingDayEntry = Omit<TimeTrackingDayEntry, 'breakMinutes' | 'leaveCode'>
+
+function toWeeklyDayEntry(entry: TimeTrackingDayEntry): WeeklyTimeTrackingDayEntry {
+  const weeklyEntry: WeeklyTimeTrackingDayEntry = {}
+
+  if (entry.id !== undefined) weeklyEntry.id = entry.id
+  if (entry.clockIn !== undefined) weeklyEntry.clockIn = entry.clockIn
+  if (entry.clockOut !== undefined) weeklyEntry.clockOut = entry.clockOut
+  if (entry.totalMinutes !== undefined) weeklyEntry.totalMinutes = entry.totalMinutes
+  if (entry.status !== undefined) weeklyEntry.status = entry.status
+  if (entry.leaveType !== undefined) weeklyEntry.leaveType = entry.leaveType
+  if (entry.leaveColor !== undefined) weeklyEntry.leaveColor = entry.leaveColor
+
+  return weeklyEntry
+}
 
 /** Parses "YYYY-Www" (e.g. "2026-W13") into Monday of that ISO week */
 function parseIsoWeek(week: string): Date | null {
@@ -66,7 +83,12 @@ export async function GET(req: NextRequest) {
     weekStart: data.startDate,
     weekEnd: data.endDate,
     days: data.days,
-    employees: data.employees,
+    employees: data.employees.map((employee) => ({
+      ...employee,
+      entries: Object.fromEntries(
+        Object.entries(employee.entries).map(([date, entry]) => [date, toWeeklyDayEntry(entry)])
+      ),
+    })),
     dailyTotals: data.dailyTotals,
   })
 }
