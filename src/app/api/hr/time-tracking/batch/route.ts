@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
+import type { Session } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import type { PrismaClient } from '@/generated/prisma'
 import { canViewEmployeeRecord } from '@/lib/hr/access'
 import {
   getWarsawBusinessDate,
@@ -50,6 +52,12 @@ type SavedRow = {
   index: number
   date: string
   entryId: string
+}
+
+export interface TimeEntryBatchHandlerDependencies {
+  prisma: PrismaClient
+  getSession: () => Promise<Session | null>
+  getHrSettings: typeof getHrSettings
 }
 
 class TimeEntryUniqueConflictError extends Error {
@@ -120,6 +128,7 @@ function leaveOverlapsDate(
 }
 
 async function saveValidRows(
+  db: PrismaClient,
   employeeId: string,
   rows: ValidRow[],
   failedByIndex: Map<number, string>
@@ -129,7 +138,7 @@ async function saveValidRows(
   while (pendingRows.length > 0) {
     try {
       const result = await runSerializableTransactionWithRetry(() =>
-        prisma.$transaction(async (tx) => {
+        db.$transaction(async (tx) => {
           const createRows = pendingRows.filter((candidate) => !candidate.row.entryId)
           const createDateRange =
             createRows.length > 0
@@ -228,8 +237,15 @@ async function saveValidRows(
   return []
 }
 
-export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions)
+async function handleTimeEntryBatch(
+  req: NextRequest,
+  {
+    prisma: db,
+    getSession,
+    getHrSettings: loadHrSettings,
+  }: TimeEntryBatchHandlerDependencies
+) {
+  const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (session.user.role !== 'ADMIN' && session.user.role !== 'MANAGER') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
@@ -252,12 +268,12 @@ export async function POST(req: NextRequest) {
 
   const { employeeId, rows } = parsed.data
   const [targetEmployee, viewerEmployee] = await Promise.all([
-    prisma.employee.findUnique({
+    db.employee.findUnique({
       where: { id: employeeId },
       select: { id: true, divisionId: true, active: true },
     }),
     session.user.role === 'MANAGER' && session.user.employeeId
-      ? prisma.employee.findUnique({
+      ? db.employee.findUnique({
           where: { id: session.user.employeeId },
           select: { id: true, divisionId: true, active: true },
         })
@@ -275,13 +291,13 @@ export async function POST(req: NextRequest) {
 
   const [timeRule, hrSettings] = await Promise.all([
     targetEmployee.divisionId
-      ? prisma.timeTrackingRule.findFirst({
+      ? db.timeTrackingRule.findFirst({
           where: { divisionId: targetEmployee.divisionId },
           orderBy: { id: 'asc' },
           select: { overtimeThreshold: true },
         })
       : Promise.resolve(null),
-    getHrSettings(),
+    loadHrSettings(),
   ])
   const ruleThresholdMinutes = timeRule
     ? Math.round(timeRule.overtimeThreshold * 60)
@@ -299,7 +315,7 @@ export async function POST(req: NextRequest) {
     .map((row) => row.entryId)
     .filter((entryId): entryId is string => entryId !== undefined)
 
-  const existingEntries = await prisma.timeEntry.findMany({
+  const existingEntries = await db.timeEntry.findMany({
     where: {
       OR: [
         ...(referencedEntryIds.length > 0
@@ -384,7 +400,7 @@ export async function POST(req: NextRequest) {
 
   let savedRows: SavedRow[]
   try {
-    savedRows = await saveValidRows(employeeId, validRows, failedByIndex)
+    savedRows = await saveValidRows(db, employeeId, validRows, failedByIndex)
   } catch (error) {
     if (error instanceof SerializableTransactionConflictError) {
       return NextResponse.json(
@@ -404,3 +420,15 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ saved, failed })
 }
+
+export function createTimeEntryBatchHandler(
+  dependencies: TimeEntryBatchHandlerDependencies
+) {
+  return (req: NextRequest) => handleTimeEntryBatch(req, dependencies)
+}
+
+export const POST = createTimeEntryBatchHandler({
+  prisma,
+  getSession: () => getServerSession(authOptions),
+  getHrSettings,
+})

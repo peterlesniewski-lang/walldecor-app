@@ -13,11 +13,7 @@ import { join } from 'node:path'
 import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { PrismaClient } from '@/generated/prisma'
-import {
-  getWarsawBusinessDate,
-  getWarsawBusinessDateQueryRange,
-} from '@/lib/hr/business-date'
-import { runSerializableTransactionWithRetry } from '@/lib/hr/serializable-transaction'
+import { getWarsawBusinessDate } from '@/lib/hr/business-date'
 
 vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
@@ -33,9 +29,10 @@ let tempDir = ''
 let databaseUrl = ''
 let prisma: PrismaClient
 let postBatch: typeof import('@/app/api/hr/time-tracking/batch/route').POST
-
-class BlockingApprovedLeaveError extends Error {}
-class WorkedTimeConflictError extends Error {}
+let createTimeEntryBatchHandler:
+  typeof import('@/app/api/hr/time-tracking/batch/route').createTimeEntryBatchHandler
+let createLeaveApprovalHandler:
+  typeof import('@/app/api/hr/leave-requests/[id]/approve/route').createLeaveApprovalHandler
 
 function createClient() {
   return new PrismaClient({
@@ -96,6 +93,9 @@ async function createSchema() {
   await prisma.$executeRawUnsafe(`
     CREATE TABLE "Employee" (
       "id" TEXT NOT NULL PRIMARY KEY,
+      "firstName" TEXT NOT NULL,
+      "lastName" TEXT NOT NULL,
+      "userId" TEXT,
       "divisionId" TEXT,
       "active" BOOLEAN NOT NULL DEFAULT true
     )
@@ -109,14 +109,37 @@ async function createSchema() {
     )
   `)
   await prisma.$executeRawUnsafe(`
+    CREATE TABLE "LeaveType" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "name" TEXT NOT NULL,
+      "code" TEXT NOT NULL,
+      "color" TEXT NOT NULL DEFAULT '#3B82F6',
+      "tracksBalance" BOOLEAN NOT NULL DEFAULT true,
+      "parentId" TEXT
+    )
+  `)
+  await prisma.$executeRawUnsafe(`
     CREATE TABLE "LeaveRequestNew" (
       "id" TEXT NOT NULL PRIMARY KEY,
       "employeeId" TEXT NOT NULL,
+      "leaveTypeId" TEXT NOT NULL,
       "startDate" DATETIME NOT NULL,
       "endDate" DATETIME NOT NULL,
-      "status" TEXT NOT NULL DEFAULT 'pending',
+      "days" REAL NOT NULL,
+      "hours" REAL,
+      "isOnDemand" BOOLEAN NOT NULL DEFAULT false,
       "isRemoteWork" BOOLEAN NOT NULL DEFAULT false,
       "isDelegation" BOOLEAN NOT NULL DEFAULT false,
+      "status" TEXT NOT NULL DEFAULT 'pending',
+      "approverId" TEXT,
+      "approvedAt" DATETIME,
+      "rejectionNote" TEXT,
+      "substituteId" TEXT,
+      "notifySubstitute" BOOLEAN NOT NULL DEFAULT false,
+      "note" TEXT,
+      "attachments" TEXT,
+      "gcalEventId" TEXT,
+      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
       "updatedAt" DATETIME NOT NULL
     )
   `)
@@ -153,7 +176,13 @@ beforeAll(async () => {
   await createSchema()
 
   vi.doMock('@/lib/prisma', () => ({ prisma }))
-  ;({ POST: postBatch } = await import('@/app/api/hr/time-tracking/batch/route'))
+  ;({
+    POST: postBatch,
+    createTimeEntryBatchHandler,
+  } = await import('@/app/api/hr/time-tracking/batch/route'))
+  ;({
+    createLeaveApprovalHandler,
+  } = await import('@/app/api/hr/leave-requests/[id]/approve/route'))
 })
 
 beforeEach(async () => {
@@ -172,6 +201,7 @@ beforeEach(async () => {
   await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS "fail_second_time_entry"')
   await prisma.timeEntry.deleteMany()
   await prisma.leaveRequestNew.deleteMany()
+  await prisma.$executeRawUnsafe('DELETE FROM "LeaveType"')
   await prisma.$executeRawUnsafe('DELETE FROM "TimeTrackingRule"')
   await prisma.$executeRawUnsafe('DELETE FROM "Employee"')
   await prisma.$executeRawUnsafe('DELETE FROM "Division"')
@@ -185,8 +215,15 @@ beforeEach(async () => {
     VALUES ('JAG', 'Jagiellonska')
   `)
   await prisma.$executeRawUnsafe(`
-    INSERT INTO "Employee" ("id", "divisionId", "active")
-    VALUES ('employee-1', 'JAG', true)
+    INSERT INTO "Employee" (
+      "id",
+      "firstName",
+      "lastName",
+      "userId",
+      "divisionId",
+      "active"
+    )
+    VALUES ('employee-1', 'Jan', 'Kowalski', NULL, 'JAG', true)
   `)
   await prisma.$executeRawUnsafe(`
     INSERT INTO "TimeTrackingRule" (
@@ -196,6 +233,17 @@ beforeEach(async () => {
       "overtimeThreshold"
     )
     VALUES ('rule-a', 'JAG', 7.5, 8)
+  `)
+  await prisma.$executeRawUnsafe(`
+    INSERT INTO "LeaveType" (
+      "id",
+      "name",
+      "code",
+      "color",
+      "tracksBalance",
+      "parentId"
+    )
+    VALUES ('leave-type-ub', 'Urlop bezpłatny', 'UB', '#64748B', false, NULL)
   `)
 })
 
@@ -258,201 +306,113 @@ describe('time tracking batch transaction integration', () => {
     expect(await prisma.timeEntry.count()).toBe(0)
   })
 
-  it('serializes leave approval against worked-time creation so both cannot commit', async () => {
+  it('runs actual approve and batch handlers concurrently without committing both states', async () => {
     const date = new Date('2026-07-06T00:00:00.000Z')
     await prisma.$executeRawUnsafe(
       `
         INSERT INTO "LeaveRequestNew" (
           "id",
           "employeeId",
+          "leaveTypeId",
           "startDate",
           "endDate",
+          "days",
           "status",
           "isRemoteWork",
           "isDelegation",
+          "createdAt",
           "updatedAt"
         )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       'leave-concurrent',
       'employee-1',
+      'leave-type-ub',
       date,
       date,
+      1,
       'pending',
       false,
       false,
+      new Date('2026-07-01T00:00:00.000Z'),
       new Date('2026-07-01T00:00:00.000Z')
     )
 
     const approvalClient = createClient()
     const timeEntryClient = createClient()
+    const startTogether = createOneShotGate(2)
+    const session = {
+      user: {
+        id: 'admin-user',
+        name: 'Admin',
+        email: 'admin@test.pl',
+        role: 'ADMIN' as const,
+        employeeId: null,
+      },
+      expires: '',
+    }
+    const getSession = async () => {
+      await startTogether()
+      return session
+    }
 
     await Promise.all([
-      approvalClient.$queryRawUnsafe('PRAGMA busy_timeout = 100'),
-      timeEntryClient.$queryRawUnsafe('PRAGMA busy_timeout = 100'),
+      approvalClient.$queryRawUnsafe('PRAGMA busy_timeout = 1000'),
+      timeEntryClient.$queryRawUnsafe('PRAGMA busy_timeout = 1000'),
     ])
 
-    const approveLeave = () => runSerializableTransactionWithRetry(
-      () => approvalClient.$transaction(
-        async (tx) => {
-          const dateRange = getWarsawBusinessDateQueryRange(date)
-          const entries = await tx.timeEntry.findMany({
-            where: {
-              employeeId: 'employee-1',
-              date: dateRange,
-            },
-            select: { date: true },
-          })
-
-          if (entries.some(
-            (entry) =>
-              getWarsawBusinessDate(entry.date).isoDate === '2026-07-06'
-          )) {
-            throw new WorkedTimeConflictError()
-          }
-
-          const transition = await tx.leaveRequestNew.updateMany({
-            where: { id: 'leave-concurrent', status: 'pending' },
-            data: { status: 'approved' },
-          })
-          if (transition.count !== 1) throw new WorkedTimeConflictError()
-        },
-        {
-          isolationLevel: 'Serializable',
-          maxWait: 1_000,
-          timeout: 1_000,
-        }
-      ),
-      { initialDelayMs: 0, maxAttempts: 5 }
-    )
-
-    const createWorkedTime = () => runSerializableTransactionWithRetry(
-      () => timeEntryClient.$transaction(
-        async (tx) => {
-          const blockingLeaves = await tx.leaveRequestNew.findMany({
-            where: {
-              employeeId: 'employee-1',
-              status: 'approved',
-              isRemoteWork: false,
-              isDelegation: false,
-              startDate: { lte: date },
-              endDate: { gte: date },
-            },
-            select: { id: true },
-          })
-
-          if (blockingLeaves.length > 0) {
-            throw new BlockingApprovedLeaveError()
-          }
-
-          await tx.timeEntry.create({
-            data: {
-              employeeId: 'employee-1',
-              date,
-              clockIn: new Date('2026-07-06T06:00:00.000Z'),
-              clockOut: new Date('2026-07-06T14:00:00.000Z'),
-              source: 'bulk',
-              status: 'pending',
-              totalMinutes: 480,
-              breakMinutes: 30,
-              overtimeMinutes: 0,
-            },
-          })
-        },
-        {
-          isolationLevel: 'Serializable',
-          maxWait: 1_000,
-          timeout: 1_000,
-        }
-      ),
-      { initialDelayMs: 0, maxAttempts: 5 }
-    )
+    const approveLeave = createLeaveApprovalHandler({
+      prisma: approvalClient,
+      getSession,
+    })
+    const createWorkedTime = createTimeEntryBatchHandler({
+      prisma: timeEntryClient,
+      getSession,
+      getHrSettings: async () => ({
+        saturdayWorkable: true,
+        standardClockIn: '08:00',
+        standardClockOut: '16:00',
+        overtimeThresholdMinutes: 480,
+      }),
+    })
 
     try {
-      /*
-       * SQLite serializes writers at database level. With Prisma's interactive
-       * transactions here, placing a two-party gate after both predicate reads
-       * deadlocks because the second callback waits before reaching its read.
-       * Instead, two clients first prove they can make the stale decisions, then
-       * the loser gets a deterministic P2034 and retries a real Serializable
-       * transaction against the winner's committed state.
-       */
-      const afterPreflightRead = createOneShotGate(2)
-      const [initialEntries, initialBlockingLeaves] = await Promise.all([
-        approvalClient.timeEntry.findMany({
-          where: { employeeId: 'employee-1', date },
-          select: { id: true },
-        }).then(async (entries) => {
-          await afterPreflightRead()
-          return entries
-        }),
-        timeEntryClient.leaveRequestNew.findMany({
-          where: {
-            employeeId: 'employee-1',
-            status: 'approved',
-            startDate: { lte: date },
-            endDate: { gte: date },
-          },
-          select: { id: true },
-        }).then(async (leaves) => {
-          await afterPreflightRead()
-          return leaves
-        }),
+      const [approvalResponse, batchResponse] = await Promise.all([
+        approveLeave(
+          new NextRequest(
+            'http://localhost/api/hr/leave-requests/leave-concurrent/approve',
+            { method: 'PATCH' }
+          ),
+          { params: Promise.resolve({ id: 'leave-concurrent' }) }
+        ),
+        createWorkedTime(request([row('2026-07-06')])),
       ])
-      expect(initialEntries).toEqual([])
-      expect(initialBlockingLeaves).toEqual([])
-
-      await approveLeave()
-
-      const conflict = Object.assign(new Error('Write conflict'), { code: 'P2034' })
-      const transactionSpy = vi.spyOn(timeEntryClient, '$transaction')
-        .mockRejectedValueOnce(conflict)
-
-      await expect(createWorkedTime()).rejects.toBeInstanceOf(
-        BlockingApprovedLeaveError
-      )
-      expect(transactionSpy).toHaveBeenCalledTimes(2)
-      transactionSpy.mockRestore()
-
-      let [leave, entryCount] = await Promise.all([
+      const [leave, timeEntries] = await Promise.all([
         prisma.leaveRequestNew.findUniqueOrThrow({
           where: { id: 'leave-concurrent' },
           select: { status: true },
         }),
-        prisma.timeEntry.count({
-          where: { employeeId: 'employee-1', date },
+        prisma.timeEntry.findMany({
+          where: { employeeId: 'employee-1' },
+          select: { date: true },
         }),
       ])
-
-      expect({ leaveStatus: leave.status, entryCount }).toEqual({
-        leaveStatus: 'approved',
-        entryCount: 0,
-      })
-      expect(leave.status === 'approved' && entryCount === 1).toBe(false)
-
-      await prisma.leaveRequestNew.updateMany({
-        where: { id: 'leave-concurrent' },
-        data: { status: 'pending' },
-      })
-      await createWorkedTime()
-      await expect(approveLeave()).rejects.toBeInstanceOf(
-        WorkedTimeConflictError
+      const logicalDayEntries = timeEntries.filter(
+        (entry) => getWarsawBusinessDate(entry.date).isoDate === '2026-07-06'
       )
 
-      ;[leave, entryCount] = await Promise.all([
-        prisma.leaveRequestNew.findUniqueOrThrow({
-          where: { id: 'leave-concurrent' },
-          select: { status: true },
-        }),
-        prisma.timeEntry.count({
-          where: { employeeId: 'employee-1', date },
-        }),
-      ])
-      expect({ leaveStatus: leave.status, entryCount }).toEqual({
-        leaveStatus: 'pending',
-        entryCount: 1,
+      expect(batchResponse.status).toBe(200)
+      expect([200, 409]).toContain(approvalResponse.status)
+      expect([
+        { leaveStatus: 'approved', entryCount: 0 },
+        { leaveStatus: 'pending', entryCount: 1 },
+      ]).toContainEqual({
+        leaveStatus: leave.status,
+        entryCount: logicalDayEntries.length,
       })
-      expect(leave.status === 'approved' && entryCount === 1).toBe(false)
+      expect(
+        leave.status === 'approved' && logicalDayEntries.length > 0
+      ).toBe(false)
     } finally {
       await Promise.all([
         approvalClient.$disconnect(),

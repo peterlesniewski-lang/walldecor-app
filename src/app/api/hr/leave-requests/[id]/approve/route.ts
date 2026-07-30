@@ -1,7 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
+import type { Session } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import type { PrismaClient } from '@/generated/prisma'
 import { canViewEmployeeRecord } from '@/lib/hr/access'
 import {
   LeaveBalancePolicyConfigurationError,
@@ -25,11 +27,20 @@ class LeaveApprovalError extends Error {
   }
 }
 
-export async function PATCH(
+export interface LeaveApprovalHandlerDependencies {
+  prisma: PrismaClient
+  getSession: () => Promise<Session | null>
+}
+
+async function handleLeaveApproval(
   _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
+  {
+    prisma: db,
+    getSession,
+  }: LeaveApprovalHandlerDependencies
 ) {
-  const session = await getServerSession(authOptions)
+  const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const role = session.user.role
@@ -39,7 +50,7 @@ export async function PATCH(
 
   const { id } = await params
 
-  const leaveRequest = await prisma.leaveRequestNew.findUnique({
+  const leaveRequest = await db.leaveRequestNew.findUnique({
     where: { id },
     include: {
       leaveType: {
@@ -69,7 +80,7 @@ export async function PATCH(
   if (!leaveRequest) return NextResponse.json({ error: 'Not found' }, { status: 404 })
   if (role === 'MANAGER') {
     const viewerEmployee = session.user.employeeId
-      ? await prisma.employee.findUnique({
+      ? await db.employee.findUnique({
           where: { id: session.user.employeeId },
           select: { id: true, divisionId: true, active: true },
         })
@@ -95,7 +106,7 @@ export async function PATCH(
   const now = new Date()
 
   const approveRequest = () =>
-    prisma.$transaction(async (tx) => {
+    db.$transaction(async (tx) => {
       if (!leaveRequest.isRemoteWork && !leaveRequest.isDelegation) {
         const startRange = getWarsawBusinessDateQueryRange(leaveRequest.startDate)
         const endRange = getWarsawBusinessDateQueryRange(leaveRequest.endDate)
@@ -219,7 +230,7 @@ export async function PATCH(
 
   const userId = leaveRequest.employee.userId
   if (userId) {
-    await prisma.notification.create({
+    await db.notification.create({
       data: {
         userId,
         type: 'leave_approved',
@@ -250,3 +261,17 @@ export async function PATCH(
 
   return NextResponse.json(updated)
 }
+
+export function createLeaveApprovalHandler(
+  dependencies: LeaveApprovalHandlerDependencies
+) {
+  return (
+    req: NextRequest,
+    context: { params: Promise<{ id: string }> }
+  ) => handleLeaveApproval(req, context, dependencies)
+}
+
+export const PATCH = createLeaveApprovalHandler({
+  prisma,
+  getSession: () => getServerSession(authOptions),
+})
