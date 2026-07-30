@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { EMPLOYMENT_TYPES, TIME_ENTRY_SOURCES, BREAK_TYPES } from './constants'
+import { isCanonicalTimeEntryDate } from './time-tracking/batch-policy'
 
 export const employeeCreateSchema = z.object({
   firstName: z.string().min(1).max(100),
@@ -50,6 +51,20 @@ export const timeEntryBulkCreateSchema = z.object({
   clockOutUtc: z.string(),
   skipWeekends: z.boolean().default(true),
   projectId: z.string().optional(),
+})
+
+export const timeEntryBatchMutationSchema = z.object({
+  employeeId: z.string().min(1),
+  rows: z.array(z.object({
+    entryId: z.string().min(1).optional(),
+    date: z.string().refine(
+      isCanonicalTimeEntryDate,
+      'date must be a valid canonical YYYY-MM-DD with year 1000 or later'
+    ),
+    clockIn: z.string().datetime(),
+    clockOut: z.string().datetime(),
+    breakMinutes: z.number().int().min(0).max(1440).default(0),
+  })).min(1).max(31),
 })
 
 export const breakSchema = z.object({
