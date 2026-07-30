@@ -3,7 +3,10 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { CalendarDays, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
-import { MonthlyEmployeeTable } from './monthly-employee-table'
+import {
+  MonthlyEmployeeTable,
+  type MonthlyEmployeeDraftRow,
+} from './monthly-employee-table'
 import { MonthlyTeamGrid } from './monthly-team-grid'
 import { TimeEntryEditModal } from './time-entry-edit-modal'
 import {
@@ -112,7 +115,9 @@ export function MonthlyTimesheet({
   const [editModal, setEditModal] = useState<EditModalState | null>(null)
   const [hasDirtyRows, setHasDirtyRows] = useState(false)
   const [mutationBusy, setMutationBusy] = useState(false)
-  const [discardToken, setDiscardToken] = useState(0)
+  const [employeeDraftRows, setEmployeeDraftRows] = useState<
+    Map<string, MonthlyEmployeeDraftRow>
+  >(new Map())
   const requestSequenceRef = useRef(0)
   const requestControllerRef = useRef<AbortController | null>(null)
   const recoveryFocusRef = useRef<HTMLButtonElement>(null)
@@ -210,6 +215,7 @@ export function MonthlyTimesheet({
       const acceptedUrl = acceptedUrlRef.current
       if (!acceptedUrl) return
       window.history.pushState(acceptedHistoryStateRef.current, '', acceptedUrl)
+      router.replace(acceptedUrl)
     }
 
     const handlePopState = (event: PopStateEvent) => {
@@ -229,19 +235,20 @@ export function MonthlyTimesheet({
       acceptedUrlRef.current =
         `${window.location.pathname}${window.location.search}${window.location.hash}`
       acceptedHistoryStateRef.current = event.state
+      setEmployeeDraftRows(new Map())
       setHasDirtyRows(false)
       onDirtyChange(false)
-      setDiscardToken((current) => current + 1)
     }
 
     window.addEventListener('popstate', handlePopState, true)
     return () => window.removeEventListener('popstate', handlePopState, true)
-  }, [hasDirtyRows, mutationBusy, onDirtyChange])
+  }, [hasDirtyRows, mutationBusy, onDirtyChange, router])
 
   useEffect(() => {
     if (mode === 'employee') return
     setHasDirtyRows(false)
     setMutationBusy(false)
+    setEmployeeDraftRows(new Map())
     onDirtyChange(false)
     onBusyChange(false)
   }, [mode, onBusyChange, onDirtyChange])
@@ -260,10 +267,19 @@ export function MonthlyTimesheet({
 
   const pushState = (updates: Record<string, string | null>) => {
     if (!confirmDiscard()) return
+    if (hasDirtyRows) {
+      setEmployeeDraftRows(new Map())
+      setHasDirtyRows(false)
+      onDirtyChange(false)
+    }
     navigateState(updates)
   }
 
-  const handleDirtyChange = useCallback((dirty: boolean) => {
+  const handleDirtyRowsChange = useCallback((
+    rows: Map<string, MonthlyEmployeeDraftRow>
+  ) => {
+    const dirty = rows.size > 0
+    setEmployeeDraftRows(rows)
     setHasDirtyRows(dirty)
     onDirtyChange(dirty)
   }, [onDirtyChange])
@@ -451,9 +467,9 @@ export function MonthlyTimesheet({
                   entry,
                 })
               }}
-              onDirtyChange={handleDirtyChange}
+              dirtyRows={employeeDraftRows}
+              onDirtyRowsChange={handleDirtyRowsChange}
               onBusyChange={handleBusyChange}
-              resetToken={discardToken}
             />
           )}
 

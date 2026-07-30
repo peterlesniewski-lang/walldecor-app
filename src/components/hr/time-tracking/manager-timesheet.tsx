@@ -128,6 +128,7 @@ export function ManagerTimesheet({
     ) {
       return
     }
+    setHasMonthlyDirtyRows(false)
     if (nextView === 'month') {
       router.push(buildTimesheetHref(
         new URLSearchParams(searchParams.toString()),
@@ -153,6 +154,7 @@ export function ManagerTimesheet({
     ) {
       return
     }
+    setHasMonthlyDirtyRows(false)
     router.push(buildTimesheetHref(
       new URLSearchParams(searchParams.toString()),
       { view: 'month', mode: nextMode, month },

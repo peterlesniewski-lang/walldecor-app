@@ -9,11 +9,12 @@ import type { TimeTrackingEmployeeRow } from '@/lib/hr/time-tracking/types'
 
 const navigation = vi.hoisted(() => ({
   push: vi.fn(),
+  replace: vi.fn(),
   search: '',
 }))
 
 vi.mock('next/navigation', () => ({
-  useRouter: () => ({ push: navigation.push }),
+  useRouter: () => ({ push: navigation.push, replace: navigation.replace }),
   useSearchParams: () => new URLSearchParams(navigation.search),
 }))
 
@@ -135,6 +136,7 @@ function deferred<T>() {
 
 beforeEach(() => {
   navigation.push.mockReset()
+  navigation.replace.mockReset()
   navigation.search = ''
   vi.stubGlobal('fetch', vi.fn(async (input: string | URL | Request) => {
     const url = String(input)
@@ -1037,6 +1039,9 @@ describe('ManagerTimesheet navigation', () => {
     expect(confirmMock).toHaveBeenCalledWith('Masz niezapisane zmiany. Odrzucić je?')
     expect(window.location.search).toBe(
       '?view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    )
+    expect(navigation.replace).toHaveBeenCalledWith(
+      '/hr/time-tracking?view=month&mode=employee&month=2026-07&employeeId=employee-1'
     )
     expect(screen.getByRole('button', { name: 'Zapisz zmiany (1)' })).toBeTruthy()
   })

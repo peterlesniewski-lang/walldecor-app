@@ -21,12 +21,12 @@ interface MonthlyEmployeeTableProps {
   standardClockOut: string
   onSaved: () => Promise<void>
   onOpenEntry: (date: string, entry: TimeTrackingDayEntry | null) => void
-  onDirtyChange: (dirty: boolean) => void
+  dirtyRows: Map<string, MonthlyEmployeeDraftRow>
+  onDirtyRowsChange: (rows: Map<string, MonthlyEmployeeDraftRow>) => void
   onBusyChange: (busy: boolean) => void
-  resetToken: number
 }
 
-interface DraftRow {
+export interface MonthlyEmployeeDraftRow {
   clockIn: string
   clockOut: string
   breakMinutes: number
@@ -57,7 +57,7 @@ function toWarsawTime(iso: string | null | undefined): string {
   return Number.isFinite(date.getTime()) ? WARSAW_TIME_FORMATTER.format(date) : ''
 }
 
-function getInitialRow(entry: TimeTrackingDayEntry | undefined): DraftRow {
+function getInitialRow(entry: TimeTrackingDayEntry | undefined): MonthlyEmployeeDraftRow {
   return {
     clockIn: toWarsawTime(entry?.clockIn),
     clockOut: toWarsawTime(entry?.clockOut),
@@ -66,7 +66,10 @@ function getInitialRow(entry: TimeTrackingDayEntry | undefined): DraftRow {
   }
 }
 
-function rowsMatch(left: DraftRow, right: DraftRow): boolean {
+function rowsMatch(
+  left: MonthlyEmployeeDraftRow,
+  right: MonthlyEmployeeDraftRow
+): boolean {
   return (
     left.clockIn === right.clockIn &&
     left.clockOut === right.clockOut &&
@@ -109,7 +112,7 @@ function getBlockedReason(
   return null
 }
 
-function calculateNetMinutes(row: DraftRow): number | null {
+function calculateNetMinutes(row: MonthlyEmployeeDraftRow): number | null {
   if (!row.clockIn || !row.clockOut) return null
   const [inHour, inMinute] = row.clockIn.split(':').map(Number)
   const [outHour, outMinute] = row.clockOut.split(':').map(Number)
@@ -134,32 +137,19 @@ export function MonthlyEmployeeTable({
   standardClockOut,
   onSaved,
   onOpenEntry,
-  onDirtyChange,
+  dirtyRows,
+  onDirtyRowsChange,
   onBusyChange,
-  resetToken,
 }: MonthlyEmployeeTableProps) {
-  const [dirtyRows, setDirtyRows] = useState<Map<string, DraftRow>>(new Map())
   const [saving, setSaving] = useState(false)
   const [fillOpen, setFillOpen] = useState(false)
   const [fillBusy, setFillBusy] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
-  const scopeKey = `${employee.id}|${days[0] ?? ''}|${days.at(-1) ?? ''}`
   const busy = saving || fillBusy
 
   const initialRows = useMemo(() => new Map(
     days.map((day) => [day, getInitialRow(employee.entries[day])])
   ), [days, employee.entries])
-
-  useEffect(() => {
-    setDirtyRows(new Map())
-    setSaveError(null)
-  }, [resetToken, scopeKey])
-
-  useEffect(() => {
-    onDirtyChange(dirtyRows.size > 0)
-  }, [dirtyRows.size, onDirtyChange])
-
-  useEffect(() => () => onDirtyChange(false), [onDirtyChange])
 
   useEffect(() => {
     onBusyChange(busy)
@@ -172,18 +162,16 @@ export function MonthlyEmployeeTable({
     value: string
   ) => {
     setSaveError(null)
-    setDirtyRows((current) => {
-      const next = new Map(current)
-      const initial = initialRows.get(day) ?? getInitialRow(undefined)
-      const updated = {
-        ...(current.get(day) ?? initial),
-        [field]: value,
-        error: null,
-      }
-      if (rowsMatch(updated, initial)) next.delete(day)
-      else next.set(day, updated)
-      return next
-    })
+    const next = new Map(dirtyRows)
+    const initial = initialRows.get(day) ?? getInitialRow(undefined)
+    const updated = {
+      ...(dirtyRows.get(day) ?? initial),
+      [field]: value,
+      error: null,
+    }
+    if (rowsMatch(updated, initial)) next.delete(day)
+    else next.set(day, updated)
+    onDirtyRowsChange(next)
   }
 
   const saveChanges = async () => {
@@ -202,19 +190,17 @@ export function MonthlyEmployeeTable({
     })
 
     if (invalidDates.length > 0) {
-      setDirtyRows((current) => {
-        const next = new Map(current)
-        invalidDates.forEach((date) => {
-          const row = next.get(date)
-          if (row) {
-            next.set(date, {
-              ...row,
-              error: 'Uzupełnij godzinę wejścia i wyjścia',
-            })
-          }
-        })
-        return next
+      const next = new Map(dirtyRows)
+      invalidDates.forEach((date) => {
+        const row = next.get(date)
+        if (row) {
+          next.set(date, {
+            ...row,
+            error: 'Uzupełnij godzinę wejścia i wyjścia',
+          })
+        }
       })
+      onDirtyRowsChange(next)
       return
     }
 
@@ -237,15 +223,13 @@ export function MonthlyEmployeeTable({
         result.failed.map((row) => [row.date, row.error])
       )
 
-      setDirtyRows((current) => {
-        const next = new Map(current)
-        savedDates.forEach((date) => next.delete(date))
-        failedByDate.forEach((error, date) => {
-          const row = next.get(date)
-          if (row) next.set(date, { ...row, error })
-        })
-        return next
+      const next = new Map(dirtyRows)
+      savedDates.forEach((date) => next.delete(date))
+      failedByDate.forEach((error, date) => {
+        const row = next.get(date)
+        if (row) next.set(date, { ...row, error })
       })
+      onDirtyRowsChange(next)
 
       if (result.saved.length > 0) {
         try {
