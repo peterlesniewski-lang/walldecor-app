@@ -32,6 +32,8 @@ const EMPLOYEE_COLUMN_WIDTH = 176
 const DAY_COLUMN_WIDTH = 56
 const TOTAL_COLUMN_WIDTH = 88
 const DAY_LABELS = ['Nd', 'Pn', 'Wt', 'Śr', 'Cz', 'Pt', 'Sb']
+const EMPLOYEE_COLUMN_HEADER_ID = 'monthly-employee-column'
+const TOTAL_COLUMN_HEADER_ID = 'monthly-total-column'
 
 const STATUS_DETAILS: Record<string, {
   label: string
@@ -63,6 +65,14 @@ function leaveLabel(entry: TimeTrackingDayEntry): string | null {
   if (entry.leaveCode) return entry.leaveCode
   if (!entry.leaveType) return null
   return entry.leaveType.length > 6 ? `${entry.leaveType.slice(0, 5)}…` : entry.leaveType
+}
+
+function employeeRowHeaderId(employeeId: string): string {
+  return `monthly-employee-${employeeId}`
+}
+
+function dayColumnHeaderId(day: string): string {
+  return `monthly-day-${day}`
 }
 
 function getHolidayName(
@@ -107,6 +117,32 @@ function getEntryDescription(entry: TimeTrackingDayEntry | undefined): string {
   return parts.join(', ')
 }
 
+function getNoninteractiveDescription({
+  employeeName,
+  day,
+  entry,
+  pureLeave,
+  holidayName,
+  isSunday,
+}: {
+  employeeName: string
+  day: string
+  entry: TimeTrackingDayEntry | undefined
+  pureLeave: boolean
+  holidayName: string | null
+  isSunday: boolean
+}): string {
+  if (pureLeave && entry) {
+    const code = leaveLabel(entry) ?? 'urlop'
+    const type = entry.leaveType ? ` - ${entry.leaveType}` : ''
+    return `${employeeName}, ${day}: urlop ${code}${type}`
+  }
+  if (holidayName) {
+    return `${employeeName}, ${day}: święto - ${holidayName}`
+  }
+  return `${employeeName}, ${day}: dzień wolny - ${isSunday ? 'niedziela' : 'sobota'}`
+}
+
 function EntryContent({ entry }: { entry: TimeTrackingDayEntry }) {
   const status = entry.status ? STATUS_DETAILS[entry.status] : null
   const StatusIcon = status?.icon
@@ -119,7 +155,7 @@ function EntryContent({ entry }: { entry: TimeTrackingDayEntry }) {
         style={{
           backgroundColor: entry.leaveColor ? `${entry.leaveColor}18` : 'var(--wd-surface-2)',
           borderColor: entry.leaveColor ? `${entry.leaveColor}40` : 'var(--wd-border)',
-          color: entry.leaveColor ?? 'var(--wd-text-muted)',
+          color: 'var(--muted-foreground)',
         }}
         title={entry.leaveType ?? leave ?? undefined}
       >
@@ -146,7 +182,7 @@ function EntryContent({ entry }: { entry: TimeTrackingDayEntry }) {
             className="max-w-[48px] truncate rounded px-1 py-px text-[9px] font-semibold leading-none"
             style={{
               backgroundColor: entry.leaveColor ? `${entry.leaveColor}18` : 'var(--wd-surface-2)',
-              color: entry.leaveColor ?? 'var(--wd-text-muted)',
+              color: 'var(--muted-foreground)',
             }}
             title={entry.leaveType ?? leave}
           >
@@ -196,9 +232,10 @@ export function MonthlyTeamGrid({
         <thead>
           <tr className="h-14 border-b-2 border-[var(--wd-border)] bg-[var(--wd-surface-2)]">
             <th
+              id={EMPLOYEE_COLUMN_HEADER_ID}
               data-testid="monthly-employee-header"
               scope="col"
-              className="sticky left-0 z-30 h-14 border-r border-[var(--wd-border)] bg-[var(--wd-surface-2)] px-3 text-left text-[10px] font-semibold uppercase text-[var(--wd-text-muted)]"
+              className="sticky left-0 z-30 h-14 border-r border-[var(--wd-border)] bg-[var(--wd-surface-2)] px-3 text-left text-[10px] font-semibold uppercase text-[var(--muted-foreground)]"
               style={{ width: `${EMPLOYEE_COLUMN_WIDTH}px` }}
             >
               Pracownik
@@ -207,6 +244,7 @@ export function MonthlyTeamGrid({
               const { date, isWeekend } = getDayState(day, saturdayWorkable)
               return (
                 <th
+                  id={dayColumnHeaderId(day)}
                   key={day}
                   scope="col"
                   className={`h-14 border-r border-[var(--wd-border)] px-1 text-center ${
@@ -214,7 +252,7 @@ export function MonthlyTeamGrid({
                   }`}
                   style={{ width: `${DAY_COLUMN_WIDTH}px` }}
                 >
-                  <span className="block text-[9px] font-semibold uppercase leading-3 text-[var(--wd-text-muted)]">
+                  <span className="block text-[9px] font-semibold uppercase leading-3 text-[var(--muted-foreground)]">
                     {DAY_LABELS[date.getDay()]}
                   </span>
                   <span className="num block text-xs font-semibold leading-4 text-[var(--wd-text-primary)]">
@@ -224,8 +262,9 @@ export function MonthlyTeamGrid({
               )
             })}
             <th
+              id={TOTAL_COLUMN_HEADER_ID}
               scope="col"
-              className="h-14 px-2 text-center text-[10px] font-semibold uppercase text-[var(--wd-text-muted)]"
+              className="h-14 px-2 text-center text-[10px] font-semibold uppercase text-[var(--muted-foreground)]"
               style={{ width: `${TOTAL_COLUMN_WIDTH}px` }}
             >
               Łącznie
@@ -238,7 +277,7 @@ export function MonthlyTeamGrid({
             <tr className="h-20">
               <td
                 colSpan={days.length + 2}
-                className="text-center text-xs text-[var(--wd-text-muted)]"
+                className="text-center text-xs text-[var(--muted-foreground)]"
               >
                 Brak pracowników do wyświetlenia
               </td>
@@ -255,8 +294,10 @@ export function MonthlyTeamGrid({
                 key={employee.id}
                 className="group h-14 border-b border-[var(--wd-border)] last:border-b-0"
               >
-                <td
+                <th
+                  id={employeeRowHeaderId(employee.id)}
                   data-testid={`monthly-employee-cell-${employee.id}`}
+                  scope="row"
                   className="sticky left-0 z-20 h-14 border-r border-[var(--wd-border)] bg-white px-2.5 group-hover:bg-[var(--wd-off-white)]"
                   style={{ width: `${EMPLOYEE_COLUMN_WIDTH}px` }}
                 >
@@ -272,13 +313,13 @@ export function MonthlyTeamGrid({
                         {employee.lastName} {employee.firstName[0]}.
                       </div>
                       {employee.divisionName && (
-                        <div className="truncate text-[10px] leading-3 text-[var(--wd-text-muted)]">
+                        <div className="truncate text-[10px] leading-3 text-[var(--muted-foreground)]">
                           {employee.divisionName}
                         </div>
                       )}
                     </div>
                   </div>
-                </td>
+                </th>
 
                 {days.map((day) => {
                   const entry = employee.entries[day]
@@ -290,6 +331,16 @@ export function MonthlyTeamGrid({
                   const blocked = dayState.isBlockedWeekend || Boolean(holidayName)
                   const editable = hasEntry || (!blocked && !pureLeave)
                   const description = getEntryDescription(entry)
+                  const noninteractiveDescription = !editable
+                    ? getNoninteractiveDescription({
+                        employeeName,
+                        day,
+                        entry,
+                        pureLeave,
+                        holidayName,
+                        isSunday: dayState.isSunday,
+                      })
+                    : null
 
                   const stateBackground = holidayName
                     ? 'bg-red-50/60'
@@ -303,6 +354,7 @@ export function MonthlyTeamGrid({
                     <td
                       key={day}
                       data-testid={`monthly-cell-${employee.id}-${day}`}
+                      headers={`${employeeRowHeaderId(employee.id)} ${dayColumnHeaderId(day)}`}
                       className={`h-14 border-r border-[var(--wd-border)] p-0 text-center align-middle ${stateBackground}`}
                       style={{
                         width: `${DAY_COLUMN_WIDTH}px`,
@@ -325,7 +377,7 @@ export function MonthlyTeamGrid({
                           {entry?.id ? (
                             <EntryContent entry={entry} />
                           ) : (
-                            <span className="text-xs text-[var(--wd-text-muted)]">—</span>
+                            <span className="text-xs text-[var(--muted-foreground)]">—</span>
                           )}
                         </button>
                       ) : (
@@ -333,17 +385,20 @@ export function MonthlyTeamGrid({
                           className="flex h-14 w-14 items-center justify-center"
                           title={holidayName ?? undefined}
                         >
-                          {pureLeave && entry ? (
-                            <EntryContent entry={entry} />
-                          ) : holidayName ? (
-                            <span className="text-[9px] font-semibold leading-3 text-red-600">
-                              Święto
-                            </span>
-                          ) : (
-                            <span className="text-[9px] font-medium leading-3 text-[var(--wd-text-muted)]">
-                              Wolne
-                            </span>
-                          )}
+                          <span className="sr-only">{noninteractiveDescription}</span>
+                          <div aria-hidden="true" className="flex items-center justify-center">
+                            {pureLeave && entry ? (
+                              <EntryContent entry={entry} />
+                            ) : holidayName ? (
+                              <span className="text-[9px] font-semibold leading-3 text-[var(--muted-foreground)]">
+                                Święto
+                              </span>
+                            ) : (
+                              <span className="text-[9px] font-medium leading-3 text-[var(--muted-foreground)]">
+                                Wolne
+                              </span>
+                            )}
+                          </div>
                         </div>
                       )}
                     </td>
@@ -351,6 +406,8 @@ export function MonthlyTeamGrid({
                 })}
 
                 <td
+                  data-testid={`monthly-total-${employee.id}`}
+                  headers={`${employeeRowHeaderId(employee.id)} ${TOTAL_COLUMN_HEADER_ID}`}
                   className="num h-14 bg-white px-2 text-center text-xs font-semibold text-[var(--wd-text-primary)] group-hover:bg-[var(--wd-off-white)]"
                   style={{ width: `${TOTAL_COLUMN_WIDTH}px` }}
                 >

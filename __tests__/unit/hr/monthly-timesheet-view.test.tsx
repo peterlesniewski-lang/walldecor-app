@@ -478,6 +478,8 @@ describe('MonthlyTeamGrid', () => {
     expect(screen.getByText('Święto')).toBeTruthy()
     expect(screen.getByTestId('monthly-employee-header').className).toContain('sticky')
     expect(screen.getByTestId('monthly-employee-cell-employee-1').className).toContain('sticky')
+    expect(screen.getByTestId('monthly-employee-cell-employee-1').tagName).toBe('TH')
+    expect(screen.getByTestId('monthly-employee-cell-employee-1').getAttribute('scope')).toBe('row')
     expect(grid.className).toContain('overflow-x-auto')
     expect(table.style.tableLayout).toBe('fixed')
     expect(table.style.width).toBe('2000px')
@@ -492,6 +494,69 @@ describe('MonthlyTeamGrid', () => {
     expect(screen.getByTitle('Zatwierdzony')).toBeTruthy()
     expect(screen.getByTitle('Oczekujący')).toBeTruthy()
     expect(screen.getByText('15h')).toBeTruthy()
+  })
+
+  it('associates every data cell with stable row and column headers', () => {
+    render(
+      <MonthlyTeamGrid
+        days={monthlyGridDays}
+        employees={monthlyGridEmployees}
+        holidays={monthlyGridHolidays}
+        saturdayWorkable={false}
+        onEditCell={vi.fn()}
+      />
+    )
+
+    expect(screen.getByTestId('monthly-employee-header').id).toBe(
+      'monthly-employee-column'
+    )
+    expect(document.getElementById('monthly-day-2026-07-01')?.getAttribute('scope')).toBe('col')
+    expect(document.getElementById('monthly-total-column')?.getAttribute('scope')).toBe('col')
+
+    const employeeHeader = screen.getByTestId('monthly-employee-cell-employee-1')
+    expect(employeeHeader.id).toBe('monthly-employee-employee-1')
+    expect(employeeHeader.getAttribute('scope')).toBe('row')
+    expect(
+      screen.getByTestId('monthly-cell-employee-1-2026-07-01').getAttribute('headers')
+    ).toBe('monthly-employee-employee-1 monthly-day-2026-07-01')
+    expect(
+      screen.getByTestId('monthly-total-employee-1').getAttribute('headers')
+    ).toBe('monthly-employee-employee-1 monthly-total-column')
+  })
+
+  it('uses AA text tokens and describes every noninteractive state', () => {
+    render(
+      <MonthlyTeamGrid
+        days={monthlyGridDays}
+        employees={monthlyGridEmployees}
+        holidays={monthlyGridHolidays}
+        saturdayWorkable={false}
+        onEditCell={vi.fn()}
+      />
+    )
+
+    const grid = screen.getByTestId('monthly-team-grid')
+    const leaveCell = screen.getByTestId('monthly-cell-employee-1-2026-07-02')
+    const holidayCell = screen.getByTestId('monthly-cell-employee-1-2026-07-06')
+    const weekendCell = screen.getByTestId('monthly-cell-employee-2-2026-07-05')
+
+    expect(grid.innerHTML).not.toContain('--wd-text-muted')
+    expect(grid.innerHTML).toContain('--muted-foreground')
+    expect(within(leaveCell).getByText('VL').style.color).toBe(
+      'var(--muted-foreground)'
+    )
+    expect(within(holidayCell).getByText('Święto').className).toContain(
+      'text-[var(--muted-foreground)]'
+    )
+    expect(within(leaveCell).getByText(
+      'Jan Kowalski, 2026-07-02: urlop VL - Urlop wypoczynkowy'
+    ).className).toContain('sr-only')
+    expect(within(holidayCell).getByText(
+      'Jan Kowalski, 2026-07-06: święto - Dzień wolny JAG'
+    ).className).toContain('sr-only')
+    expect(within(weekendCell).getByText(
+      'Ewa Nowak, 2026-07-05: dzień wolny - niedziela'
+    ).className).toContain('sr-only')
   })
 
   it('uses division-aware holidays and sends the exact editable-cell payload', async () => {
