@@ -40,11 +40,9 @@ interface LeaveBalance {
 function BalanceProgressBar({
   used,
   total,
-  color,
 }: {
   used: number
   total: number
-  color: string
 }) {
   const pct = total > 0 ? Math.min(100, (used / total) * 100) : 0
   const barColor =
@@ -79,10 +77,17 @@ function InlineBalanceEdit({
   const [totalDays, setTotalDays] = useState(String(balance.totalDays))
   const [usedDays, setUsedDays] = useState(String(balance.usedDays))
   const [carriedOver, setCarriedOver] = useState(String(balance.carriedOver))
+  const [reason, setReason] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState('')
 
   const handleSave = async () => {
+    const trimmedReason = reason.trim()
+    if (trimmedReason.length < 3) {
+      setError('Powód korekty musi mieć co najmniej 3 znaki')
+      return
+    }
+
     setLoading(true)
     setError('')
     try {
@@ -93,6 +98,7 @@ function InlineBalanceEdit({
           totalDays: parseFloat(totalDays),
           usedDays: parseFloat(usedDays),
           carriedOver: parseFloat(carriedOver),
+          reason: trimmedReason,
         }),
       })
       if (!res.ok) {
@@ -109,11 +115,12 @@ function InlineBalanceEdit({
   }
 
   return (
-    <td colSpan={6} className="px-4 py-2">
+    <td colSpan={7} className="px-4 py-2">
       <div className="flex items-center gap-3 flex-wrap">
         <label className="flex items-center gap-1.5 text-xs text-[var(--wd-text-muted)]">
           Przysługuje:
           <input
+            aria-label="Przysługuje"
             type="number"
             value={totalDays}
             onChange={(e) => setTotalDays(e.target.value)}
@@ -125,6 +132,7 @@ function InlineBalanceEdit({
         <label className="flex items-center gap-1.5 text-xs text-[var(--wd-text-muted)]">
           Wykorzystane:
           <input
+            aria-label="Wykorzystane"
             type="number"
             value={usedDays}
             onChange={(e) => setUsedDays(e.target.value)}
@@ -136,6 +144,7 @@ function InlineBalanceEdit({
         <label className="flex items-center gap-1.5 text-xs text-[var(--wd-text-muted)]">
           Przeniesione:
           <input
+            aria-label="Przeniesione"
             type="number"
             value={carriedOver}
             onChange={(e) => setCarriedOver(e.target.value)}
@@ -144,7 +153,24 @@ function InlineBalanceEdit({
             className="w-16 px-2 py-1 text-xs rounded border border-[var(--wd-border)] bg-[var(--wd-surface)] focus:outline-none focus:ring-1 focus:ring-[var(--wd-sand)]"
           />
         </label>
-        {error && <span className="text-xs text-red-600">{error}</span>}
+        <label className="flex items-center gap-1.5 text-xs text-[var(--wd-text-muted)]">
+          Powód korekty:
+          <input
+            aria-label="Powód korekty"
+            type="text"
+            value={reason}
+            onChange={(e) => setReason(e.target.value)}
+            required
+            minLength={3}
+            maxLength={1000}
+            className="w-64 max-w-full px-2 py-1 text-xs rounded border border-[var(--wd-border)] bg-[var(--wd-surface)] focus:outline-none focus:ring-1 focus:ring-[var(--wd-sand)]"
+          />
+        </label>
+        {error && (
+          <span role="alert" className="text-xs text-red-600">
+            {error}
+          </span>
+        )}
         <div className="flex items-center gap-1">
           <button
             onClick={handleSave}
@@ -152,10 +178,11 @@ function InlineBalanceEdit({
             className="inline-flex items-center gap-1 px-2.5 py-1 text-xs font-medium rounded bg-[var(--wd-dark)] text-white hover:bg-[#2E2E2E] disabled:opacity-50 transition-colors"
           >
             {loading ? <Loader2 size={12} className="animate-spin" /> : <Check size={12} />}
-            Zapisz
+            Zapisz korektę
           </button>
           <button
             onClick={onCancel}
+            aria-label="Anuluj korektę"
             className="p-1 rounded text-[var(--wd-text-muted)] hover:bg-[var(--wd-surface-2)] transition-colors"
           >
             <X size={14} />
@@ -181,12 +208,17 @@ function CarryoverModal({
   const [fromYear, setFromYear] = useState(String(currentYear - 1))
   const [toYear, setToYear] = useState(String(currentYear))
   const [maxDays, setMaxDays] = useState('')
+  const [reason, setReason] = useState('')
   const [loading, setLoading] = useState(false)
   const [result, setResult] = useState<{
     processed: number
     created: number
     updated: number
     skipped: number
+    needsReview: Array<{
+      employeeId: string
+      employeeName: string
+    }>
   } | null>(null)
   const [error, setError] = useState('')
 
@@ -194,11 +226,28 @@ function CarryoverModal({
     if (!open) {
       setResult(null)
       setError('')
+      setReason('')
     }
   }, [open])
 
+  useEffect(() => {
+    if (!open) return
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose()
+    }
+    document.addEventListener('keydown', handleKeyDown)
+    return () => document.removeEventListener('keydown', handleKeyDown)
+  }, [onClose, open])
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    const trimmedReason = reason.trim()
+    if (trimmedReason.length < 3) {
+      setError('Powód przeniesienia musi mieć co najmniej 3 znaki')
+      return
+    }
+
     setLoading(true)
     setError('')
     setResult(null)
@@ -211,11 +260,20 @@ function CarryoverModal({
           fromYear: parseInt(fromYear, 10),
           toYear: parseInt(toYear, 10),
           maxCarryoverDays: maxDays ? parseFloat(maxDays) : undefined,
+          reason: trimmedReason,
         }),
       })
 
       const data = await res.json() as {
-        processed?: number; created?: number; updated?: number; skipped?: number; error?: string
+        processed?: number
+        created?: number
+        updated?: number
+        skipped?: number
+        needsReview?: Array<{
+          employeeId: string
+          employeeName: string
+        }>
+        error?: string
       }
 
       if (!res.ok) {
@@ -228,6 +286,7 @@ function CarryoverModal({
         created: data.created ?? 0,
         updated: data.updated ?? 0,
         skipped: data.skipped ?? 0,
+        needsReview: data.needsReview ?? [],
       })
       onDone()
     } catch {
@@ -241,10 +300,19 @@ function CarryoverModal({
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" onClick={onClose} />
+      <button
+        type="button"
+        tabIndex={-1}
+        aria-label="Zamknij okno przeniesienia"
+        className="absolute inset-0 bg-black/40 backdrop-blur-sm"
+        onClick={onClose}
+      />
 
       <div
-        className="relative w-full max-w-sm rounded-xl shadow-2xl"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="carryover-dialog-title"
+        className="relative w-full max-w-md rounded-lg shadow-2xl"
         style={{ background: 'var(--wd-white)', border: '1px solid var(--wd-border)' }}
       >
         <div
@@ -253,10 +321,17 @@ function CarryoverModal({
         >
           <div className="flex items-center gap-2">
             <RefreshCw size={16} className="text-[var(--wd-text-muted)]" />
-            <h2 className="font-semibold text-[var(--wd-text-primary)]">Przeniesienie dni na nowy rok</h2>
+            <h2
+              id="carryover-dialog-title"
+              className="font-semibold text-[var(--wd-text-primary)]"
+            >
+              Przeniesienie dni na nowy rok
+            </h2>
           </div>
           <button
+            type="button"
             onClick={onClose}
+            aria-label="Zamknij"
             className="p-1 rounded-md hover:bg-[var(--wd-surface-2)] text-[var(--wd-text-muted)] transition-colors"
           >
             <X size={16} />
@@ -264,31 +339,43 @@ function CarryoverModal({
         </div>
 
         <form onSubmit={handleSubmit} className="p-5 space-y-4">
+          <p className="text-xs leading-5 text-[var(--wd-text-muted)]">
+            Operacja dotyczy wyłącznie urlopu wypoczynkowego (VL).
+          </p>
+
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-[var(--wd-text-muted)] mb-1.5 uppercase tracking-wide">
+              <label
+                htmlFor="carryover-from-year"
+                className="block text-xs font-medium text-[var(--wd-text-muted)] mb-1.5 uppercase tracking-wide"
+              >
                 Z roku
               </label>
               <input
+                id="carryover-from-year"
                 type="number"
                 value={fromYear}
                 onChange={(e) => setFromYear(e.target.value)}
                 required
-                min={2020}
+                min={2000}
                 max={2100}
                 className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-[var(--wd-surface)] text-[var(--wd-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--wd-sand)] transition"
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-[var(--wd-text-muted)] mb-1.5 uppercase tracking-wide">
+              <label
+                htmlFor="carryover-to-year"
+                className="block text-xs font-medium text-[var(--wd-text-muted)] mb-1.5 uppercase tracking-wide"
+              >
                 Na rok
               </label>
               <input
+                id="carryover-to-year"
                 type="number"
                 value={toYear}
                 onChange={(e) => setToYear(e.target.value)}
                 required
-                min={2020}
+                min={2000}
                 max={2100}
                 className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-[var(--wd-surface)] text-[var(--wd-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--wd-sand)] transition"
               />
@@ -296,10 +383,14 @@ function CarryoverModal({
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-[var(--wd-text-muted)] mb-1.5 uppercase tracking-wide">
+            <label
+              htmlFor="carryover-max-days"
+              className="block text-xs font-medium text-[var(--wd-text-muted)] mb-1.5 uppercase tracking-wide"
+            >
               Maks. dni do przeniesienia <span className="normal-case font-normal">(opcjonalnie)</span>
             </label>
             <input
+              id="carryover-max-days"
               type="number"
               value={maxDays}
               onChange={(e) => setMaxDays(e.target.value)}
@@ -310,28 +401,71 @@ function CarryoverModal({
             />
           </div>
 
+          <div>
+            <label
+              htmlFor="carryover-reason"
+              className="block text-xs font-medium text-[var(--wd-text-muted)] mb-1.5 uppercase tracking-wide"
+            >
+              Powód przeniesienia
+            </label>
+            <textarea
+              id="carryover-reason"
+              value={reason}
+              onChange={(e) => setReason(e.target.value)}
+              required
+              minLength={3}
+              maxLength={1000}
+              rows={2}
+              className="w-full resize-y px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-[var(--wd-surface)] text-[var(--wd-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--wd-sand)] transition"
+            />
+          </div>
+
           {error && (
-            <p className="text-xs text-red-600 bg-red-50 px-3 py-2 rounded-lg border border-red-200">
+            <p
+              role="alert"
+              className="text-xs text-red-600 border-l-2 border-red-500 pl-3 py-1"
+            >
               {error}
             </p>
           )}
 
           {result && (
-            <div className="bg-emerald-50 border border-emerald-200 rounded-lg px-3 py-2.5 space-y-1">
+            <div
+              role="status"
+              aria-live="polite"
+              className="border-t border-[var(--wd-border)] pt-3 space-y-3"
+            >
               <p className="text-xs font-medium text-emerald-800">Przeniesienie zakończone</p>
               <div className="grid grid-cols-4 gap-2 text-center">
                 {[
-                  { label: 'Przetw.', value: result.processed },
-                  { label: 'Nowych', value: result.created },
-                  { label: 'Aktuali.', value: result.updated },
-                  { label: 'Pominię.', value: result.skipped },
+                  { label: 'Przetworzone', value: result.processed },
+                  { label: 'Utworzone', value: result.created },
+                  { label: 'Zaktualizowane', value: result.updated },
+                  { label: 'Pominięte', value: result.skipped },
                 ].map((s) => (
                   <div key={s.label}>
                     <p className="text-lg font-bold text-emerald-700">{s.value}</p>
-                    <p className="text-[10px] text-emerald-600">{s.label}</p>
+                    <p className="text-[10px] leading-4 text-emerald-700 break-words">
+                      {s.label}
+                    </p>
                   </div>
                 ))}
               </div>
+              {result.needsReview.length > 0 && (
+                <div className="border-l-2 border-amber-500 pl-3">
+                  <p className="text-xs font-medium text-amber-800">
+                    Wymagają weryfikacji
+                  </p>
+                  <p className="text-xs text-amber-800 mt-0.5">
+                    Trzeba ustawić wymiar urlopu na profilu pracownika:
+                  </p>
+                  <ul className="mt-1 text-xs text-amber-900 list-disc list-inside">
+                    {result.needsReview.map((employee) => (
+                      <li key={employee.employeeId}>{employee.employeeName}</li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
           )}
 
@@ -429,13 +563,15 @@ export default function LeaveBalancesPage() {
         </div>
         <div className="flex items-center gap-2 flex-wrap">
           {isAdmin && <AdminLeaveButton onSuccess={fetchBalances} />}
-          <button
-            onClick={() => setCarryoverOpen(true)}
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-[var(--wd-border)] bg-white text-[var(--wd-text-primary)] hover:bg-[var(--wd-surface-2)] transition-colors"
-          >
-            <RefreshCw size={14} />
-            Przenieś na nowy rok
-          </button>
+          {isAdmin && (
+            <button
+              onClick={() => setCarryoverOpen(true)}
+              className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg border border-[var(--wd-border)] bg-white text-[var(--wd-text-primary)] hover:bg-[var(--wd-surface-2)] transition-colors"
+            >
+              <RefreshCw size={14} />
+              Przenieś na nowy rok
+            </button>
+          )}
         </div>
       </div>
 
@@ -506,15 +642,15 @@ export default function LeaveBalancesPage() {
                   <th className="text-right">Oczek.</th>
                   <th className="text-right">Pozostało</th>
                   <th style={{ minWidth: '120px' }}>Postęp</th>
-                  <th className="text-right">Akcje</th>
+                  {isAdmin && <th className="text-right">Akcje</th>}
                 </tr>
               </thead>
               <tbody>
-                {Object.entries(grouped).map(([employeeId, empBalances]) => {
+                {Object.values(grouped).map((empBalances) => {
                   const emp = empBalances[0]?.employee
                   return empBalances.map((balance, idx) => {
                     const remaining = balance.totalDays - balance.usedDays - balance.pendingDays
-                    const isEditing = editingId === balance.id
+                    const isEditing = isAdmin && editingId === balance.id
 
                     if (isEditing) {
                       return (
@@ -605,18 +741,20 @@ export default function LeaveBalancesPage() {
                           <BalanceProgressBar
                             used={balance.usedDays}
                             total={balance.totalDays}
-                            color={balance.leaveType.color}
                           />
                         </td>
-                        <td className="text-right">
-                          <button
-                            onClick={() => setEditingId(balance.id)}
-                            className="p-1.5 rounded-md text-[var(--wd-text-muted)] hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] transition-colors"
-                            title="Edytuj saldo"
-                          >
-                            <Pencil size={14} />
-                          </button>
-                        </td>
+                        {isAdmin && (
+                          <td className="text-right">
+                            <button
+                              onClick={() => setEditingId(balance.id)}
+                              aria-label="Edytuj saldo"
+                              className="p-1.5 rounded-md text-[var(--wd-text-muted)] hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] transition-colors"
+                              title="Edytuj saldo"
+                            >
+                              <Pencil size={14} />
+                            </button>
+                          </td>
+                        )}
                       </tr>
                     )
                   })
@@ -628,11 +766,13 @@ export default function LeaveBalancesPage() {
       </div>
 
       {/* Carryover Modal */}
-      <CarryoverModal
-        open={carryoverOpen}
-        onClose={() => setCarryoverOpen(false)}
-        onDone={fetchBalances}
-      />
+      {isAdmin && (
+        <CarryoverModal
+          open={carryoverOpen}
+          onClose={() => setCarryoverOpen(false)}
+          onDone={fetchBalances}
+        />
+      )}
     </div>
   )
 }
