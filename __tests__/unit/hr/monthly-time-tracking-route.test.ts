@@ -136,24 +136,14 @@ describe('GET /api/hr/time-tracking/monthly', () => {
     ]).toEqual([2026, 9, 1, 2026, 9, 30])
   })
 
-  it('loads supported years below 100 without Date constructor coercion', async () => {
-    process.env.TZ = 'UTC'
+  it('rejects years below 100 before calling the range loader', async () => {
     mockGetServerSession.mockResolvedValue(session('ADMIN'))
 
     const response = await GET(request('month=0001-07'))
-    const input = mockLoadRange.mock.calls[0][0]
 
-    expect(response.status).toBe(200)
-    expect([
-      input.start.getFullYear(),
-      input.start.getMonth() + 1,
-      input.start.getDate(),
-      input.start.getHours(),
-      input.end.getFullYear(),
-      input.end.getMonth() + 1,
-      input.end.getDate(),
-      input.end.getHours(),
-    ]).toEqual([1, 7, 1, 0, 1, 7, 31, 23])
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'Month year must be 0100 or later' })
+    expect(mockLoadRange).not.toHaveBeenCalled()
   })
 
   it('loads exactly the requested month with all filters and returns the monthly contract', async () => {

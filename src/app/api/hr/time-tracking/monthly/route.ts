@@ -30,6 +30,9 @@ export async function GET(req: NextRequest) {
   if (!parsedMonth) {
     return NextResponse.json({ error: 'Invalid month format. Use YYYY-MM' }, { status: 400 })
   }
+  if (parsedMonth.year < 100) {
+    return NextResponse.json({ error: 'Month year must be 0100 or later' }, { status: 400 })
+  }
 
   const divisionId = searchParams.get('divisionId') || undefined
   const departmentId = searchParams.get('departmentId') || undefined
