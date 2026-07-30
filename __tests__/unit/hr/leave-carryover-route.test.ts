@@ -133,10 +133,15 @@ function malformedRequest() {
   )
 }
 
-function prismaError(code: string, message: string, target?: string[]) {
+function prismaError(
+  code: string,
+  message: string,
+  target?: string[],
+  modelName?: string
+) {
   return Object.assign(new Error(message), {
     code,
-    ...(target ? { meta: { target } } : {}),
+    ...(target ? { meta: { target, modelName } } : {}),
   })
 }
 
@@ -737,7 +742,7 @@ describe('POST /api/hr/leave-balances/carryover target snapshots and idempotence
 })
 
 describe('POST /api/hr/leave-balances/carryover batch rollback and retry', () => {
-  it('returns 409 when the second employee fails inside the single batch transaction', async () => {
+  it('rethrows when the second employee fails inside the single batch transaction', async () => {
     txSourceFindMany.mockResolvedValue([
       sourceBalance(),
       sourceBalance(
@@ -756,11 +761,7 @@ describe('POST /api/hr/leave-balances/carryover batch rollback and retry', () =>
       .mockResolvedValueOnce({ id: 'target-employee-1' })
       .mockRejectedValueOnce(new Error('second employee failed'))
 
-    const response = await POST(request())
-    const body = await response.json()
-
-    expect(response.status).toBe(409)
-    expect(body.code).toBe('CARRYOVER_CONFLICT')
+    await expect(POST(request())).rejects.toThrow('second employee failed')
     expect(mockTransaction).toHaveBeenCalledOnce()
     expect(txBalanceCreate).toHaveBeenCalledTimes(2)
     expect(txCorrectionCreate).not.toHaveBeenCalled()
@@ -812,7 +813,8 @@ describe('POST /api/hr/leave-balances/carryover batch rollback and retry', () =>
       prismaError(
         'P2002',
         'Unique constraint failed',
-        ['employeeId', 'leaveTypeId', 'year']
+        ['employeeId', 'leaveTypeId', 'year'],
+        'LeaveBalanceNew'
       )
     )
 
@@ -823,7 +825,25 @@ describe('POST /api/hr/leave-balances/carryover batch rollback and retry', () =>
     expect(txCorrectionCreate).not.toHaveBeenCalled()
   })
 
-  it('returns 409 and does not append an audit when a target update fails', async () => {
+  it('rethrows an unrelated P2002 error', async () => {
+    txSourceFindMany.mockResolvedValue([sourceBalance()])
+    txBalanceCreate.mockRejectedValue(
+      prismaError(
+        'P2002',
+        'Unrelated unique constraint failed',
+        ['employeeId', 'leaveTypeId', 'year'],
+        'LeaveEntitlementConfig'
+      )
+    )
+
+    await expect(POST(request())).rejects.toThrow(
+      'Unrelated unique constraint failed'
+    )
+    expect(txBalanceCreate).toHaveBeenCalledOnce()
+    expect(txCorrectionCreate).not.toHaveBeenCalled()
+  })
+
+  it('rethrows and does not append an audit when a target update fails', async () => {
     txSourceFindMany.mockResolvedValue([sourceBalance()])
     txBalanceFindUnique.mockResolvedValue({
       id: 'target-balance-1',
@@ -837,9 +857,7 @@ describe('POST /api/hr/leave-balances/carryover batch rollback and retry', () =>
     })
     txBalanceUpdate.mockRejectedValue(new Error('update failed'))
 
-    const response = await POST(request())
-
-    expect(response.status).toBe(409)
+    await expect(POST(request())).rejects.toThrow('update failed')
     expect(txCorrectionCreate).not.toHaveBeenCalled()
   })
 })

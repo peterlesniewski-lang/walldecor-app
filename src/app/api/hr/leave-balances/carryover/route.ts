@@ -7,7 +7,10 @@ import {
   executeLeaveCarryoverBatch,
   LeaveCarryoverCanonicalVlError,
 } from '@/lib/hr/leave-carryover'
-import { runSerializableTransactionWithRetry } from '@/lib/hr/serializable-transaction'
+import {
+  runSerializableTransactionWithRetry,
+  SerializableTransactionConflictError,
+} from '@/lib/hr/serializable-transaction'
 
 const carryoverSchema = z.object({
   fromYear: z.number().int().min(2000).max(2100),
@@ -33,6 +36,37 @@ function missingCanonicalVl() {
   return NextResponse.json(
     { error: 'Canonical leave type VL is not configured correctly' },
     { status: 503 }
+  )
+}
+
+function isTargetBalanceUniqueError(error: unknown): boolean {
+  if (
+    typeof error !== 'object' ||
+    error === null ||
+    !('code' in error) ||
+    error.code !== 'P2002' ||
+    !('meta' in error) ||
+    typeof error.meta !== 'object' ||
+    error.meta === null
+  ) {
+    return false
+  }
+
+  const meta = error.meta
+  if (
+    !('modelName' in meta) ||
+    meta.modelName !== 'LeaveBalanceNew'
+  ) {
+    return false
+  }
+  if (!('target' in meta)) return false
+
+  const target = meta.target
+  const targetFields = ['employeeId', 'leaveTypeId', 'year']
+  return (
+    Array.isArray(target) &&
+    target.length === targetFields.length &&
+    targetFields.every((field, index) => target[index] === field)
   )
 }
 
@@ -85,6 +119,12 @@ export async function POST(req: NextRequest) {
     if (error instanceof LeaveCarryoverCanonicalVlError) {
       return missingCanonicalVl()
     }
-    return carryoverConflict()
+    if (
+      error instanceof SerializableTransactionConflictError ||
+      isTargetBalanceUniqueError(error)
+    ) {
+      return carryoverConflict()
+    }
+    throw error
   }
 }
