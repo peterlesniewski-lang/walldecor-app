@@ -89,9 +89,51 @@ function InlineBalanceEdit({
   const [error, setError] = useState('')
 
   const handleSave = async () => {
+    if (loading) return
+
     const trimmedReason = reason.trim()
     if (trimmedReason.length < 3) {
       setError('Powód korekty musi mieć co najmniej 3 znaki')
+      return
+    }
+    if (trimmedReason.length > 1000) {
+      setError('Powód korekty może mieć maksymalnie 1000 znaków')
+      return
+    }
+
+    const values = [
+      {
+        label: 'Przysługuje',
+        raw: totalDays,
+      },
+      {
+        label: 'Wykorzystane',
+        raw: usedDays,
+      },
+      {
+        label: 'Przeniesione',
+        raw: carriedOver,
+      },
+    ]
+    const parsedValues: number[] = []
+    for (const value of values) {
+      const parsedValue = Number(value.raw)
+      if (
+        value.raw.trim() === '' ||
+        !Number.isFinite(parsedValue) ||
+        parsedValue < 0
+      ) {
+        setError(`${value.label} musi być liczbą nieujemną`)
+        return
+      }
+      parsedValues.push(parsedValue)
+    }
+
+    const [parsedTotalDays, parsedUsedDays, parsedCarriedOver] = parsedValues
+    if (parsedCarriedOver > parsedTotalDays) {
+      setError(
+        'Przeniesione dni nie mogą przekraczać liczby dni przysługujących'
+      )
       return
     }
 
@@ -102,9 +144,9 @@ function InlineBalanceEdit({
         method: 'PATCH',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          totalDays: parseFloat(totalDays),
-          usedDays: parseFloat(usedDays),
-          carriedOver: parseFloat(carriedOver),
+          totalDays: parsedTotalDays,
+          usedDays: parsedUsedDays,
+          carriedOver: parsedCarriedOver,
           reason: trimmedReason,
         }),
       })
@@ -131,6 +173,7 @@ function InlineBalanceEdit({
             type="number"
             value={totalDays}
             onChange={(e) => setTotalDays(e.target.value)}
+            disabled={loading}
             min={0}
             step={0.5}
             className="w-16 px-2 py-1 text-xs rounded border border-[var(--wd-border)] bg-[var(--wd-surface)] focus:outline-none focus:ring-1 focus:ring-[var(--wd-sand)]"
@@ -143,6 +186,7 @@ function InlineBalanceEdit({
             type="number"
             value={usedDays}
             onChange={(e) => setUsedDays(e.target.value)}
+            disabled={loading}
             min={0}
             step={0.5}
             className="w-16 px-2 py-1 text-xs rounded border border-[var(--wd-border)] bg-[var(--wd-surface)] focus:outline-none focus:ring-1 focus:ring-[var(--wd-sand)]"
@@ -155,6 +199,7 @@ function InlineBalanceEdit({
             type="number"
             value={carriedOver}
             onChange={(e) => setCarriedOver(e.target.value)}
+            disabled={loading}
             min={0}
             step={0.5}
             className="w-16 px-2 py-1 text-xs rounded border border-[var(--wd-border)] bg-[var(--wd-surface)] focus:outline-none focus:ring-1 focus:ring-[var(--wd-sand)]"
@@ -167,6 +212,7 @@ function InlineBalanceEdit({
             type="text"
             value={reason}
             onChange={(e) => setReason(e.target.value)}
+            disabled={loading}
             required
             minLength={3}
             maxLength={1000}
@@ -190,6 +236,7 @@ function InlineBalanceEdit({
           <button
             onClick={onCancel}
             aria-label="Anuluj korektę"
+            disabled={loading}
             className="p-1 rounded text-[var(--wd-text-muted)] hover:bg-[var(--wd-surface-2)] transition-colors"
           >
             <X size={14} />
@@ -210,7 +257,7 @@ function CarryoverModal({
 }: {
   open: boolean
   onClose: () => void
-  onDone: () => void
+  onDone: () => Promise<void>
   returnFocusRef: React.RefObject<HTMLElement | null>
 }) {
   const currentYear = new Date().getFullYear()
@@ -231,17 +278,21 @@ function CarryoverModal({
     }>
   } | null>(null)
   const [error, setError] = useState('')
+  const [refreshWarning, setRefreshWarning] = useState('')
 
   useEffect(() => {
     if (!open) {
       setResult(null)
       setError('')
+      setRefreshWarning('')
       setReason('')
     }
   }, [open])
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
+    if (loading) return
+
     const trimmedReason = reason.trim()
     if (trimmedReason.length < 3) {
       setError('Powód przeniesienia musi mieć co najmniej 3 znaki')
@@ -250,6 +301,7 @@ function CarryoverModal({
 
     setLoading(true)
     setError('')
+    setRefreshWarning('')
     setResult(null)
 
     try {
@@ -288,7 +340,13 @@ function CarryoverModal({
         skipped: data.skipped ?? 0,
         needsReview: data.needsReview ?? [],
       })
-      onDone()
+      try {
+        await onDone()
+      } catch {
+        setRefreshWarning(
+          'Przeniesienie zapisane, nie udało się odświeżyć'
+        )
+      }
     } catch {
       setError('Błąd połączenia z serwerem')
     } finally {
@@ -300,10 +358,16 @@ function CarryoverModal({
     <Dialog
       open={open}
       onOpenChange={(nextOpen) => {
-        if (!nextOpen) onClose()
+        if (!nextOpen && !loading) onClose()
       }}
     >
       <DialogContent
+        onEscapeKeyDown={(event) => {
+          if (loading) event.preventDefault()
+        }}
+        onPointerDownOutside={(event) => {
+          if (loading) event.preventDefault()
+        }}
         onOpenAutoFocus={(event) => {
           event.preventDefault()
           initialFocusRef.current?.focus()
@@ -345,6 +409,7 @@ function CarryoverModal({
                 type="number"
                 value={fromYear}
                 onChange={(e) => setFromYear(e.target.value)}
+                disabled={loading}
                 required
                 min={2000}
                 max={2100}
@@ -363,6 +428,7 @@ function CarryoverModal({
                 type="number"
                 value={toYear}
                 onChange={(e) => setToYear(e.target.value)}
+                disabled={loading}
                 required
                 min={2000}
                 max={2100}
@@ -383,6 +449,7 @@ function CarryoverModal({
               type="number"
               value={maxDays}
               onChange={(e) => setMaxDays(e.target.value)}
+              disabled={loading}
               min={0}
               step={0.5}
               className="w-full px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-[var(--wd-surface)] text-[var(--wd-text-primary)] focus:outline-none focus:ring-2 focus:ring-[var(--wd-sand)] transition"
@@ -401,6 +468,7 @@ function CarryoverModal({
               id="carryover-reason"
               value={reason}
               onChange={(e) => setReason(e.target.value)}
+              disabled={loading}
               required
               minLength={3}
               maxLength={1000}
@@ -415,6 +483,15 @@ function CarryoverModal({
               className="text-xs text-red-600 border-l-2 border-red-500 pl-3 py-1"
             >
               {error}
+            </p>
+          )}
+
+          {refreshWarning && (
+            <p
+              role="alert"
+              className="text-xs text-amber-800 border-l-2 border-amber-500 pl-3 py-1"
+            >
+              {refreshWarning}
             </p>
           )}
 
@@ -461,7 +538,10 @@ function CarryoverModal({
           <div className="flex items-center justify-end gap-2 pt-1">
             <button
               type="button"
-              onClick={onClose}
+              onClick={() => {
+                if (!loading) onClose()
+              }}
+              disabled={loading}
               className="px-4 py-2 text-sm font-medium rounded-lg border border-[var(--wd-border)] text-[var(--wd-text-muted)] hover:bg-[var(--wd-surface-2)] transition-colors"
             >
               {result ? 'Zamknij' : 'Anuluj'}
@@ -507,10 +587,9 @@ export default function LeaveBalancesPage() {
       if (selectedYear) params.set('year', selectedYear)
 
       const res = await fetch(`/api/hr/leave-balances?${params.toString()}`)
-      if (res.ok) {
-        const data = await res.json() as LeaveBalance[]
-        setBalances(data)
-      }
+      if (!res.ok) throw new Error('Failed to refresh leave balances')
+      const data = await res.json() as LeaveBalance[]
+      setBalances(data)
     } finally {
       setLoading(false)
     }
@@ -529,7 +608,7 @@ export default function LeaveBalancesPage() {
   }, [fetchEmployees])
 
   useEffect(() => {
-    void fetchBalances()
+    void fetchBalances().catch(() => undefined)
   }, [fetchBalances])
 
   // Group balances by employee

@@ -14,30 +14,42 @@ vi.mock('@/lib/auth', () => ({
 
 vi.mock('@/lib/prisma', () => ({
   prisma: {
-    leaveType: {
-      findUnique: vi.fn(),
-    },
-    leaveBalanceNew: {
-      findMany: vi.fn(),
-    },
     $transaction: vi.fn(),
   },
 }))
 
 const mockGetServerSession = vi.mocked(getServerSession)
-const mockLeaveTypeFindUnique = vi.mocked(prisma.leaveType.findUnique)
-const mockSourceFindMany = vi.mocked(prisma.leaveBalanceNew.findMany)
 const mockTransaction = vi.mocked(prisma.$transaction)
 
+const txLeaveTypeFindUnique = vi.fn()
+const txSourceFindMany = vi.fn()
 const txBalanceFindUnique = vi.fn()
 const txBalanceCreate = vi.fn()
 const txBalanceUpdate = vi.fn()
 const txCorrectionCreate = vi.fn()
 
+const tx = {
+  leaveType: {
+    findUnique: txLeaveTypeFindUnique,
+  },
+  leaveBalanceNew: {
+    findMany: txSourceFindMany,
+    findUnique: txBalanceFindUnique,
+    create: txBalanceCreate,
+    update: txBalanceUpdate,
+  },
+  leaveBalanceCorrection: {
+    create: txCorrectionCreate,
+  },
+}
+
 const canonicalVl = {
   id: 'leave-type-vl',
   code: 'VL',
   parentId: null,
+  isActive: true,
+  isPaid: true,
+  requiresApproval: true,
   tracksBalance: true,
 }
 
@@ -131,8 +143,8 @@ function prismaError(code: string, message: string, target?: string[]) {
 beforeEach(() => {
   vi.clearAllMocks()
   mockGetServerSession.mockResolvedValue(session())
-  mockLeaveTypeFindUnique.mockResolvedValue(canonicalVl as never)
-  mockSourceFindMany.mockResolvedValue([])
+  txLeaveTypeFindUnique.mockResolvedValue(canonicalVl)
+  txSourceFindMany.mockResolvedValue([])
   txBalanceFindUnique.mockResolvedValue(null)
   txBalanceCreate.mockImplementation(async ({ data }) => ({
     id: `target-${data.employeeId}`,
@@ -151,47 +163,33 @@ beforeEach(() => {
   }))
   txCorrectionCreate.mockResolvedValue({ id: 'correction-1' })
   mockTransaction.mockImplementation(
-    async (callback) => callback({
-      leaveBalanceNew: {
-        findUnique: txBalanceFindUnique,
-        create: txBalanceCreate,
-        update: txBalanceUpdate,
-      },
-      leaveBalanceCorrection: {
-        create: txCorrectionCreate,
-      },
-    } as never) as never
+    async (callback) => callback(tx as never) as never
   )
 })
 
 describe('POST /api/hr/leave-balances/carryover access and validation', () => {
-  it('returns 401 before database access when unauthenticated', async () => {
+  it('returns 401 before opening a transaction when unauthenticated', async () => {
     mockGetServerSession.mockResolvedValue(null)
 
     const response = await POST(request())
 
     expect(response.status).toBe(401)
-    expect(mockLeaveTypeFindUnique).not.toHaveBeenCalled()
-    expect(mockSourceFindMany).not.toHaveBeenCalled()
     expect(mockTransaction).not.toHaveBeenCalled()
   })
 
-  it('returns 403 before database access for a manager', async () => {
+  it('returns 403 before opening a transaction for a manager', async () => {
     mockGetServerSession.mockResolvedValue(session('MANAGER'))
 
     const response = await POST(request())
 
     expect(response.status).toBe(403)
-    expect(mockLeaveTypeFindUnique).not.toHaveBeenCalled()
-    expect(mockSourceFindMany).not.toHaveBeenCalled()
     expect(mockTransaction).not.toHaveBeenCalled()
   })
 
-  it('returns 400 for malformed JSON before database access', async () => {
+  it('returns 400 for malformed JSON before opening a transaction', async () => {
     const response = await POST(malformedRequest())
 
     expect(response.status).toBe(400)
-    expect(mockLeaveTypeFindUnique).not.toHaveBeenCalled()
     expect(mockTransaction).not.toHaveBeenCalled()
   })
 
@@ -231,27 +229,58 @@ describe('POST /api/hr/leave-balances/carryover access and validation', () => {
     const response = await POST(request(body))
 
     expect(response.status).toBe(400)
-    expect(mockLeaveTypeFindUnique).not.toHaveBeenCalled()
     expect(mockTransaction).not.toHaveBeenCalled()
   })
 })
 
-describe('POST /api/hr/leave-balances/carryover canonical VL scope', () => {
+describe('POST /api/hr/leave-balances/carryover canonical VL invariants', () => {
   it.each([
     ['missing', null],
+    ['wrong code', { ...canonicalVl, code: 'BROKEN' }],
     ['nested', { ...canonicalVl, parentId: 'parent-type' }],
+    ['inactive', { ...canonicalVl, isActive: false }],
+    ['unpaid', { ...canonicalVl, isPaid: false }],
+    ['without approval', { ...canonicalVl, requiresApproval: false }],
     ['not balance tracking', { ...canonicalVl, tracksBalance: false }],
-  ])('returns 503 without mutations for a %s VL type', async (_label, vlType) => {
-    mockLeaveTypeFindUnique.mockResolvedValue(vlType as never)
+  ])('returns 503 and rolls back for a %s VL type', async (_label, vlType) => {
+    txLeaveTypeFindUnique.mockResolvedValue(vlType)
 
     const response = await POST(request())
 
     expect(response.status).toBe(503)
-    expect(mockSourceFindMany).not.toHaveBeenCalled()
-    expect(mockTransaction).not.toHaveBeenCalled()
+    expect(mockTransaction).toHaveBeenCalledOnce()
+    expect(txLeaveTypeFindUnique).toHaveBeenCalledWith({
+      where: { code: 'VL' },
+      select: {
+        id: true,
+        code: true,
+        parentId: true,
+        isActive: true,
+        isPaid: true,
+        requiresApproval: true,
+        tracksBalance: true,
+      },
+    })
+    expect(txSourceFindMany).not.toHaveBeenCalled()
+    expect(txBalanceCreate).not.toHaveBeenCalled()
+    expect(txBalanceUpdate).not.toHaveBeenCalled()
+    expect(txCorrectionCreate).not.toHaveBeenCalled()
   })
 
-  it('queries only active source VL balances and ignores leaveTypeId input', async () => {
+  it('does not require maxDaysPerYear on canonical VL', async () => {
+    txLeaveTypeFindUnique.mockResolvedValue({
+      ...canonicalVl,
+      maxDaysPerYear: 0,
+    })
+
+    const response = await POST(request())
+
+    expect(response.status).toBe(200)
+  })
+})
+
+describe('POST /api/hr/leave-balances/carryover transaction scope', () => {
+  it('reads canonical VL, active source balances, and configs inside one transaction', async () => {
     const response = await POST(request({
       fromYear: 2025,
       toYear: 2026,
@@ -268,7 +297,12 @@ describe('POST /api/hr/leave-balances/carryover canonical VL scope', () => {
       skipped: 0,
       needsReview: [],
     })
-    expect(mockSourceFindMany).toHaveBeenCalledWith({
+    expect(mockTransaction).toHaveBeenCalledOnce()
+    expect(mockTransaction).toHaveBeenCalledWith(
+      expect.any(Function),
+      { isolationLevel: 'Serializable' }
+    )
+    expect(txSourceFindMany).toHaveBeenCalledWith({
       where: {
         year: 2025,
         leaveTypeId: canonicalVl.id,
@@ -307,11 +341,12 @@ describe('POST /api/hr/leave-balances/carryover canonical VL scope', () => {
           },
         },
       },
+      orderBy: { employeeId: 'asc' },
     })
   })
 
   it('processes only active canonical VL rows returned by the source query', async () => {
-    mockSourceFindMany.mockResolvedValue([
+    txSourceFindMany.mockResolvedValue([
       sourceBalance(),
       sourceBalance(
         {
@@ -325,7 +360,7 @@ describe('POST /api/hr/leave-balances/carryover canonical VL scope', () => {
         { id: 'source-inactive', employeeId: 'employee-inactive' },
         { id: 'employee-inactive', active: false }
       ),
-    ] as never)
+    ])
 
     const response = await POST(request())
     const body = await response.json()
@@ -334,14 +369,30 @@ describe('POST /api/hr/leave-balances/carryover canonical VL scope', () => {
     expect(body.processed).toBe(1)
     expect(body.created).toBe(1)
     expect(mockTransaction).toHaveBeenCalledOnce()
+    expect(txBalanceCreate).toHaveBeenCalledOnce()
+  })
+
+  it('returns empty zero counters when there are no source rows', async () => {
+    const response = await POST(request())
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toEqual({
+      processed: 0,
+      created: 0,
+      updated: 0,
+      skipped: 0,
+      needsReview: [],
+    })
+    expect(txBalanceFindUnique).not.toHaveBeenCalled()
   })
 })
 
-describe('POST /api/hr/leave-balances/carryover entitlement and calculations', () => {
-  it('reports a missing effective config for review without writes', async () => {
-    mockSourceFindMany.mockResolvedValue([
+describe('POST /api/hr/leave-balances/carryover entitlement validation', () => {
+  it('reports a missing effective config for review without target access', async () => {
+    txSourceFindMany.mockResolvedValue([
       sourceBalance({}, { leaveEntitlementConfigs: [] }),
-    ] as never)
+    ])
 
     const response = await POST(request())
     const body = await response.json()
@@ -359,14 +410,56 @@ describe('POST /api/hr/leave-balances/carryover entitlement and calculations', (
         },
       ],
     })
-    expect(mockTransaction).not.toHaveBeenCalled()
+    expect(txBalanceFindUnique).not.toHaveBeenCalled()
+    expect(txBalanceCreate).not.toHaveBeenCalled()
+    expect(txBalanceUpdate).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    [
+      'unknown mode with a plausible custom value',
+      { mode: 'BROKEN', customAnnualDays: 17 },
+    ],
+    ['zero fraction', { employmentFraction: 0 }],
+    ['fraction above one', { employmentFraction: 1.1 }],
+    ['CUSTOM without custom days', { mode: 'CUSTOM', customAnnualDays: null }],
+    ['CUSTOM with zero days', { mode: 'CUSTOM', customAnnualDays: 0 }],
+    ['CUSTOM with fractional days', { mode: 'CUSTOM', customAnnualDays: 17.5 }],
+    ['CUSTOM above the supported range', { mode: 'CUSTOM', customAnnualDays: 366 }],
+    ['invalid effective date', { effectiveFrom: new Date('invalid') }],
+  ])('skips and flags %s', async (_label, configOverrides) => {
+    txSourceFindMany.mockResolvedValue([
+      sourceBalance({}, {
+        leaveEntitlementConfigs: [
+          entitlementConfig(configOverrides),
+        ],
+      }),
+    ])
+
+    const response = await POST(request())
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toEqual({
+      processed: 1,
+      created: 0,
+      updated: 0,
+      skipped: 1,
+      needsReview: [
+        {
+          employeeId: 'employee-1',
+          employeeName: 'Anna Nowak',
+        },
+      ],
+    })
+    expect(txBalanceFindUnique).not.toHaveBeenCalled()
     expect(txBalanceCreate).not.toHaveBeenCalled()
     expect(txBalanceUpdate).not.toHaveBeenCalled()
     expect(txCorrectionCreate).not.toHaveBeenCalled()
   })
 
-  it('uses the latest config effective by year end with fraction and start-date proration', async () => {
-    mockSourceFindMany.mockResolvedValue([
+  it('uses the latest valid config effective by year end with fraction and start-date proration', async () => {
+    txSourceFindMany.mockResolvedValue([
       sourceBalance(
         {
           totalDays: 10,
@@ -390,7 +483,7 @@ describe('POST /api/hr/leave-balances/carryover entitlement and calculations', (
           ],
         }
       ),
-    ] as never)
+    ])
 
     const response = await POST(request())
 
@@ -405,9 +498,11 @@ describe('POST /api/hr/leave-balances/carryover entitlement and calculations', (
       },
     })
   })
+})
 
+describe('POST /api/hr/leave-balances/carryover calculations', () => {
   it('subtracts pending days, clamps negative remaining, and applies the optional cap', async () => {
-    mockSourceFindMany.mockResolvedValue([
+    txSourceFindMany.mockResolvedValue([
       sourceBalance({
         id: 'source-positive',
         totalDays: 10,
@@ -428,7 +523,7 @@ describe('POST /api/hr/leave-balances/carryover entitlement and calculations', (
           lastName: 'Kowalski',
         }
       ),
-    ] as never)
+    ])
 
     const response = await POST(request({
       fromYear: 2025,
@@ -445,6 +540,7 @@ describe('POST /api/hr/leave-balances/carryover entitlement and calculations', (
       updated: 0,
       skipped: 0,
     })
+    expect(mockTransaction).toHaveBeenCalledOnce()
     expect(txBalanceCreate).toHaveBeenNthCalledWith(1, {
       data: {
         employeeId: 'employee-1',
@@ -466,13 +562,13 @@ describe('POST /api/hr/leave-balances/carryover entitlement and calculations', (
   })
 
   it('creates the annual base target when carryover is zero', async () => {
-    mockSourceFindMany.mockResolvedValue([
+    txSourceFindMany.mockResolvedValue([
       sourceBalance({
         totalDays: 5,
         usedDays: 5,
         pendingDays: 0,
       }),
-    ] as never)
+    ])
 
     const response = await POST(request())
     const body = await response.json()
@@ -492,7 +588,7 @@ describe('POST /api/hr/leave-balances/carryover entitlement and calculations', (
   })
 })
 
-describe('POST /api/hr/leave-balances/carryover target transactions', () => {
+describe('POST /api/hr/leave-balances/carryover target snapshots and idempotence', () => {
   it('updates exact totals, preserves usage, and appends transaction-local audit snapshots', async () => {
     const targetBefore = {
       id: 'target-balance-1',
@@ -509,13 +605,13 @@ describe('POST /api/hr/leave-balances/carryover target transactions', () => {
       totalDays: 28,
       carriedOver: 8,
     }
-    mockSourceFindMany.mockResolvedValue([
+    txSourceFindMany.mockResolvedValue([
       sourceBalance({
         totalDays: 15,
         usedDays: 5,
         pendingDays: 2,
       }),
-    ] as never)
+    ])
     txBalanceFindUnique.mockResolvedValue(targetBefore)
     txBalanceUpdate.mockResolvedValue(targetAfter)
 
@@ -576,13 +672,13 @@ describe('POST /api/hr/leave-balances/carryover target transactions', () => {
   })
 
   it('skips an exact target on rerun without update or audit', async () => {
-    mockSourceFindMany.mockResolvedValue([
+    txSourceFindMany.mockResolvedValue([
       sourceBalance({
         totalDays: 15,
         usedDays: 5,
         pendingDays: 2,
       }),
-    ] as never)
+    ])
     txBalanceFindUnique.mockResolvedValue({
       id: 'target-balance-1',
       employeeId: 'employee-1',
@@ -609,13 +705,13 @@ describe('POST /api/hr/leave-balances/carryover target transactions', () => {
   })
 
   it('sets carriedOver exactly instead of adding it on rerun', async () => {
-    mockSourceFindMany.mockResolvedValue([
+    txSourceFindMany.mockResolvedValue([
       sourceBalance({
         totalDays: 15,
         usedDays: 5,
         pendingDays: 2,
       }),
-    ] as never)
+    ])
     txBalanceFindUnique.mockResolvedValue({
       id: 'target-balance-1',
       employeeId: 'employee-1',
@@ -638,9 +734,68 @@ describe('POST /api/hr/leave-balances/carryover target transactions', () => {
       },
     })
   })
+})
 
-  it('maps serializable retry exhaustion to 409 without an audit', async () => {
-    mockSourceFindMany.mockResolvedValue([sourceBalance()] as never)
+describe('POST /api/hr/leave-balances/carryover batch rollback and retry', () => {
+  it('returns 409 when the second employee fails inside the single batch transaction', async () => {
+    txSourceFindMany.mockResolvedValue([
+      sourceBalance(),
+      sourceBalance(
+        {
+          id: 'source-2',
+          employeeId: 'employee-2',
+        },
+        {
+          id: 'employee-2',
+          firstName: 'Jan',
+          lastName: 'Kowalski',
+        }
+      ),
+    ])
+    txBalanceCreate
+      .mockResolvedValueOnce({ id: 'target-employee-1' })
+      .mockRejectedValueOnce(new Error('second employee failed'))
+
+    const response = await POST(request())
+    const body = await response.json()
+
+    expect(response.status).toBe(409)
+    expect(body.code).toBe('CARRYOVER_CONFLICT')
+    expect(mockTransaction).toHaveBeenCalledOnce()
+    expect(txBalanceCreate).toHaveBeenCalledTimes(2)
+    expect(txCorrectionCreate).not.toHaveBeenCalled()
+  })
+
+  it('repeats the whole source read on retry without duplicating result counters', async () => {
+    txSourceFindMany.mockResolvedValue([sourceBalance()])
+    let attempt = 0
+    mockTransaction.mockImplementation(async (callback) => {
+      const callbackResult = await callback(tx as never)
+      attempt++
+      if (attempt === 1) {
+        throw prismaError('P2034', 'write conflict')
+      }
+      return callbackResult as never
+    })
+
+    const response = await POST(request())
+    const body = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(body).toEqual({
+      processed: 1,
+      created: 1,
+      updated: 0,
+      skipped: 0,
+      needsReview: [],
+    })
+    expect(mockTransaction).toHaveBeenCalledTimes(2)
+    expect(txLeaveTypeFindUnique).toHaveBeenCalledTimes(2)
+    expect(txSourceFindMany).toHaveBeenCalledTimes(2)
+    expect(txBalanceCreate).toHaveBeenCalledTimes(2)
+  })
+
+  it('maps Serializable retry exhaustion to 409', async () => {
     mockTransaction.mockRejectedValue(
       prismaError('P2034', 'write conflict') as never
     )
@@ -649,11 +804,10 @@ describe('POST /api/hr/leave-balances/carryover target transactions', () => {
 
     expect(response.status).toBe(409)
     expect(mockTransaction).toHaveBeenCalledTimes(3)
-    expect(txCorrectionCreate).not.toHaveBeenCalled()
   })
 
-  it('maps a target create P2002 race to 409 without an audit', async () => {
-    mockSourceFindMany.mockResolvedValue([sourceBalance()] as never)
+  it('maps a target create P2002 race to 409', async () => {
+    txSourceFindMany.mockResolvedValue([sourceBalance()])
     txBalanceCreate.mockRejectedValue(
       prismaError(
         'P2002',
@@ -669,8 +823,8 @@ describe('POST /api/hr/leave-balances/carryover target transactions', () => {
     expect(txCorrectionCreate).not.toHaveBeenCalled()
   })
 
-  it('does not append an audit when the target update fails', async () => {
-    mockSourceFindMany.mockResolvedValue([sourceBalance()] as never)
+  it('returns 409 and does not append an audit when a target update fails', async () => {
+    txSourceFindMany.mockResolvedValue([sourceBalance()])
     txBalanceFindUnique.mockResolvedValue({
       id: 'target-balance-1',
       employeeId: 'employee-1',
@@ -683,8 +837,9 @@ describe('POST /api/hr/leave-balances/carryover target transactions', () => {
     })
     txBalanceUpdate.mockRejectedValue(new Error('update failed'))
 
-    await expect(POST(request())).rejects.toThrow('update failed')
+    const response = await POST(request())
 
+    expect(response.status).toBe(409)
     expect(txCorrectionCreate).not.toHaveBeenCalled()
   })
 })
