@@ -50,6 +50,7 @@ export function getPolishHolidays(year: number): string[] {
     fmt(add(easter, 1)),            // Poniedziałek Wielkanocny
     `${year}-05-01`, // Święto Pracy
     `${year}-05-03`, // Święto Konstytucji
+    fmt(add(easter, 49)),           // Zielone Świątki
     fmt(add(easter, 60)),           // Boże Ciało
     `${year}-08-15`, // Wniebowzięcie NMP
     `${year}-11-01`, // Wszystkich Świętych

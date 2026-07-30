@@ -555,6 +555,25 @@ describe('MonthlyTeamGrid', () => {
     expect(onEditCell).not.toHaveBeenCalled()
   })
 
+  it('labels Pentecost Sunday as a holiday rather than only a weekend', () => {
+    render(
+      <MonthlyTeamGrid
+        days={buildMonthDateKeys('2025-06')}
+        employees={[monthlyGridEmployees[0]]}
+        holidays={[]}
+        saturdayWorkable={false}
+        onEditCell={vi.fn()}
+      />
+    )
+
+    const pentecostCell = screen.getByTestId(
+      'monthly-cell-employee-1-2025-06-08'
+    )
+    expect(within(pentecostCell).getByText('Święto')).toBeTruthy()
+    expect(within(pentecostCell).queryByText('Wolne')).toBeNull()
+    expect(within(pentecostCell).queryByRole('button')).toBeNull()
+  })
+
   it('enables Saturday only when saturdayWorkable is true', async () => {
     const onEditCell = vi.fn()
     const user = userEvent.setup()

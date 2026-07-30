@@ -14,9 +14,9 @@ const utcDate = (year: number, month: number, day: number): Date =>
   new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0))
 
 describe('getPolishHolidays', () => {
-  it('returns exactly 13 dates for 2025', () => {
+  it('returns exactly 14 dates for 2025', () => {
     const holidays = getPolishHolidays(2025)
-    expect(holidays).toHaveLength(13)
+    expect(holidays).toHaveLength(14)
   })
 
   it('contains Easter Sunday 2025 (2025-04-20)', () => {
@@ -27,6 +27,13 @@ describe('getPolishHolidays', () => {
   it('contains Boże Ciało 2025 (2025-06-19 = Easter + 60)', () => {
     const holidays = getPolishHolidays(2025)
     expect(holidays).toContain('2025-06-19')
+  })
+
+  it.each([
+    [2025, '2025-06-08'],
+    [2026, '2026-05-24'],
+  ])('contains Pentecost Sunday for %i', (year, expectedDate) => {
+    expect(getPolishHolidays(year)).toContain(expectedDate)
   })
 
   it('contains fixed holidays', () => {
