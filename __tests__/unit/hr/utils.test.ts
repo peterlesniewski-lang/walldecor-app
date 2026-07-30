@@ -3,6 +3,7 @@ import {
   calculateWorkingDays,
   calculateWorkingHours,
   isWeekend,
+  isPublicHoliday,
   formatDuration,
   calculateOvertimeMinutes,
 } from '@/lib/hr/utils'
@@ -13,9 +14,9 @@ const utcDate = (year: number, month: number, day: number): Date =>
   new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0))
 
 describe('getPolishHolidays', () => {
-  it('returns exactly 12 dates for 2025', () => {
+  it('returns exactly 13 dates for 2025', () => {
     const holidays = getPolishHolidays(2025)
-    expect(holidays).toHaveLength(12)
+    expect(holidays).toHaveLength(13)
   })
 
   it('contains Easter Sunday 2025 (2025-04-20)', () => {
@@ -39,6 +40,17 @@ describe('getPolishHolidays', () => {
     expect(holidays).toContain('2025-11-11')
     expect(holidays).toContain('2025-12-25')
     expect(holidays).toContain('2025-12-26')
+  })
+
+  it.each([
+    [2024, false],
+    [2025, true],
+    [2026, true],
+  ])('treats Christmas Eve in %i according to its effective date', (year, expected) => {
+    const dateKey = `${year}-12-24`
+
+    expect(getPolishHolidays(year).includes(dateKey)).toBe(expected)
+    expect(isPublicHoliday(new Date(year, 11, 24, 12))).toBe(expected)
   })
 })
 

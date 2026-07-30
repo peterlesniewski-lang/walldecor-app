@@ -479,8 +479,15 @@ describe('MonthlyTeamGrid', () => {
     expect(screen.getByTestId('monthly-employee-header').className).toContain('sticky')
     expect(screen.getByTestId('monthly-employee-cell-employee-1').className).toContain('sticky')
     expect(grid.className).toContain('overflow-x-auto')
-    expect(table.getAttribute('style')).toContain('table-layout: fixed')
-    expect(table.getAttribute('style')).toContain('width:')
+    expect(table.style.tableLayout).toBe('fixed')
+    expect(table.style.width).toBe('2000px')
+    expect(table.style.minWidth).toBe('2000px')
+
+    const columns = Array.from(table.querySelectorAll('col'))
+    expect(columns).toHaveLength(33)
+    expect(columns[0].style.width).toBe('176px')
+    expect(columns.slice(1, -1).every((column) => column.style.width === '56px')).toBe(true)
+    expect(columns.at(-1)?.style.width).toBe('88px')
     expect(screen.queryAllByRole('checkbox')).toHaveLength(0)
     expect(screen.getByTitle('Zatwierdzony')).toBeTruthy()
     expect(screen.getByTitle('Oczekujący')).toBeTruthy()
@@ -522,6 +529,71 @@ describe('MonthlyTeamGrid', () => {
       employeeName: 'Jan Kowalski',
       date: '2026-07-03',
       entry: monthlyGridEmployees[0].entries['2026-07-03'],
+    })
+  })
+
+  it('keeps a statutory public holiday non-editable', async () => {
+    const onEditCell = vi.fn()
+    const user = userEvent.setup()
+    render(
+      <MonthlyTeamGrid
+        days={buildMonthDateKeys('2025-12')}
+        employees={[monthlyGridEmployees[0]]}
+        holidays={[]}
+        saturdayWorkable
+        onEditCell={onEditCell}
+      />
+    )
+
+    const christmasEveCell = screen.getByTestId(
+      'monthly-cell-employee-1-2025-12-24'
+    )
+    expect(within(christmasEveCell).getByText('Święto')).toBeTruthy()
+    expect(within(christmasEveCell).queryByRole('button')).toBeNull()
+
+    await user.click(christmasEveCell)
+    expect(onEditCell).not.toHaveBeenCalled()
+  })
+
+  it('enables Saturday only when saturdayWorkable is true', async () => {
+    const onEditCell = vi.fn()
+    const user = userEvent.setup()
+    const { rerender } = render(
+      <MonthlyTeamGrid
+        days={monthlyGridDays}
+        employees={[monthlyGridEmployees[1]]}
+        holidays={[]}
+        saturdayWorkable={false}
+        onEditCell={onEditCell}
+      />
+    )
+
+    const saturdayTestId = 'monthly-cell-employee-2-2026-07-04'
+    const blockedSaturday = screen.getByTestId(saturdayTestId)
+    expect(within(blockedSaturday).getByText('Wolne')).toBeTruthy()
+    expect(within(blockedSaturday).queryByRole('button')).toBeNull()
+
+    await user.click(blockedSaturday)
+    expect(onEditCell).not.toHaveBeenCalled()
+
+    rerender(
+      <MonthlyTeamGrid
+        days={monthlyGridDays}
+        employees={[monthlyGridEmployees[1]]}
+        holidays={[]}
+        saturdayWorkable
+        onEditCell={onEditCell}
+      />
+    )
+
+    await user.click(within(screen.getByTestId(saturdayTestId)).getByRole('button', {
+      name: 'Ewa Nowak, 2026-07-04: brak wpisu',
+    }))
+    expect(onEditCell).toHaveBeenCalledWith({
+      employeeId: 'employee-2',
+      employeeName: 'Ewa Nowak',
+      date: '2026-07-04',
+      entry: null,
     })
   })
 })

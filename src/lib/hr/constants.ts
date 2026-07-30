@@ -54,6 +54,7 @@ export function getPolishHolidays(year: number): string[] {
     `${year}-08-15`, // Wniebowzięcie NMP
     `${year}-11-01`, // Wszystkich Świętych
     `${year}-11-11`, // Święto Niepodległości
+    ...(year >= 2025 ? [`${year}-12-24`] : []), // Wigilia od 2025
     `${year}-12-25`, // Boże Narodzenie
     `${year}-12-26`, // Drugi dzień BN
   ]
