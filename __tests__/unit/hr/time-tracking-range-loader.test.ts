@@ -221,8 +221,8 @@ describe('loadTimeTrackingRange', () => {
     expect(mockCustomHolidayFindMany).toHaveBeenCalledWith({
       where: {
         date: {
-          gte: new Date('2026-07-01T00:00:00.000Z'),
-          lte: new Date('2026-07-31T23:59:59.999Z'),
+          gte: new Date('2026-06-30T00:00:00.000Z'),
+          lte: new Date('2026-08-01T23:59:59.999Z'),
         },
         OR: [{ divisionId: null }, { divisionId: 'JAG' }],
       },
@@ -235,69 +235,140 @@ describe('loadTimeTrackingRange', () => {
     ])
   })
 
-  it.each(['UTC', 'America/Los_Angeles'])(
-    'keeps UTC-midnight stored dates stable in %s',
+  it.each(['UTC', 'America/Los_Angeles', 'Europe/Warsaw'])(
+    'loads mixed persisted date representations without range leakage in %s',
     async (timezone) => {
       const originalTimezone = process.env.TZ
       process.env.TZ = timezone
 
       try {
         mockEmployeeFindMany.mockResolvedValue([employee] as never)
-        mockTimeEntryFindMany.mockResolvedValue([{
-          id: 'entry-utc',
-          employeeId: 'employee-1',
-          date: new Date('2026-07-01T00:00:00.000Z'),
-          clockIn: new Date('2026-07-01T09:00:00.000Z'),
-          clockOut: new Date('2026-07-01T17:00:00.000Z'),
-          totalMinutes: 480,
-          breakMinutes: 30,
-          status: 'approved',
-        }] as never)
-        mockLeaveRequestFindMany.mockResolvedValue([{
-          employeeId: 'employee-1',
-          startDate: new Date('2026-07-02T00:00:00.000Z'),
-          endDate: new Date('2026-07-02T00:00:00.000Z'),
-          leaveType: {
-            name: 'Urlop bezplatny',
-            code: 'UB',
-            color: '#64748B',
+        mockTimeEntryFindMany.mockResolvedValue([
+          {
+            id: 'entry-utc',
+            employeeId: 'employee-1',
+            date: new Date('2026-07-01T00:00:00.000Z'),
+            clockIn: new Date('2026-07-01T09:00:00.000Z'),
+            clockOut: new Date('2026-07-01T17:00:00.000Z'),
+            totalMinutes: 480,
+            breakMinutes: 30,
+            status: 'approved',
           },
-        }] as never)
-        mockCustomHolidayFindMany.mockResolvedValue([{
-          date: new Date('2026-07-03T00:00:00.000Z'),
-          name: 'Dzien wolny',
-          divisionId: null,
-        }] as never)
+          {
+            id: 'entry-local',
+            employeeId: 'employee-1',
+            date: new Date(2026, 6, 2, 0, 0, 0, 0),
+            clockIn: new Date('2026-07-02T09:00:00.000Z'),
+            clockOut: new Date('2026-07-02T16:00:00.000Z'),
+            totalMinutes: 420,
+            breakMinutes: 15,
+            status: 'pending',
+          },
+          {
+            id: 'entry-outside',
+            employeeId: 'employee-1',
+            date: new Date(2026, 5, 30, 0, 0, 0, 0),
+            clockIn: new Date('2026-06-30T09:00:00.000Z'),
+            clockOut: new Date('2026-06-30T10:00:00.000Z'),
+            totalMinutes: 60,
+            breakMinutes: 0,
+            status: 'approved',
+          },
+        ] as never)
+        mockLeaveRequestFindMany.mockResolvedValue([
+          {
+            employeeId: 'employee-1',
+            startDate: new Date(2026, 6, 2, 0, 0, 0, 0),
+            endDate: new Date(2026, 6, 2, 0, 0, 0, 0),
+            leaveType: {
+              name: 'Urlop bezplatny',
+              code: 'UB',
+              color: '#64748B',
+            },
+          },
+          {
+            employeeId: 'employee-1',
+            startDate: new Date('2026-07-03T00:00:00.000Z'),
+            endDate: new Date('2026-07-03T00:00:00.000Z'),
+            leaveType: {
+              name: 'Urlop wypoczynkowy',
+              code: 'VL',
+              color: '#16A34A',
+            },
+          },
+          {
+            employeeId: 'employee-1',
+            startDate: new Date(2026, 5, 30, 0, 0, 0, 0),
+            endDate: new Date(2026, 5, 30, 0, 0, 0, 0),
+            leaveType: {
+              name: 'Poza zakresem',
+              code: 'OUT',
+              color: '#DC2626',
+            },
+          },
+        ] as never)
+        mockCustomHolidayFindMany.mockResolvedValue([
+          {
+            date: new Date('2026-07-03T00:00:00.000Z'),
+            name: 'Dzien UTC',
+            divisionId: null,
+          },
+          {
+            date: new Date(2026, 6, 4, 0, 0, 0, 0),
+            name: 'Dzien lokalny',
+            divisionId: 'JAG',
+          },
+          {
+            date: new Date(2026, 5, 30, 0, 0, 0, 0),
+            name: 'Poza zakresem',
+            divisionId: null,
+          },
+        ] as never)
 
         const result = await loadTimeTrackingRange({
           session: session('ADMIN'),
           start: new Date(2026, 6, 1, 0, 0, 0, 0),
-          end: new Date(2026, 6, 3, 23, 59, 59, 999),
+          end: new Date(2026, 6, 4, 23, 59, 59, 999),
         })
 
-        const expectedRange = {
-          gte: new Date('2026-07-01T00:00:00.000Z'),
-          lte: new Date('2026-07-03T23:59:59.999Z'),
+        const expectedQueryRange = {
+          gte: new Date('2026-06-30T00:00:00.000Z'),
+          lte: new Date('2026-07-05T23:59:59.999Z'),
         }
 
         expect(mockTimeEntryFindMany).toHaveBeenCalledWith(expect.objectContaining({
-          where: expect.objectContaining({ date: expectedRange }),
+          where: expect.objectContaining({ date: expectedQueryRange }),
         }))
         expect(mockLeaveRequestFindMany).toHaveBeenCalledWith(expect.objectContaining({
           where: expect.objectContaining({
-            startDate: { lte: expectedRange.lte },
-            endDate: { gte: expectedRange.gte },
+            startDate: { lte: expectedQueryRange.lte },
+            endDate: { gte: expectedQueryRange.gte },
           }),
         }))
         expect(mockCustomHolidayFindMany).toHaveBeenCalledWith(expect.objectContaining({
-          where: expect.objectContaining({ date: expectedRange }),
+          where: expect.objectContaining({ date: expectedQueryRange }),
         }))
-        expect(result.employees[0].entries).toMatchObject({
-          '2026-07-01': { id: 'entry-utc' },
-          '2026-07-02': { leaveCode: 'UB', status: 'leave' },
+        expect(result.employees[0].entries).toEqual({
+          '2026-07-01': expect.objectContaining({ id: 'entry-utc' }),
+          '2026-07-02': expect.objectContaining({
+            id: 'entry-local',
+            leaveCode: 'UB',
+            totalMinutes: 420,
+          }),
+          '2026-07-03': expect.objectContaining({
+            leaveCode: 'VL',
+            status: 'leave',
+          }),
+        })
+        expect(result.dailyTotals).toEqual({
+          '2026-07-01': 480,
+          '2026-07-02': 420,
+          '2026-07-03': 0,
+          '2026-07-04': 0,
         })
         expect(result.holidays).toEqual([
-          { date: '2026-07-03', name: 'Dzien wolny', divisionId: null },
+          { date: '2026-07-03', name: 'Dzien UTC', divisionId: null },
+          { date: '2026-07-04', name: 'Dzien lokalny', divisionId: 'JAG' },
         ])
       } finally {
         if (originalTimezone === undefined) delete process.env.TZ

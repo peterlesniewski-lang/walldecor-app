@@ -24,6 +24,23 @@ function formatUtcDateKey(date: Date): string {
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`
 }
 
+function formatLocalDateKey(date: Date): string {
+  const pad = (value: number) => String(value).padStart(2, '0')
+  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
+}
+
+function isExactUtcMidnight(date: Date): boolean {
+  return date.getUTCHours() === 0 &&
+    date.getUTCMinutes() === 0 &&
+    date.getUTCSeconds() === 0 &&
+    date.getUTCMilliseconds() === 0
+}
+
+// Bulk rows use UTC midnight; manual, clock, and holiday writers use local calendar instants.
+function persistedPlainDateKey(date: Date): string {
+  return isExactUtcMidnight(date) ? formatUtcDateKey(date) : formatLocalDateKey(date)
+}
+
 function normalizeCalendarRange(start: Date, end: Date): { rangeStart: Date; rangeEnd: Date } {
   return {
     rangeStart: new Date(Date.UTC(start.getFullYear(), start.getMonth(), start.getDate())),
@@ -37,6 +54,22 @@ function normalizeCalendarRange(start: Date, end: Date): { rangeStart: Date; ran
       999
     )),
   }
+}
+
+function widenCalendarQueryRange(
+  rangeStart: Date,
+  rangeEnd: Date
+): { queryStart: Date; queryEnd: Date } {
+  const queryStart = new Date(rangeStart)
+  queryStart.setUTCDate(queryStart.getUTCDate() - 1)
+  const queryEnd = new Date(rangeEnd)
+  queryEnd.setUTCDate(queryEnd.getUTCDate() + 1)
+  return { queryStart, queryEnd }
+}
+
+function dateKeyToUtcDate(dateKey: string): Date {
+  const [year, month, day] = dateKey.split('-').map(Number)
+  return new Date(Date.UTC(year, month - 1, day))
 }
 
 function buildDateKeys(rangeStart: Date, rangeEnd: Date): string[] {
@@ -83,6 +116,7 @@ export async function loadTimeTrackingRange({
   employeeId,
 }: LoadTimeTrackingRangeInput): Promise<TimeTrackingRangeData> {
   const { rangeStart, rangeEnd } = normalizeCalendarRange(start, end)
+  const { queryStart, queryEnd } = widenCalendarQueryRange(rangeStart, rangeEnd)
   const days = buildDateKeys(rangeStart, rangeEnd)
   const daySet = new Set(days)
   const settingsPromise = getHrSettings()
@@ -134,7 +168,7 @@ export async function loadTimeTrackingRange({
       ? prisma.timeEntry.findMany({
           where: {
             employeeId: { in: employeeIds },
-            date: { gte: rangeStart, lte: rangeEnd },
+            date: { gte: queryStart, lte: queryEnd },
           },
           select: {
             id: true,
@@ -153,8 +187,8 @@ export async function loadTimeTrackingRange({
           where: {
             employeeId: { in: employeeIds },
             status: 'approved',
-            startDate: { lte: rangeEnd },
-            endDate: { gte: rangeStart },
+            startDate: { lte: queryEnd },
+            endDate: { gte: queryStart },
           },
           select: {
             employeeId: true,
@@ -168,7 +202,7 @@ export async function loadTimeTrackingRange({
       : Promise.resolve([]),
     prisma.customHoliday.findMany({
       where: {
-        date: { gte: rangeStart, lte: rangeEnd },
+        date: { gte: queryStart, lte: queryEnd },
         ...(holidayDivisionId
           ? { OR: [{ divisionId: null }, { divisionId: holidayDivisionId }] }
           : {}),
@@ -184,7 +218,7 @@ export async function loadTimeTrackingRange({
   )
 
   for (const entry of timeEntries) {
-    const dateKey = formatUtcDateKey(entry.date)
+    const dateKey = persistedPlainDateKey(entry.date)
     const employeeEntries = entryMap.get(entry.employeeId)
     if (!employeeEntries || !daySet.has(dateKey)) continue
 
@@ -202,16 +236,8 @@ export async function loadTimeTrackingRange({
     const employeeEntries = entryMap.get(leave.employeeId)
     if (!employeeEntries) continue
 
-    const current = new Date(Date.UTC(
-      leave.startDate.getUTCFullYear(),
-      leave.startDate.getUTCMonth(),
-      leave.startDate.getUTCDate()
-    ))
-    const leaveEnd = new Date(Date.UTC(
-      leave.endDate.getUTCFullYear(),
-      leave.endDate.getUTCMonth(),
-      leave.endDate.getUTCDate()
-    ))
+    const current = dateKeyToUtcDate(persistedPlainDateKey(leave.startDate))
+    const leaveEnd = dateKeyToUtcDate(persistedPlainDateKey(leave.endDate))
 
     while (current <= leaveEnd) {
       const dateKey = formatUtcDateKey(current)
@@ -252,11 +278,13 @@ export async function loadTimeTrackingRange({
       entries: entryMap.get(employee.id) ?? {},
     })),
     dailyTotals,
-    holidays: customHolidays.map((holiday) => ({
-      date: formatUtcDateKey(holiday.date),
-      name: holiday.name,
-      divisionId: holiday.divisionId,
-    })),
+    holidays: customHolidays
+      .map((holiday) => ({
+        date: persistedPlainDateKey(holiday.date),
+        name: holiday.name,
+        divisionId: holiday.divisionId,
+      }))
+      .filter((holiday) => daySet.has(holiday.date)),
     saturdayWorkable: settings.saturdayWorkable,
     standardClockIn: settings.standardClockIn,
     standardClockOut: settings.standardClockOut,
