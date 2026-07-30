@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
+import { getHrSettings } from '@/lib/hr/hr-settings'
 import { GET as getWeeklyTimeTracking } from '@/app/api/hr/time-tracking/weekly/route'
 import { POST as createTimeEntry } from '@/app/api/hr/time-tracking/route'
 import { POST as createBulkTimeEntries } from '@/app/api/hr/time-tracking/bulk/route'
@@ -28,7 +29,14 @@ vi.mock('@/lib/prisma', () => ({
     leaveRequestNew: {
       findMany: vi.fn(),
     },
+    customHoliday: {
+      findMany: vi.fn(),
+    },
   },
+}))
+
+vi.mock('@/lib/hr/hr-settings', () => ({
+  getHrSettings: vi.fn(),
 }))
 
 const mockGetServerSession = vi.mocked(getServerSession)
@@ -38,6 +46,8 @@ const mockTimeEntryFindMany = vi.mocked(prisma.timeEntry.findMany)
 const mockTimeEntryFindFirst = vi.mocked(prisma.timeEntry.findFirst)
 const mockTimeEntryCreate = vi.mocked(prisma.timeEntry.create)
 const mockLeaveRequestFindMany = vi.mocked(prisma.leaveRequestNew.findMany)
+const mockCustomHolidayFindMany = vi.mocked(prisma.customHoliday.findMany)
+const mockGetHrSettings = vi.mocked(getHrSettings)
 
 function session(role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE', employeeId: string | null = null) {
   return {
@@ -54,6 +64,13 @@ function session(role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE', employeeId: string | nu
 
 beforeEach(() => {
   vi.clearAllMocks()
+  mockCustomHolidayFindMany.mockResolvedValue([])
+  mockGetHrSettings.mockResolvedValue({
+    saturdayWorkable: true,
+    standardClockIn: '11:00',
+    standardClockOut: '19:00',
+    overtimeThresholdMinutes: 480,
+  })
 })
 
 describe('HR operational access scoping', () => {
