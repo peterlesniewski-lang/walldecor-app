@@ -9,8 +9,11 @@ import {
   toWarsawBusinessDateUtcMidnight,
 } from '@/lib/hr/business-date'
 import { timeEntryBatchMutationSchema } from '@/lib/hr/schemas'
-import { validateTimeMutationRow } from '@/lib/hr/time-tracking/batch-policy'
-import { calculateOvertimeMinutes } from '@/lib/hr/utils'
+import {
+  calculateBatchOvertimeMinutes,
+  validateTimeMutationRow,
+} from '@/lib/hr/time-tracking/batch-policy'
+import { getHrSettings } from '@/lib/hr/hr-settings'
 import {
   runSerializableTransactionWithRetry,
   SerializableTransactionConflictError,
@@ -270,14 +273,25 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const timeRule = targetEmployee.divisionId
-    ? await prisma.timeTrackingRule.findFirst({
-        where: { divisionId: targetEmployee.divisionId },
-        orderBy: { id: 'asc' },
-        select: { dailyHours: true },
-      })
+  const [timeRule, hrSettings] = await Promise.all([
+    targetEmployee.divisionId
+      ? prisma.timeTrackingRule.findFirst({
+          where: { divisionId: targetEmployee.divisionId },
+          orderBy: { id: 'asc' },
+          select: { overtimeThreshold: true },
+        })
+      : Promise.resolve(null),
+    getHrSettings(),
+  ])
+  const ruleThresholdMinutes = timeRule
+    ? Math.round(timeRule.overtimeThreshold * 60)
     : null
-  const dailyThresholdHours = timeRule?.dailyHours ?? 8
+  const overtimeThresholdMinutes =
+    ruleThresholdMinutes !== null &&
+    Number.isFinite(ruleThresholdMinutes) &&
+    ruleThresholdMinutes >= 0
+      ? ruleThresholdMinutes
+      : hrSettings.overtimeThresholdMinutes
 
   const dateCounts = getCounts(rows.map((row) => row.date))
   const requestedDateRange = getRequestedDateRange(rows.map((row) => row.date))
@@ -351,7 +365,6 @@ export async function POST(req: NextRequest) {
     }
 
     const clockIn = new Date(row.clockIn)
-    const netMinutes = validation.totalMinutes - validation.breakMinutes
     validRows.push({
       index,
       row,
@@ -360,7 +373,12 @@ export async function POST(req: NextRequest) {
       canonicalDate: toWarsawBusinessDateUtcMidnight(clockIn),
       totalMinutes: validation.totalMinutes,
       breakMinutes: validation.breakMinutes,
-      overtimeMinutes: calculateOvertimeMinutes(netMinutes, dailyThresholdHours),
+      overtimeMinutes: calculateBatchOvertimeMinutes({
+        date: row.date,
+        totalMinutes: validation.totalMinutes,
+        breakMinutes: validation.breakMinutes,
+        overtimeThresholdMinutes,
+      }),
     })
   })
 

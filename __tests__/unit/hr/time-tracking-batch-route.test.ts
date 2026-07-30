@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
+import { getHrSettings } from '@/lib/hr/hr-settings'
 import { POST } from '@/app/api/hr/time-tracking/batch/route'
 
 const transactionTimeEntryCreate = vi.hoisted(() => vi.fn())
@@ -14,6 +15,10 @@ vi.mock('next-auth', () => ({
 
 vi.mock('@/lib/auth', () => ({
   authOptions: {},
+}))
+
+vi.mock('@/lib/hr/hr-settings', () => ({
+  getHrSettings: vi.fn(),
 }))
 
 vi.mock('@/lib/prisma', () => ({
@@ -40,6 +45,7 @@ const mockTimeEntryFindMany = vi.mocked(prisma.timeEntry.findMany)
 const mockTimeRuleFindFirst = vi.mocked(prisma.timeTrackingRule.findFirst)
 const mockLeaveRequestFindMany = vi.mocked(prisma.leaveRequestNew.findMany)
 const mockTransaction = vi.mocked(prisma.$transaction)
+const mockGetHrSettings = vi.mocked(getHrSettings)
 
 type Role = 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
 
@@ -94,6 +100,12 @@ beforeEach(() => {
   mockEmployeeFindUnique.mockResolvedValue(employee('employee-1') as never)
   mockTimeEntryFindMany.mockResolvedValue([])
   mockTimeRuleFindFirst.mockResolvedValue(null)
+  mockGetHrSettings.mockResolvedValue({
+    saturdayWorkable: true,
+    standardClockIn: '11:00',
+    standardClockOut: '19:00',
+    overtimeThresholdMinutes: 480,
+  })
   mockLeaveRequestFindMany.mockResolvedValue([])
   transactionLeaveRequestFindMany.mockResolvedValue([])
   transactionTimeEntryCreate.mockImplementation(async ({ data }) => ({
@@ -311,9 +323,12 @@ describe('POST /api/hr/time-tracking/batch', () => {
     )
   })
 
-  it('calculates create overtime from net minutes using the deterministic division rule', async () => {
+  it('uses overtimeThreshold 8h instead of dailyHours 7.5 for weekday overtime', async () => {
     mockGetServerSession.mockResolvedValue(session('ADMIN'))
-    mockTimeRuleFindFirst.mockResolvedValue({ dailyHours: 7.5 } as never)
+    mockTimeRuleFindFirst.mockResolvedValue({
+      dailyHours: 7.5,
+      overtimeThreshold: 8,
+    } as never)
 
     const response = await POST(request([
       row('2026-07-02', {
@@ -326,13 +341,13 @@ describe('POST /api/hr/time-tracking/batch', () => {
     expect(mockTimeRuleFindFirst).toHaveBeenCalledWith({
       where: { divisionId: 'JAG' },
       orderBy: { id: 'asc' },
-      select: { dailyHours: true },
+      select: { overtimeThreshold: true },
     })
     expect(transactionTimeEntryCreate).toHaveBeenCalledWith(expect.objectContaining({
       data: expect.objectContaining({
         totalMinutes: 540,
         breakMinutes: 30,
-        overtimeMinutes: 60,
+        overtimeMinutes: 30,
       }),
     }))
   })
@@ -359,6 +374,48 @@ describe('POST /api/hr/time-tracking/batch', () => {
         totalMinutes: 600,
         breakMinutes: 60,
         overtimeMinutes: 60,
+      }),
+    }))
+  })
+
+  it('uses the global overtime threshold when the division has no time rule', async () => {
+    mockGetServerSession.mockResolvedValue(session('ADMIN'))
+    mockGetHrSettings.mockResolvedValue({
+      saturdayWorkable: true,
+      standardClockIn: '11:00',
+      standardClockOut: '19:00',
+      overtimeThresholdMinutes: 450,
+    })
+
+    const response = await POST(request([
+      row('2026-07-02', {
+        clockOut: '2026-07-02T16:30:00.000Z',
+        breakMinutes: 30,
+      }),
+    ]))
+
+    expect(response.status).toBe(200)
+    expect(transactionTimeEntryCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        totalMinutes: 510,
+        breakMinutes: 30,
+        overtimeMinutes: 30,
+      }),
+    }))
+  })
+
+  it('counts every rounded net minute on Saturday as overtime', async () => {
+    mockGetServerSession.mockResolvedValue(session('ADMIN'))
+    mockTimeRuleFindFirst.mockResolvedValue({ overtimeThreshold: 8 } as never)
+
+    const response = await POST(request([row('2026-07-04')]))
+
+    expect(response.status).toBe(200)
+    expect(transactionTimeEntryCreate).toHaveBeenCalledWith(expect.objectContaining({
+      data: expect.objectContaining({
+        totalMinutes: 480,
+        breakMinutes: 30,
+        overtimeMinutes: 450,
       }),
     }))
   })

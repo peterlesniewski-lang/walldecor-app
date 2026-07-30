@@ -13,6 +13,13 @@ export type ValidatedTimeRow =
   | { valid: true; totalMinutes: number; breakMinutes: number }
   | { valid: false; error: string }
 
+export interface BatchOvertimeInput {
+  date: string
+  totalMinutes: number
+  breakMinutes: number
+  overtimeThresholdMinutes: number
+}
+
 export function isCanonicalTimeEntryDate(value: string): boolean {
   const match = CANONICAL_DATE_PATTERN.exec(value)
   if (!match) return false
@@ -89,4 +96,19 @@ export function validateTimeMutationRow(row: TimeMutationRow): ValidatedTimeRow 
     totalMinutes,
     breakMinutes: row.breakMinutes,
   }
+}
+
+export function calculateBatchOvertimeMinutes({
+  date,
+  totalMinutes,
+  breakMinutes,
+  overtimeThresholdMinutes,
+}: BatchOvertimeInput): number {
+  const [year, month, day] = date.split('-').map(Number)
+  const isSaturday = new Date(Date.UTC(year, month - 1, day)).getUTCDay() === 6
+  const netMinutes = Math.max(0, totalMinutes - breakMinutes)
+
+  return isSaturday
+    ? netMinutes
+    : Math.max(0, netMinutes - overtimeThresholdMinutes)
 }

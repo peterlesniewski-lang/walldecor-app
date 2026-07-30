@@ -11,6 +11,10 @@ import {
   runSerializableTransactionWithRetry,
   SerializableTransactionConflictError,
 } from '@/lib/hr/serializable-transaction'
+import {
+  getWarsawBusinessDate,
+  getWarsawBusinessDateQueryRange,
+} from '@/lib/hr/business-date'
 
 class LeaveApprovalError extends Error {
   constructor(
@@ -92,6 +96,34 @@ export async function PATCH(
 
   const approveRequest = () =>
     prisma.$transaction(async (tx) => {
+      if (!leaveRequest.isRemoteWork && !leaveRequest.isDelegation) {
+        const startRange = getWarsawBusinessDateQueryRange(leaveRequest.startDate)
+        const endRange = getWarsawBusinessDateQueryRange(leaveRequest.endDate)
+        const startDateKey = getWarsawBusinessDate(leaveRequest.startDate).isoDate
+        const endDateKey = getWarsawBusinessDate(leaveRequest.endDate).isoDate
+        const timeEntries = await tx.timeEntry.findMany({
+          where: {
+            employeeId: leaveRequest.employeeId,
+            date: {
+              gte: startRange.gte,
+              lte: endRange.lte,
+            },
+          },
+          select: { id: true, date: true },
+        })
+        const hasWorkedTime = timeEntries.some((entry) => {
+          const dateKey = getWarsawBusinessDate(entry.date).isoDate
+          return startDateKey <= dateKey && dateKey <= endDateKey
+        })
+
+        if (hasWorkedTime) {
+          throw new LeaveApprovalError(
+            409,
+            'Nie można zatwierdzić urlopu w dniu z zarejestrowanym czasem pracy'
+          )
+        }
+      }
+
       const transition = await tx.leaveRequestNew.updateMany({
         where: { id, status: 'pending' },
         data: {

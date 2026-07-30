@@ -61,6 +61,7 @@ const txRequestAggregate = vi.fn()
 const txBalanceFindUnique = vi.fn()
 const txBalanceUpdate = vi.fn()
 const txBalanceUpdateMany = vi.fn()
+const txTimeEntryFindMany = vi.fn()
 
 const tx = {
   leaveRequestNew: {
@@ -75,6 +76,9 @@ const tx = {
     findUnique: txBalanceFindUnique,
     update: txBalanceUpdate,
     updateMany: txBalanceUpdateMany,
+  },
+  timeEntry: {
+    findMany: txTimeEntryFindMany,
   },
 }
 
@@ -253,6 +257,7 @@ beforeEach(() => {
   txBalanceFindUnique.mockResolvedValue(null)
   txBalanceUpdate.mockResolvedValue(balance())
   txBalanceUpdateMany.mockResolvedValue({ count: 1 })
+  txTimeEntryFindMany.mockResolvedValue([])
 
   mockTransaction.mockImplementation(
     async (callback) => callback(tx as never) as never
@@ -603,6 +608,50 @@ describe('POST /api/hr/leave-requests', () => {
 })
 
 describe('PATCH /api/hr/leave-requests/[id]/approve', () => {
+  it('blocks normal leave approval when worked time exists on a covered Warsaw date', async () => {
+    arrangeLifecycle(leaveType('VL'))
+    txTimeEntryFindMany.mockResolvedValue([{
+      id: 'entry-1',
+      date: new Date('2026-07-28T22:00:00.000Z'),
+    }])
+
+    const response = await approveLeave(request('PATCH'), params())
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({
+      error: 'Nie można zatwierdzić urlopu w dniu z zarejestrowanym czasem pracy',
+    })
+    expect(txTimeEntryFindMany).toHaveBeenCalledWith({
+      where: {
+        employeeId: employee.id,
+        date: {
+          gte: new Date('2026-07-28T00:00:00.000Z'),
+          lte: new Date('2026-07-30T23:59:59.999Z'),
+        },
+      },
+      select: { id: true, date: true },
+    })
+    expect(txRequestUpdateMany).not.toHaveBeenCalled()
+    expect(txBalanceUpdate).not.toHaveBeenCalled()
+  })
+
+  it.each([
+    ['remote work', { isRemoteWork: true }],
+    ['delegation', { isDelegation: true }],
+  ])('allows %s approval alongside worked time', async (_label, flags) => {
+    arrangeLifecycle(leaveType('VL'), flags)
+    txTimeEntryFindMany.mockResolvedValue([{
+      id: 'entry-1',
+      date: new Date('2026-07-29T00:00:00.000Z'),
+    }])
+
+    const response = await approveLeave(request('PATCH'), params())
+
+    expect(response.status).toBe(200)
+    expect(txTimeEntryFindMany).not.toHaveBeenCalled()
+    expect(txRequestUpdateMany).toHaveBeenCalledTimes(1)
+  })
+
   it('returns 503 before mutation when VLD has no parent pool', async () => {
     arrangeLifecycle(leaveType('VLD', { parentId: null }))
 

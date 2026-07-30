@@ -1,5 +1,8 @@
 import { describe, expect, it } from 'vitest'
-import { validateTimeMutationRow } from '@/lib/hr/time-tracking/batch-policy'
+import {
+  calculateBatchOvertimeMinutes,
+  validateTimeMutationRow,
+} from '@/lib/hr/time-tracking/batch-policy'
 
 describe('validateTimeMutationRow', () => {
   it('rejects clock-out before clock-in', () => {
@@ -147,5 +150,25 @@ describe('validateTimeMutationRow', () => {
       totalMinutes: 120,
       breakMinutes: 0,
     })
+  })
+})
+
+describe('calculateBatchOvertimeMinutes', () => {
+  it('uses rounded gross minus break against the configured weekday threshold', () => {
+    expect(calculateBatchOvertimeMinutes({
+      date: '2026-07-03',
+      totalMinutes: 511,
+      breakMinutes: 30,
+      overtimeThresholdMinutes: 480,
+    })).toBe(1)
+  })
+
+  it('counts all net Saturday minutes as overtime', () => {
+    expect(calculateBatchOvertimeMinutes({
+      date: '2026-07-04',
+      totalMinutes: 480,
+      breakMinutes: 30,
+      overtimeThresholdMinutes: 480,
+    })).toBe(450)
   })
 })
