@@ -337,12 +337,14 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWork
   const navigateWeek = (delta: number) => {
     const newWeek = getAdjacentWeek(currentWeek, delta)
     const params = new URLSearchParams(searchParams.toString())
+    params.set('view', 'week')
     params.set('week', newWeek)
     router.push(`?${params.toString()}`)
   }
 
   const goToday = () => {
     const params = new URLSearchParams(searchParams.toString())
+    params.set('view', 'week')
     params.set('week', getCurrentIsoWeek())
     router.push(`?${params.toString()}`)
   }
@@ -350,6 +352,7 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWork
   const handleDivisionChange = (val: string) => {
     setDivisionFilter(val)
     const params = new URLSearchParams(searchParams.toString())
+    params.set('view', 'week')
     if (val) params.set('divisionId', val)
     else params.delete('divisionId')
     router.push(`?${params.toString()}`)
@@ -439,6 +442,9 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWork
           style={{ borderColor: 'var(--wd-border)', background: 'var(--wd-white)' }}
         >
           <button
+            type="button"
+            aria-label="Poprzedni tydzień"
+            title="Poprzedni tydzień"
             onClick={() => navigateWeek(-1)}
             className="p-2 hover:bg-[var(--wd-surface-2)] transition-colors"
           >
@@ -451,6 +457,9 @@ export function WeeklyTimesheet({ userRole, divisions, initialWeek, saturdayWork
             {formatWeekLabel(weekStart, weekEnd)}
           </div>
           <button
+            type="button"
+            aria-label="Następny tydzień"
+            title="Następny tydzień"
             onClick={() => navigateWeek(1)}
             className="p-2 hover:bg-[var(--wd-surface-2)] transition-colors"
           >
