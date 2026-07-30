@@ -10,9 +10,17 @@ interface NavItemProps {
   icon: LucideIcon
   collapsed?: boolean
   exact?: boolean
+  onNavigate?: () => void
 }
 
-export function NavItem({ href, label, icon: Icon, collapsed, exact }: NavItemProps) {
+export function NavItem({
+  href,
+  label,
+  icon: Icon,
+  collapsed,
+  exact,
+  onNavigate,
+}: NavItemProps) {
   const pathname = usePathname()
   const isActive = exact ? pathname === href : pathname === href || (href !== '/' && pathname.startsWith(href + '/'))
 
@@ -20,6 +28,7 @@ export function NavItem({ href, label, icon: Icon, collapsed, exact }: NavItemPr
     <Link
       href={href}
       title={collapsed ? label : undefined}
+      onClick={onNavigate}
       className="flex items-center gap-3 py-2 rounded-md text-sm font-medium transition-colors"
       style={
         isActive

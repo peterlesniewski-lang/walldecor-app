@@ -1,5 +1,3 @@
-import { getServerSession } from 'next-auth'
-import { authOptions } from '@/lib/auth'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import {
   DropdownMenu,
@@ -11,6 +9,8 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { SignOutButton } from './sign-out-button'
 import { NotificationBell } from './notification-bell'
+import { GlobalMobileNavigation } from './global-mobile-navigation'
+import type { SidebarRole } from './sidebar'
 
 const ROLE_LABELS: Record<string, string> = {
   ADMIN: 'Administrator',
@@ -27,54 +27,63 @@ function getInitials(name: string): string {
     .toUpperCase()
 }
 
-export async function Header() {
-  const session = await getServerSession(authOptions)
-  const user = session?.user
+interface HeaderUser {
+  name?: string | null
+  email?: string | null
+  role?: string | null
+}
+
+function normalizeRole(role: string | null | undefined): SidebarRole {
+  return role === 'ADMIN' || role === 'MANAGER' ? role : 'EMPLOYEE'
+}
+
+export function Header({ user }: { user: HeaderUser }) {
+  const userRole = normalizeRole(user.role)
 
   return (
     <header
-      className="flex items-center justify-between h-14 px-6 border-b shrink-0"
+      className="flex h-14 shrink-0 items-center justify-between border-b px-3 sm:px-6"
       style={{ background: 'var(--wd-white)', borderColor: 'var(--border)' }}
     >
-      <div />
+      <div className="flex items-center">
+        <GlobalMobileNavigation userRole={userRole} />
+      </div>
 
       <div className="flex items-center gap-3">
         <NotificationBell />
 
-        {user && (
-          <DropdownMenu>
-            <DropdownMenuTrigger className="flex items-center gap-2.5 outline-none">
-              <div className="text-right hidden sm:block">
-                <p className="text-sm font-medium leading-none">{user.name}</p>
-                <p className="text-xs mt-0.5" style={{ color: 'var(--muted-foreground)' }}>
-                  {ROLE_LABELS[user.role] ?? user.role}
-                </p>
-              </div>
-              <Avatar className="h-8 w-8">
-                <AvatarFallback
-                  className="text-xs font-medium"
-                  style={{ background: 'var(--wd-sand)', color: 'var(--wd-dark)' }}
-                >
-                  {getInitials(user.name ?? 'U')}
-                </AvatarFallback>
-              </Avatar>
-            </DropdownMenuTrigger>
-            <DropdownMenuContent align="end" className="w-48">
-              <DropdownMenuLabel className="font-normal">
-                <p className="text-sm font-medium">{user.name}</p>
-                <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
-                  {user.email}
-                </p>
-              </DropdownMenuLabel>
-              <DropdownMenuSeparator />
-              <DropdownMenuItem disabled className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
-                {ROLE_LABELS[user.role] ?? user.role}
-              </DropdownMenuItem>
-              <DropdownMenuSeparator />
-              <SignOutButton />
-            </DropdownMenuContent>
-          </DropdownMenu>
-        )}
+        <DropdownMenu>
+          <DropdownMenuTrigger className="flex items-center gap-2.5 outline-none">
+            <div className="hidden text-right sm:block">
+              <p className="text-sm font-medium leading-none">{user.name}</p>
+              <p className="mt-0.5 text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                {ROLE_LABELS[userRole]}
+              </p>
+            </div>
+            <Avatar className="h-8 w-8">
+              <AvatarFallback
+                className="text-xs font-medium"
+                style={{ background: 'var(--wd-sand)', color: 'var(--wd-dark)' }}
+              >
+                {getInitials(user.name ?? 'U')}
+              </AvatarFallback>
+            </Avatar>
+          </DropdownMenuTrigger>
+          <DropdownMenuContent align="end" className="w-48">
+            <DropdownMenuLabel className="font-normal">
+              <p className="text-sm font-medium">{user.name}</p>
+              <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                {user.email}
+              </p>
+            </DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem disabled className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+              {ROLE_LABELS[userRole]}
+            </DropdownMenuItem>
+            <DropdownMenuSeparator />
+            <SignOutButton />
+          </DropdownMenuContent>
+        </DropdownMenu>
       </div>
     </header>
   )
