@@ -1,7 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { prisma } from '@/lib/prisma'
 import { getHrSettings } from '@/lib/hr/hr-settings'
-import { loadTimeTrackingRange } from '@/lib/hr/time-tracking/range-loader'
+import {
+  loadTimeTrackingRange,
+  TimeTrackingRangeConflictError,
+} from '@/lib/hr/time-tracking/range-loader'
 import type { HrSessionLike } from '@/lib/hr/access'
 
 vi.mock('@/lib/prisma', () => ({
@@ -257,7 +260,7 @@ describe('loadTimeTrackingRange', () => {
           {
             id: 'entry-local',
             employeeId: 'employee-1',
-            date: new Date(2026, 6, 2, 0, 0, 0, 0),
+            date: new Date('2026-07-01T22:00:00.000Z'),
             clockIn: new Date('2026-07-02T09:00:00.000Z'),
             clockOut: new Date('2026-07-02T16:00:00.000Z'),
             totalMinutes: 420,
@@ -267,7 +270,7 @@ describe('loadTimeTrackingRange', () => {
           {
             id: 'entry-outside',
             employeeId: 'employee-1',
-            date: new Date(2026, 5, 30, 0, 0, 0, 0),
+            date: new Date('2026-06-29T22:00:00.000Z'),
             clockIn: new Date('2026-06-30T09:00:00.000Z'),
             clockOut: new Date('2026-06-30T10:00:00.000Z'),
             totalMinutes: 60,
@@ -278,8 +281,8 @@ describe('loadTimeTrackingRange', () => {
         mockLeaveRequestFindMany.mockResolvedValue([
           {
             employeeId: 'employee-1',
-            startDate: new Date(2026, 6, 2, 0, 0, 0, 0),
-            endDate: new Date(2026, 6, 2, 0, 0, 0, 0),
+            startDate: new Date('2026-07-01T22:00:00.000Z'),
+            endDate: new Date('2026-07-01T22:00:00.000Z'),
             leaveType: {
               name: 'Urlop bezplatny',
               code: 'UB',
@@ -298,8 +301,8 @@ describe('loadTimeTrackingRange', () => {
           },
           {
             employeeId: 'employee-1',
-            startDate: new Date(2026, 5, 30, 0, 0, 0, 0),
-            endDate: new Date(2026, 5, 30, 0, 0, 0, 0),
+            startDate: new Date('2026-06-29T22:00:00.000Z'),
+            endDate: new Date('2026-06-29T22:00:00.000Z'),
             leaveType: {
               name: 'Poza zakresem',
               code: 'OUT',
@@ -314,12 +317,12 @@ describe('loadTimeTrackingRange', () => {
             divisionId: null,
           },
           {
-            date: new Date(2026, 6, 4, 0, 0, 0, 0),
+            date: new Date('2026-07-03T22:00:00.000Z'),
             name: 'Dzien lokalny',
             divisionId: 'JAG',
           },
           {
-            date: new Date(2026, 5, 30, 0, 0, 0, 0),
+            date: new Date('2026-06-29T22:00:00.000Z'),
             name: 'Poza zakresem',
             divisionId: null,
           },
@@ -370,6 +373,57 @@ describe('loadTimeTrackingRange', () => {
           { date: '2026-07-03', name: 'Dzien UTC', divisionId: null },
           { date: '2026-07-04', name: 'Dzien lokalny', divisionId: 'JAG' },
         ])
+      } finally {
+        if (originalTimezone === undefined) delete process.env.TZ
+        else process.env.TZ = originalTimezone
+      }
+    }
+  )
+
+  it.each(['UTC', 'Europe/Warsaw'])(
+    'fails deterministically when multiple entries map to one Warsaw date in %s',
+    async (timezone) => {
+      const originalTimezone = process.env.TZ
+      process.env.TZ = timezone
+
+      try {
+        mockEmployeeFindMany.mockResolvedValue([employee] as never)
+        mockTimeEntryFindMany.mockResolvedValue([
+          {
+            id: 'entry-z',
+            employeeId: 'employee-1',
+            date: new Date('2026-07-01T22:00:00.000Z'),
+            clockIn: new Date('2026-07-02T09:00:00.000Z'),
+            clockOut: new Date('2026-07-02T17:00:00.000Z'),
+            totalMinutes: 480,
+            breakMinutes: 30,
+            status: 'pending',
+          },
+          {
+            id: 'entry-a',
+            employeeId: 'employee-1',
+            date: new Date('2026-07-02T00:00:00.000Z'),
+            clockIn: new Date('2026-07-02T08:00:00.000Z'),
+            clockOut: new Date('2026-07-02T16:00:00.000Z'),
+            totalMinutes: 480,
+            breakMinutes: 0,
+            status: 'approved',
+          },
+        ] as never)
+
+        const loadPromise = loadTimeTrackingRange({
+          session: session('ADMIN'),
+          start: new Date(2026, 6, 1, 0, 0, 0, 0),
+          end: new Date(2026, 6, 3, 23, 59, 59, 999),
+        })
+
+        await expect(loadPromise).rejects.toBeInstanceOf(TimeTrackingRangeConflictError)
+        await expect(loadPromise).rejects.toMatchObject({
+          code: 'DUPLICATE_TIME_ENTRY_BUSINESS_DATE',
+          employeeId: 'employee-1',
+          dateKey: '2026-07-02',
+          entryIds: ['entry-a', 'entry-z'],
+        })
       } finally {
         if (originalTimezone === undefined) delete process.env.TZ
         else process.env.TZ = originalTimezone

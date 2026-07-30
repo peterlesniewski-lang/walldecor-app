@@ -38,6 +38,21 @@ export function getWarsawBusinessDate(now: Date = new Date()): BusinessDate {
   }
 }
 
+export function toWarsawBusinessDateUtcMidnight(value: Date): Date {
+  const businessDate = getWarsawBusinessDate(value)
+  return new Date(Date.UTC(businessDate.year, businessDate.month - 1, businessDate.day))
+}
+
+export function getWarsawBusinessDateQueryRange(value: Date): { gte: Date; lte: Date } {
+  const canonicalDate = toWarsawBusinessDateUtcMidnight(value)
+  const gte = new Date(canonicalDate)
+  gte.setUTCDate(gte.getUTCDate() - 1)
+  const lte = new Date(canonicalDate)
+  lte.setUTCDate(lte.getUTCDate() + 1)
+  lte.setUTCHours(23, 59, 59, 999)
+  return { gte, lte }
+}
+
 function utcEndOfIsoDate(isoDate: string): Date {
   const [year, month, day] = isoDate.split('-').map(Number)
   return new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999))

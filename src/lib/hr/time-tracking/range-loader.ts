@@ -4,6 +4,7 @@ import {
   HR_NO_EMPLOYEE_ACCESS_ID,
   type HrSessionLike,
 } from '@/lib/hr/access'
+import { getWarsawBusinessDate } from '@/lib/hr/business-date'
 import { getHrSettings } from '@/lib/hr/hr-settings'
 import type {
   TimeTrackingDayEntry,
@@ -19,26 +20,32 @@ export interface LoadTimeTrackingRangeInput {
   employeeId?: string
 }
 
+export class TimeTrackingRangeConflictError extends Error {
+  readonly code = 'DUPLICATE_TIME_ENTRY_BUSINESS_DATE'
+  readonly employeeId: string
+  readonly dateKey: string
+  readonly entryIds: string[]
+
+  constructor(employeeId: string, dateKey: string, entryIds: string[]) {
+    const sortedEntryIds = [...entryIds].sort()
+    super(
+      `Multiple time entries map to employee ${employeeId} on Warsaw business date ` +
+      `${dateKey}: ${sortedEntryIds.join(', ')}`
+    )
+    this.name = 'TimeTrackingRangeConflictError'
+    this.employeeId = employeeId
+    this.dateKey = dateKey
+    this.entryIds = sortedEntryIds
+  }
+}
+
 function formatUtcDateKey(date: Date): string {
   const pad = (value: number) => String(value).padStart(2, '0')
   return `${date.getUTCFullYear()}-${pad(date.getUTCMonth() + 1)}-${pad(date.getUTCDate())}`
 }
 
-function formatLocalDateKey(date: Date): string {
-  const pad = (value: number) => String(value).padStart(2, '0')
-  return `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())}`
-}
-
-function isExactUtcMidnight(date: Date): boolean {
-  return date.getUTCHours() === 0 &&
-    date.getUTCMinutes() === 0 &&
-    date.getUTCSeconds() === 0 &&
-    date.getUTCMilliseconds() === 0
-}
-
-// Bulk rows use UTC midnight; manual, clock, and holiday writers use local calendar instants.
 function persistedPlainDateKey(date: Date): string {
-  return isExactUtcMidnight(date) ? formatUtcDateKey(date) : formatLocalDateKey(date)
+  return getWarsawBusinessDate(date).isoDate
 }
 
 function normalizeCalendarRange(start: Date, end: Date): { rangeStart: Date; rangeEnd: Date } {
@@ -217,12 +224,46 @@ export async function loadTimeTrackingRange({
     employees.map((employee) => [employee.id, {}])
   )
 
+  const groupedTimeEntries = new Map<string, {
+    employeeId: string
+    dateKey: string
+    entries: Array<(typeof timeEntries)[number]>
+  }>()
+
   for (const entry of timeEntries) {
     const dateKey = persistedPlainDateKey(entry.date)
-    const employeeEntries = entryMap.get(entry.employeeId)
-    if (!employeeEntries || !daySet.has(dateKey)) continue
+    if (!entryMap.has(entry.employeeId) || !daySet.has(dateKey)) continue
 
-    employeeEntries[dateKey] = {
+    const groupKey = `${entry.employeeId}\0${dateKey}`
+    const group = groupedTimeEntries.get(groupKey) ?? {
+      employeeId: entry.employeeId,
+      dateKey,
+      entries: [],
+    }
+    group.entries.push(entry)
+    groupedTimeEntries.set(groupKey, group)
+  }
+
+  const conflict = Array.from(groupedTimeEntries.values())
+    .filter((group) => group.entries.length > 1)
+    .sort((left, right) =>
+      left.employeeId.localeCompare(right.employeeId) || left.dateKey.localeCompare(right.dateKey)
+    )[0]
+
+  if (conflict) {
+    throw new TimeTrackingRangeConflictError(
+      conflict.employeeId,
+      conflict.dateKey,
+      conflict.entries.map((entry) => entry.id)
+    )
+  }
+
+  for (const group of groupedTimeEntries.values()) {
+    const entry = group.entries[0]
+    const employeeEntries = entryMap.get(group.employeeId)
+    if (!employeeEntries) continue
+
+    employeeEntries[group.dateKey] = {
       id: entry.id,
       clockIn: entry.clockIn.toISOString(),
       clockOut: entry.clockOut?.toISOString() ?? null,

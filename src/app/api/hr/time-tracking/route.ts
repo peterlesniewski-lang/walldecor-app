@@ -4,6 +4,11 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { timeEntryCreateSchema } from '@/lib/hr/schemas'
 import { canViewEmployeeRecord } from '@/lib/hr/access'
+import {
+  getWarsawBusinessDate,
+  getWarsawBusinessDateQueryRange,
+  toWarsawBusinessDateUtcMidnight,
+} from '@/lib/hr/business-date'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -40,14 +45,18 @@ export async function POST(req: NextRequest) {
     }
   }
 
-  // Check for existing entry on this date
-  const dayStart = new Date(date)
-  dayStart.setHours(0, 0, 0, 0)
-
-  const existing = await prisma.timeEntry.findFirst({
-    where: { employeeId, date: dayStart },
+  const businessDate = getWarsawBusinessDate(date)
+  const canonicalDate = toWarsawBusinessDateUtcMidnight(date)
+  const existingCandidates = await prisma.timeEntry.findMany({
+    where: {
+      employeeId,
+      date: getWarsawBusinessDateQueryRange(date),
+    },
+    select: { id: true, date: true },
   })
-  if (existing) {
+  if (existingCandidates.some((entry) =>
+    getWarsawBusinessDate(entry.date).isoDate === businessDate.isoDate
+  )) {
     return NextResponse.json({ error: 'Entry already exists for this employee on this date' }, { status: 409 })
   }
 
@@ -60,7 +69,7 @@ export async function POST(req: NextRequest) {
   const entry = await prisma.timeEntry.create({
     data: {
       employeeId,
-      date: dayStart,
+      date: canonicalDate,
       clockIn,
       clockOut: clockOut ?? null,
       totalMinutes,

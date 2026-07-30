@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import {
+  getWarsawBusinessDate,
+  getWarsawBusinessDateQueryRange,
+  toWarsawBusinessDateUtcMidnight,
+} from '@/lib/hr/business-date'
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -25,14 +30,19 @@ export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({})) as { projectId?: string; notes?: string }
 
   const now = new Date()
-  // midnight local = today's date at 00:00:00 local time as UTC
-  const today = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0)
+  const businessDate = getWarsawBusinessDate(now)
+  const today = toWarsawBusinessDateUtcMidnight(now)
 
-  // Check for existing entry on this date (@@unique constraint)
-  const existingForDate = await prisma.timeEntry.findFirst({
-    where: { employeeId: employee.id, date: today },
+  const existingCandidates = await prisma.timeEntry.findMany({
+    where: {
+      employeeId: employee.id,
+      date: getWarsawBusinessDateQueryRange(now),
+    },
+    select: { id: true, date: true },
   })
-  if (existingForDate) {
+  if (existingCandidates.some((entry) =>
+    getWarsawBusinessDate(entry.date).isoDate === businessDate.isoDate
+  )) {
     return NextResponse.json({ error: 'Entry already exists for today' }, { status: 409 })
   }
 
