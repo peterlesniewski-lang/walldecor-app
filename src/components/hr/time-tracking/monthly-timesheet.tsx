@@ -1,6 +1,6 @@
 'use client'
 
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import { CalendarDays, ChevronLeft, ChevronRight, RefreshCw } from 'lucide-react'
 import { TimeEntryEditModal } from './time-entry-edit-modal'
@@ -102,28 +102,57 @@ export function MonthlyTimesheet({
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [editModal, setEditModal] = useState<EditModalState | null>(null)
+  const requestSequenceRef = useRef(0)
+  const requestControllerRef = useRef<AbortController | null>(null)
 
   const refreshData = useCallback(async () => {
+    const requestSequence = requestSequenceRef.current + 1
+    requestSequenceRef.current = requestSequence
+    requestControllerRef.current?.abort()
+    const controller = new AbortController()
+    requestControllerRef.current = controller
+
     setLoading(true)
     setError(null)
+    setData(null)
+
+    const isCurrentRequest = () => (
+      !controller.signal.aborted && requestSequenceRef.current === requestSequence
+    )
+
     try {
       const params = new URLSearchParams({ month })
       if (divisionId) params.set('divisionId', divisionId)
-      if (mode === 'employee' && employeeId) params.set('employeeId', employeeId)
 
-      const response = await fetch(`/api/hr/time-tracking/monthly?${params.toString()}`)
+      const response = await fetch(`/api/hr/time-tracking/monthly?${params.toString()}`, {
+        signal: controller.signal,
+      })
+      if (!isCurrentRequest()) return
       if (!response.ok) throw new Error('Monthly time tracking request failed')
-      setData(await response.json() as MonthlyTimesheetData)
+      const nextData = await response.json() as MonthlyTimesheetData
+      if (!isCurrentRequest()) return
+      setData(nextData)
     } catch {
+      if (!isCurrentRequest()) return
       setData(null)
       setError('Nie udało się pobrać ewidencji. Spróbuj ponownie.')
     } finally {
-      setLoading(false)
+      if (isCurrentRequest()) {
+        setLoading(false)
+        if (requestControllerRef.current === controller) {
+          requestControllerRef.current = null
+        }
+      }
     }
-  }, [divisionId, employeeId, mode, month])
+  }, [divisionId, month])
 
   useEffect(() => {
     void refreshData()
+    return () => {
+      requestSequenceRef.current += 1
+      requestControllerRef.current?.abort()
+      requestControllerRef.current = null
+    }
   }, [refreshData])
 
   const pushState = (updates: Record<string, string | null>) => {
@@ -141,6 +170,17 @@ export function MonthlyTimesheet({
   }
 
   const employees = data?.employees ?? []
+  const selectedEmployee = employeeId
+    ? employees.find((employee) => employee.id === employeeId) ?? null
+    : null
+  const employeeUnavailable = (
+    mode === 'employee' &&
+    !!employeeId &&
+    !loading &&
+    !error &&
+    !!data &&
+    !selectedEmployee
+  )
 
   return (
     <div
@@ -164,7 +204,7 @@ export function MonthlyTimesheet({
         {mode === 'employee' && (
           <select
             aria-label="Pracownik"
-            value={employeeId}
+            value={selectedEmployee?.id ?? ''}
             onChange={(event) => pushState({ employeeId: event.target.value || null })}
             className="h-9 min-w-52 rounded-md border border-[var(--wd-border)] bg-white px-3 text-sm text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1"
           >
@@ -183,7 +223,7 @@ export function MonthlyTimesheet({
             aria-label="Poprzedni miesiąc"
             title="Poprzedni miesiąc"
             onClick={() => pushState({ month: getAdjacentMonth(month, -1) })}
-            className="grid h-full w-9 place-items-center text-[var(--wd-text-muted)] transition-colors hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--wd-dark)]"
+            className="grid h-full w-9 place-items-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--wd-dark)]"
           >
             <ChevronLeft className="h-4 w-4" />
           </button>
@@ -195,7 +235,7 @@ export function MonthlyTimesheet({
             aria-label="Następny miesiąc"
             title="Następny miesiąc"
             onClick={() => pushState({ month: getAdjacentMonth(month, 1) })}
-            className="grid h-full w-9 place-items-center text-[var(--wd-text-muted)] transition-colors hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--wd-dark)]"
+            className="grid h-full w-9 place-items-center text-[var(--muted-foreground)] transition-colors hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-[var(--wd-dark)]"
           >
             <ChevronRight className="h-4 w-4" />
           </button>
@@ -204,12 +244,18 @@ export function MonthlyTimesheet({
         <button
           type="button"
           onClick={() => pushState({ month: currentMonthParam() })}
-          className="flex h-9 items-center gap-1.5 rounded-md border border-[var(--wd-border)] px-3 text-sm font-medium text-[var(--wd-text-muted)] transition-colors hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1"
+          className="flex h-9 items-center gap-1.5 rounded-md border border-[var(--wd-border)] px-3 text-sm font-medium text-[var(--muted-foreground)] transition-colors hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1"
         >
           <CalendarDays className="h-3.5 w-3.5" />
           Bieżący miesiąc
         </button>
       </div>
+
+      {employeeUnavailable && (
+        <p role="alert" className="text-sm text-[var(--muted-foreground)]">
+          Pracownik nie jest dostępny w bieżącym zakresie
+        </p>
+      )}
 
       <div className="flex min-h-80 items-center justify-center overflow-hidden rounded-lg border border-[var(--wd-border)] bg-white">
         {loading && (

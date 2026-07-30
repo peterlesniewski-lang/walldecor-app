@@ -77,7 +77,7 @@ function SegmentedControl<T extends string>({
             className={`min-w-[5.5rem] rounded px-3 text-sm font-medium transition-colors focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1 ${
               selected
                 ? 'bg-white text-[var(--wd-text-primary)] shadow-sm'
-                : 'text-[var(--wd-text-muted)] hover:text-[var(--wd-text-primary)]'
+                : 'text-[var(--muted-foreground)] hover:text-[var(--wd-text-primary)]'
             }`}
           >
             {option.label}

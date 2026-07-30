@@ -303,7 +303,7 @@ describe('LeaveBalancesPage', () => {
       name: 'Przeniesienie dni na nowy rok',
     })).toBe(dialog)
 
-    await user.click(within(dialog).getByRole('button', { name: 'Close' }))
+    await user.click(within(dialog).getByRole('button', { name: 'Zamknij' }))
     expect(screen.getByRole('dialog', {
       name: 'Przeniesienie dni na nowy rok',
     })).toBe(dialog)
