@@ -136,14 +136,54 @@ describe('GET /api/hr/time-tracking/monthly', () => {
     ]).toEqual([2026, 9, 1, 2026, 9, 30])
   })
 
-  it('rejects years below 100 before calling the range loader', async () => {
+  it('rejects years below 1000 before calling the range loader', async () => {
     mockGetServerSession.mockResolvedValue(session('ADMIN'))
 
-    const response = await GET(request('month=0001-07'))
+    const response = await GET(request('month=0999-07'))
 
     expect(response.status).toBe(400)
-    expect(await response.json()).toEqual({ error: 'Month year must be 0100 or later' })
+    expect(await response.json()).toEqual({ error: 'Month year must be 1000 or later' })
     expect(mockLoadRange).not.toHaveBeenCalled()
+  })
+
+  it('accepts year 1000 and returns canonical four-digit range keys', async () => {
+    process.env.TZ = 'UTC'
+    mockGetServerSession.mockResolvedValue(session('ADMIN'))
+    mockLoadRange.mockResolvedValueOnce({
+      ...julyData,
+      startDate: '1000-07-01',
+      endDate: '1000-07-31',
+      days: ['1000-07-01', '1000-07-31'],
+      employees: [],
+      dailyTotals: {
+        '1000-07-01': 0,
+        '1000-07-31': 0,
+      },
+      holidays: [],
+    })
+
+    const response = await GET(request('month=1000-07'))
+    const input = mockLoadRange.mock.calls[0][0]
+
+    expect(response.status).toBe(200)
+    expect([
+      input.start.getFullYear(),
+      input.start.getMonth() + 1,
+      input.start.getDate(),
+      input.end.getFullYear(),
+      input.end.getMonth() + 1,
+      input.end.getDate(),
+    ]).toEqual([1000, 7, 1, 1000, 7, 31])
+    expect(await response.json()).toMatchObject({
+      month: '1000-07',
+      monthStart: '1000-07-01',
+      monthEnd: '1000-07-31',
+      days: ['1000-07-01', '1000-07-31'],
+      dailyTotals: {
+        '1000-07-01': 0,
+        '1000-07-31': 0,
+      },
+    })
   })
 
   it('loads exactly the requested month with all filters and returns the monthly contract', async () => {
