@@ -295,4 +295,117 @@ describe('TimeEntryEditModal', () => {
     })
     await waitFor(() => expect(onClose).toHaveBeenCalledOnce())
   })
+
+  it.each([
+    ['save', 'Zapisz', 'PATCH', '/api/hr/time-tracking/entry-1'],
+    ['delete', 'Usuń wpis', 'DELETE', '/api/hr/time-tracking/entry-1'],
+  ])('retries only refresh after a failed post-%s refresh', async (
+    _operation,
+    buttonName,
+    method,
+    endpoint
+  ) => {
+    const onClose = vi.fn()
+    const onSaved = vi.fn()
+      .mockRejectedValueOnce(new Error('refresh failed'))
+      .mockResolvedValueOnce(undefined)
+    const fetchMock = vi.fn((
+      _input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (init?.method) return Promise.resolve(jsonResponse({ ok: true }))
+      return Promise.resolve(jsonResponse({
+        clockIn: localIso(8),
+        clockOut: localIso(16),
+        notes: 'Dyżur',
+      }))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    vi.stubGlobal('confirm', vi.fn(() => true))
+    const user = userEvent.setup()
+    render(
+      <TimeEntryEditModal
+        {...baseProps}
+        onClose={onClose}
+        onSaved={onSaved}
+      />
+    )
+
+    const dialog = screen.getByRole('dialog', { name: 'Edytuj wpis' })
+    await waitFor(() => {
+      expect((within(dialog).getByRole('button', { name: buttonName }) as HTMLButtonElement).disabled)
+        .toBe(false)
+    })
+    await user.click(within(dialog).getByRole('button', { name: buttonName }))
+
+    const recoveryAlert = await within(dialog).findByRole('alert')
+    expect(within(recoveryAlert).getByText(
+      'Zmiana została zapisana, ale nie udało się odświeżyć widoku.'
+    ).textContent).toBe(
+      'Zmiana została zapisana, ale nie udało się odświeżyć widoku.'
+    )
+    expect(onClose).not.toHaveBeenCalled()
+    expect(onSaved).toHaveBeenCalledOnce()
+    for (const mutationName of ['Usuń wpis', 'Odrzuć', 'Zatwierdź', 'Zapisz']) {
+      expect((within(dialog).getByRole('button', {
+        name: mutationName,
+      }) as HTMLButtonElement).disabled).toBe(true)
+    }
+    expect(fetchMock.mock.calls.filter(([input, init]) => (
+      String(input) === endpoint && init?.method === method
+    ))).toHaveLength(1)
+
+    await user.click(within(dialog).getByRole('button', {
+      name: 'Ponów odświeżenie',
+    }))
+
+    await waitFor(() => {
+      expect(onSaved).toHaveBeenCalledTimes(2)
+      expect(onClose).toHaveBeenCalledOnce()
+    })
+    expect(fetchMock.mock.calls.filter(([input, init]) => (
+      String(input) === endpoint && init?.method === method
+    ))).toHaveLength(1)
+  })
+
+  it('blocks passive dismissal in recovery but allows the explicit close control', async () => {
+    const onClose = vi.fn()
+    vi.stubGlobal('fetch', vi.fn((
+      _input: string | URL | Request,
+      init?: RequestInit
+    ) => Promise.resolve(init?.method
+      ? jsonResponse({ ok: true })
+      : jsonResponse({
+          clockIn: localIso(8),
+          clockOut: localIso(16),
+          notes: 'Dyżur',
+        }))))
+    const user = userEvent.setup()
+    render(
+      <TimeEntryEditModal
+        {...baseProps}
+        onClose={onClose}
+        onSaved={vi.fn().mockRejectedValue(new Error('refresh failed'))}
+      />
+    )
+
+    const dialog = screen.getByRole('dialog', { name: 'Edytuj wpis' })
+    await waitFor(() => {
+      expect((within(dialog).getByRole('button', { name: 'Zapisz' }) as HTMLButtonElement).disabled)
+        .toBe(false)
+    })
+    await user.click(within(dialog).getByRole('button', { name: 'Zapisz' }))
+    await within(dialog).findByRole('button', { name: 'Ponów odświeżenie' })
+
+    await user.keyboard('{Escape}')
+    expect(onClose).not.toHaveBeenCalled()
+
+    const overlay = dialog.previousElementSibling
+    fireEvent.pointerDown(overlay as Element)
+    fireEvent.click(overlay as Element)
+    expect(onClose).not.toHaveBeenCalled()
+
+    await user.click(within(dialog).getByRole('button', { name: 'Zamknij' }))
+    expect(onClose).toHaveBeenCalledOnce()
+  })
 })

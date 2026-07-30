@@ -495,6 +495,71 @@ describe('ManagerTimesheet navigation', () => {
     expect(document.activeElement).toBe(opener)
   })
 
+  it('keeps a saved change open for a refresh-only recovery retry', async () => {
+    navigation.search = 'view=month&mode=team&month=2026-07'
+    let monthlyRequestCount = 0
+    const fetchMock = vi.fn((
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (init?.method === 'POST') {
+        return Promise.resolve(jsonResponse({ id: 'entry-created' }))
+      }
+      if (String(input).includes('/api/hr/time-tracking/monthly')) {
+        monthlyRequestCount += 1
+        if (monthlyRequestCount === 2) {
+          return Promise.resolve(jsonResponse({ error: 'refresh failed' }, 500))
+        }
+        return Promise.resolve(jsonResponse({
+          ...monthlyData,
+          days: buildMonthDateKeys('2026-07'),
+        }))
+      }
+      return Promise.resolve(jsonResponse({}))
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(<ManagerTimesheet {...managerProps} initialView="month" />)
+
+    const opener = await screen.findByRole('button', {
+      name: 'Anna Kowalska, 2026-07-01: brak wpisu',
+    })
+    const focusSpy = vi.spyOn(opener, 'focus')
+    await user.click(opener)
+    const dialog = screen.getByRole('dialog', { name: 'Dodaj wpis' })
+    focusSpy.mockClear()
+
+    fireEvent.change(within(dialog).getByLabelText('Wejście'), {
+      target: { value: '08:00' },
+    })
+    fireEvent.change(within(dialog).getByLabelText('Wyjście'), {
+      target: { value: '16:00' },
+    })
+    await user.click(within(dialog).getByRole('button', { name: 'Zapisz' }))
+
+    const recoveryAlert = await within(dialog).findByRole('alert')
+    expect(within(recoveryAlert).getByText(
+      'Zmiana została zapisana, ale nie udało się odświeżyć widoku.'
+    ).textContent).toBe(
+      'Zmiana została zapisana, ale nie udało się odświeżyć widoku.'
+    )
+    expect(screen.getByRole('dialog', { name: 'Dodaj wpis' })).toBe(dialog)
+    expect(document.activeElement).not.toBe(opener)
+    expect(focusSpy).not.toHaveBeenCalled()
+    expect(monthlyRequestCount).toBe(2)
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
+
+    await user.click(within(dialog).getByRole('button', {
+      name: 'Ponów odświeżenie',
+    }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    await waitFor(() => expect(focusSpy).toHaveBeenCalledOnce())
+    expect(document.activeElement).toBe(opener)
+    expect(monthlyRequestCount).toBe(3)
+    expect(fetchMock.mock.calls.filter(([, init]) => init?.method === 'POST')).toHaveLength(1)
+  })
+
   it('updates client selection on simulated back-forward URL changes without refetching the roster', async () => {
     navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1'
     const fetchMock = vi.fn(async () => jsonResponse({

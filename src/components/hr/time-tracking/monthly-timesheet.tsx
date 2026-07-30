@@ -108,7 +108,7 @@ export function MonthlyTimesheet({
   const requestSequenceRef = useRef(0)
   const requestControllerRef = useRef<AbortController | null>(null)
 
-  const refreshData = useCallback(async () => {
+  const refreshData = useCallback(async (): Promise<boolean> => {
     const requestScopeKey = `${month}|${divisionId}`
     const requestSequence = requestSequenceRef.current + 1
     requestSequenceRef.current = requestSequence
@@ -130,15 +130,17 @@ export function MonthlyTimesheet({
       const response = await fetch(`/api/hr/time-tracking/monthly?${params.toString()}`, {
         signal: controller.signal,
       })
-      if (!isCurrentRequest()) return
+      if (!isCurrentRequest()) return false
       if (!response.ok) throw new Error('Monthly time tracking request failed')
       const nextData = await response.json() as MonthlyTimesheetData
-      if (!isCurrentRequest()) return
+      if (!isCurrentRequest()) return false
       setData(nextData)
       setDataScopeKey(requestScopeKey)
+      return true
     } catch {
-      if (!isCurrentRequest()) return
+      if (!isCurrentRequest()) return false
       setError('Nie udało się pobrać ewidencji. Spróbuj ponownie.')
+      return false
     } finally {
       if (isCurrentRequest()) {
         setLoading(false)
@@ -148,6 +150,13 @@ export function MonthlyTimesheet({
       }
     }
   }, [divisionId, month])
+
+  const refreshAfterMutation = useCallback(async () => {
+    const refreshed = await refreshData()
+    if (!refreshed) {
+      throw new Error('Monthly time tracking refresh failed')
+    }
+  }, [refreshData])
 
   useEffect(() => {
     void refreshData()
@@ -337,7 +346,7 @@ export function MonthlyTimesheet({
           entry={editModal.entry}
           userRole={userRole}
           onClose={() => setEditModal(null)}
-          onSaved={refreshData}
+          onSaved={refreshAfterMutation}
         />
       )}
     </div>

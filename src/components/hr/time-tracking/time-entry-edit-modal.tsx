@@ -1,7 +1,7 @@
 'use client'
 
 import { useEffect, useRef, useState } from 'react'
-import { CheckCircle, Loader2, Save, Trash2, XCircle } from 'lucide-react'
+import { CheckCircle, Loader2, RefreshCw, Save, Trash2, XCircle } from 'lucide-react'
 import { formatDuration } from '@/lib/hr/utils'
 import {
   Dialog,
@@ -56,6 +56,8 @@ export function TimeEntryEditModal({
   const [notes, setNotes] = useState('')
   const [loading, setLoading] = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)
+  const [refreshLoading, setRefreshLoading] = useState(false)
+  const [refreshFailed, setRefreshFailed] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [hydrating, setHydrating] = useState(Boolean(entry?.id))
   const returnFocusRef = useRef<HTMLElement | null>(null)
@@ -68,6 +70,8 @@ export function TimeEntryEditModal({
     setClockOut(toTimeStr(entry?.clockOut))
     setNotes('')
     setError(null)
+    setRefreshFailed(false)
+    setRefreshLoading(false)
 
     if (!entry?.id) {
       setHydrating(false)
@@ -113,12 +117,36 @@ export function TimeEntryEditModal({
   const canApproveReject = userRole === 'ADMIN' || userRole === 'MANAGER'
   const canDelete = userRole === 'ADMIN'
   const hasEntry = !!entry?.id
-  const mutationPending = loading || deleteLoading
-  const controlsDisabled = hydrating || mutationPending
+  const mutationPending = loading || deleteLoading || refreshLoading
+  const controlsDisabled = hydrating || mutationPending || refreshFailed
+  const passiveDismissalBlocked = mutationPending || refreshFailed
 
   const restoreFocus = () => {
     const target = returnFocusRef.current
     queueMicrotask(() => target?.focus())
+  }
+
+  const refreshAndClose = async () => {
+    try {
+      await onSaved()
+      onClose()
+    } catch {
+      setRefreshFailed(true)
+    }
+  }
+
+  const handleRefreshRetry = async () => {
+    if (!refreshFailed || mutationPending) return
+    setRefreshLoading(true)
+    setError(null)
+    try {
+      await onSaved()
+      onClose()
+    } catch {
+      setRefreshFailed(true)
+    } finally {
+      setRefreshLoading(false)
+    }
   }
 
   const handleSave = async () => {
@@ -171,8 +199,7 @@ export function TimeEntryEditModal({
         }
       }
 
-      await onSaved()
-      onClose()
+      await refreshAndClose()
     } catch {
       setError('Błąd połączenia')
     } finally {
@@ -191,8 +218,7 @@ export function TimeEntryEditModal({
         setError(d.error ?? 'Błąd zatwierdzenia')
         return
       }
-      await onSaved()
-      onClose()
+      await refreshAndClose()
     } catch {
       setError('Błąd połączenia')
     } finally {
@@ -211,8 +237,7 @@ export function TimeEntryEditModal({
         setError(d.error ?? 'Błąd odrzucenia')
         return
       }
-      await onSaved()
-      onClose()
+      await refreshAndClose()
     } catch {
       setError('Błąd połączenia')
     } finally {
@@ -232,8 +257,7 @@ export function TimeEntryEditModal({
         setError(d.error ?? 'Błąd usuwania')
         return
       }
-      await onSaved()
-      onClose()
+      await refreshAndClose()
     } catch {
       setError('Błąd połączenia')
     } finally {
@@ -251,10 +275,10 @@ export function TimeEntryEditModal({
       <DialogContent
         aria-modal="true"
         onEscapeKeyDown={(event) => {
-          if (mutationPending) event.preventDefault()
+          if (passiveDismissalBlocked) event.preventDefault()
         }}
         onPointerDownOutside={(event) => {
-          if (mutationPending) event.preventDefault()
+          if (passiveDismissalBlocked) event.preventDefault()
         }}
         onCloseAutoFocus={(event) => {
           event.preventDefault()
@@ -376,6 +400,27 @@ export function TimeEntryEditModal({
                 className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
               >
                 {error}
+              </div>
+            )}
+
+            {refreshFailed && (
+              <div
+                role="alert"
+                className="space-y-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900"
+              >
+                <p>Zmiana została zapisana, ale nie udało się odświeżyć widoku.</p>
+                <button
+                  type="button"
+                  onClick={() => void handleRefreshRetry()}
+                  disabled={refreshLoading}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-md border border-amber-400 bg-white px-3 font-medium transition-colors hover:bg-amber-100 disabled:cursor-wait disabled:opacity-60"
+                >
+                  <RefreshCw
+                    className={`h-4 w-4 ${refreshLoading ? 'animate-spin' : ''}`}
+                    aria-hidden="true"
+                  />
+                  {refreshLoading ? 'Odświeżam...' : 'Ponów odświeżenie'}
+                </button>
               </div>
             )}
           </div>
