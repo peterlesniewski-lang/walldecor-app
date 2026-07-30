@@ -1,8 +1,15 @@
 'use client'
 
-import { useState, useEffect } from 'react'
-import { X, CheckCircle, XCircle, Trash2, Save } from 'lucide-react'
+import { useEffect, useRef, useState, type RefObject } from 'react'
+import { CheckCircle, Loader2, RefreshCw, Save, Trash2, XCircle } from 'lucide-react'
 import { formatDuration } from '@/lib/hr/utils'
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 
 interface DayEntry {
   id?: string
@@ -21,7 +28,8 @@ interface TimeEntryEditModalProps {
   entry: DayEntry | null
   userRole: 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
   onClose: () => void
-  onSaved: () => void
+  onSaved: () => void | Promise<void>
+  recoveryFocusRef?: RefObject<HTMLElement | null>
 }
 
 function toTimeStr(iso: string | undefined | null): string {
@@ -43,30 +51,62 @@ export function TimeEntryEditModal({
   userRole,
   onClose,
   onSaved,
+  recoveryFocusRef,
 }: TimeEntryEditModalProps) {
   const [clockIn, setClockIn] = useState(toTimeStr(entry?.clockIn))
   const [clockOut, setClockOut] = useState(toTimeStr(entry?.clockOut))
   const [notes, setNotes] = useState('')
   const [loading, setLoading] = useState(false)
   const [deleteLoading, setDeleteLoading] = useState(false)
+  const [refreshLoading, setRefreshLoading] = useState(false)
+  const [refreshFailed, setRefreshFailed] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [hydrating, setHydrating] = useState(Boolean(entry?.id))
+  const returnFocusRef = useRef<HTMLElement | null>(null)
+  const recoveryCloseRequestedRef = useRef(false)
+  if (returnFocusRef.current === null && typeof document !== 'undefined') {
+    returnFocusRef.current = document.activeElement as HTMLElement | null
+  }
 
-  // Load full entry details on mount if entry exists
   useEffect(() => {
-    if (!entry?.id) return
+    setClockIn(toTimeStr(entry?.clockIn))
+    setClockOut(toTimeStr(entry?.clockOut))
+    setNotes('')
+    setError(null)
+    setRefreshFailed(false)
+    setRefreshLoading(false)
+
+    if (!entry?.id) {
+      setHydrating(false)
+      return
+    }
+
+    const controller = new AbortController()
+    setHydrating(true)
+
     void (async () => {
       try {
-        const res = await fetch(`/api/hr/time-tracking/${entry.id}`)
-        if (!res.ok) return
+        const res = await fetch(`/api/hr/time-tracking/${entry.id}`, {
+          signal: controller.signal,
+        })
+        if (controller.signal.aborted) return
+        if (!res.ok) throw new Error('Time entry detail request failed')
         const data = await res.json() as { clockIn: string; clockOut: string | null; notes: string | null }
+        if (controller.signal.aborted) return
         setClockIn(toTimeStr(data.clockIn))
         setClockOut(toTimeStr(data.clockOut))
         setNotes(data.notes ?? '')
       } catch {
-        // silent
+        if (!controller.signal.aborted) {
+          setError('Nie udało się pobrać szczegółów wpisu')
+        }
+      } finally {
+        if (!controller.signal.aborted) setHydrating(false)
       }
     })()
-  }, [entry?.id])
+
+    return () => controller.abort()
+  }, [entry?.clockIn, entry?.clockOut, entry?.id])
 
   // Computed duration preview
   let previewMinutes: number | null = null
@@ -80,13 +120,49 @@ export function TimeEntryEditModal({
   const canApproveReject = userRole === 'ADMIN' || userRole === 'MANAGER'
   const canDelete = userRole === 'ADMIN'
   const hasEntry = !!entry?.id
+  const mutationPending = loading || deleteLoading || refreshLoading
+  const controlsDisabled = hydrating || mutationPending || refreshFailed
+  const passiveDismissalBlocked = mutationPending || refreshFailed
+
+  const restoreFocus = () => {
+    const target = (
+      recoveryCloseRequestedRef.current
+        ? recoveryFocusRef?.current
+        : null
+    ) ?? returnFocusRef.current
+    queueMicrotask(() => target?.focus())
+  }
+
+  const refreshAndClose = async () => {
+    try {
+      await onSaved()
+      onClose()
+    } catch {
+      setRefreshFailed(true)
+    }
+  }
+
+  const handleRefreshRetry = async () => {
+    if (!refreshFailed || mutationPending) return
+    setRefreshLoading(true)
+    setError(null)
+    try {
+      await onSaved()
+      onClose()
+    } catch {
+      setRefreshFailed(true)
+    } finally {
+      setRefreshLoading(false)
+    }
+  }
 
   const handleSave = async () => {
+    if (controlsDisabled) return
     setLoading(true)
     setError(null)
     try {
       if (!clockIn) {
-        setError('Godzina clock-in jest wymagana')
+        setError('Godzina wejścia jest wymagana')
         return
       }
 
@@ -130,8 +206,7 @@ export function TimeEntryEditModal({
         }
       }
 
-      onSaved()
-      onClose()
+      await refreshAndClose()
     } catch {
       setError('Błąd połączenia')
     } finally {
@@ -150,8 +225,7 @@ export function TimeEntryEditModal({
         setError(d.error ?? 'Błąd zatwierdzenia')
         return
       }
-      onSaved()
-      onClose()
+      await refreshAndClose()
     } catch {
       setError('Błąd połączenia')
     } finally {
@@ -170,8 +244,7 @@ export function TimeEntryEditModal({
         setError(d.error ?? 'Błąd odrzucenia')
         return
       }
-      onSaved()
-      onClose()
+      await refreshAndClose()
     } catch {
       setError('Błąd połączenia')
     } finally {
@@ -191,8 +264,7 @@ export function TimeEntryEditModal({
         setError(d.error ?? 'Błąd usuwania')
         return
       }
-      onSaved()
-      onClose()
+      await refreshAndClose()
     } catch {
       setError('Błąd połączenia')
     } finally {
@@ -201,40 +273,38 @@ export function TimeEntryEditModal({
   }
 
   return (
-    <div
-      className="fixed inset-0 z-50 flex items-center justify-center p-4"
-      style={{ background: 'rgba(0,0,0,0.45)' }}
-      onClick={(e) => { if (e.target === e.currentTarget) onClose() }}
+    <Dialog
+      open
+      onOpenChange={(open) => {
+        if (!open && !mutationPending) {
+          recoveryCloseRequestedRef.current = refreshFailed
+          onClose()
+        }
+      }}
     >
-      <div
-        className="w-full max-w-md rounded-2xl overflow-hidden"
-        style={{
-          background: '#fff',
-          boxShadow: '0 20px 60px rgba(0,0,0,0.18)',
+      <DialogContent
+        aria-modal="true"
+        onEscapeKeyDown={(event) => {
+          if (passiveDismissalBlocked) event.preventDefault()
         }}
+        onPointerDownOutside={(event) => {
+          if (passiveDismissalBlocked) event.preventDefault()
+        }}
+        onCloseAutoFocus={(event) => {
+          event.preventDefault()
+          restoreFocus()
+        }}
+        className="max-w-md gap-0 overflow-hidden border-[var(--wd-border)] bg-white p-0 shadow-2xl"
       >
-        {/* Header */}
-        <div
-          className="flex items-center justify-between px-5 py-4 border-b"
-          style={{ borderColor: 'var(--wd-border)' }}
-        >
-          <div>
-            <h2 className="font-semibold text-[var(--wd-text-primary)]">
-              {hasEntry ? 'Edytuj wpis' : 'Dodaj wpis'}
-            </h2>
-            <p className="text-xs mt-0.5" style={{ color: 'var(--wd-text-muted)' }}>
-              {employeeName} · {formatDateLabel(date)}
-            </p>
-          </div>
-          <button
-            onClick={onClose}
-            className="p-1.5 rounded-lg hover:bg-[var(--wd-surface-2)] transition-colors"
-          >
-            <X className="w-4 h-4 text-[var(--wd-text-muted)]" />
-          </button>
-        </div>
+        <DialogHeader className="border-b border-[var(--wd-border)] px-5 py-4 pr-12 text-left">
+          <DialogTitle className="text-base font-semibold text-[var(--wd-text-primary)]">
+            {hasEntry ? 'Edytuj wpis' : 'Dodaj wpis'}
+          </DialogTitle>
+          <DialogDescription className="text-xs text-[var(--muted-foreground)]">
+            {employeeName} · {formatDateLabel(date)}
+          </DialogDescription>
+        </DialogHeader>
 
-        {/* Status badge */}
         {entry?.status && entry.status !== 'leave' && (
           <div className="px-5 pt-4">
             {entry.status === 'approved' ? (
@@ -255,133 +325,166 @@ export function TimeEntryEditModal({
           </div>
         )}
 
-        {/* Form */}
-        <div className="p-5 space-y-4">
-          <div className="grid grid-cols-2 gap-3">
-            <div>
-              <label className="data-label block mb-1.5">Clock In</label>
-              <input
-                type="time"
-                value={clockIn}
-                onChange={(e) => setClockIn(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border text-sm font-medium num"
-                style={{
-                  borderColor: 'var(--wd-border)',
-                  background: 'var(--wd-off-white)',
-                  color: 'var(--wd-text-primary)',
-                }}
-              />
-            </div>
-            <div>
-              <label className="data-label block mb-1.5">Clock Out</label>
-              <input
-                type="time"
-                value={clockOut}
-                onChange={(e) => setClockOut(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg border text-sm font-medium num"
-                style={{
-                  borderColor: 'var(--wd-border)',
-                  background: 'var(--wd-off-white)',
-                  color: 'var(--wd-text-primary)',
-                }}
-              />
-            </div>
-          </div>
-
-          {/* Duration preview */}
-          {previewMinutes !== null && (
-            <div
-              className="flex items-center gap-2 px-3 py-2 rounded-lg"
-              style={{ background: 'var(--wd-surface-2)' }}
-            >
-              <span className="text-xs" style={{ color: 'var(--wd-text-muted)' }}>Czas pracy:</span>
-              <span className="text-sm font-semibold num" style={{ color: 'var(--wd-text-primary)' }}>
-                {formatDuration(previewMinutes)}
-              </span>
-            </div>
-          )}
-
-          <div>
-            <label className="data-label block mb-1.5">Notatka</label>
-            <textarea
-              value={notes}
-              onChange={(e) => setNotes(e.target.value)}
-              rows={2}
-              placeholder="Opcjonalna notatka..."
-              className="w-full px-3 py-2 rounded-lg border text-sm resize-none"
-              style={{
-                borderColor: 'var(--wd-border)',
-                background: 'var(--wd-off-white)',
-                color: 'var(--wd-text-primary)',
-              }}
-            />
-          </div>
-
-          {error && (
-            <div
-              className="px-3 py-2 rounded-lg text-sm"
-              style={{ background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA' }}
-            >
-              {error}
-            </div>
-          )}
-        </div>
-
-        {/* Footer actions */}
-        <div
-          className="flex items-center gap-2 px-5 py-4 border-t"
-          style={{ borderColor: 'var(--wd-border)', background: 'var(--wd-off-white)' }}
+        <form
+          onSubmit={(event) => {
+            event.preventDefault()
+            void handleSave()
+          }}
         >
-          {/* Left: delete */}
-          {hasEntry && canDelete && (
+          <div className="space-y-4 p-5">
+            {hydrating && (
+              <div
+                role="status"
+                className="flex items-center gap-2 text-sm text-[var(--muted-foreground)]"
+              >
+                <Loader2 className="h-4 w-4 animate-spin" />
+                Ładowanie szczegółów wpisu
+              </div>
+            )}
+
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <label
+                  htmlFor="time-entry-clock-in"
+                  className="mb-1.5 block text-xs font-medium text-[var(--muted-foreground)]"
+                >
+                  Wejście
+                </label>
+                <input
+                  id="time-entry-clock-in"
+                  type="time"
+                  value={clockIn}
+                  onChange={(event) => setClockIn(event.target.value)}
+                  disabled={controlsDisabled}
+                  className="num w-full rounded-md border border-[var(--wd-border)] bg-[var(--wd-off-white)] px-3 py-2 text-sm font-medium text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1 disabled:cursor-wait disabled:opacity-60"
+                />
+              </div>
+              <div>
+                <label
+                  htmlFor="time-entry-clock-out"
+                  className="mb-1.5 block text-xs font-medium text-[var(--muted-foreground)]"
+                >
+                  Wyjście
+                </label>
+                <input
+                  id="time-entry-clock-out"
+                  type="time"
+                  value={clockOut}
+                  onChange={(event) => setClockOut(event.target.value)}
+                  disabled={controlsDisabled}
+                  className="num w-full rounded-md border border-[var(--wd-border)] bg-[var(--wd-off-white)] px-3 py-2 text-sm font-medium text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1 disabled:cursor-wait disabled:opacity-60"
+                />
+              </div>
+            </div>
+
+            {previewMinutes !== null && (
+              <div className="flex items-center gap-2 rounded-md bg-[var(--wd-surface-2)] px-3 py-2">
+                <span className="text-xs text-[var(--muted-foreground)]">Czas pracy:</span>
+                <span className="num text-sm font-semibold text-[var(--wd-text-primary)]">
+                  {formatDuration(previewMinutes)}
+                </span>
+              </div>
+            )}
+
+            <div>
+              <label
+                htmlFor="time-entry-notes"
+                className="mb-1.5 block text-xs font-medium text-[var(--muted-foreground)]"
+              >
+                Notatka
+              </label>
+              <textarea
+                id="time-entry-notes"
+                value={notes}
+                onChange={(event) => setNotes(event.target.value)}
+                disabled={controlsDisabled}
+                rows={2}
+                placeholder="Opcjonalna notatka..."
+                className="w-full resize-none rounded-md border border-[var(--wd-border)] bg-[var(--wd-off-white)] px-3 py-2 text-sm text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1 disabled:cursor-wait disabled:opacity-60"
+              />
+            </div>
+
+            {error && (
+              <div
+                role="alert"
+                className="rounded-md border border-red-200 bg-red-50 px-3 py-2 text-sm text-red-700"
+              >
+                {error}
+              </div>
+            )}
+
+            {refreshFailed && (
+              <div
+                role="alert"
+                className="space-y-3 rounded-md border border-amber-300 bg-amber-50 px-3 py-3 text-sm text-amber-900"
+              >
+                <p>Zmiana została zapisana, ale nie udało się odświeżyć widoku.</p>
+                <button
+                  type="button"
+                  onClick={() => void handleRefreshRetry()}
+                  disabled={refreshLoading}
+                  className="inline-flex min-h-11 items-center gap-2 rounded-md border border-amber-400 bg-white px-3 font-medium transition-colors hover:bg-amber-100 disabled:cursor-wait disabled:opacity-60"
+                >
+                  <RefreshCw
+                    className={`h-4 w-4 ${refreshLoading ? 'animate-spin' : ''}`}
+                    aria-hidden="true"
+                  />
+                  {refreshLoading ? 'Odświeżam...' : 'Ponów odświeżenie'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          <div className="flex flex-wrap items-center gap-2 border-t border-[var(--wd-border)] bg-[var(--wd-off-white)] px-5 py-4">
+            {hasEntry && canDelete && (
+              <button
+                type="button"
+                aria-label="Usuń wpis"
+                title="Usuń wpis"
+                onClick={() => void handleDelete()}
+                disabled={controlsDisabled}
+                className="group rounded-md p-2 transition-colors hover:bg-red-50 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                <Trash2 className="h-4 w-4 text-red-500 group-hover:text-red-700" />
+              </button>
+            )}
+
+            <div className="flex-1" />
+
+            {hasEntry && canApproveReject && entry?.status === 'pending' && (
+              <>
+                <button
+                  type="button"
+                  onClick={() => void handleReject()}
+                  disabled={controlsDisabled}
+                  className="flex items-center gap-1.5 rounded-md border border-red-200 bg-red-50 px-3 py-1.5 text-sm font-medium text-red-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <XCircle className="h-3.5 w-3.5" />
+                  Odrzuć
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleApprove()}
+                  disabled={controlsDisabled}
+                  className="flex items-center gap-1.5 rounded-md border border-emerald-200 bg-emerald-50 px-3 py-1.5 text-sm font-medium text-emerald-700 transition-colors disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  <CheckCircle className="h-3.5 w-3.5" />
+                  Zatwierdź
+                </button>
+              </>
+            )}
+
             <button
-              onClick={() => void handleDelete()}
-              disabled={deleteLoading}
-              className="p-2 rounded-lg hover:bg-red-50 transition-colors group"
-              title="Usuń wpis"
+              type="submit"
+              disabled={controlsDisabled || !clockIn}
+              className="flex items-center gap-1.5 rounded-md bg-[var(--wd-dark)] px-4 py-1.5 text-sm font-semibold text-white transition-colors disabled:cursor-not-allowed disabled:opacity-50"
             >
-              <Trash2 className="w-4 h-4 text-red-400 group-hover:text-red-600" />
+              {loading ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Save className="h-3.5 w-3.5" />}
+              {loading ? 'Zapisuję...' : 'Zapisz'}
             </button>
-          )}
-
-          <div className="flex-1" />
-
-          {/* Approve / Reject */}
-          {hasEntry && canApproveReject && entry?.status === 'pending' && (
-            <>
-              <button
-                onClick={() => void handleReject()}
-                disabled={loading}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-                style={{ background: '#FEF2F2', color: '#DC2626', border: '1px solid #FECACA' }}
-              >
-                <XCircle className="w-3.5 h-3.5" />
-                Odrzuć
-              </button>
-              <button
-                onClick={() => void handleApprove()}
-                disabled={loading}
-                className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium transition-colors"
-                style={{ background: '#F0FDF4', color: '#16A34A', border: '1px solid #BBF7D0' }}
-              >
-                <CheckCircle className="w-3.5 h-3.5" />
-                Zatwierdź
-              </button>
-            </>
-          )}
-
-          {/* Save */}
-          <button
-            onClick={() => void handleSave()}
-            disabled={loading || !clockIn}
-            className="flex items-center gap-1.5 px-4 py-1.5 rounded-lg text-sm font-semibold transition-all disabled:opacity-50"
-            style={{ background: 'var(--wd-dark)', color: '#fff' }}
-          >
-            <Save className="w-3.5 h-3.5" />
-            {loading ? 'Zapisuję...' : 'Zapisz'}
-          </button>
-        </div>
-      </div>
-    </div>
+          </div>
+        </form>
+      </DialogContent>
+    </Dialog>
   )
 }

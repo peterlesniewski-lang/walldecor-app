@@ -3,7 +3,7 @@ import { redirect } from 'next/navigation'
 import { Suspense } from 'react'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { WeeklyTimesheet } from '@/components/hr/time-tracking/weekly-timesheet'
+import { ManagerTimesheet } from '@/components/hr/time-tracking/manager-timesheet'
 import { ClockWidget } from '@/components/hr/time-tracking/clock-widget'
 import { getWeekRange, getMonthRange, formatDuration } from '@/lib/hr/utils'
 import { getHrSettings } from '@/lib/hr/hr-settings'
@@ -22,7 +22,11 @@ function formatDateShort(date: Date | string): string {
 }
 
 interface SearchParams {
+  view?: 'week' | 'month'
+  mode?: 'team' | 'employee'
   week?: string
+  month?: string
+  employeeId?: string
   divisionId?: string
 }
 
@@ -38,7 +42,7 @@ export default async function TimeTrackingPage({
   const role = session.user.role
   const now = new Date()
 
-  // ── ADMIN / MANAGER → weekly manager view ──────────────────────────────────
+  // ── ADMIN / MANAGER → manager time views ───────────────────────────────────
   if (role === 'ADMIN' || role === 'MANAGER') {
     const managerDivisionId =
       role === 'MANAGER' && session.user.employeeId
@@ -61,7 +65,7 @@ export default async function TimeTrackingPage({
           <div>
             <h1 className="text-2xl font-bold text-[var(--wd-text-primary)]">Ewidencja czasu pracy</h1>
             <p className="text-sm mt-0.5" style={{ color: 'var(--wd-text-muted)' }}>
-              Tygodniowy widok czasu pracy pracowników
+              Tygodniowa i miesięczna ewidencja czasu pracy
             </p>
           </div>
         </div>
@@ -70,10 +74,14 @@ export default async function TimeTrackingPage({
             <div className="w-6 h-6 rounded-full border-2 animate-spin" style={{ borderColor: 'var(--wd-sand)', borderTopColor: 'transparent' }} />
           </div>
         }>
-          <WeeklyTimesheet
+          <ManagerTimesheet
             userRole={role}
             divisions={divisions}
+            initialView={sp.view === 'month' ? 'month' : 'week'}
+            initialMode={sp.mode === 'employee' ? 'employee' : 'team'}
             initialWeek={sp.week ?? null}
+            initialMonth={sp.month ?? null}
+            initialEmployeeId={sp.employeeId ?? null}
             saturdayWorkable={hrSettings.saturdayWorkable}
           />
         </Suspense>

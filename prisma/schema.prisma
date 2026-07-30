@@ -526,6 +526,8 @@ model Employee {
   overtimeRequests  OvertimeRequest[]
   leaveBalancesNew  LeaveBalanceNew[]
   leaveRequestsNew  LeaveRequestNew[]
+  leaveEntitlementConfigs LeaveEntitlementConfig[]
+  leaveBalanceCorrections LeaveBalanceCorrection[]
 
   createdAt DateTime @default(now())
 }
@@ -762,6 +764,7 @@ model LeaveType {
   subtypes         LeaveType[]   @relation("LeaveSubtype")
   leaveBalancesNew LeaveBalanceNew[]
   leaveRequestsNew LeaveRequestNew[]
+  leaveBalanceCorrections LeaveBalanceCorrection[]
 }
 
 model LeaveBalanceNew {
@@ -775,8 +778,45 @@ model LeaveBalanceNew {
   usedDays    Float     @default(0)
   pendingDays Float     @default(0)
   carriedOver Float     @default(0)
+  corrections LeaveBalanceCorrection[]
 
   @@unique([employeeId, leaveTypeId, year])
+}
+
+model LeaveEntitlementConfig {
+  id                 String   @id @default(cuid())
+  employeeId         String
+  employee           Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  mode               String   // "DAYS_20" | "DAYS_26" | "CUSTOM"
+  customAnnualDays   Int?
+  employmentFraction Float    @default(1)
+  effectiveFrom      DateTime
+  note               String?
+  createdById        String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([employeeId, effectiveFrom])
+  @@index([employeeId, effectiveFrom])
+}
+
+model LeaveBalanceCorrection {
+  id          String          @id @default(cuid())
+  balanceId   String
+  balance     LeaveBalanceNew @relation(fields: [balanceId], references: [id], onDelete: Restrict)
+  employeeId  String
+  employee    Employee        @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  leaveTypeId String
+  leaveType   LeaveType       @relation(fields: [leaveTypeId], references: [id], onDelete: Restrict)
+  year        Int
+  reason      String
+  actorId     String
+  beforeJson  String
+  afterJson   String
+  createdAt   DateTime        @default(now())
+
+  @@index([balanceId, createdAt])
+  @@index([employeeId, year])
 }
 
 model LeaveRequestNew {

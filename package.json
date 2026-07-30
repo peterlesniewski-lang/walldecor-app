@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node --preserve-symlinks node_modules/next/dist/bin/next dev",
     "build": "node --preserve-symlinks node_modules/next/dist/bin/next build",
+    "audit:hr-leave-migration": "node --preserve-symlinks --import tsx scripts/audit-hr-leave-migration.ts",
     "start": "node --preserve-symlinks node_modules/next/dist/bin/next start",
     "lint": "eslint",
     "test": "node --preserve-symlinks node_modules/vitest/dist/cli.js run",

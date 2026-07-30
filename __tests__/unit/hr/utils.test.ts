@@ -3,6 +3,7 @@ import {
   calculateWorkingDays,
   calculateWorkingHours,
   isWeekend,
+  isPublicHoliday,
   formatDuration,
   calculateOvertimeMinutes,
 } from '@/lib/hr/utils'
@@ -13,9 +14,9 @@ const utcDate = (year: number, month: number, day: number): Date =>
   new Date(Date.UTC(year, month - 1, day, 12, 0, 0, 0))
 
 describe('getPolishHolidays', () => {
-  it('returns exactly 12 dates for 2025', () => {
+  it('returns exactly 14 dates for 2025', () => {
     const holidays = getPolishHolidays(2025)
-    expect(holidays).toHaveLength(12)
+    expect(holidays).toHaveLength(14)
   })
 
   it('contains Easter Sunday 2025 (2025-04-20)', () => {
@@ -26,6 +27,13 @@ describe('getPolishHolidays', () => {
   it('contains Boże Ciało 2025 (2025-06-19 = Easter + 60)', () => {
     const holidays = getPolishHolidays(2025)
     expect(holidays).toContain('2025-06-19')
+  })
+
+  it.each([
+    [2025, '2025-06-08'],
+    [2026, '2026-05-24'],
+  ])('contains Pentecost Sunday for %i', (year, expectedDate) => {
+    expect(getPolishHolidays(year)).toContain(expectedDate)
   })
 
   it('contains fixed holidays', () => {
@@ -40,9 +48,46 @@ describe('getPolishHolidays', () => {
     expect(holidays).toContain('2025-12-25')
     expect(holidays).toContain('2025-12-26')
   })
+
+  it.each([
+    [2024, false],
+    [2025, true],
+    [2026, true],
+  ])('treats Christmas Eve in %i according to its effective date', (year, expected) => {
+    const dateKey = `${year}-12-24`
+
+    expect(getPolishHolidays(year).includes(dateKey)).toBe(expected)
+    expect(isPublicHoliday(new Date(year, 11, 24, 12))).toBe(expected)
+  })
 })
 
 describe('calculateWorkingDays', () => {
+  it('counts a UTC-midnight four-day VLD range consistently', () => {
+    const start = new Date('2026-07-27T00:00:00.000Z')
+    const end = new Date('2026-07-30T00:00:00.000Z')
+
+    expect(calculateWorkingDays(start, end)).toBe(4)
+  })
+
+  it('skips a UTC-midnight weekend without shifting calendar dates', () => {
+    const start = new Date('2026-07-31T00:00:00.000Z')
+    const end = new Date('2026-08-03T00:00:00.000Z')
+
+    expect(calculateWorkingDays(start, end)).toBe(2)
+  })
+
+  it('matches Polish holidays using UTC YYYY-MM-DD', () => {
+    const independenceDay = new Date('2026-11-11T00:00:00.000Z')
+
+    expect(calculateWorkingDays(independenceDay, independenceDay)).toBe(0)
+  })
+
+  it('matches extra holidays using the canonical UTC date', () => {
+    const day = new Date('2026-07-29T00:00:00.000Z')
+
+    expect(calculateWorkingDays(day, day, ['2026-07-29'])).toBe(0)
+  })
+
   it('skips weekends in a full week Mon–Fri = 5 days', () => {
     // 2025-04-14 (Monday) to 2025-04-18 (Friday) — no holidays that week
     const start = utcDate(2025, 4, 14)

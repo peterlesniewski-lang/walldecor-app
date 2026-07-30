@@ -1,15 +1,46 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
+import type { Session } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import type { PrismaClient } from '@/generated/prisma'
 import { canViewEmployeeRecord } from '@/lib/hr/access'
-import { shouldTrackLeaveBalance } from '@/lib/hr/leave-balance-policy'
+import {
+  LeaveBalancePolicyConfigurationError,
+  resolveLeaveBalancePoolId,
+} from '@/lib/hr/leave-balance-policy'
+import {
+  runSerializableTransactionWithRetry,
+  SerializableTransactionConflictError,
+} from '@/lib/hr/serializable-transaction'
+import {
+  getWarsawBusinessDate,
+  getWarsawBusinessDateQueryRange,
+} from '@/lib/hr/business-date'
 
-export async function PATCH(
+class LeaveApprovalError extends Error {
+  constructor(
+    readonly status: number,
+    message: string
+  ) {
+    super(message)
+  }
+}
+
+export interface LeaveApprovalHandlerDependencies {
+  prisma: PrismaClient
+  getSession: () => Promise<Session | null>
+}
+
+async function handleLeaveApproval(
   _req: NextRequest,
-  { params }: { params: Promise<{ id: string }> }
+  { params }: { params: Promise<{ id: string }> },
+  {
+    prisma: db,
+    getSession,
+  }: LeaveApprovalHandlerDependencies
 ) {
-  const session = await getServerSession(authOptions)
+  const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const role = session.user.role
@@ -19,11 +50,19 @@ export async function PATCH(
 
   const { id } = await params
 
-  // 1. Pobierz wniosek z leaveType i employee
-  const leaveRequest = await prisma.leaveRequestNew.findUnique({
+  const leaveRequest = await db.leaveRequestNew.findUnique({
     where: { id },
     include: {
-      leaveType: true,
+      leaveType: {
+        select: {
+          id: true,
+          name: true,
+          color: true,
+          code: true,
+          tracksBalance: true,
+          parentId: true,
+        },
+      },
       employee: {
         select: {
           id: true,
@@ -38,10 +77,14 @@ export async function PATCH(
     },
   })
 
-  if (!leaveRequest) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (!leaveRequest) {
+    return role === 'MANAGER'
+      ? NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      : NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
   if (role === 'MANAGER') {
     const viewerEmployee = session.user.employeeId
-      ? await prisma.employee.findUnique({
+      ? await db.employee.findUnique({
           where: { id: session.user.employeeId },
           select: { id: true, divisionId: true, active: true },
         })
@@ -54,75 +97,144 @@ export async function PATCH(
     return NextResponse.json({ error: 'Only pending requests can be approved' }, { status: 409 })
   }
 
-  // 2. Pobierz saldo urlopowe
-  const year = leaveRequest.startDate.getFullYear()
-  const tracksBalance = shouldTrackLeaveBalance(leaveRequest.leaveType, leaveRequest)
-  const balance = tracksBalance
-    ? await prisma.leaveBalanceNew.findUnique({
-        where: {
-          employeeId_leaveTypeId_year: {
-            employeeId: leaveRequest.employeeId,
-            leaveTypeId: leaveRequest.leaveTypeId,
-            year,
-          },
-        },
-      })
-    : null
-
-  // 3. Walidacja salda
-  if (balance) {
-    const available = balance.totalDays - balance.usedDays
-    if (available < leaveRequest.days) {
-      return NextResponse.json(
-        {
-          error: `Niewystarczające saldo urlopowe. Dostępne: ${available} dni, wymagane: ${leaveRequest.days} dni`,
-        },
-        { status: 422 }
-      )
+  const year = leaveRequest.startDate.getUTCFullYear()
+  let balancePoolId: string | null
+  try {
+    balancePoolId = resolveLeaveBalancePoolId(leaveRequest.leaveType, leaveRequest)
+  } catch (error) {
+    if (error instanceof LeaveBalancePolicyConfigurationError) {
+      return NextResponse.json({ error: error.message }, { status: 503 })
     }
+    throw error
   }
-
   const now = new Date()
 
-  // 4 & 5. Transakcja: zaktualizuj wniosek + saldo
-  const updated = await prisma.$transaction(async (tx) => {
-    const updatedRequest = await tx.leaveRequestNew.update({
-      where: { id },
-      data: {
-        status: 'approved',
-        approverId: session.user.id,
-        approvedAt: now,
-      },
-      include: {
-        leaveType: { select: { id: true, name: true, color: true, code: true } },
-        employee: {
-          select: {
-            id: true,
-            firstName: true,
-            lastName: true,
-            division: { select: { id: true, name: true } },
+  const approveRequest = () =>
+    db.$transaction(async (tx) => {
+      if (!leaveRequest.isRemoteWork && !leaveRequest.isDelegation) {
+        const startRange = getWarsawBusinessDateQueryRange(leaveRequest.startDate)
+        const endRange = getWarsawBusinessDateQueryRange(leaveRequest.endDate)
+        const startDateKey = getWarsawBusinessDate(leaveRequest.startDate).isoDate
+        const endDateKey = getWarsawBusinessDate(leaveRequest.endDate).isoDate
+        const timeEntries = await tx.timeEntry.findMany({
+          where: {
+            employeeId: leaveRequest.employeeId,
+            date: {
+              gte: startRange.gte,
+              lte: endRange.lte,
+            },
           },
-        },
-      },
-    })
+          select: { id: true, date: true },
+        })
+        const hasWorkedTime = timeEntries.some((entry) => {
+          const dateKey = getWarsawBusinessDate(entry.date).isoDate
+          return startDateKey <= dateKey && dateKey <= endDateKey
+        })
 
-    if (balance) {
-      await tx.leaveBalanceNew.update({
-        where: { id: balance.id },
+        if (hasWorkedTime) {
+          throw new LeaveApprovalError(
+            409,
+            'Nie można zatwierdzić urlopu w dniu z zarejestrowanym czasem pracy'
+          )
+        }
+      }
+
+      const transition = await tx.leaveRequestNew.updateMany({
+        where: { id, status: 'pending' },
         data: {
-          usedDays: { increment: leaveRequest.days },
-          pendingDays: { decrement: leaveRequest.days },
+          status: 'approved',
+          approverId: session.user.id,
+          approvedAt: now,
         },
       })
+
+      if (transition.count !== 1) {
+        throw new LeaveApprovalError(409, 'Wniosek został już przetworzony')
+      }
+
+      if (balancePoolId) {
+        const balance = await tx.leaveBalanceNew.findUnique({
+          where: {
+            employeeId_leaveTypeId_year: {
+              employeeId: leaveRequest.employeeId,
+              leaveTypeId: balancePoolId,
+              year,
+            },
+          },
+        })
+
+        if (!balance) {
+          throw new LeaveApprovalError(
+            422,
+            'Brak salda urlopowego dla tego typu urlopu'
+          )
+        }
+
+        const available = balance.totalDays - balance.usedDays
+        if (available < leaveRequest.days) {
+          throw new LeaveApprovalError(
+            422,
+            `Niewystarczające saldo urlopowe. Dostępne: ${available} dni, wymagane: ${leaveRequest.days} dni`
+          )
+        }
+
+        if (balance.pendingDays < leaveRequest.days) {
+          throw new LeaveApprovalError(
+            409,
+            'Saldo oczekujących dni jest niższe niż liczba dni wniosku'
+          )
+        }
+
+        await tx.leaveBalanceNew.update({
+          where: { id: balance.id },
+          data: {
+            usedDays: { increment: leaveRequest.days },
+            pendingDays: { decrement: leaveRequest.days },
+          },
+        })
+      }
+
+      const updatedRequest = await tx.leaveRequestNew.findUnique({
+        where: { id },
+        include: {
+          leaveType: { select: { id: true, name: true, color: true, code: true } },
+          employee: {
+            select: {
+              id: true,
+              firstName: true,
+              lastName: true,
+              division: { select: { id: true, name: true } },
+            },
+          },
+        },
+      })
+
+      if (!updatedRequest) {
+        throw new LeaveApprovalError(409, 'Wniosek został usunięty podczas zatwierdzania')
+      }
+
+      return updatedRequest
+    }, { isolationLevel: 'Serializable' })
+
+  let updated: Awaited<ReturnType<typeof approveRequest>>
+  try {
+    updated = await runSerializableTransactionWithRetry(approveRequest)
+  } catch (error) {
+    if (error instanceof LeaveApprovalError) {
+      return NextResponse.json({ error: error.message }, { status: error.status })
     }
+    if (error instanceof SerializableTransactionConflictError) {
+      return NextResponse.json(
+        { error: 'Wniosek został zmieniony równocześnie. Spróbuj ponownie.' },
+        { status: 409 }
+      )
+    }
+    throw error
+  }
 
-    return updatedRequest
-  })
-
-  // 6. Utwórz powiadomienie dla pracownika
   const userId = leaveRequest.employee.userId
   if (userId) {
-    await prisma.notification.create({
+    await db.notification.create({
       data: {
         userId,
         type: 'leave_approved',
@@ -133,7 +245,6 @@ export async function PATCH(
     })
   }
 
-  // 7. Fire-and-forget webhook to n8n for Google Calendar sync
   if (process.env.N8N_WEBHOOK_URL) {
     void fetch(process.env.N8N_WEBHOOK_URL, {
       method: 'POST',
@@ -149,8 +260,22 @@ export async function PATCH(
         days: leaveRequest.days,
         divisionName: updated.employee.division?.name ?? null,
       }),
-    }).catch(() => {}) // fire-and-forget, don't fail approval if webhook fails
+    }).catch(() => {})
   }
 
   return NextResponse.json(updated)
 }
+
+export function createLeaveApprovalHandler(
+  dependencies: LeaveApprovalHandlerDependencies
+) {
+  return (
+    req: NextRequest,
+    context: { params: Promise<{ id: string }> }
+  ) => handleLeaveApproval(req, context, dependencies)
+}
+
+export const PATCH = createLeaveApprovalHandler({
+  prisma,
+  getSession: () => getServerSession(authOptions),
+})

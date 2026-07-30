@@ -1,12 +1,28 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
+import type { Session } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import type { PrismaClient } from '@/generated/prisma'
 import { timeEntryBulkCreateSchema } from '@/lib/hr/schemas'
 import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
+import {
+  ApprovedLeaveBlocksTimeEntryError,
+  createTimeEntryRespectingApprovedLeave,
+  TimeEntryAlreadyExistsError,
+  TimeEntryConcurrentWriteError,
+} from '@/lib/hr/time-tracking/create-entry'
 
-export async function POST(req: NextRequest) {
-  const session = await getServerSession(authOptions)
+export interface BulkTimeEntryHandlerDependencies {
+  prisma: PrismaClient
+  getSession: () => Promise<Session | null>
+}
+
+async function handleBulkTimeEntries(
+  req: NextRequest,
+  { prisma: db, getSession }: BulkTimeEntryHandlerDependencies
+) {
+  const session = await getSession()
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   if (session.user.role === 'EMPLOYEE') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
@@ -38,7 +54,7 @@ export async function POST(req: NextRequest) {
 
   const viewerEmployee =
     role === 'MANAGER' && session.user.employeeId
-      ? await prisma.employee.findUnique({
+      ? await db.employee.findUnique({
           where: { id: session.user.employeeId },
           select: { id: true, divisionId: true, active: true },
         })
@@ -50,7 +66,7 @@ export async function POST(req: NextRequest) {
   }
 
   // Validate employees exist and are inside the caller's HR scope.
-  const employees = await prisma.employee.findMany({
+  const employees = await db.employee.findMany({
     where: { ...scopedWhere, id: { in: employeeIds } },
     select: { id: true },
   })
@@ -79,25 +95,16 @@ export async function POST(req: NextRequest) {
 
     // UTC midnight for the day — used as the `date` field
     const dayDate = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth(), cur.getUTCDate()))
-
     // Apply the same UTC time to this specific day
     const clockInDt = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth(), cur.getUTCDate(), inUtcH, inUtcM))
     const clockOutDt = new Date(Date.UTC(cur.getUTCFullYear(), cur.getUTCMonth(), cur.getUTCDate(), outUtcH, outUtcM))
 
     for (const employeeId of employeeIds) {
-      const existing = await prisma.timeEntry.findFirst({
-        where: { employeeId, date: dayDate },
-      })
-      if (existing) {
-        skipped.push(`${employeeId}:${startDate}`)
-        continue
-      }
-
       try {
-        const entry = await prisma.timeEntry.create({
+        const entry = await createTimeEntryRespectingApprovedLeave(db, {
+          employeeId,
+          date: dayDate,
           data: {
-            employeeId,
-            date: dayDate,
             clockIn: clockInDt,
             clockOut: clockOutDt,
             totalMinutes: totalMinutesPerDay,
@@ -107,8 +114,16 @@ export async function POST(req: NextRequest) {
           },
         })
         created.push(entry.id)
-      } catch {
-        skipped.push(`${employeeId}:${dayDate.toISOString().slice(0, 10)}`)
+      } catch (error) {
+        if (
+          error instanceof TimeEntryAlreadyExistsError ||
+          error instanceof ApprovedLeaveBlocksTimeEntryError ||
+          error instanceof TimeEntryConcurrentWriteError
+        ) {
+          skipped.push(`${employeeId}:${dayDate.toISOString().slice(0, 10)}`)
+          continue
+        }
+        throw error
       }
     }
 
@@ -117,3 +132,14 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({ created: created.length, skipped: skipped.length }, { status: 201 })
 }
+
+export function createBulkTimeEntryHandler(
+  dependencies: BulkTimeEntryHandlerDependencies
+) {
+  return (req: NextRequest) => handleBulkTimeEntries(req, dependencies)
+}
+
+export const POST = createBulkTimeEntryHandler({
+  prisma,
+  getSession: () => getServerSession(authOptions),
+})

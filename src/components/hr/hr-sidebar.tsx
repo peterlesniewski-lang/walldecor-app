@@ -20,18 +20,19 @@ import {
   TrendingUp,
   PieChart,
 } from 'lucide-react'
+import { MobileNavigationDialog } from '@/components/shared/mobile-navigation-dialog'
 
-type Role = 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+export type HrRole = 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
 
 interface HrSidebarProps {
-  userRole: Role
+  userRole: HrRole
 }
 
 interface NavLeaf {
   href: string
   label: string
   icon: React.ElementType
-  roles?: Role[]
+  roles?: HrRole[]
 }
 
 interface NavGroup {
@@ -48,7 +49,7 @@ interface NavSection {
 
 type NavEntry = NavGroup | NavSection
 
-const NAV: NavEntry[] = [
+export const HR_NAV: NavEntry[] = [
   {
     type: 'leaf',
     items: [
@@ -89,7 +90,15 @@ function isGroup(entry: NavEntry): entry is NavGroup {
 
 // ─── Single nav leaf link ────────────────────────────────────────────────────
 
-function HrNavLink({ item, indent = false }: { item: NavLeaf; indent?: boolean }) {
+function HrNavLink({
+  item,
+  indent = false,
+  onNavigate,
+}: {
+  item: NavLeaf
+  indent?: boolean
+  onNavigate?: () => void
+}) {
   const pathname = usePathname()
   // exact match for index routes, startsWith for nested
   const isActive =
@@ -104,7 +113,8 @@ function HrNavLink({ item, indent = false }: { item: NavLeaf; indent?: boolean }
   return (
     <Link
       href={item.href}
-      className="flex items-center gap-2.5 py-1.5 rounded-sm text-[13px] font-medium transition-all duration-150"
+      onClick={onNavigate}
+      className="flex min-h-11 items-center gap-2.5 rounded-sm py-1.5 text-[13px] font-medium transition-all duration-150 xl:min-h-0"
       style={
         isActive
           ? {
@@ -142,7 +152,17 @@ function HrNavLink({ item, indent = false }: { item: NavLeaf; indent?: boolean }
 
 // ─── Collapsible group ───────────────────────────────────────────────────────
 
-function HrNavGroup({ group, userRole }: { group: NavGroup; userRole: Role }) {
+function HrNavGroup({
+  group,
+  userRole,
+  onNavigate,
+  idPrefix,
+}: {
+  group: NavGroup
+  userRole: HrRole
+  onNavigate?: () => void
+  idPrefix: string
+}) {
   const pathname = usePathname()
   const visibleChildren = group.children.filter(
     (c) => !c.roles || c.roles.includes(userRole)
@@ -153,13 +173,16 @@ function HrNavGroup({ group, userRole }: { group: NavGroup; userRole: Role }) {
   const [open, setOpen] = useState(isAnyChildActive)
   const Icon = group.icon
   const Chevron = open ? ChevronDown : ChevronRight
+  const regionId = `${idPrefix}-group-${group.id}`
 
   return (
     <div>
       <button
         type="button"
+        aria-expanded={open}
+        aria-controls={regionId}
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between px-3 py-1.5 rounded-sm text-[13px] font-medium transition-all duration-150"
+        className="flex min-h-11 w-full items-center justify-between rounded-sm px-3 py-1.5 text-[13px] font-medium transition-all duration-150 xl:min-h-0"
         style={{
           color: isAnyChildActive ? '#FFFFFF' : 'var(--sidebar-text)',
           background: 'transparent',
@@ -180,23 +203,90 @@ function HrNavGroup({ group, userRole }: { group: NavGroup; userRole: Role }) {
         <Chevron size={13} className="shrink-0 opacity-60" />
       </button>
 
-      {open && (
-        <div className="mt-0.5 space-y-0.5">
-          {visibleChildren.map((child) => (
-            <HrNavLink key={child.href} item={child} indent />
-          ))}
-        </div>
-      )}
+      <div
+        id={regionId}
+        role="region"
+        aria-label={`${group.label} - podmenu`}
+        hidden={!open}
+        className="mt-0.5 space-y-0.5"
+      >
+        {visibleChildren.map((child) => (
+          <HrNavLink key={child.href} item={child} indent onNavigate={onNavigate} />
+        ))}
+      </div>
     </div>
   )
 }
 
 // ─── Main sidebar ────────────────────────────────────────────────────────────
 
+export function HrNavigation({
+  userRole,
+  onNavigate,
+  idPrefix,
+}: {
+  userRole: HrRole
+  onNavigate?: () => void
+  idPrefix: string
+}) {
+  return (
+    <nav aria-label="Obszary HR" className="space-y-1 px-2 py-3">
+      <div>
+        <p
+          className="mb-1 px-3"
+          style={{ fontSize: '0.6875rem', fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: 'var(--sidebar-text)', opacity: 0.7 }}
+        >
+          Pracownicy
+        </p>
+        <div className="space-y-0.5">
+          {(HR_NAV[0] as NavSection).items.map((item) => (
+            <HrNavLink key={item.href} item={item} onNavigate={onNavigate} />
+          ))}
+        </div>
+      </div>
+
+      <div className="pt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
+
+      {HR_NAV.slice(1).map((entry) => {
+        if (!isGroup(entry)) return null
+        return (
+          <HrNavGroup
+            key={entry.id}
+            group={entry}
+            userRole={userRole}
+            onNavigate={onNavigate}
+            idPrefix={idPrefix}
+          />
+        )
+      })}
+    </nav>
+  )
+}
+
+export function HrMobileNavigation({ userRole }: HrSidebarProps) {
+  return (
+    <MobileNavigationDialog
+      triggerLabel="Otwórz menu HR"
+      title="Menu HR"
+      description="Nawigacja modułu HR"
+      className="xl:hidden"
+    >
+      {(close) => (
+        <HrNavigation
+          userRole={userRole}
+          onNavigate={close}
+          idPrefix="hr-mobile-nav"
+        />
+      )}
+    </MobileNavigationDialog>
+  )
+}
+
 export function HrSidebar({ userRole }: HrSidebarProps) {
   return (
     <aside
-      className="flex flex-col w-52 shrink-0 border-r overflow-y-auto"
+      aria-label="Nawigacja HR"
+      className="hidden w-52 shrink-0 flex-col overflow-y-auto border-r xl:flex"
       style={{
         background: '#252525',
         borderColor: 'var(--sidebar-border)',
@@ -217,34 +307,7 @@ export function HrSidebar({ userRole }: HrSidebarProps) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-2 py-3 space-y-1">
-        {/* Employees flat section */}
-        <div>
-          <p
-            className="px-3 mb-1"
-            style={{ fontSize: '0.6875rem', fontWeight: 600, letterSpacing: '0.07em', textTransform: 'uppercase', color: '#8A8582' }}
-          >
-            Pracownicy
-          </p>
-          <div className="space-y-0.5">
-            {(NAV[0] as NavSection).items.map((item) => (
-              <HrNavLink key={item.href} item={item} />
-            ))}
-          </div>
-        </div>
-
-        <div className="pt-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
-
-        {/* Collapsible groups */}
-        {NAV.slice(1).map((entry) => {
-          if (isGroup(entry)) {
-            return (
-              <HrNavGroup key={entry.id} group={entry} userRole={userRole} />
-            )
-          }
-          return null
-        })}
-      </nav>
+      <HrNavigation userRole={userRole} idPrefix="hr-desktop-nav" />
     </aside>
   )
 }
