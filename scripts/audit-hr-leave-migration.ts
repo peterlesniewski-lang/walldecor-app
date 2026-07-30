@@ -8,6 +8,16 @@ export type HrLeaveMigrationAuditClient = {
   leaveRequestNew: Pick<PrismaClient['leaveRequestNew'], 'count'>
 }
 
+type HrLeaveMigrationAuditRuntimeClient = HrLeaveMigrationAuditClient &
+  Pick<PrismaClient, '$disconnect'>
+
+export type HrLeaveMigrationAuditRunnerDependencies = {
+  createClient: () => HrLeaveMigrationAuditRuntimeClient
+  writeJson: (json: string) => void
+  writeError: (message: string) => void
+  setExitCode: (code: number) => void
+}
+
 export async function buildHrLeaveMigrationReport(
   prisma: HrLeaveMigrationAuditClient
 ) {
@@ -53,23 +63,28 @@ export async function buildHrLeaveMigrationReport(
   }
 }
 
-async function main() {
-  let prisma: PrismaClient | undefined
+export async function runHrLeaveMigrationAudit({
+  createClient,
+  writeJson,
+  writeError,
+  setExitCode,
+}: HrLeaveMigrationAuditRunnerDependencies) {
+  let prisma: HrLeaveMigrationAuditRuntimeClient | undefined
 
   try {
-    prisma = new PrismaClient()
+    prisma = createClient()
     const report = await buildHrLeaveMigrationReport(prisma)
-    console.log(JSON.stringify(report, null, 2))
+    writeJson(JSON.stringify(report, null, 2))
   } catch {
-    console.error('HR leave migration audit failed.')
-    process.exitCode = 1
+    writeError('HR leave migration audit failed.')
+    setExitCode(1)
   } finally {
     if (prisma) {
       try {
         await prisma.$disconnect()
       } catch {
-        console.error('Failed to disconnect the HR leave migration audit client.')
-        process.exitCode = 1
+        writeError('Failed to disconnect the HR leave migration audit client.')
+        setExitCode(1)
       }
     }
   }
@@ -81,5 +96,12 @@ if (
   entrypoint &&
   import.meta.url === pathToFileURL(resolve(entrypoint)).href
 ) {
-  void main()
+  void runHrLeaveMigrationAudit({
+    createClient: () => new PrismaClient(),
+    writeJson: (json) => console.log(json),
+    writeError: (message) => console.error(message),
+    setExitCode: (code) => {
+      process.exitCode = code
+    },
+  })
 }
