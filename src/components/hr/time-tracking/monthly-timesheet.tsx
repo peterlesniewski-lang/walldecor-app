@@ -439,6 +439,8 @@ export function MonthlyTimesheet({
               days={visibleData.days}
               holidays={visibleData.holidays}
               saturdayWorkable={effectiveSaturdayWorkable}
+              standardClockIn={visibleData.standardClockIn}
+              standardClockOut={visibleData.standardClockOut}
               onSaved={refreshAfterMutation}
               onOpenEntry={(date, entry) => {
                 if (mutationBusy) return

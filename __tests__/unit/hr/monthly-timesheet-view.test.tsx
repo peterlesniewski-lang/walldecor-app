@@ -1078,6 +1078,362 @@ describe('ManagerTimesheet navigation', () => {
     )
     expect(await screen.findByRole('button', { name: 'Zapisz zmiany (0)' })).toBeTruthy()
   })
+
+  it('previews working-day fill before applying and renders every count group', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    const fullMonthData = {
+      ...monthlyData,
+      days: buildMonthDateKeys('2026-07'),
+    }
+    const fetchMock = vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (
+        String(input) === '/api/hr/time-tracking/monthly/fill' &&
+        init?.method === 'POST'
+      ) {
+        return jsonResponse({
+          preview: true,
+          counts: {
+            eligible: 20,
+            existing: 2,
+            weekends: 8,
+            holidays: 1,
+            approvedLeave: 0,
+            invalid: 0,
+          },
+          rows: [],
+          saved: [],
+        })
+      }
+      return jsonResponse(fullMonthData)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+        initialEmployeeId="employee-1"
+      />
+    )
+
+    await user.click(await screen.findByRole('button', {
+      name: 'Wypełnij dni robocze',
+    }))
+    expect(screen.getByRole('dialog', {
+      name: 'Wypełnij dni robocze',
+    })).toBeTruthy()
+    expect(screen.getByLabelText('Od').getAttribute('value')).toBe('2026-07-01')
+    expect(screen.getByLabelText('Do').getAttribute('value')).toBe('2026-07-31')
+    expect(screen.getByLabelText('Godzina wejścia').getAttribute('value')).toBe('11:00')
+    expect(screen.getByLabelText('Godzina wyjścia').getAttribute('value')).toBe('19:00')
+
+    await user.click(screen.getByRole('button', { name: 'Sprawdź' }))
+
+    const fillCalls = fetchMock.mock.calls.filter(([input]) => (
+      String(input) === '/api/hr/time-tracking/monthly/fill'
+    ))
+    expect(fillCalls).toHaveLength(1)
+    const previewBody = JSON.parse(String(fillCalls[0][1]?.body))
+    expect(previewBody).toMatchObject({
+      employeeId: 'employee-1',
+      overwrite: false,
+      preview: true,
+    })
+    expect(previewBody.rows).toHaveLength(31)
+    expect(screen.getByText('Do zapisania')).toBeTruthy()
+    expect(screen.getByText('Istniejące')).toBeTruthy()
+    expect(screen.getByText('Weekendy')).toBeTruthy()
+    expect(screen.getByText('Święta')).toBeTruthy()
+    expect(screen.getByText('Urlopy')).toBeTruthy()
+    expect(screen.getByText('Nieprawidłowe')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Zastosuj' })).toBeTruthy()
+  })
+
+  it('applies the exact preview rows and overwrite value, then refreshes and closes', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    const fullMonthData = {
+      ...monthlyData,
+      days: buildMonthDateKeys('2026-07'),
+    }
+    const fillBodies: Array<Record<string, unknown>> = []
+    let monthlyRequestCount = 0
+    const fetchMock = vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (
+        String(input) === '/api/hr/time-tracking/monthly/fill' &&
+        init?.method === 'POST'
+      ) {
+        const body = JSON.parse(String(init.body)) as Record<string, unknown>
+        fillBodies.push(body)
+        return jsonResponse({
+          preview: body.preview,
+          counts: {
+            eligible: 23,
+            existing: 0,
+            weekends: 8,
+            holidays: 0,
+            approvedLeave: 0,
+            invalid: 0,
+          },
+          rows: [],
+          saved: body.preview ? [] : [{ date: '2026-07-01', entryId: 'entry-1' }],
+        })
+      }
+      monthlyRequestCount += 1
+      return jsonResponse(fullMonthData)
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    const user = userEvent.setup()
+    render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+        initialEmployeeId="employee-1"
+      />
+    )
+
+    await user.click(await screen.findByRole('button', {
+      name: 'Wypełnij dni robocze',
+    }))
+    await user.click(screen.getByLabelText('Nadpisz istniejące wpisy'))
+    await user.click(screen.getByRole('button', { name: 'Sprawdź' }))
+    await user.click(await screen.findByRole('button', { name: 'Zastosuj' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(fillBodies).toHaveLength(2)
+    expect(fillBodies[0].preview).toBe(true)
+    expect(fillBodies[1].preview).toBe(false)
+    expect(fillBodies[0].overwrite).toBe(true)
+    expect(fillBodies[1].overwrite).toBe(true)
+    expect(fillBodies[1].rows).toEqual(fillBodies[0].rows)
+    expect(monthlyRequestCount).toBe(2)
+  })
+
+  it('keeps inputs and preview visible when apply fails', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    const fullMonthData = {
+      ...monthlyData,
+      days: buildMonthDateKeys('2026-07'),
+    }
+    let fillRequestCount = 0
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (
+        String(input) === '/api/hr/time-tracking/monthly/fill' &&
+        init?.method === 'POST'
+      ) {
+        fillRequestCount += 1
+        if (fillRequestCount === 2) {
+          return jsonResponse({ error: 'Konflikt równoczesnej zmiany' }, 409)
+        }
+        return jsonResponse({
+          preview: true,
+          counts: {
+            eligible: 23,
+            existing: 0,
+            weekends: 8,
+            holidays: 0,
+            approvedLeave: 0,
+            invalid: 0,
+          },
+          rows: [],
+          saved: [],
+        })
+      }
+      return jsonResponse(fullMonthData)
+    }))
+    const user = userEvent.setup()
+    render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+        initialEmployeeId="employee-1"
+      />
+    )
+
+    await user.click(await screen.findByRole('button', {
+      name: 'Wypełnij dni robocze',
+    }))
+    await user.clear(screen.getByLabelText('Przerwa w minutach'))
+    await user.type(screen.getByLabelText('Przerwa w minutach'), '45')
+    await user.click(screen.getByRole('button', { name: 'Sprawdź' }))
+    await user.click(await screen.findByRole('button', { name: 'Zastosuj' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain(
+      'Konflikt równoczesnej zmiany'
+    )
+    expect(screen.getByRole('dialog')).toBeTruthy()
+    expect(screen.getByLabelText('Przerwa w minutach').getAttribute('value')).toBe('45')
+    expect(screen.getByText('Do zapisania')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Zastosuj' })).toBeTruthy()
+  })
+
+  it('retries only refresh after a successful apply without submitting fill twice', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    const fullMonthData = {
+      ...monthlyData,
+      days: buildMonthDateKeys('2026-07'),
+    }
+    let fillRequestCount = 0
+    let monthlyRequestCount = 0
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (
+        String(input) === '/api/hr/time-tracking/monthly/fill' &&
+        init?.method === 'POST'
+      ) {
+        fillRequestCount += 1
+        const body = JSON.parse(String(init.body)) as { preview: boolean }
+        return jsonResponse({
+          preview: body.preview,
+          counts: {
+            eligible: 23,
+            existing: 0,
+            weekends: 8,
+            holidays: 0,
+            approvedLeave: 0,
+            invalid: 0,
+          },
+          rows: [],
+          saved: body.preview ? [] : [{ date: '2026-07-01', entryId: 'entry-1' }],
+        })
+      }
+      monthlyRequestCount += 1
+      if (monthlyRequestCount === 2) {
+        return jsonResponse({ error: 'refresh failed' }, 500)
+      }
+      return jsonResponse(fullMonthData)
+    }))
+    const user = userEvent.setup()
+    render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+        initialEmployeeId="employee-1"
+      />
+    )
+
+    await user.click(await screen.findByRole('button', {
+      name: 'Wypełnij dni robocze',
+    }))
+    await user.click(screen.getByRole('button', { name: 'Sprawdź' }))
+    await user.click(await screen.findByRole('button', { name: 'Zastosuj' }))
+
+    expect(await screen.findByText(
+      'Wpisy zapisano, ale nie udało się odświeżyć widoku.'
+    )).toBeTruthy()
+    expect(fillRequestCount).toBe(2)
+
+    await user.click(screen.getByRole('button', { name: 'Ponów odświeżenie' }))
+
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
+    expect(fillRequestCount).toBe(2)
+    expect(monthlyRequestCount).toBe(3)
+  })
+
+  it('builds fill timestamps in Europe/Warsaw across the DST boundary', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-03&employeeId=employee-1'
+    const marchData = {
+      ...monthlyData,
+      month: '2026-03',
+      monthStart: '2026-03-01',
+      monthEnd: '2026-03-31',
+      days: buildMonthDateKeys('2026-03'),
+    }
+    let previewBody: {
+      rows: Array<{ date: string; clockIn: string; clockOut: string }>
+    } | null = null
+    vi.stubGlobal('fetch', vi.fn(async (
+      input: string | URL | Request,
+      init?: RequestInit
+    ) => {
+      if (
+        String(input) === '/api/hr/time-tracking/monthly/fill' &&
+        init?.method === 'POST'
+      ) {
+        previewBody = JSON.parse(String(init.body))
+        return jsonResponse({
+          preview: true,
+          counts: {
+            eligible: 22,
+            existing: 0,
+            weekends: 9,
+            holidays: 0,
+            approvedLeave: 0,
+            invalid: 0,
+          },
+          rows: [],
+          saved: [],
+        })
+      }
+      return jsonResponse(marchData)
+    }))
+    const user = userEvent.setup()
+    render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+        initialMonth="2026-03"
+        initialEmployeeId="employee-1"
+      />
+    )
+
+    await user.click(await screen.findByRole('button', {
+      name: 'Wypełnij dni robocze',
+    }))
+    await user.click(screen.getByRole('button', { name: 'Sprawdź' }))
+
+    expect(previewBody).not.toBeNull()
+    const rows = previewBody!.rows
+    expect(rows.find((item) => item.date === '2026-03-28')).toMatchObject({
+      clockIn: '2026-03-28T10:00:00.000Z',
+      clockOut: '2026-03-28T18:00:00.000Z',
+    })
+    expect(rows.find((item) => item.date === '2026-03-29')).toMatchObject({
+      clockIn: '2026-03-29T09:00:00.000Z',
+      clockOut: '2026-03-29T17:00:00.000Z',
+    })
+  })
+
+  it('does not allow fill to discard dirty inline rows', async () => {
+    navigation.search = 'view=month&mode=employee&month=2026-07&employeeId=employee-1'
+    const user = userEvent.setup()
+    render(
+      <ManagerTimesheet
+        {...managerProps}
+        initialView="month"
+        initialMode="employee"
+        initialEmployeeId="employee-1"
+      />
+    )
+
+    const fillButton = await screen.findByRole('button', {
+      name: 'Wypełnij dni robocze',
+    })
+    expect(fillButton.hasAttribute('disabled')).toBe(false)
+
+    await user.type(screen.getByLabelText('Wejście 2026-07-02'), '09:00')
+
+    expect(fillButton.hasAttribute('disabled')).toBe(true)
+    expect(fillButton.getAttribute('title')).toBe(
+      'Najpierw zapisz albo odrzuć zmiany w tabeli'
+    )
+    expect(screen.getByRole('button', { name: 'Zapisz zmiany (1)' })).toBeTruthy()
+  })
 })
 
 describe('MonthlyTeamGrid', () => {

@@ -1,8 +1,10 @@
 'use client'
 
 import { useEffect, useMemo, useState } from 'react'
-import { Loader2, MoreHorizontal, Save } from 'lucide-react'
+import { CalendarRange, Loader2, MoreHorizontal, Save } from 'lucide-react'
+import { FillWorkingDaysDialog } from './fill-working-days-dialog'
 import { dateKeyToLocalNoon } from '@/lib/hr/time-tracking/month'
+import { warsawWallClockToIso } from '@/lib/hr/time-tracking/batch-policy'
 import type {
   TimeTrackingDayEntry,
   TimeTrackingEmployeeRow,
@@ -15,6 +17,8 @@ interface MonthlyEmployeeTableProps {
   days: string[]
   holidays: TimeTrackingRangeData['holidays']
   saturdayWorkable: boolean
+  standardClockIn: string
+  standardClockOut: string
   onSaved: () => Promise<void>
   onOpenEntry: (date: string, entry: TimeTrackingDayEntry | null) => void
   onDirtyChange: (dirty: boolean) => void
@@ -46,48 +50,11 @@ const WARSAW_TIME_FORMATTER = new Intl.DateTimeFormat('en-GB', {
   minute: '2-digit',
   hourCycle: 'h23',
 })
-const WARSAW_PARTS_FORMATTER = new Intl.DateTimeFormat('en-CA', {
-  timeZone: WARSAW_TIME_ZONE,
-  year: 'numeric',
-  month: '2-digit',
-  day: '2-digit',
-  hour: '2-digit',
-  minute: '2-digit',
-  second: '2-digit',
-  hourCycle: 'h23',
-})
 
 function toWarsawTime(iso: string | null | undefined): string {
   if (!iso) return ''
   const date = new Date(iso)
   return Number.isFinite(date.getTime()) ? WARSAW_TIME_FORMATTER.format(date) : ''
-}
-
-function getWarsawOffset(timestamp: number): number {
-  const parts = Object.fromEntries(
-    WARSAW_PARTS_FORMATTER
-      .formatToParts(new Date(timestamp))
-      .filter((part) => part.type !== 'literal')
-      .map((part) => [part.type, Number(part.value)])
-  )
-  const representedAsUtc = Date.UTC(
-    parts.year,
-    parts.month - 1,
-    parts.day,
-    parts.hour,
-    parts.minute,
-    parts.second
-  )
-  return representedAsUtc - timestamp
-}
-
-function warsawDateTimeToIso(date: string, time: string): string {
-  const [year, month, day] = date.split('-').map(Number)
-  const [hour, minute] = time.split(':').map(Number)
-  const wallClockAsUtc = Date.UTC(year, month - 1, day, hour, minute)
-  const firstPass = wallClockAsUtc - getWarsawOffset(wallClockAsUtc)
-  const resolved = wallClockAsUtc - getWarsawOffset(firstPass)
-  return new Date(resolved).toISOString()
 }
 
 function getInitialRow(entry: TimeTrackingDayEntry | undefined): DraftRow {
@@ -163,6 +130,8 @@ export function MonthlyEmployeeTable({
   days,
   holidays,
   saturdayWorkable,
+  standardClockIn,
+  standardClockOut,
   onSaved,
   onOpenEntry,
   onDirtyChange,
@@ -171,8 +140,11 @@ export function MonthlyEmployeeTable({
 }: MonthlyEmployeeTableProps) {
   const [dirtyRows, setDirtyRows] = useState<Map<string, DraftRow>>(new Map())
   const [saving, setSaving] = useState(false)
+  const [fillOpen, setFillOpen] = useState(false)
+  const [fillBusy, setFillBusy] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const scopeKey = `${employee.id}|${days[0] ?? ''}|${days.at(-1) ?? ''}`
+  const busy = saving || fillBusy
 
   const initialRows = useMemo(() => new Map(
     days.map((day) => [day, getInitialRow(employee.entries[day])])
@@ -190,9 +162,9 @@ export function MonthlyEmployeeTable({
   useEffect(() => () => onDirtyChange(false), [onDirtyChange])
 
   useEffect(() => {
-    onBusyChange(saving)
+    onBusyChange(busy)
     return () => onBusyChange(false)
-  }, [onBusyChange, saving])
+  }, [busy, onBusyChange])
 
   const updateRow = (
     day: string,
@@ -215,7 +187,7 @@ export function MonthlyEmployeeTable({
   }
 
   const saveChanges = async () => {
-    if (saving || dirtyRows.size === 0) return
+    if (busy || dirtyRows.size === 0) return
 
     const invalidDates: string[] = []
     const rows = Array.from(dirtyRows, ([date, draft]) => {
@@ -223,8 +195,8 @@ export function MonthlyEmployeeTable({
       return {
         entryId: employee.entries[date]?.id,
         date,
-        clockIn: draft.clockIn ? warsawDateTimeToIso(date, draft.clockIn) : '',
-        clockOut: draft.clockOut ? warsawDateTimeToIso(date, draft.clockOut) : '',
+        clockIn: draft.clockIn ? warsawWallClockToIso(date, draft.clockIn) : '',
+        clockOut: draft.clockOut ? warsawWallClockToIso(date, draft.clockOut) : '',
         breakMinutes: draft.breakMinutes,
       }
     })
@@ -307,19 +279,33 @@ export function MonthlyEmployeeTable({
           </p>
         </div>
 
-        <button
-          type="button"
-          disabled={saving || dirtyRows.size === 0}
-          onClick={() => void saveChanges()}
-          className="flex h-9 items-center gap-1.5 rounded-md bg-[var(--wd-dark)] px-3 text-sm font-medium text-white transition-colors hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
-        >
-          {saving ? (
-            <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
-          ) : (
-            <Save className="h-4 w-4" aria-hidden="true" />
-          )}
-          Zapisz zmiany ({dirtyRows.size})
-        </button>
+        <div className="flex flex-wrap items-center gap-2">
+          <button
+            type="button"
+            disabled={busy || dirtyRows.size > 0}
+            title={dirtyRows.size > 0
+              ? 'Najpierw zapisz albo odrzuć zmiany w tabeli'
+              : 'Wypełnij dni robocze'}
+            onClick={() => setFillOpen(true)}
+            className="flex h-11 items-center gap-1.5 rounded-md border border-[var(--wd-border)] bg-white px-3 text-sm font-medium text-[var(--wd-text-primary)] transition-colors hover:bg-[var(--wd-surface-2)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            <CalendarRange className="h-4 w-4" aria-hidden="true" />
+            Wypełnij dni robocze
+          </button>
+          <button
+            type="button"
+            disabled={busy || dirtyRows.size === 0}
+            onClick={() => void saveChanges()}
+            className="flex h-11 items-center gap-1.5 rounded-md bg-[var(--wd-dark)] px-3 text-sm font-medium text-white transition-colors hover:bg-black focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {saving ? (
+              <Loader2 className="h-4 w-4 animate-spin" aria-hidden="true" />
+            ) : (
+              <Save className="h-4 w-4" aria-hidden="true" />
+            )}
+            Zapisz zmiany ({dirtyRows.size})
+          </button>
+        </div>
       </div>
 
       {saveError && (
@@ -406,7 +392,7 @@ export function MonthlyEmployeeTable({
                         ? `monthly-employee-error-${day}`
                         : undefined}
                       value={draft.clockIn}
-                      disabled={readOnly || saving}
+                      disabled={readOnly || busy}
                       onChange={(event) => updateRow(day, 'clockIn', event.target.value)}
                       className="h-9 w-full rounded-md border border-[var(--wd-border)] bg-white px-2 text-sm text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:bg-[var(--wd-surface-2)] disabled:text-[var(--muted-foreground)]"
                     />
@@ -420,7 +406,7 @@ export function MonthlyEmployeeTable({
                         ? `monthly-employee-error-${day}`
                         : undefined}
                       value={draft.clockOut}
-                      disabled={readOnly || saving}
+                      disabled={readOnly || busy}
                       onChange={(event) => updateRow(day, 'clockOut', event.target.value)}
                       className="h-9 w-full rounded-md border border-[var(--wd-border)] bg-white px-2 text-sm text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:bg-[var(--wd-surface-2)] disabled:text-[var(--muted-foreground)]"
                     />
@@ -447,7 +433,7 @@ export function MonthlyEmployeeTable({
                         type="button"
                         aria-label={`Szczegóły wpisu ${day}`}
                         title="Szczegóły wpisu"
-                        disabled={saving}
+                        disabled={busy}
                         onClick={() => onOpenEntry(day, entry)}
                         className="inline-grid h-9 w-9 place-items-center rounded text-[var(--muted-foreground)] transition-colors hover:bg-[var(--wd-surface-2)] hover:text-[var(--wd-text-primary)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--wd-dark)] focus-visible:ring-offset-1 disabled:cursor-not-allowed disabled:opacity-50"
                       >
@@ -461,6 +447,20 @@ export function MonthlyEmployeeTable({
           </tbody>
         </table>
       </div>
+
+      {fillOpen && days[0] && days.at(-1) && (
+        <FillWorkingDaysDialog
+          employeeId={employee.id}
+          employeeName={`${employee.firstName} ${employee.lastName}`}
+          monthStart={days[0]}
+          monthEnd={days.at(-1)!}
+          standardClockIn={standardClockIn}
+          standardClockOut={standardClockOut}
+          onBusyChange={setFillBusy}
+          onApplied={onSaved}
+          onClose={() => setFillOpen(false)}
+        />
+      )}
     </section>
   )
 }

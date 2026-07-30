@@ -31,6 +31,8 @@ let prisma: PrismaClient
 let postBatch: typeof import('@/app/api/hr/time-tracking/batch/route').POST
 let createTimeEntryBatchHandler:
   typeof import('@/app/api/hr/time-tracking/batch/route').createTimeEntryBatchHandler
+let createTimeEntryFillHandler:
+  typeof import('@/app/api/hr/time-tracking/monthly/fill/route').createTimeEntryFillHandler
 let createLeaveApprovalHandler:
   typeof import('@/app/api/hr/leave-requests/[id]/approve/route').createLeaveApprovalHandler
 
@@ -60,6 +62,18 @@ function request(rows: Array<Record<string, unknown>>) {
   return new NextRequest('http://localhost/api/hr/time-tracking/batch', {
     method: 'POST',
     body: JSON.stringify({ employeeId: 'employee-1', rows }),
+  })
+}
+
+function fillRequest(rows: Array<Record<string, unknown>>) {
+  return new NextRequest('http://localhost/api/hr/time-tracking/monthly/fill', {
+    method: 'POST',
+    body: JSON.stringify({
+      employeeId: 'employee-1',
+      rows,
+      overwrite: true,
+      preview: false,
+    }),
   })
 }
 
@@ -167,6 +181,16 @@ async function createSchema() {
     CREATE UNIQUE INDEX "TimeEntry_employeeId_date_key"
     ON "TimeEntry"("employeeId", "date")
   `)
+  await prisma.$executeRawUnsafe(`
+    CREATE TABLE "CustomHoliday" (
+      "id" TEXT NOT NULL PRIMARY KEY,
+      "name" TEXT NOT NULL,
+      "date" DATETIME NOT NULL,
+      "divisionId" TEXT,
+      "isRecurring" BOOLEAN NOT NULL DEFAULT false,
+      "country" TEXT NOT NULL DEFAULT 'PL'
+    )
+  `)
 }
 
 beforeAll(async () => {
@@ -183,6 +207,9 @@ beforeAll(async () => {
   ;({
     createLeaveApprovalHandler,
   } = await import('@/app/api/hr/leave-requests/[id]/approve/route'))
+  ;({
+    createTimeEntryFillHandler,
+  } = await import('@/app/api/hr/time-tracking/monthly/fill/route'))
 })
 
 beforeEach(async () => {
@@ -201,6 +228,7 @@ beforeEach(async () => {
   await prisma.$executeRawUnsafe('DROP TRIGGER IF EXISTS "fail_second_time_entry"')
   await prisma.timeEntry.deleteMany()
   await prisma.leaveRequestNew.deleteMany()
+  await prisma.customHoliday.deleteMany()
   await prisma.$executeRawUnsafe('DELETE FROM "LeaveType"')
   await prisma.$executeRawUnsafe('DELETE FROM "TimeTrackingRule"')
   await prisma.$executeRawUnsafe('DELETE FROM "Employee"')
@@ -297,6 +325,45 @@ describe('time tracking batch transaction integration', () => {
     `)
 
     await expect(postBatch(request([
+      row('2026-07-02'),
+      row('2026-07-03', {
+        clockOut: '2026-07-03T17:00:00.000Z',
+      }),
+    ]))).rejects.toThrow()
+
+    expect(await prisma.timeEntry.count()).toBe(0)
+  })
+
+  it('rolls back the whole working-day fill when a later insert fails', async () => {
+    await prisma.$executeRawUnsafe(`
+      CREATE TRIGGER "fail_second_time_entry"
+      BEFORE INSERT ON "TimeEntry"
+      WHEN NEW."totalMinutes" = 540
+      BEGIN
+        SELECT RAISE(ABORT, 'forced second time-entry failure');
+      END
+    `)
+    const fillWorkedTime = createTimeEntryFillHandler({
+      prisma,
+      getSession: async () => ({
+        user: {
+          id: 'admin-user',
+          name: 'Admin',
+          email: 'admin@test.pl',
+          role: 'ADMIN',
+          employeeId: null,
+        },
+        expires: '',
+      }),
+      getHrSettings: async () => ({
+        saturdayWorkable: true,
+        standardClockIn: '08:00',
+        standardClockOut: '16:00',
+        overtimeThresholdMinutes: 480,
+      }),
+    })
+
+    await expect(fillWorkedTime(fillRequest([
       row('2026-07-02'),
       row('2026-07-03', {
         clockOut: '2026-07-03T17:00:00.000Z',
@@ -417,6 +484,121 @@ describe('time tracking batch transaction integration', () => {
       await Promise.all([
         approvalClient.$disconnect(),
         timeEntryClient.$disconnect(),
+      ])
+    }
+  })
+
+  it('runs actual approve and fill handlers concurrently without committing both states', async () => {
+    const date = new Date('2026-07-07T00:00:00.000Z')
+    await prisma.$executeRawUnsafe(
+      `
+        INSERT INTO "LeaveRequestNew" (
+          "id",
+          "employeeId",
+          "leaveTypeId",
+          "startDate",
+          "endDate",
+          "days",
+          "status",
+          "isRemoteWork",
+          "isDelegation",
+          "createdAt",
+          "updatedAt"
+        )
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      'leave-fill-concurrent',
+      'employee-1',
+      'leave-type-ub',
+      date,
+      date,
+      1,
+      'pending',
+      false,
+      false,
+      new Date('2026-07-01T00:00:00.000Z'),
+      new Date('2026-07-01T00:00:00.000Z')
+    )
+
+    const approvalClient = createClient()
+    const fillClient = createClient()
+    const startTogether = createOneShotGate(2)
+    const session = {
+      user: {
+        id: 'admin-user',
+        name: 'Admin',
+        email: 'admin@test.pl',
+        role: 'ADMIN' as const,
+        employeeId: null,
+      },
+      expires: '',
+    }
+    const getSession = async () => {
+      await startTogether()
+      return session
+    }
+
+    await Promise.all([
+      approvalClient.$queryRawUnsafe('PRAGMA busy_timeout = 1000'),
+      fillClient.$queryRawUnsafe('PRAGMA busy_timeout = 1000'),
+    ])
+
+    const approveLeave = createLeaveApprovalHandler({
+      prisma: approvalClient,
+      getSession,
+    })
+    const fillWorkedTime = createTimeEntryFillHandler({
+      prisma: fillClient,
+      getSession,
+      getHrSettings: async () => ({
+        saturdayWorkable: true,
+        standardClockIn: '08:00',
+        standardClockOut: '16:00',
+        overtimeThresholdMinutes: 480,
+      }),
+    })
+
+    try {
+      const [approvalResponse, fillResponse] = await Promise.all([
+        approveLeave(
+          new NextRequest(
+            'http://localhost/api/hr/leave-requests/leave-fill-concurrent/approve',
+            { method: 'PATCH' }
+          ),
+          { params: Promise.resolve({ id: 'leave-fill-concurrent' }) }
+        ),
+        fillWorkedTime(fillRequest([row('2026-07-07')])),
+      ])
+      const [leave, timeEntries] = await Promise.all([
+        prisma.leaveRequestNew.findUniqueOrThrow({
+          where: { id: 'leave-fill-concurrent' },
+          select: { status: true },
+        }),
+        prisma.timeEntry.findMany({
+          where: { employeeId: 'employee-1' },
+          select: { date: true },
+        }),
+      ])
+      const logicalDayEntries = timeEntries.filter(
+        (entry) => getWarsawBusinessDate(entry.date).isoDate === '2026-07-07'
+      )
+
+      expect([200, 409]).toContain(approvalResponse.status)
+      expect([200, 409]).toContain(fillResponse.status)
+      expect([
+        { leaveStatus: 'approved', entryCount: 0 },
+        { leaveStatus: 'pending', entryCount: 1 },
+      ]).toContainEqual({
+        leaveStatus: leave.status,
+        entryCount: logicalDayEntries.length,
+      })
+      expect(
+        leave.status === 'approved' && logicalDayEntries.length > 0
+      ).toBe(false)
+    } finally {
+      await Promise.all([
+        approvalClient.$disconnect(),
+        fillClient.$disconnect(),
       ])
     }
   })

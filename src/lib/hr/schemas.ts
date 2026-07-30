@@ -67,6 +67,21 @@ export const timeEntryBatchMutationSchema = z.object({
   })).min(1).max(31),
 })
 
+export const timeEntryFillSchema = z.object({
+  employeeId: z.string().min(1),
+  rows: z.array(z.object({
+    date: z.string().refine(
+      isCanonicalTimeEntryDate,
+      'date must be a valid canonical YYYY-MM-DD with year 1000 or later'
+    ),
+    clockIn: z.string().datetime(),
+    clockOut: z.string().datetime(),
+    breakMinutes: z.number().int().min(0).max(1440).default(0),
+  })).min(1).max(31),
+  overwrite: z.boolean().default(false),
+  preview: z.boolean().default(true),
+})
+
 export const breakSchema = z.object({
   timeEntryId: z.string().min(1),
   startTime: z.coerce.date(),
