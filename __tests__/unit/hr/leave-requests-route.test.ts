@@ -5,7 +5,10 @@ import { prisma } from '@/lib/prisma'
 import { GET, POST } from '@/app/api/hr/leave-requests/route'
 import { PATCH as approveLeave } from '@/app/api/hr/leave-requests/[id]/approve/route'
 import { PATCH as rejectLeave } from '@/app/api/hr/leave-requests/[id]/reject/route'
-import { DELETE as cancelLeave } from '@/app/api/hr/leave-requests/[id]/route'
+import {
+  DELETE as cancelLeave,
+  GET as getLeave,
+} from '@/app/api/hr/leave-requests/[id]/route'
 
 vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
@@ -809,7 +812,77 @@ describe('PATCH /api/hr/leave-requests/[id]/approve', () => {
   })
 })
 
+describe('GET /api/hr/leave-requests/[id]', () => {
+  it('does not let managers distinguish a missing request from one outside their division', async () => {
+    mockGetServerSession.mockResolvedValue(managerSession as never)
+    mockEmployeeFindUnique.mockResolvedValue({
+      id: 'manager-employee',
+      divisionId: 'division-manager',
+      active: true,
+    } as never)
+
+    mockRequestFindUnique.mockResolvedValue(null)
+    const missing = await getLeave(request(), params('missing-request'))
+
+    arrangeLifecycle(leaveType('UB'))
+    const outside = await getLeave(request(), params())
+
+    expect(missing.status).toBe(403)
+    expect(await missing.json()).toEqual({ error: 'Forbidden' })
+    expect(outside.status).toBe(403)
+    expect(await outside.json()).toEqual({ error: 'Forbidden' })
+  })
+
+  it('returns 404 to an admin for a missing request', async () => {
+    mockRequestFindUnique.mockResolvedValue(null)
+
+    const response = await getLeave(request(), params('missing-request'))
+
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({ error: 'Not found' })
+  })
+})
+
 describe('PATCH /api/hr/leave-requests/[id]/reject', () => {
+  it('does not let managers distinguish a missing request from one outside their division', async () => {
+    mockGetServerSession.mockResolvedValue(managerSession as never)
+    mockEmployeeFindUnique.mockResolvedValue({
+      id: 'manager-employee',
+      divisionId: 'division-manager',
+      active: true,
+    } as never)
+
+    mockRequestFindUnique.mockResolvedValue(null)
+    const missing = await rejectLeave(
+      request('PATCH', { rejectionNote: 'Brak obsady' }),
+      params('missing-request')
+    )
+
+    arrangeLifecycle(leaveType('UB'))
+    const outside = await rejectLeave(
+      request('PATCH', { rejectionNote: 'Brak obsady' }),
+      params()
+    )
+
+    expect(missing.status).toBe(403)
+    expect(await missing.json()).toEqual({ error: 'Forbidden' })
+    expect(outside.status).toBe(403)
+    expect(await outside.json()).toEqual({ error: 'Forbidden' })
+    expect(mockTransaction).not.toHaveBeenCalled()
+  })
+
+  it('returns 404 to an admin for a missing request', async () => {
+    mockRequestFindUnique.mockResolvedValue(null)
+
+    const response = await rejectLeave(
+      request('PATCH', { rejectionNote: 'Brak obsady' }),
+      params('missing-request')
+    )
+
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({ error: 'Not found' })
+  })
+
   it('returns 503 before mutation when VLD has no parent pool', async () => {
     arrangeLifecycle(leaveType('VLD', { parentId: null }))
 
@@ -911,6 +984,31 @@ describe('PATCH /api/hr/leave-requests/[id]/reject', () => {
 })
 
 describe('DELETE /api/hr/leave-requests/[id]', () => {
+  it('does not let managers distinguish a missing request from one they do not own', async () => {
+    mockGetServerSession.mockResolvedValue(managerSession as never)
+
+    mockRequestFindUnique.mockResolvedValue(null)
+    const missing = await cancelLeave(request('DELETE'), params('missing-request'))
+
+    arrangeLifecycle(leaveType('UB'))
+    const outside = await cancelLeave(request('DELETE'), params())
+
+    expect(missing.status).toBe(403)
+    expect(await missing.json()).toEqual({ error: 'Forbidden' })
+    expect(outside.status).toBe(403)
+    expect(await outside.json()).toEqual({ error: 'Forbidden' })
+    expect(mockTransaction).not.toHaveBeenCalled()
+  })
+
+  it('returns 404 to an admin for a missing request', async () => {
+    mockRequestFindUnique.mockResolvedValue(null)
+
+    const response = await cancelLeave(request('DELETE'), params('missing-request'))
+
+    expect(response.status).toBe(404)
+    expect(await response.json()).toEqual({ error: 'Not found' })
+  })
+
   it('returns 503 before mutation when VLD has no parent pool', async () => {
     arrangeLifecycle(leaveType('VLD', { parentId: null }))
 

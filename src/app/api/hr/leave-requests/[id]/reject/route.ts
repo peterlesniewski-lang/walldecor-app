@@ -66,7 +66,11 @@ export async function PATCH(
     },
   })
 
-  if (!leaveRequest) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (!leaveRequest) {
+    return role === 'MANAGER'
+      ? NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      : NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
   if (role === 'MANAGER') {
     const viewerEmployee = session.user.employeeId
       ? await prisma.employee.findUnique({

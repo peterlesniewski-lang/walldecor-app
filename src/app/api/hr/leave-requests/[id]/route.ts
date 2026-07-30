@@ -29,6 +29,7 @@ export async function GET(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
+  const role = session.user.role
 
   const request = await prisma.leaveRequestNew.findUnique({
     where: { id },
@@ -48,9 +49,11 @@ export async function GET(
     },
   })
 
-  if (!request) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-
-  const role = session.user.role
+  if (!request) {
+    return role === 'MANAGER'
+      ? NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      : NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
   const isAdminOrManager = role === 'ADMIN' || role === 'MANAGER'
 
   if (!isAdminOrManager && request.employeeId !== session.user.employeeId) {
@@ -79,6 +82,7 @@ export async function DELETE(
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
+  const role = session.user.role
 
   const request = await prisma.leaveRequestNew.findUnique({
     where: { id },
@@ -94,10 +98,13 @@ export async function DELETE(
     },
   })
 
-  if (!request) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+  if (!request) {
+    return role === 'MANAGER'
+      ? NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+      : NextResponse.json({ error: 'Not found' }, { status: 404 })
+  }
 
   if (request.employeeId !== session.user.employeeId) {
-    const role = session.user.role
     if (role !== 'ADMIN') {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
