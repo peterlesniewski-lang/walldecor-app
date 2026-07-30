@@ -76,7 +76,8 @@ export function validateTimeMutationRow(row: TimeMutationRow): ValidatedTimeRow 
     }
   }
 
-  if (row.breakMinutes * 60_000 > grossDurationMs) {
+  const totalMinutes = Math.round(grossDurationMs / 60_000)
+  if (row.breakMinutes > totalMinutes) {
     return {
       valid: false,
       error: 'Przerwa nie może być dłuższa niż czas pracy',
@@ -85,7 +86,7 @@ export function validateTimeMutationRow(row: TimeMutationRow): ValidatedTimeRow 
 
   return {
     valid: true,
-    totalMinutes: Math.round(grossDurationMs / 60_000),
+    totalMinutes,
     breakMinutes: row.breakMinutes,
   }
 }

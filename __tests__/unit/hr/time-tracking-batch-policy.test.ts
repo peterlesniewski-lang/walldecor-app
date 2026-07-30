@@ -97,4 +97,29 @@ describe('validateTimeMutationRow', () => {
       error: 'Przerwa nie może być dłuższa niż czas pracy',
     })
   })
+
+  it('accepts a break equal to the rounded total minutes', () => {
+    expect(validateTimeMutationRow({
+      date: '2026-07-02',
+      clockIn: '2026-07-02T08:00:00.000Z',
+      clockOut: '2026-07-02T08:00:30.000Z',
+      breakMinutes: 1,
+    })).toEqual({
+      valid: true,
+      totalMinutes: 1,
+      breakMinutes: 1,
+    })
+  })
+
+  it('rejects a break just over the rounded total minutes', () => {
+    expect(validateTimeMutationRow({
+      date: '2026-07-02',
+      clockIn: '2026-07-02T08:00:00.000Z',
+      clockOut: '2026-07-02T08:00:30.000Z',
+      breakMinutes: 2,
+    })).toEqual({
+      valid: false,
+      error: 'Przerwa nie może być dłuższa niż czas pracy',
+    })
+  })
 })
