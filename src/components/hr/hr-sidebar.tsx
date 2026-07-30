@@ -114,7 +114,7 @@ function HrNavLink({
     <Link
       href={item.href}
       onClick={onNavigate}
-      className="flex items-center gap-2.5 py-1.5 rounded-sm text-[13px] font-medium transition-all duration-150"
+      className="flex min-h-11 items-center gap-2.5 rounded-sm py-1.5 text-[13px] font-medium transition-all duration-150 xl:min-h-0"
       style={
         isActive
           ? {
@@ -156,10 +156,12 @@ function HrNavGroup({
   group,
   userRole,
   onNavigate,
+  idPrefix,
 }: {
   group: NavGroup
   userRole: HrRole
   onNavigate?: () => void
+  idPrefix: string
 }) {
   const pathname = usePathname()
   const visibleChildren = group.children.filter(
@@ -171,13 +173,16 @@ function HrNavGroup({
   const [open, setOpen] = useState(isAnyChildActive)
   const Icon = group.icon
   const Chevron = open ? ChevronDown : ChevronRight
+  const regionId = `${idPrefix}-group-${group.id}`
 
   return (
     <div>
       <button
         type="button"
+        aria-expanded={open}
+        aria-controls={regionId}
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center justify-between px-3 py-1.5 rounded-sm text-[13px] font-medium transition-all duration-150"
+        className="flex min-h-11 w-full items-center justify-between rounded-sm px-3 py-1.5 text-[13px] font-medium transition-all duration-150 xl:min-h-0"
         style={{
           color: isAnyChildActive ? '#FFFFFF' : 'var(--sidebar-text)',
           background: 'transparent',
@@ -198,13 +203,17 @@ function HrNavGroup({
         <Chevron size={13} className="shrink-0 opacity-60" />
       </button>
 
-      {open && (
-        <div className="mt-0.5 space-y-0.5">
-          {visibleChildren.map((child) => (
-            <HrNavLink key={child.href} item={child} indent onNavigate={onNavigate} />
-          ))}
-        </div>
-      )}
+      <div
+        id={regionId}
+        role="region"
+        aria-label={`${group.label} - podmenu`}
+        hidden={!open}
+        className="mt-0.5 space-y-0.5"
+      >
+        {visibleChildren.map((child) => (
+          <HrNavLink key={child.href} item={child} indent onNavigate={onNavigate} />
+        ))}
+      </div>
     </div>
   )
 }
@@ -214,9 +223,11 @@ function HrNavGroup({
 export function HrNavigation({
   userRole,
   onNavigate,
+  idPrefix,
 }: {
   userRole: HrRole
   onNavigate?: () => void
+  idPrefix: string
 }) {
   return (
     <nav aria-label="Obszary HR" className="space-y-1 px-2 py-3">
@@ -244,6 +255,7 @@ export function HrNavigation({
             group={entry}
             userRole={userRole}
             onNavigate={onNavigate}
+            idPrefix={idPrefix}
           />
         )
       })}
@@ -259,7 +271,13 @@ export function HrMobileNavigation({ userRole }: HrSidebarProps) {
       description="Nawigacja modułu HR"
       className="xl:hidden"
     >
-      {(close) => <HrNavigation userRole={userRole} onNavigate={close} />}
+      {(close) => (
+        <HrNavigation
+          userRole={userRole}
+          onNavigate={close}
+          idPrefix="hr-mobile-nav"
+        />
+      )}
     </MobileNavigationDialog>
   )
 }
@@ -289,7 +307,7 @@ export function HrSidebar({ userRole }: HrSidebarProps) {
       </div>
 
       {/* Navigation */}
-      <HrNavigation userRole={userRole} />
+      <HrNavigation userRole={userRole} idPrefix="hr-desktop-nav" />
     </aside>
   )
 }

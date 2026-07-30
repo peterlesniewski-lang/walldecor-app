@@ -29,7 +29,7 @@ export function NavItem({
       href={href}
       title={collapsed ? label : undefined}
       onClick={onNavigate}
-      className="flex items-center gap-3 py-2 rounded-md text-sm font-medium transition-colors"
+      className="flex min-h-11 items-center gap-3 rounded-md py-2 text-sm font-medium transition-colors lg:min-h-0"
       style={
         isActive
           ? {

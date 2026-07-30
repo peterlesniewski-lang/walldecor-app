@@ -80,7 +80,15 @@ describe('responsive dashboard navigation', () => {
 
     await user.click(trigger)
     const dialog = screen.getByRole('dialog', { name: 'WallDecor' })
-    expect(within(dialog).getAllByRole('link')).toHaveLength(17)
+    const links = within(dialog).getAllByRole('link')
+    expect(links).toHaveLength(17)
+    for (const link of links) {
+      expect(link.className).toContain('min-h-11')
+      expect(link.className).toContain('lg:min-h-0')
+    }
+    const close = within(dialog).getByRole('button', { name: 'Zamknij' })
+    expect(close.className).toContain('h-11')
+    expect(close.className).toContain('w-11')
     expect(within(dialog).getByRole('link', { name: 'KSeF Inbox' })).toBeTruthy()
     expect(within(dialog).getByRole('link', { name: 'Czas pracy' })).toBeTruthy()
 
@@ -112,9 +120,30 @@ describe('responsive dashboard navigation', () => {
 
     await user.click(trigger)
     let dialog = screen.getByRole('dialog', { name: 'Menu HR' })
-    await user.click(within(dialog).getByRole('button', { name: 'Urlopy' }))
+    const timeGroup = within(dialog).getByRole('button', { name: 'Czas pracy' })
+    const leaveGroup = within(dialog).getByRole('button', { name: 'Urlopy' })
 
-    expect(within(dialog).getAllByRole('link')).toHaveLength(9)
+    expect(timeGroup.getAttribute('aria-expanded')).toBe('true')
+    expect(timeGroup.getAttribute('aria-controls')).toBe('hr-mobile-nav-group-time')
+    expect(leaveGroup.getAttribute('aria-expanded')).toBe('false')
+    expect(leaveGroup.getAttribute('aria-controls')).toBe('hr-mobile-nav-group-leave')
+    expect(document.getElementById('hr-mobile-nav-group-time')?.getAttribute('role')).toBe('region')
+    expect(document.getElementById('hr-mobile-nav-group-leave')?.hidden).toBe(true)
+    for (const group of [timeGroup, leaveGroup]) {
+      expect(group.className).toContain('min-h-11')
+      expect(group.className).toContain('xl:min-h-0')
+    }
+
+    await user.click(leaveGroup)
+    expect(leaveGroup.getAttribute('aria-expanded')).toBe('true')
+    expect(document.getElementById('hr-mobile-nav-group-leave')?.hidden).toBe(false)
+
+    const employeeLinks = within(dialog).getAllByRole('link')
+    expect(employeeLinks).toHaveLength(9)
+    for (const link of employeeLinks) {
+      expect(link.className).toContain('min-h-11')
+      expect(link.className).toContain('xl:min-h-0')
+    }
     expect(within(dialog).getByRole('link', { name: 'Rejestracja' })).toBeTruthy()
     expect(within(dialog).getByRole('link', { name: 'Wnioski' })).toBeTruthy()
     expect(within(dialog).queryByRole('link', { name: 'Okresy' })).toBeNull()
@@ -135,5 +164,27 @@ describe('responsive dashboard navigation', () => {
     expect(within(dialog).getByRole('link', { name: 'Typy' })).toBeTruthy()
     expect(within(dialog).getByRole('link', { name: 'Salda' })).toBeTruthy()
     expect(within(dialog).getByRole('link', { name: 'Akceptacja' })).toBeTruthy()
+  })
+
+  it('keeps HR disclosure targets unique when desktop and mobile navigation coexist', async () => {
+    const user = userEvent.setup()
+    render(
+      <>
+        <HrSidebar userRole="ADMIN" />
+        <HrMobileNavigation userRole="ADMIN" />
+      </>
+    )
+
+    await user.click(screen.getByRole('button', { name: 'Otwórz menu HR' }))
+
+    const controlledIds = Array.from(
+      document.querySelectorAll<HTMLButtonElement>('button[aria-controls*="nav-group"]')
+    ).map((button) => button.getAttribute('aria-controls'))
+    expect(controlledIds).toHaveLength(4)
+    expect(new Set(controlledIds).size).toBe(4)
+    for (const id of controlledIds) {
+      expect(id).not.toBeNull()
+      expect(document.getElementById(id!)).toBeTruthy()
+    }
   })
 })
