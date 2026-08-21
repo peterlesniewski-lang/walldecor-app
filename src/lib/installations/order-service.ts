@@ -11,9 +11,10 @@ type InstallationDb = PrismaClient | Prisma.TransactionClient
 
 const orderInclude = {
   client: true,
-  primaryEmployee: { select: { id: true, firstName: true, lastName: true, email: true, active: true } },
-  backupEmployee: { select: { id: true, firstName: true, lastName: true, email: true, active: true } },
+  primaryEmployee: { select: { id: true, firstName: true, lastName: true, active: true } },
+  backupEmployee: { select: { id: true, firstName: true, lastName: true, active: true } },
   delegations: { orderBy: { createdAt: 'desc' } },
+  installerAssignments: { select: { employeeId: true } },
   auditEvents: { orderBy: { createdAt: 'desc' } },
 } satisfies Prisma.InstallationOrderInclude
 

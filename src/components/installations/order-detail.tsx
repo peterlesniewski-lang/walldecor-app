@@ -15,7 +15,17 @@ type InstallationOrderDetailValue = InstallationOrderFormValue & {
   backupEmployee: { firstName: string; lastName: string }
 }
 
-export function InstallationOrderDetail({ order, employees }: { order: InstallationOrderDetailValue; employees: InstallationEmployeeOption[] }) {
+export function InstallationOrderDetail({
+  order,
+  employees,
+  canEdit = false,
+  canArchive = false,
+}: {
+  order: InstallationOrderDetailValue
+  employees: InstallationEmployeeOption[]
+  canEdit?: boolean
+  canArchive?: boolean
+}) {
   const router = useRouter()
   const [archiving, setArchiving] = useState(false)
   const [error, setError] = useState('')
@@ -48,7 +58,7 @@ export function InstallationOrderDetail({ order, employees }: { order: Installat
           <p className="num mt-5 text-xs font-bold tracking-wide" style={{ color: '#8C5718' }}>{order.number}</p>
           <h1 className="mt-1 text-3xl font-extrabold tracking-tight" style={{ color: 'var(--wd-dark)' }}>{order.client.name}</h1>
         </div>
-        {!order.archivedAt && (
+        {canArchive && !order.archivedAt && (
           <Button type="button" variant="outline" onClick={archive} disabled={archiving} className="min-h-11 border-red-200 text-red-800 hover:bg-red-50">
             <Archive /> {archiving ? 'Archiwizowanie…' : 'Archiwizuj zlecenie'}
           </Button>
@@ -71,9 +81,9 @@ export function InstallationOrderDetail({ order, employees }: { order: Installat
         <p className="rounded-xl border px-4 py-3 text-sm font-medium" style={{ background: 'var(--wd-sand-light)', borderColor: 'rgba(30, 30, 30, 0.12)', color: 'var(--wd-dark)' }}>
           Karta jest zarchiwizowana. Historia i odpowiedzialność pozostają zachowane.
         </p>
-      ) : (
+      ) : canEdit ? (
         <InstallationOrderForm mode="edit" order={order} employees={employees} />
-      )}
+      ) : null}
       {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
     </div>
   )

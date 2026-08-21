@@ -1,5 +1,5 @@
-import { execFileSync } from 'node:child_process'
-import { existsSync, mkdtempSync, rmSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
@@ -19,6 +19,7 @@ const databaseUrl = `file:${databasePath}`
 let db: PrismaClient
 let primaryEmployeeId: string
 let backupEmployeeId: string
+let installerEmployeeId: string
 let inactiveEmployeeId: string
 
 function createClient() {
@@ -27,7 +28,22 @@ function createClient() {
 
 async function seedEmployees() {
   await db.costCenter.create({ data: { id: 'JAG', name: 'Janki' } })
+  await db.user.create({
+    data: {
+      username: 'installation-admin',
+      name: 'Administrator montaży',
+      email: 'installation-admin@example.test',
+      role: 'ADMIN',
+      passwordHash: 'test-only-hash',
+    },
+  })
   const employees = await Promise.all([
+    db.employee.create({
+      data: {
+        firstName: 'Dawid', lastName: 'Instalator', email: 'dawid.instalator@example.pl',
+        position: 'Instalator', costCenterId: 'JAG', startDate: new Date('2025-01-01T12:00:00.000Z'), active: true,
+      },
+    }),
     db.employee.create({
       data: {
         firstName: 'Anna', lastName: 'Opiekun', email: 'anna.opiekun@example.pl',
@@ -49,16 +65,31 @@ async function seedEmployees() {
   ])
   primaryEmployeeId = employees[0].id
   backupEmployeeId = employees[1].id
-  inactiveEmployeeId = employees[2].id
+  installerEmployeeId = employees[2].id
+  inactiveEmployeeId = employees[3].id
+}
+
+function applyCommittedMigrations() {
+  const migrationRoot = path.join(process.cwd(), 'prisma', 'migrations')
+  const migrationSqlPaths = readdirSync(migrationRoot)
+    .sort()
+    .map((directory) => path.join(migrationRoot, directory, 'migration.sql'))
+    .filter(existsSync)
+
+  for (const migrationSqlPath of migrationSqlPaths) {
+    const result = spawnSync('sqlite3', ['-bail', databasePath], {
+      cwd: process.cwd(),
+      input: readFileSync(migrationSqlPath, 'utf8'),
+      encoding: 'utf8',
+    })
+    if (result.status !== 0) {
+      throw new Error(`Nie udało się zastosować migracji ${migrationSqlPath}: ${result.stderr || result.stdout}`)
+    }
+  }
 }
 
 beforeAll(async () => {
-  const schemaSql = execFileSync(
-    process.execPath,
-    ['node_modules/prisma/build/index.js', 'migrate', 'diff', '--from-empty', '--to-schema-datamodel', 'prisma/schema.prisma', '--script'],
-    { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: databaseUrl }, encoding: 'utf8' },
-  )
-  execFileSync('sqlite3', [databasePath], { input: schemaSql })
+  applyCommittedMigrations()
   db = createClient()
   await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
   await seedEmployees()
@@ -119,7 +150,7 @@ describe('installation order CRUD persists in a real SQLite database', () => {
     })
   })
 
-  it('enforces unique order numbers and employee foreign keys in SQLite', async () => {
+  it('enforces order and concrete installer assignment unique/FK constraints in SQLite', async () => {
     const created = await createInstallationOrder(db, {
       client: { name: 'Maria Nowak', email: 'maria.nowak@example.pl', phone: '+48 502 345 678' },
       address: { street: 'Domaniewska', buildingNumber: '10', postalCode: '02-672', city: 'Warszawa' },
@@ -149,6 +180,20 @@ describe('installation order CRUD persists in a real SQLite database', () => {
         primaryEmployeeId: inactiveEmployeeId,
         backupEmployeeId: 'missing-employee',
       },
+    })).rejects.toMatchObject({ code: 'P2003' })
+
+    await db.installationOrderInstaller.create({
+      data: { orderId: created.id, employeeId: installerEmployeeId, createdById: 'installation-admin' },
+    })
+    expect((await getInstallationOrder(db, created.id))?.installerAssignments).toEqual([
+      { employeeId: installerEmployeeId },
+    ])
+
+    await expect(db.installationOrderInstaller.create({
+      data: { orderId: created.id, employeeId: installerEmployeeId },
+    })).rejects.toMatchObject({ code: 'P2002' })
+    await expect(db.installationOrderInstaller.create({
+      data: { orderId: created.id, employeeId: 'missing-installer' },
     })).rejects.toMatchObject({ code: 'P2003' })
   })
 })

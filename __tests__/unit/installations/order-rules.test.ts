@@ -8,6 +8,7 @@ import { prisma } from '@/lib/prisma'
 import {
   InstallationOrderValidationError,
   parseCreateInstallationOrder,
+  parseUpdateInstallationOrder,
 } from '@/lib/installations/schemas'
 import { canAccessInstallationOrder } from '@/lib/installations/access'
 import {
@@ -58,6 +59,7 @@ vi.mock('@/lib/prisma', () => ({
     leaveBalance: { deleteMany: vi.fn() },
     installationOrder: { count: vi.fn() },
     installationDelegation: { count: vi.fn() },
+    installationOrderInstaller: { count: vi.fn() },
   },
 }))
 vi.mock('next/navigation', () => ({
@@ -139,13 +141,27 @@ describe('installation order rules', () => {
     expect(parsed).not.toHaveProperty('externalSystem')
     expect(parsed).not.toHaveProperty('externalId')
   })
+
+  it('reserves ARCHIVED for the archive endpoint instead of regular create or update payloads', async () => {
+    await expect(parseCreateInstallationOrder({ ...validOrder, status: 'ARCHIVED' })).rejects.toMatchObject({
+      fieldErrors: { status: 'Status ARCHIVED jest ustawiany wyłącznie podczas archiwizacji.' },
+    } satisfies Partial<InstallationOrderValidationError>)
+    expect(() => parseUpdateInstallationOrder({ status: 'ARCHIVED' })).toThrow(InstallationOrderValidationError)
+    try {
+      parseUpdateInstallationOrder({ status: 'ARCHIVED' })
+    } catch (error) {
+      expect(error).toMatchObject({
+      fieldErrors: { status: 'Status ARCHIVED jest ustawiany wyłącznie podczas archiwizacji.' },
+      } satisfies Partial<InstallationOrderValidationError>)
+    }
+  })
 })
 
 describe('installation order access policy', () => {
   const order = {
     primaryEmployeeId: 'primary',
     backupEmployeeId: 'backup',
-    isAssignedInstaller: false,
+    installerAssignments: [{ employeeId: 'installer-a' }],
     delegations: [
       {
         delegateEmployeeId: 'delegate-active',
@@ -160,7 +176,7 @@ describe('installation order access policy', () => {
         endedAt: new Date('2026-08-21T12:00:00.000Z'),
       },
     ],
-  }
+  } as unknown as Parameters<typeof canAccessInstallationOrder>[1]
   const now = new Date('2026-08-22T12:00:00.000Z')
 
   it('grants full access to admin and manager', () => {
@@ -176,13 +192,9 @@ describe('installation order access policy', () => {
     expect(canAccessInstallationOrder({ role: 'EMPLOYEE', employeeId: 'outsider' }, order, now)).toBe(false)
   })
 
-  it('grants installer access only to an explicitly assigned installer record', () => {
-    expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer' }, order, now)).toBe(false)
-    expect(canAccessInstallationOrder(
-      { role: 'INSTALLER', employeeId: 'installer' },
-      { ...order, isAssignedInstaller: true },
-      now,
-    )).toBe(true)
+  it('grants installer access only to their own explicitly assigned installer record', () => {
+    expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-a' }, order, now)).toBe(true)
+    expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-b' }, order, now)).toBe(false)
   })
 })
 
@@ -199,7 +211,7 @@ const apiOrder = {
   addressCity: validOrder.address.city,
   primaryEmployeeId: 'primary',
   backupEmployeeId: 'backup',
-  isAssignedInstaller: false,
+  installerAssignments: [],
   scheduledAt: null,
   externalSystem: null,
   externalId: null,
@@ -279,6 +291,48 @@ describe('installation order API boundaries', () => {
     expect(mockCreateInstallationOrder).not.toHaveBeenCalled()
   })
 
+  it('allows an employee to create only an order where they are the primary owner', async () => {
+    mockGetServerSession.mockResolvedValue(session('EMPLOYEE', 'employee-self') as never)
+    mockCreateInstallationOrder.mockResolvedValue(apiOrder as never)
+
+    const response = await createOrder(jsonRequest({ ...validOrder, primaryEmployeeId: 'employee-self' }))
+
+    expect(response.status).toBe(201)
+    expect(mockCreateInstallationOrder).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      primaryEmployeeId: 'employee-self',
+    }), 'employee-user')
+  })
+
+  it('returns 403 before service invocation when an employee creates an order for another primary owner', async () => {
+    mockGetServerSession.mockResolvedValue(session('EMPLOYEE', 'employee-self') as never)
+
+    const response = await createOrder(jsonRequest({ ...validOrder, primaryEmployeeId: 'employee-other' }))
+
+    expect(response.status).toBe(403)
+    expect(mockCreateInstallationOrder).not.toHaveBeenCalled()
+  })
+
+  it('returns 403 before service invocation when an employee lacks an employeeId', async () => {
+    mockGetServerSession.mockResolvedValue(session('EMPLOYEE') as never)
+
+    const response = await createOrder(jsonRequest(validOrder))
+
+    expect(response.status).toBe(403)
+    expect(mockCreateInstallationOrder).not.toHaveBeenCalled()
+  })
+
+  it.each(['ADMIN', 'MANAGER'] as const)('allows %s to create with arbitrary active owners', async (role) => {
+    mockGetServerSession.mockResolvedValue(session(role) as never)
+    mockCreateInstallationOrder.mockResolvedValue(apiOrder as never)
+
+    const response = await createOrder(jsonRequest({ ...validOrder, primaryEmployeeId: 'employee-a', backupEmployeeId: 'employee-b' }))
+
+    expect(response.status).toBe(201)
+    expect(mockCreateInstallationOrder).toHaveBeenCalledWith(expect.anything(), expect.objectContaining({
+      primaryEmployeeId: 'employee-a', backupEmployeeId: 'employee-b',
+    }), `${role.toLowerCase()}-user`)
+  })
+
   it('does not disclose an order to an unrelated employee', async () => {
     mockGetServerSession.mockResolvedValue(session('EMPLOYEE', 'outsider') as never)
     mockGetInstallationOrder.mockResolvedValue(apiOrder as never)
@@ -336,6 +390,7 @@ describe('employee deletion installation protection', () => {
       prisma.employee.count,
       prisma.installationOrder.count,
       prisma.installationDelegation.count,
+      prisma.installationOrderInstaller.count,
     ]) {
       vi.mocked(count).mockResolvedValue(0 as never)
     }
@@ -353,11 +408,23 @@ describe('employee deletion installation protection', () => {
     expect(await response.json()).toEqual({ error: 'Pracownik ma dane historyczne. Użyj opcji "Ukryj".' })
     expect(prisma.$transaction).not.toHaveBeenCalled()
   })
+
+  it('returns 409 instead of attempting a hard delete for an assigned installer', async () => {
+    mockGetServerSession.mockResolvedValue(session('ADMIN') as never)
+    vi.mocked(prisma.installationOrderInstaller.count).mockResolvedValue(1 as never)
+
+    const response = await deleteEmployee(new NextRequest('http://localhost/api/hr/employees/employee-1', { method: 'DELETE' }), {
+      params: Promise.resolve({ id: 'employee-1' }),
+    })
+
+    expect(response.status).toBe(409)
+    expect(prisma.$transaction).not.toHaveBeenCalled()
+  })
 })
 
 const installationEmployees = [
-  { id: 'primary', firstName: 'Anna', lastName: 'Opiekun', email: 'anna@example.pl' },
-  { id: 'backup', firstName: 'Bartek', lastName: 'Zastępca', email: 'bartek@example.pl' },
+  { id: 'primary', firstName: 'Anna', lastName: 'Opiekun' },
+  { id: 'backup', firstName: 'Bartek', lastName: 'Zastępca' },
 ]
 
 describe('installation order controls', () => {
@@ -371,6 +438,36 @@ describe('installation order controls', () => {
     render(createElement(InstallationOrderList, { orders: [apiOrder] }))
 
     expect(screen.getByRole('link', { name: /MON-20260822-1234/ }).getAttribute('href')).toBe('/installations/order-1')
+  })
+
+  it('does not render either creation control when the viewer cannot create an installation order', () => {
+    render(createElement(InstallationOrderList, { orders: [], canCreate: false } as never))
+
+    expect(screen.queryByRole('link', { name: 'Nowa karta' })).toBeNull()
+    expect(screen.queryByRole('link', { name: 'Utwórz kartę montażu' })).toBeNull()
+  })
+
+  it('does not render edit or archive controls when the viewer cannot mutate an order', () => {
+    render(createElement(InstallationOrderDetail, {
+      order: apiOrder,
+      employees: installationEmployees,
+      canEdit: false,
+      canArchive: false,
+    } as never))
+
+    expect(screen.queryByRole('heading', { name: 'Dane zlecenia' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Archiwizuj zlecenie' })).toBeNull()
+  })
+
+  it('locks an employee create form to their own primary owner while leaving backup selectable', () => {
+    render(createElement(InstallationOrderForm, {
+      mode: 'create',
+      employees: installationEmployees,
+      primaryEmployeeIdLocked: 'primary',
+    } as never))
+
+    expect(screen.getByRole('button', { name: 'Wybierz głównego opiekuna' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('button', { name: 'Wybierz zastępcę opiekuna' }).hasAttribute('disabled')).toBe(false)
   })
 
   it('creates an order through the API with styled owner pickers instead of native selects', async () => {
@@ -401,7 +498,7 @@ describe('installation order controls', () => {
     const user = userEvent.setup()
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ...apiOrder, archivedAt: '2026-08-22T12:00:00.000Z' }) })
     vi.stubGlobal('fetch', fetchMock)
-    render(createElement(InstallationOrderDetail, { order: apiOrder, employees: installationEmployees }))
+    render(createElement(InstallationOrderDetail, { order: apiOrder, employees: installationEmployees, canEdit: true, canArchive: true } as never))
 
     await user.click(screen.getByRole('button', { name: 'Archiwizuj zlecenie' }))
 

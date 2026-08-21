@@ -11,7 +11,6 @@ export type InstallationEmployeeOption = {
   id: string
   firstName: string
   lastName: string
-  email: string
 }
 
 export type InstallationOrderFormValue = {
@@ -32,10 +31,11 @@ type OwnerPickerProps = {
   value: string
   employees: InstallationEmployeeOption[]
   disabledEmployeeId?: string
+  disabled?: boolean
   onChange: (employeeId: string) => void
 }
 
-function EmployeePicker({ triggerLabel, ownerRoleLabel, value, employees, disabledEmployeeId, onChange }: OwnerPickerProps) {
+function EmployeePicker({ triggerLabel, ownerRoleLabel, value, employees, disabledEmployeeId, disabled = false, onChange }: OwnerPickerProps) {
   const [open, setOpen] = useState(false)
   const selected = employees.find((employee) => employee.id === value)
 
@@ -43,8 +43,10 @@ function EmployeePicker({ triggerLabel, ownerRoleLabel, value, employees, disabl
     <div className="relative">
       <button
         type="button"
+        aria-label={triggerLabel}
         aria-haspopup="listbox"
         aria-expanded={open}
+        disabled={disabled}
         onClick={() => setOpen((current) => !current)}
         className="flex min-h-11 w-full items-center justify-between rounded-lg border px-3 text-left text-sm font-medium transition hover:border-stone-400 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
         style={{ background: 'var(--wd-sand-light)', borderColor: 'rgba(30, 30, 30, 0.14)', color: 'var(--wd-dark)' }}
@@ -95,11 +97,13 @@ export function InstallationOrderForm({
   employees,
   order,
   onSaved,
+  primaryEmployeeIdLocked,
 }: {
   mode: 'create' | 'edit'
   employees: InstallationEmployeeOption[]
   order?: InstallationOrderFormValue
   onSaved?: () => void
+  primaryEmployeeIdLocked?: string
 }) {
   const router = useRouter()
   const initial = useMemo(() => ({
@@ -111,7 +115,7 @@ export function InstallationOrderForm({
     apartmentNumber: order?.addressApartmentNumber ?? '',
     postalCode: order?.addressPostalCode ?? '',
     city: order?.addressCity ?? '',
-    primaryEmployeeId: order?.primaryEmployeeId ?? '',
+    primaryEmployeeId: primaryEmployeeIdLocked ?? order?.primaryEmployeeId ?? '',
     backupEmployeeId: order?.backupEmployeeId ?? '',
   }), [order])
   const [form, setForm] = useState(initial)
@@ -142,7 +146,7 @@ export function InstallationOrderForm({
         postalCode: form.postalCode,
         city: form.city,
       },
-      primaryEmployeeId: form.primaryEmployeeId,
+      primaryEmployeeId: primaryEmployeeIdLocked ?? form.primaryEmployeeId,
       backupEmployeeId: form.backupEmployeeId,
     }
 
@@ -252,7 +256,7 @@ export function InstallationOrderForm({
             <div>
               <Label>Główny opiekun</Label>
               <div className="mt-2">
-                <EmployeePicker triggerLabel="Wybierz głównego opiekuna" ownerRoleLabel="głównego opiekuna" value={form.primaryEmployeeId} employees={employees} disabledEmployeeId={form.backupEmployeeId} onChange={(value) => updateField('primaryEmployeeId', value)} />
+                <EmployeePicker triggerLabel="Wybierz głównego opiekuna" ownerRoleLabel="głównego opiekuna" value={form.primaryEmployeeId} employees={employees} disabled={Boolean(primaryEmployeeIdLocked)} disabledEmployeeId={form.backupEmployeeId} onChange={(value) => updateField('primaryEmployeeId', value)} />
               </div>
               {fieldError(errors, 'primaryEmployeeId') && <p className="mt-1 text-xs text-red-700">{fieldError(errors, 'primaryEmployeeId')}</p>}
             </div>

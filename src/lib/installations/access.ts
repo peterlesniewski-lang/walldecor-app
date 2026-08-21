@@ -8,7 +8,9 @@ export type InstallationOrderViewer = {
 export type InstallationOrderAccessRecord = {
   primaryEmployeeId: string
   backupEmployeeId: string
-  isAssignedInstaller: boolean
+  installerAssignments: Array<{
+    employeeId: string
+  }>
   delegations: Array<{
     delegateEmployeeId: string
     startsAt: Date
@@ -23,7 +25,11 @@ export function canAccessInstallationOrder(
   now = new Date(),
 ): boolean {
   if (viewer.role === 'ADMIN' || viewer.role === 'MANAGER') return true
-  if (viewer.role === 'INSTALLER') return order.isAssignedInstaller
+  if (viewer.role === 'INSTALLER') {
+    return Boolean(viewer.employeeId && order.installerAssignments.some(
+      (assignment) => assignment.employeeId === viewer.employeeId,
+    ))
+  }
   if (viewer.role !== 'EMPLOYEE' || !viewer.employeeId) return false
   if (viewer.employeeId === order.primaryEmployeeId || viewer.employeeId === order.backupEmployeeId) return true
 

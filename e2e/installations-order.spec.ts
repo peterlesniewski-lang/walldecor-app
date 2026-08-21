@@ -1,28 +1,42 @@
-import { execFileSync } from 'node:child_process'
-import { existsSync, rmSync } from 'node:fs'
+import { spawnSync } from 'node:child_process'
+import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import { PrismaClient } from '@/generated/prisma'
 import bcrypt from 'bcryptjs'
 import { expect, test, type Page } from '@playwright/test'
 
-const databaseUrl = process.env.DATABASE_URL
+const databaseUrl = process.env.E2E_DATABASE_URL
 const e2ePassword = 'E2E-Installation-2026!'
 
 if (!databaseUrl?.startsWith('file:/tmp/walldecor-installations-e2e-')) {
-  throw new Error('E2E montaży wymaga izolowanego DATABASE_URL=file:/tmp/walldecor-installations-e2e-*.db')
+  throw new Error('E2E montaży wymaga izolowanego E2E_DATABASE_URL=file:/tmp/walldecor-installations-e2e-*.db')
 }
 
 const databasePath = databaseUrl.replace(/^file:/, '')
 let db: PrismaClient
 
+function applyCommittedMigrations() {
+  const migrationRoot = path.join(process.cwd(), 'prisma', 'migrations')
+  const migrationSqlPaths = readdirSync(migrationRoot)
+    .sort()
+    .map((directory) => path.join(migrationRoot, directory, 'migration.sql'))
+    .filter(existsSync)
+
+  for (const migrationSqlPath of migrationSqlPaths) {
+    const result = spawnSync('sqlite3', ['-bail', databasePath], {
+      cwd: process.cwd(),
+      input: readFileSync(migrationSqlPath, 'utf8'),
+      encoding: 'utf8',
+    })
+    if (result.status !== 0) {
+      throw new Error(`Nie udało się zastosować migracji ${migrationSqlPath}: ${result.stderr || result.stdout}`)
+    }
+  }
+}
+
 test.beforeAll(async () => {
   rmSync(databasePath, { force: true })
-  const schemaSql = execFileSync(
-    process.execPath,
-    ['node_modules/prisma/build/index.js', 'migrate', 'diff', '--from-empty', '--to-schema-datamodel', 'prisma/schema.prisma', '--script'],
-    { cwd: process.cwd(), env: { ...process.env, DATABASE_URL: databaseUrl }, encoding: 'utf8' },
-  )
-  execFileSync('sqlite3', [databasePath], { input: schemaSql })
+  applyCommittedMigrations()
   db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
   await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
   await db.costCenter.create({ data: { id: 'JAG', name: 'Jagiellońska' } })
@@ -110,7 +124,14 @@ test.describe('Installation order workflow', () => {
     await page.getByRole('option', { name: 'Ustaw Bartek Zastępca jako zastępcę opiekuna' }).click()
     await page.getByRole('button', { name: 'Utwórz kartę' }).click()
 
-    await expect(page).toHaveURL(/\/installations\/[^/]+$/)
+    await expect(page).not.toHaveURL(/\/installations\/new$/)
+    const orderUrl = page.url()
+    expect(orderUrl).toMatch(/\/installations\/[^/]+$/)
+    await page.goto('/installations')
+    const orderCard = page.getByRole('link', { name: /Jan E2E Kowalski/ })
+    await expect(orderCard).toBeVisible()
+    await orderCard.click()
+    await expect(page).toHaveURL(orderUrl)
     await expect(page.getByRole('heading', { name: 'Jan E2E Kowalski' })).toBeVisible()
     await expect(page.getByText('Opiekun: Anna Opiekun')).toBeVisible()
     await expect(page.getByText('Zastępca: Bartek Zastępca')).toBeVisible()

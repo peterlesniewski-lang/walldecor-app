@@ -530,6 +530,7 @@ model Employee {
   installationOrdersPrimary InstallationOrder[]      @relation("InstallationOrderPrimaryEmployee")
   installationOrdersBackup  InstallationOrder[]      @relation("InstallationOrderBackupEmployee")
   installationDelegations   InstallationDelegation[]
+  installationOrderAssignments InstallationOrderInstaller[]
 
   createdAt DateTime @default(now())
 }
@@ -564,9 +565,9 @@ model InstallationOrder {
   scheduledAt           DateTime?
   externalSystem        String?
   externalId            String?
-  isAssignedInstaller   Boolean  @default(false)
   archivedAt            DateTime?
   delegations           InstallationDelegation[]
+  installerAssignments  InstallationOrderInstaller[]
   auditEvents           InstallationAuditEvent[]
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -575,6 +576,19 @@ model InstallationOrder {
   @@index([primaryEmployeeId])
   @@index([backupEmployeeId])
   @@index([clientId])
+}
+
+model InstallationOrderInstaller {
+  id          String            @id @default(cuid())
+  orderId     String
+  order       InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  employeeId  String
+  employee    Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  createdById String?
+  createdAt   DateTime          @default(now())
+
+  @@unique([orderId, employeeId])
+  @@index([employeeId])
 }
 
 model InstallationDelegation {

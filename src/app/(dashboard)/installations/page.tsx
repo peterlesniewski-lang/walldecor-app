@@ -16,6 +16,7 @@ export default async function InstallationsPage() {
     : 'EMPLOYEE'
   const orders = await listInstallationOrders(prisma)
   const visibleOrders = orders.filter((order) => canAccessInstallationOrder({ role, employeeId: session.user.employeeId }, order))
+  const canCreate = role === 'ADMIN' || role === 'MANAGER' || (role === 'EMPLOYEE' && Boolean(session.user.employeeId))
 
-  return <InstallationOrderList orders={visibleOrders} />
+  return <InstallationOrderList orders={visibleOrders} canCreate={canCreate} />
 }

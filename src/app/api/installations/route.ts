@@ -26,12 +26,16 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (viewerFromSession(session).role === 'INSTALLER') {
+  const viewer = viewerFromSession(session)
+  if (viewer.role === 'INSTALLER') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   try {
     const body = await req.json()
+    if (viewer.role === 'EMPLOYEE' && (!viewer.employeeId || body.primaryEmployeeId !== viewer.employeeId)) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
     const order = await createInstallationOrder(prisma, body, session.user.id)
     return NextResponse.json(order, { status: 201 })
   } catch (error) {

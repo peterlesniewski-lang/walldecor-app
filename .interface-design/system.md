@@ -16,6 +16,8 @@ Pracownik ma szybko rozpoznać stan zlecenia, odpowiedzialność, terminy i blok
 Instalator ma zobaczyć własny zakres oraz wykonać działania terenowe bez danych
 finansowych. Panel zachowuje istniejącą nawigację aplikacji, ale karta zlecenia
 organizuje informacje wokół przebiegu montażu, nie wokół generycznych kafelków.
+Panel świadomie zachowuje istniejący krój `Plus Jakarta Sans`; nie zmieniamy
+globalnej typografii panelu na fonty formularza klienta.
 
 ## Domena
 
@@ -62,7 +64,7 @@ Sygnatura pojawia się co najmniej w:
 - dominujący upload zdjęć → zdjęcia jako pomocnicza odpowiedź, z QR na komputerze;
 - modal do całego procesu → pełne, spokojne strony z zachowaniem postępu.
 
-## Typografia
+## Typografia formularza klienta
 
 - nagłówki: `Bricolage Grotesque`, skrajne wagi 700–800, zwarte tracking;
 - treść i kontrolki: `Spline Sans`, 400–600;
@@ -70,6 +72,15 @@ Sygnatura pojawia się co najmniej w:
   tabularnymi, tylko gdy poprawia skanowanie danych;
 - fonty muszą zawierać komplet polskich znaków i być serwowane lokalnie albo
   przez istniejący mechanizm Next Font.
+
+## Typografia panelu operacyjnego
+
+- panel pracownika i instalatora używa istniejącego `Plus Jakarta Sans`, aby
+  pozostać zgodnym z resztą aplikacji;
+- `Bricolage Grotesque` i `Spline Sans` są zarezerwowane dla publicznego
+  formularza klienta oraz jego materiałów pomocniczych;
+- mono można stosować wyłącznie do identyfikatorów, wymiarów i dat, gdy poprawia
+  skanowanie danych; nie zmieniamy globalnych fontów panelu w tym zadaniu.
 
 ## Głębia, powierzchnie i obramowania
 
@@ -118,7 +129,6 @@ Intent: kto używa komponentu, co ma wykonać i jak ma się czuć
 Palette: które tokeny domenowe są użyte i dlaczego
 Depth: subtelny cień albo brak podniesienia i dlaczego
 Surfaces: poziomy powierzchni rodzica, kontrolki i nakładki
-Typography: rola Bricolage/Spline/mono
+Typography: formularz klienta używa Bricolage/Spline/mono; panel zachowuje Plus Jakarta Sans
 Spacing: wielokrotności bazowych 4 px
 ```
-

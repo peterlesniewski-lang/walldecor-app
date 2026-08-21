@@ -22,7 +22,7 @@ const STATUS_LABELS: Record<string, string> = {
   CLOSED: 'Zamknięte',
 }
 
-export function InstallationOrderList({ orders }: { orders: OrderListItem[] }) {
+export function InstallationOrderList({ orders, canCreate = false }: { orders: OrderListItem[]; canCreate?: boolean }) {
   return (
     <section className="mx-auto max-w-6xl" aria-labelledby="installation-orders-heading">
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
@@ -35,14 +35,14 @@ export function InstallationOrderList({ orders }: { orders: OrderListItem[] }) {
             Klient, adres i odpowiedzialność w jednym miejscu — bez skrótów i bez zgadywania.
           </p>
         </div>
-        <Link
+        {canCreate && <Link
           href="/installations/new"
           className="inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-bold transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
           style={{ background: '#A96A20', color: '#fff', boxShadow: '0 4px 10px rgba(90, 59, 22, 0.16)' }}
         >
           <Plus className="h-4 w-4" />
           Nowa karta
-        </Link>
+        </Link>}
       </div>
 
       {orders.length === 0 ? (
@@ -55,9 +55,9 @@ export function InstallationOrderList({ orders }: { orders: OrderListItem[] }) {
           <p className="mx-auto mt-2 max-w-sm text-sm" style={{ color: 'var(--wd-text-muted)' }}>
             Pierwsza karta od razu przypisze opiekuna i jego zastępcę.
           </p>
-          <Link href="/installations/new" className="mt-5 inline-flex text-sm font-bold underline underline-offset-4" style={{ color: '#8C5718' }}>
+          {canCreate && <Link href="/installations/new" className="mt-5 inline-flex text-sm font-bold underline underline-offset-4" style={{ color: '#8C5718' }}>
             Utwórz kartę montażu
-          </Link>
+          </Link>}
         </div>
       ) : (
         <div className="grid gap-3">

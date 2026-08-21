@@ -24,9 +24,10 @@ export default async function InstallationOrderPage({ params }: Params) {
 
   const employees = await prisma.employee.findMany({
     where: { active: true },
-    select: { id: true, firstName: true, lastName: true, email: true },
+    select: { id: true, firstName: true, lastName: true },
     orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
   })
 
-  return <InstallationOrderDetail order={order} employees={employees} />
+  const canMutate = role !== 'INSTALLER'
+  return <InstallationOrderDetail order={order} employees={employees} canEdit={canMutate} canArchive={canMutate} />
 }

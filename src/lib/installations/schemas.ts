@@ -22,6 +22,11 @@ const optionalDate = z.preprocess(
   z.coerce.date().optional(),
 )
 
+const mutableStatus = z.enum(INSTALLATION_ORDER_STATUSES).refine(
+  (status) => status !== 'ARCHIVED',
+  { message: 'Status ARCHIVED jest ustawiany wyłącznie podczas archiwizacji.' },
+)
+
 const createInstallationOrderSchema = z.object({
   client: z.object({
     name: z.string().trim().min(1, 'Podaj imię i nazwisko lub nazwę klienta.'),
@@ -39,7 +44,7 @@ const createInstallationOrderSchema = z.object({
   backupEmployeeId: z.string().trim().min(1, 'Wybierz zastępcę opiekuna.'),
   status: z.preprocess(
     (value) => (value === '' || value === null ? undefined : value),
-    z.enum(INSTALLATION_ORDER_STATUSES).optional(),
+    mutableStatus.optional(),
   ),
   scheduledAt: optionalDate,
   externalSystem: optionalTrimmedString,
@@ -65,7 +70,7 @@ const updateInstallationOrderSchema = z.object({
   backupEmployeeId: z.string().optional(),
   status: z.preprocess(
     (value) => (value === '' || value === null ? undefined : value),
-    z.enum(INSTALLATION_ORDER_STATUSES).optional(),
+    mutableStatus.optional(),
   ),
   scheduledAt: optionalDate,
   externalSystem: optionalTrimmedString,

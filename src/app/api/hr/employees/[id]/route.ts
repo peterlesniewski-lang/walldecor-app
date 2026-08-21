@@ -108,6 +108,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     subordinateCount,
     installationOrderCount,
     installationDelegationCount,
+    installationOrderInstallerCount,
   ] = await Promise.all([
     prisma.timeEntry.count({ where: { employeeId: id } }),
     prisma.leaveRequestNew.count({ where: { employeeId: id } }),
@@ -129,6 +130,7 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
       },
     }),
     prisma.installationDelegation.count({ where: { delegateEmployeeId: id } }),
+    prisma.installationOrderInstaller.count({ where: { employeeId: id } }),
   ])
 
   const hasRealHistoricalData =
@@ -144,7 +146,8 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     userCount > 0 ||
     subordinateCount > 0 ||
     installationOrderCount > 0 ||
-    installationDelegationCount > 0
+    installationDelegationCount > 0 ||
+    installationOrderInstallerCount > 0
 
   if (hasRealHistoricalData) {
     return NextResponse.json(
