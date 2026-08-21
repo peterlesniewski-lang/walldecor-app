@@ -141,8 +141,8 @@ export function InstallationOrderForm({
       client: { name: form.clientName, email: form.email, phone: form.phone },
       address: {
         street: form.street,
-        buildingNumber: form.buildingNumber || undefined,
-        apartmentNumber: form.apartmentNumber || undefined,
+        buildingNumber: form.buildingNumber || (mode === 'edit' ? null : undefined),
+        apartmentNumber: form.apartmentNumber || (mode === 'edit' ? null : undefined),
         postalCode: form.postalCode,
         city: form.city,
       },

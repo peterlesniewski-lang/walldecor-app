@@ -540,9 +540,9 @@ model Employee {
 model InstallationClient {
   id        String   @id @default(cuid())
   name      String
-  email     String   @unique
+  email     String
   phone     String
-  orders    InstallationOrder[]
+  order     InstallationOrder?
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
@@ -551,7 +551,7 @@ model InstallationOrder {
   id                    String   @id @default(cuid())
   number                String   @unique
   status                String   @default("DRAFT")
-  clientId              String
+  clientId              String   @unique
   client                InstallationClient @relation(fields: [clientId], references: [id], onDelete: Restrict)
   addressStreet         String
   addressBuildingNumber String?
@@ -575,7 +575,6 @@ model InstallationOrder {
   @@index([status, archivedAt])
   @@index([primaryEmployeeId])
   @@index([backupEmployeeId])
-  @@index([clientId])
 }
 
 model InstallationOrderInstaller {

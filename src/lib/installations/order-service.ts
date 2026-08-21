@@ -4,7 +4,6 @@ import {
   InstallationOrderValidationError,
   parseCreateInstallationOrder,
   parseUpdateInstallationOrder,
-  type CreateInstallationOrderInput,
 } from './schemas'
 
 type InstallationDb = PrismaClient | Prisma.TransactionClient
@@ -87,6 +86,18 @@ async function fetchOrderOrThrow(db: InstallationDb, id: string) {
   return order
 }
 
+function resolvedOptionalPatchValue<T>(
+  patch: object | undefined,
+  key: string,
+  current: T | null,
+): T | null {
+  if (patch && Object.hasOwn(patch, key)) {
+    const value = (patch as Record<string, unknown>)[key]
+    if (value !== undefined) return (value as T | null) ?? null
+  }
+  return current
+}
+
 export async function createInstallationOrder(
   db: PrismaClient,
   input: unknown,
@@ -98,11 +109,7 @@ export async function createInstallationOrder(
     })
     await assertActiveOwners(tx, parsed.primaryEmployeeId, parsed.backupEmployeeId)
 
-    const client = await tx.installationClient.upsert({
-      where: { email: parsed.client.email },
-      create: parsed.client,
-      update: parsed.client,
-    })
+    const client = await tx.installationClient.create({ data: parsed.client })
     const order = await tx.installationOrder.create({
       data: {
         number: await nextInstallationNumber(tx),
@@ -159,7 +166,20 @@ export async function updateInstallationOrder(
       throw new InstallationOrderValidationError({ form: 'Nie można edytować zarchiwizowanego zlecenia.' })
     }
 
-    const normalized: CreateInstallationOrderInput = {
+    const addressBuildingNumber = resolvedOptionalPatchValue(
+      update.address,
+      'buildingNumber',
+      current.addressBuildingNumber,
+    )
+    const addressApartmentNumber = resolvedOptionalPatchValue(
+      update.address,
+      'apartmentNumber',
+      current.addressApartmentNumber,
+    )
+    const scheduledAt = resolvedOptionalPatchValue(update, 'scheduledAt', current.scheduledAt)
+    const externalSystem = resolvedOptionalPatchValue(update, 'externalSystem', current.externalSystem)
+    const externalId = resolvedOptionalPatchValue(update, 'externalId', current.externalId)
+    const normalized = {
       client: {
         name: update.client?.name ?? current.client.name,
         email: update.client?.email ?? current.client.email,
@@ -167,47 +187,43 @@ export async function updateInstallationOrder(
       },
       address: {
         street: update.address?.street ?? current.addressStreet,
-        buildingNumber: update.address?.buildingNumber ?? current.addressBuildingNumber ?? undefined,
-        apartmentNumber: update.address?.apartmentNumber ?? current.addressApartmentNumber ?? undefined,
+        buildingNumber: addressBuildingNumber ?? undefined,
+        apartmentNumber: addressApartmentNumber ?? undefined,
         postalCode: update.address?.postalCode ?? current.addressPostalCode,
         city: update.address?.city ?? current.addressCity,
       },
       primaryEmployeeId: update.primaryEmployeeId ?? current.primaryEmployeeId,
       backupEmployeeId: update.backupEmployeeId ?? current.backupEmployeeId,
-      status: update.status ?? current.status as CreateInstallationOrderInput['status'],
-      scheduledAt: update.scheduledAt ?? current.scheduledAt ?? undefined,
-      externalSystem: update.externalSystem ?? current.externalSystem ?? undefined,
-      externalId: update.externalId ?? current.externalId ?? undefined,
+      status: update.status ?? current.status,
+      scheduledAt,
+      externalSystem: externalSystem ?? undefined,
+      externalId: externalId ?? undefined,
     }
     const parsed = await parseCreateInstallationOrder(normalized, {
       isEmployeeActive: async (employeeId) => (await findActiveEmployeeIds(tx, [employeeId])).has(employeeId),
     })
     await assertActiveOwners(tx, parsed.primaryEmployeeId, parsed.backupEmployeeId)
 
-    const client = parsed.client.email === current.client.email
-      ? await tx.installationClient.update({ where: { id: current.clientId }, data: parsed.client })
-      : await tx.installationClient.upsert({
-          where: { email: parsed.client.email },
-          create: parsed.client,
-          update: parsed.client,
-        })
+    await tx.installationClient.update({
+      where: { id: current.clientId },
+      data: parsed.client,
+    })
 
     const before = orderAuditSnapshot(current)
     const updated = await tx.installationOrder.update({
       where: { id },
       data: {
         status: parsed.status ?? current.status,
-        clientId: client.id,
         addressStreet: parsed.address.street,
-        addressBuildingNumber: parsed.address.buildingNumber,
-        addressApartmentNumber: parsed.address.apartmentNumber,
+        addressBuildingNumber,
+        addressApartmentNumber,
         addressPostalCode: parsed.address.postalCode,
         addressCity: parsed.address.city,
         primaryEmployeeId: parsed.primaryEmployeeId,
         backupEmployeeId: parsed.backupEmployeeId,
-        scheduledAt: parsed.scheduledAt,
-        externalSystem: parsed.externalSystem,
-        externalId: parsed.externalId,
+        scheduledAt,
+        externalSystem,
+        externalId,
       },
       include: orderInclude,
     })

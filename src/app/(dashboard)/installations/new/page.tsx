@@ -13,6 +13,14 @@ export default async function NewInstallationOrderPage() {
     : 'EMPLOYEE'
   if (role === 'INSTALLER' || (role === 'EMPLOYEE' && !session.user.employeeId)) redirect('/installations')
 
+  if (role === 'EMPLOYEE') {
+    const employee = await prisma.employee.findUnique({
+      where: { id: session.user.employeeId! },
+      select: { active: true },
+    })
+    if (!employee?.active) redirect('/installations')
+  }
+
   const employees = await prisma.employee.findMany({
     where: { active: true },
     select: { id: true, firstName: true, lastName: true },

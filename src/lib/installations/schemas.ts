@@ -22,6 +22,16 @@ const optionalDate = z.preprocess(
   z.coerce.date().optional(),
 )
 
+const nullableOptionalTrimmedString = z.preprocess(
+  (value) => (typeof value === 'string' && value.trim() === '' ? null : value),
+  z.string().trim().min(1).nullish(),
+)
+
+const nullableOptionalDate = z.preprocess(
+  (value) => (value === '' ? null : value),
+  z.coerce.date().nullable().optional(),
+)
+
 const mutableStatus = z.enum(INSTALLATION_ORDER_STATUSES).refine(
   (status) => status !== 'ARCHIVED',
   { message: 'Status ARCHIVED jest ustawiany wyłącznie podczas archiwizacji.' },
@@ -61,8 +71,8 @@ const updateInstallationOrderSchema = z.object({
   }).optional(),
   address: z.object({
     street: z.string().optional(),
-    buildingNumber: z.string().nullable().optional(),
-    apartmentNumber: z.string().nullable().optional(),
+    buildingNumber: nullableOptionalTrimmedString,
+    apartmentNumber: nullableOptionalTrimmedString,
     postalCode: z.string().optional(),
     city: z.string().optional(),
   }).optional(),
@@ -72,9 +82,9 @@ const updateInstallationOrderSchema = z.object({
     (value) => (value === '' || value === null ? undefined : value),
     mutableStatus.optional(),
   ),
-  scheduledAt: optionalDate,
-  externalSystem: optionalTrimmedString,
-  externalId: optionalTrimmedString,
+  scheduledAt: nullableOptionalDate,
+  externalSystem: nullableOptionalTrimmedString,
+  externalId: nullableOptionalTrimmedString,
 })
 
 export type UpdateInstallationOrderInput = z.infer<typeof updateInstallationOrderSchema>

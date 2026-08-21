@@ -7,11 +7,17 @@ import { INSTALLATION_ROLES, type InstallationRole } from '@/lib/installations/c
 import { InstallationOrderValidationError } from '@/lib/installations/schemas'
 import { createInstallationOrder, listInstallationOrders } from '@/lib/installations/order-service'
 
-function viewerFromSession(session: { user: { role: string; employeeId?: string | null } }): InstallationOrderViewer {
+async function viewerFromSession(session: { user: { role: string; employeeId?: string | null } }): Promise<InstallationOrderViewer> {
   const role = INSTALLATION_ROLES.includes(session.user.role as InstallationRole)
     ? session.user.role as InstallationRole
     : 'EMPLOYEE'
-  return { role, employeeId: session.user.employeeId }
+  if (role !== 'EMPLOYEE') return { role, employeeId: session.user.employeeId }
+  if (!session.user.employeeId) return { role, employeeId: null, employeeActive: false }
+  const employee = await prisma.employee.findUnique({
+    where: { id: session.user.employeeId },
+    select: { active: true },
+  })
+  return { role, employeeId: session.user.employeeId, employeeActive: employee?.active === true }
 }
 
 function isPlainObject(value: unknown): value is Record<string, unknown> {
@@ -24,7 +30,7 @@ export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
-  const viewer = viewerFromSession(session)
+  const viewer = await viewerFromSession(session)
   const orders = await listInstallationOrders(prisma)
   return NextResponse.json(orders.filter((order) => canAccessInstallationOrder(viewer, order)))
 }
@@ -32,7 +38,7 @@ export async function GET() {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  const viewer = viewerFromSession(session)
+  const viewer = await viewerFromSession(session)
   if (viewer.role === 'INSTALLER') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
@@ -45,7 +51,11 @@ export async function POST(req: NextRequest) {
         fieldErrors: { form: 'Prześlij formularz zlecenia w poprawnym formacie.' },
       }, { status: 400 })
     }
-    if (viewer.role === 'EMPLOYEE' && (!viewer.employeeId || body.primaryEmployeeId !== viewer.employeeId)) {
+    if (viewer.role === 'EMPLOYEE' && (
+      viewer.employeeActive !== true ||
+      !viewer.employeeId ||
+      body.primaryEmployeeId !== viewer.employeeId
+    )) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
     const order = await createInstallationOrder(prisma, body, session.user.id)

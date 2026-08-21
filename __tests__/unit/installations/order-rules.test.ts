@@ -10,7 +10,11 @@ import {
   parseCreateInstallationOrder,
   parseUpdateInstallationOrder,
 } from '@/lib/installations/schemas'
-import { canAccessInstallationOrder } from '@/lib/installations/access'
+import {
+  canAccessInstallationOrder,
+  canArchiveInstallationOrder,
+  canEditInstallationOrder,
+} from '@/lib/installations/access'
 import {
   archiveInstallationOrder,
   createInstallationOrder,
@@ -24,7 +28,7 @@ import {
   GET as getOrder,
   PATCH as updateOrder,
 } from '@/app/api/installations/[id]/route'
-import { DELETE as deleteEmployee } from '@/app/api/hr/employees/[id]/route'
+import { DELETE as deleteEmployee, PATCH as updateEmployee } from '@/app/api/hr/employees/[id]/route'
 import { InstallationOrderForm } from '@/components/installations/order-form'
 import { InstallationOrderList } from '@/components/installations/order-list'
 import { InstallationOrderDetail } from '@/components/installations/order-detail'
@@ -44,7 +48,7 @@ vi.mock('@/lib/installations/order-service', () => ({
 vi.mock('@/lib/prisma', () => ({
   prisma: {
     $transaction: vi.fn(),
-    employee: { findUnique: vi.fn(), count: vi.fn(), delete: vi.fn() },
+    employee: { findUnique: vi.fn(), count: vi.fn(), delete: vi.fn(), update: vi.fn() },
     timeEntry: { count: vi.fn() },
     leaveRequestNew: { count: vi.fn() },
     contract: { count: vi.fn() },
@@ -155,6 +159,14 @@ describe('installation order rules', () => {
       } satisfies Partial<InstallationOrderValidationError>)
     }
   })
+
+  it('keeps explicit null and empty optional address fields as a clear operation in an update payload', () => {
+    expect(parseUpdateInstallationOrder({
+      address: { buildingNumber: null, apartmentNumber: '' },
+    })).toEqual({
+      address: { buildingNumber: null, apartmentNumber: null },
+    })
+  })
 })
 
 describe('installation order access policy', () => {
@@ -185,16 +197,35 @@ describe('installation order access policy', () => {
   })
 
   it('grants employee access only to primary, backup, or an active delegate', () => {
-    expect(canAccessInstallationOrder({ role: 'EMPLOYEE', employeeId: 'primary' }, order, now)).toBe(true)
-    expect(canAccessInstallationOrder({ role: 'EMPLOYEE', employeeId: 'backup' }, order, now)).toBe(true)
-    expect(canAccessInstallationOrder({ role: 'EMPLOYEE', employeeId: 'delegate-active' }, order, now)).toBe(true)
-    expect(canAccessInstallationOrder({ role: 'EMPLOYEE', employeeId: 'delegate-ended' }, order, now)).toBe(false)
-    expect(canAccessInstallationOrder({ role: 'EMPLOYEE', employeeId: 'outsider' }, order, now)).toBe(false)
+    expect(canAccessInstallationOrder({ role: 'EMPLOYEE', employeeId: 'primary', employeeActive: true }, order, now)).toBe(true)
+    expect(canAccessInstallationOrder({ role: 'EMPLOYEE', employeeId: 'backup', employeeActive: true }, order, now)).toBe(true)
+    expect(canAccessInstallationOrder({ role: 'EMPLOYEE', employeeId: 'delegate-active', employeeActive: true }, order, now)).toBe(true)
+    expect(canAccessInstallationOrder({ role: 'EMPLOYEE', employeeId: 'delegate-ended', employeeActive: true }, order, now)).toBe(false)
+    expect(canAccessInstallationOrder({ role: 'EMPLOYEE', employeeId: 'outsider', employeeActive: true }, order, now)).toBe(false)
   })
 
   it('grants installer access only to their own explicitly assigned installer record', () => {
     expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-a' }, order, now)).toBe(true)
     expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-b' }, order, now)).toBe(false)
+  })
+
+  it('fails closed when an EMPLOYEE account is no longer active', () => {
+    expect(canAccessInstallationOrder({ role: 'EMPLOYEE', employeeId: 'primary', employeeActive: false }, order, now)).toBe(false)
+  })
+
+  it('allows an active delegate to edit operations, but not ownership or archiving', () => {
+    const delegate = { role: 'EMPLOYEE' as const, employeeId: 'delegate-active', employeeActive: true }
+
+    expect(canAccessInstallationOrder(delegate, order, now)).toBe(true)
+    expect(canEditInstallationOrder(delegate, order, now)).toBe(true)
+    expect(canArchiveInstallationOrder(delegate, order, now)).toBe(false)
+  })
+
+  it('allows primary and backup to archive, but never an installer', () => {
+    expect(canArchiveInstallationOrder({ role: 'EMPLOYEE', employeeId: 'primary', employeeActive: true }, order, now)).toBe(true)
+    expect(canArchiveInstallationOrder({ role: 'EMPLOYEE', employeeId: 'backup', employeeActive: true }, order, now)).toBe(true)
+    expect(canEditInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-a' }, order, now)).toBe(false)
+    expect(canArchiveInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-a' }, order, now)).toBe(false)
   })
 })
 
@@ -242,6 +273,7 @@ function jsonRequest(body: unknown, method = 'POST') {
 describe('installation order API boundaries', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.mocked(prisma.employee.findUnique).mockResolvedValue({ id: 'primary', active: true } as never)
   })
 
   it('returns 401 without a session before listing orders', async () => {
@@ -363,6 +395,18 @@ describe('installation order API boundaries', () => {
     expect(await response.json()).toEqual({ error: 'Forbidden' })
   })
 
+  it('fails closed for an inactive EMPLOYEE even if their id is a card owner', async () => {
+    mockGetServerSession.mockResolvedValue(session('EMPLOYEE', 'primary') as never)
+    vi.mocked(prisma.employee.findUnique).mockResolvedValue({ id: 'primary', active: false } as never)
+    mockGetInstallationOrder.mockResolvedValue(apiOrder as never)
+
+    const response = await getOrder(new NextRequest('http://localhost/api/installations/order-1'), {
+      params: Promise.resolve({ id: 'order-1' }),
+    })
+
+    expect(response.status).toBe(403)
+  })
+
   it('checks a session independently before patching or archiving', async () => {
     mockGetServerSession.mockResolvedValue(null)
     const context = { params: Promise.resolve({ id: 'order-1' }) }
@@ -387,6 +431,40 @@ describe('installation order API boundaries', () => {
 
     expect(response.status).toBe(200)
     expect(mockUpdateInstallationOrder).toHaveBeenCalledWith(expect.anything(), 'order-1', { address: { buildingNumber: '19' } }, 'employee-user')
+  })
+
+  it('lets an active delegate edit operating data but blocks both owner changes and archive', async () => {
+    const delegatedOrder = {
+      ...apiOrder,
+      primaryEmployeeId: 'other-primary',
+      backupEmployeeId: 'other-backup',
+      delegations: [{
+        delegateEmployeeId: 'delegate-active',
+        startsAt: new Date('2026-08-20T08:00:00.000Z'),
+        endsAt: new Date('2026-08-23T18:00:00.000Z'),
+        endedAt: null,
+      }],
+    }
+    mockGetServerSession.mockResolvedValue(session('EMPLOYEE', 'delegate-active') as never)
+    vi.mocked(prisma.employee.findUnique).mockResolvedValue({ id: 'delegate-active', active: true } as never)
+    mockGetInstallationOrder.mockResolvedValue(delegatedOrder as never)
+    mockUpdateInstallationOrder.mockResolvedValue(delegatedOrder as never)
+
+    const editResponse = await updateOrder(jsonRequest({ address: { city: 'Piaseczno' } }, 'PATCH'), {
+      params: Promise.resolve({ id: 'order-1' }),
+    })
+    const ownerResponse = await updateOrder(jsonRequest({ primaryEmployeeId: 'other-owner' }, 'PATCH'), {
+      params: Promise.resolve({ id: 'order-1' }),
+    })
+    const archiveResponse = await archiveOrder(new NextRequest('http://localhost/api/installations/order-1', { method: 'DELETE' }), {
+      params: Promise.resolve({ id: 'order-1' }),
+    })
+
+    expect(editResponse.status).toBe(200)
+    expect(ownerResponse.status).toBe(403)
+    expect(archiveResponse.status).toBe(403)
+    expect(mockUpdateInstallationOrder).toHaveBeenCalledTimes(1)
+    expect(mockArchiveInstallationOrder).not.toHaveBeenCalled()
   })
 })
 
@@ -437,6 +515,22 @@ describe('employee deletion installation protection', () => {
 
     expect(response.status).toBe(409)
     expect(prisma.$transaction).not.toHaveBeenCalled()
+  })
+
+  it('returns 409 before deactivating an owner of an active installation order', async () => {
+    mockGetServerSession.mockResolvedValue(session('ADMIN') as never)
+    vi.mocked(prisma.employee.findUnique).mockResolvedValue({ id: 'employee-1', active: true } as never)
+    vi.mocked(prisma.installationOrder.count).mockResolvedValue(1 as never)
+
+    const response = await updateEmployee(jsonRequest({ active: false }, 'PATCH'), {
+      params: Promise.resolve({ id: 'employee-1' }),
+    })
+
+    expect(response.status).toBe(409)
+    expect(await response.json()).toEqual({
+      error: 'Pracownik jest opiekunem aktywnych kart montaży. Najpierw przypnij karty do innego opiekuna.',
+    })
+    expect(prisma.employee.update).not.toHaveBeenCalled()
   })
 })
 
@@ -522,5 +616,34 @@ describe('installation order controls', () => {
 
     expect(fetchMock).toHaveBeenCalledWith('/api/installations/order-1', { method: 'DELETE' })
     expect(mockRouterPush).toHaveBeenCalledWith('/installations')
+  })
+
+  it('renders an operational edit form but no archive control for a delegated viewer', () => {
+    render(createElement(InstallationOrderDetail, {
+      order: apiOrder,
+      employees: installationEmployees,
+      canEdit: true,
+      canArchive: false,
+    } as never))
+
+    expect(screen.getByRole('heading', { name: 'Dane zlecenia' })).not.toBeNull()
+    expect(screen.queryByRole('button', { name: 'Archiwizuj zlecenie' })).toBeNull()
+  })
+
+  it('sends null for an address field explicitly cleared while editing an order', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => apiOrder })
+    vi.stubGlobal('fetch', fetchMock)
+    render(createElement(InstallationOrderForm, {
+      mode: 'edit', order: apiOrder, employees: installationEmployees,
+    } as never))
+
+    await user.clear(screen.getByLabelText('Numer budynku'))
+    await user.click(screen.getByRole('button', { name: 'Zapisz zmiany' }))
+
+    const request = fetchMock.mock.calls[0]?.[1] as RequestInit
+    expect(JSON.parse(request.body as string)).toMatchObject({
+      address: { buildingNumber: null },
+    })
   })
 })

@@ -45,12 +45,13 @@ Spacing: wszystkie grupy i kontrolki utrzymują siatkę bazową 4 px.
 
 | Komenda | Wynik |
 | --- | --- |
-| `npm test -- __tests__/unit/installations/order-rules.test.ts` | 33/33, exit 0 |
-| `npm test -- __tests__/integration/installations/order-crud.test.ts` | 2/2, exit 0 |
-| `npm test` | 53 pliki, 313/313, exit 0 |
-| `npm run build` | exit 0; Turbopack 4.6 s, TypeScript i 130 route'ów |
+| `npm test -- __tests__/unit/installations/order-rules.test.ts` | 42/42, exit 0 |
+| `npm test -- __tests__/integration/installations/order-crud.test.ts` | 4/4, exit 0 |
+| `npm test` | 53 pliki, 324/324, exit 0 |
+| `npm run build` | exit 0; Turbopack 3.4 s, TypeScript i 130 route'ów |
 | `node scripts/validate-installation-order.mjs` | exit 0; `persistedStatus: ARCHIVED` |
 | `npm run test:e2e -- e2e/installations-order.spec.ts` | 1/1, exit 0 (6.9 s) |
+| `prisma migrate deploy` na świeżej SQLite | 18/18 migracji, `foreign_key_check` puste, `integrity_check: ok` |
 
 ## Dowód DB, API i UI
 
@@ -90,3 +91,65 @@ ją webServerowi jako `DATABASE_URL` i `E2E_DATABASE_URL`, wymusza lokalny
 przed startem webServera. `reuseExistingServer: false` wyklucza
 przypadkowe podłączenie do obcego dev servera. Po tym hardeningu wykonano
 osobne potwierdzenie tego samego scenariusza: 1/1, exit 0 (6.6 s).
+
+## Re-review jakości Tasku 1 — izolacja i invariants
+
+### RED → GREEN
+
+1. Nowy test integracyjny dla dwóch kart z tym samym e-mailem był czerwony:
+   druga karta dostała ten sam `clientId` (`expected ... not to be ...`).
+   Model zmieniono na relację 1:1, migracja kopiuje historycznie współdzielony
+   rekord dla każdej późniejszej karty, a serwis zawsze tworzy klienta przy
+   create i aktualizuje tylko `current.clientId` przy PATCH. Zielony wynik:
+   4/4 integracyjne; edycja B nie zmienia klienta ani audytu A.
+2. Targeted test policy/null/HR był czerwony w 8 przypadkach: pusty numer
+   lokalu nie stawał się `null`, inactive EMPLOYEE nadal widział kartę,
+   brakowało osobnych praw edit/archive, delegat mógł archiwizować, a HR PATCH
+   nie zatrzymywał dezaktywacji ownera. Po minimalnych zmianach: 42/42
+   jednostkowych. Polityka ma jawne `canView`, `canEdit`, `canArchive`;
+   aktywność EMPLOYEE jest odczytywana z `Employee.active` przez route'y i
+   Server Components.
+3. Fresh-chain test najpierw wskazał FK do celowo niezasianych historycznych
+   ownerów. Fixture skorygowano do prawdziwych rekordów `Employee` i
+   `CostCenter`; finalnie kolejno stosuje wszystkie committed SQL, seeduje
+   współdzielonego dawnego klienta przed corrective migration, a następnie
+   dowodzi osobnych snapshotów oraz pustego `foreign_key_check`.
+4. Migracja `20260822010200...` odbudowuje `InstallationOrder` z DB-level
+   `CHECK (primaryEmployeeId <> backupEmployeeId)`, FK oraz indeksami.
+   Bezpośredni `PrismaClient.installationOrder.create` z tym samym ownerem
+   kończy się `CHECK constraint failed`.
+5. Pierwszy build po zmianie wykrył wyłącznie błąd TypeScript w generycznym
+   typie helpera patcha; po minimalnej korekcie targeted testy są zielone.
+   Kolejna kompilacja zatrzymała się po TypeScript bez nowego outputu i przez
+   ponad 2 minuty trzymała `.next/lock` (PID 95892, rodzic PID 95376).
+   Żywy proces zatrzymano kontrolowanie `SIGTERM`, bez kasowania locka;
+   kolejny całkowicie świeży build zakończył się exit 0.
+6. Pierwszy `prisma migrate deploy` na pustym pliku zwrócił tylko
+   `Schema engine error` bez utworzenia `_prisma_migrations`. Diagnostyczne
+   ponowienie na tym samym, nadal pustym pliku zastosowało 18/18 migracji;
+   `PRAGMA foreign_key_check` nie zwróciło wierszy, a `integrity_check` zwrócił
+   `ok`. Tymczasową DB i sidecary usunięto.
+
+### Dowód zachowań
+
+- EMPLOYEE jest fail-closed po dezaktywacji zarówno dla list/detail API, jak i
+  create; primary/backup mogą edytować i archiwizować. Aktywny delegat może
+  edytować dane operacyjne, lecz route blokuje zmianę primary/backup i DELETE.
+  INSTALLER zachowuje wyłącznie konkretnie przypisany widok, bez mutation.
+- Zwykły PATCH formularza przesyła `null` po wyczyszczeniu numeru budynku lub
+  lokalu; schema i serwis traktują to jako trwałe wyczyszczenie, nie jako
+  odtworzenie poprzedniej wartości.
+- HTTP walidator po re-review przeszedł z odizolowaną SQLite: login,
+  400/403, POST → list/detail → PATCH → DELETE, restart serwera i direct DB
+  readback (`ARCHIVED`). E2E 1/1 sprawdza create → aktywna lista → detail →
+  edit/refresh → archive oraz 403 outsider EMPLOYEE.
+
+### Granica wdrożenia migracji
+
+Nie zmieniano `docker-entrypoint.sh`: aktualny runtime produkcyjny nadal
+wykonuje `prisma db push --skip-generate`. `migrate deploy` jest dowiedziony
+wyłącznie na świeżej, lokalnej SQLite. To **nie** jest deklaracja gotowości
+produkcji: przed deployem wymagany jest osobny gate baseline/reconcile na
+klonie produkcyjnej SQLite (backup, porównanie `_prisma_migrations`,
+`foreign_key_check`, `integrity_check` i plan rollbacku), zanim zmieni się
+tryb entrypointu lub zastosuje migracje na produkcji.

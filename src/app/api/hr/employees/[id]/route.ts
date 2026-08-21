@@ -68,6 +68,23 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   const existing = await prisma.employee.findUnique({ where: { id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
+  if (existing.active && parsed.data.active === false) {
+    const activeInstallationOwnershipCount = await prisma.installationOrder.count({
+      where: {
+        archivedAt: null,
+        OR: [
+          { primaryEmployeeId: id },
+          { backupEmployeeId: id },
+        ],
+      },
+    })
+    if (activeInstallationOwnershipCount > 0) {
+      return NextResponse.json({
+        error: 'Pracownik jest opiekunem aktywnych kart montaży. Najpierw przypnij karty do innego opiekuna.',
+      }, { status: 409 })
+    }
+  }
+
   const employee = await prisma.employee.update({
     where: { id },
     data: parsed.data,

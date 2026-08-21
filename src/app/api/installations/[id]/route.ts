@@ -2,7 +2,12 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { canAccessInstallationOrder, type InstallationOrderViewer } from '@/lib/installations/access'
+import {
+  canArchiveInstallationOrder,
+  canEditInstallationOrder,
+  canViewInstallationOrder,
+  type InstallationOrderViewer,
+} from '@/lib/installations/access'
 import { INSTALLATION_ROLES, type InstallationRole } from '@/lib/installations/constants'
 import { InstallationOrderValidationError } from '@/lib/installations/schemas'
 import {
@@ -14,17 +19,23 @@ import {
 
 type Params = { params: Promise<{ id: string }> }
 
-function viewerFromSession(session: { user: { role: string; employeeId?: string | null } }): InstallationOrderViewer {
+async function viewerFromSession(session: { user: { role: string; employeeId?: string | null } }): Promise<InstallationOrderViewer> {
   const role = INSTALLATION_ROLES.includes(session.user.role as InstallationRole)
     ? session.user.role as InstallationRole
     : 'EMPLOYEE'
-  return { role, employeeId: session.user.employeeId }
+  if (role !== 'EMPLOYEE') return { role, employeeId: session.user.employeeId }
+  if (!session.user.employeeId) return { role, employeeId: null, employeeActive: false }
+  const employee = await prisma.employee.findUnique({
+    where: { id: session.user.employeeId },
+    select: { active: true },
+  })
+  return { role, employeeId: session.user.employeeId, employeeActive: employee?.active === true }
 }
 
 async function loadAccessibleOrder(id: string, viewer: InstallationOrderViewer) {
   const order = await getInstallationOrder(prisma, id)
   if (!order) return { response: NextResponse.json({ error: 'Not found' }, { status: 404 }) }
-  if (!canAccessInstallationOrder(viewer, order)) {
+  if (!canViewInstallationOrder(viewer, order)) {
     return { response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
   }
   return { order }
@@ -35,7 +46,8 @@ export async function GET(_req: NextRequest, { params }: Params) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
-  const loaded = await loadAccessibleOrder(id, viewerFromSession(session))
+  const viewer = await viewerFromSession(session)
+  const loaded = await loadAccessibleOrder(id, viewer)
   if ('response' in loaded) return loaded.response
   return NextResponse.json(loaded.order)
 }
@@ -45,14 +57,22 @@ export async function PATCH(req: NextRequest, { params }: Params) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
-  const loaded = await loadAccessibleOrder(id, viewerFromSession(session))
+  const viewer = await viewerFromSession(session)
+  const loaded = await loadAccessibleOrder(id, viewer)
   if ('response' in loaded) return loaded.response
-  if (viewerFromSession(session).role === 'INSTALLER') {
+  if (!canEditInstallationOrder(viewer, loaded.order)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
   try {
-    const order = await updateInstallationOrder(prisma, id, await req.json(), session.user.id)
+    const body = await req.json()
+    const changesOwners = isPlainObject(body) && (
+      Object.hasOwn(body, 'primaryEmployeeId') || Object.hasOwn(body, 'backupEmployeeId')
+    )
+    if (!canArchiveInstallationOrder(viewer, loaded.order) && changesOwners) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+    const order = await updateInstallationOrder(prisma, id, body, session.user.id)
     return NextResponse.json(order)
   } catch (error) {
     if (error instanceof InstallationOrderValidationError) {
@@ -73,9 +93,10 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const { id } = await params
-  const loaded = await loadAccessibleOrder(id, viewerFromSession(session))
+  const viewer = await viewerFromSession(session)
+  const loaded = await loadAccessibleOrder(id, viewer)
   if ('response' in loaded) return loaded.response
-  if (viewerFromSession(session).role === 'INSTALLER') {
+  if (!canArchiveInstallationOrder(viewer, loaded.order)) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
@@ -88,4 +109,10 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     }
     throw error
   }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
 }
