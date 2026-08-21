@@ -15,12 +15,13 @@ import {
   ReceiptText,
   Target,
   ChartPie,
+  ClipboardList,
   type LucideIcon,
 } from 'lucide-react'
 import { NavItem } from './nav-item'
 import { Separator } from '@/components/ui/separator'
 
-type SidebarRole = 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+type SidebarRole = 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER'
 type NavSectionItem = {
   href: string
   label: string
@@ -63,6 +64,7 @@ const NAV_SECTIONS: Array<{ label: string | null; items: NavSectionItem[] }> = [
       { href: '/operations', label: 'Centrum', icon: ListChecks },
       { href: '/operations/procedures', label: 'Procedury', icon: BookOpen },
       { href: '/operations/runs', label: 'Wykonania', icon: ListChecks },
+      { href: '/installations', label: 'Montaże', icon: ClipboardList },
     ],
   },
   {

@@ -527,7 +527,86 @@ model Employee {
   leaveBalancesNew  LeaveBalanceNew[]
   leaveRequestsNew  LeaveRequestNew[]
 
+  installationOrdersPrimary InstallationOrder[]      @relation("InstallationOrderPrimaryEmployee")
+  installationOrdersBackup  InstallationOrder[]      @relation("InstallationOrderBackupEmployee")
+  installationDelegations   InstallationDelegation[]
+
   createdAt DateTime @default(now())
+}
+
+// ─── Installation Operations ─────────────────────────────────────────────────
+
+model InstallationClient {
+  id        String   @id @default(cuid())
+  name      String
+  email     String   @unique
+  phone     String
+  orders    InstallationOrder[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model InstallationOrder {
+  id                    String   @id @default(cuid())
+  number                String   @unique
+  status                String   @default("DRAFT")
+  clientId              String
+  client                InstallationClient @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  addressStreet         String
+  addressBuildingNumber String?
+  addressApartmentNumber String?
+  addressPostalCode     String
+  addressCity           String
+  primaryEmployeeId     String
+  primaryEmployee       Employee @relation("InstallationOrderPrimaryEmployee", fields: [primaryEmployeeId], references: [id], onDelete: Restrict)
+  backupEmployeeId      String
+  backupEmployee        Employee @relation("InstallationOrderBackupEmployee", fields: [backupEmployeeId], references: [id], onDelete: Restrict)
+  scheduledAt           DateTime?
+  externalSystem        String?
+  externalId            String?
+  isAssignedInstaller   Boolean  @default(false)
+  archivedAt            DateTime?
+  delegations           InstallationDelegation[]
+  auditEvents           InstallationAuditEvent[]
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([status, archivedAt])
+  @@index([primaryEmployeeId])
+  @@index([backupEmployeeId])
+  @@index([clientId])
+}
+
+model InstallationDelegation {
+  id                 String   @id @default(cuid())
+  orderId            String
+  order              InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  delegateEmployeeId String
+  delegateEmployee   Employee @relation(fields: [delegateEmployeeId], references: [id], onDelete: Restrict)
+  startsAt           DateTime
+  endsAt             DateTime?
+  endedAt            DateTime?
+  reason             String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([orderId, startsAt])
+  @@index([delegateEmployeeId])
+}
+
+model InstallationAuditEvent {
+  id           String   @id @default(cuid())
+  orderId      String
+  order        InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actorId      String
+  action       String
+  beforeJson   String?
+  afterJson    String?
+  metadataJson String?
+  createdAt    DateTime @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([actorId])
 }
 
 // type: UOP | B2B | UZ
