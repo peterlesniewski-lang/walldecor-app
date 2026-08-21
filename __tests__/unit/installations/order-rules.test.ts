@@ -321,6 +321,24 @@ describe('installation order API boundaries', () => {
     expect(mockCreateInstallationOrder).not.toHaveBeenCalled()
   })
 
+  it.each([
+    { label: 'null', payload: null },
+    { label: 'tablicę', payload: [] },
+    { label: 'string', payload: 'nie formularz' },
+    { label: 'liczbę', payload: 42 },
+  ])('returns form-level 400 instead of 403 or 500 for EMPLOYEE body shaped as $label', async ({ payload }) => {
+    mockGetServerSession.mockResolvedValue(session('EMPLOYEE', 'employee-self') as never)
+
+    const response = await createOrder(jsonRequest(payload))
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({
+      error: 'Dane zlecenia są niepoprawne.',
+      fieldErrors: { form: 'Prześlij formularz zlecenia w poprawnym formacie.' },
+    })
+    expect(mockCreateInstallationOrder).not.toHaveBeenCalled()
+  })
+
   it.each(['ADMIN', 'MANAGER'] as const)('allows %s to create with arbitrary active owners', async (role) => {
     mockGetServerSession.mockResolvedValue(session(role) as never)
     mockCreateInstallationOrder.mockResolvedValue(apiOrder as never)

@@ -14,6 +14,12 @@ function viewerFromSession(session: { user: { role: string; employeeId?: string 
   return { role, employeeId: session.user.employeeId }
 }
 
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}
+
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -33,6 +39,12 @@ export async function POST(req: NextRequest) {
 
   try {
     const body = await req.json()
+    if (!isPlainObject(body)) {
+      return NextResponse.json({
+        error: 'Dane zlecenia są niepoprawne.',
+        fieldErrors: { form: 'Prześlij formularz zlecenia w poprawnym formacie.' },
+      }, { status: 400 })
+    }
     if (viewer.role === 'EMPLOYEE' && (!viewer.employeeId || body.primaryEmployeeId !== viewer.employeeId)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }

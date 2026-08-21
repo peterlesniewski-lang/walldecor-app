@@ -35,17 +35,22 @@ Spacing: wszystkie grupy i kontrolki utrzymują siatkę bazową 4 px.
    `sqlite3 -bail`, sprawdza exit code, włącza `PRAGMA foreign_keys=ON`,
    restartuje Prisma na tym samym pliku i usuwa temp DB. Pierwsze uruchomienie
    poprawiło selekcję `migration_lock.toml`; finalnie 2/2.
+6. Re-review wykazał, że EMPLOYEE body `null` powodował TypeError, a tablica,
+   string i liczba dostawały 403 przed walidacją. Test route był czerwony dla
+   4 przypadków; po sprawdzeniu non-null plain object przed odczytem
+   `primaryEmployeeId` wszystkie zwracają 400 z polskim `fieldErrors.form`,
+   bez wywołania serwisu. Zielony targeted wynik: 33/33.
 
 ## Świeża bramka
 
 | Komenda | Wynik |
 | --- | --- |
-| `npm test -- __tests__/unit/installations/order-rules.test.ts` | 29/29, exit 0 |
+| `npm test -- __tests__/unit/installations/order-rules.test.ts` | 33/33, exit 0 |
 | `npm test -- __tests__/integration/installations/order-crud.test.ts` | 2/2, exit 0 |
-| `npm test` | 53 pliki, 309/309, exit 0 |
-| `npm run build` | exit 0; Turbopack 4.2 s, TypeScript i 130 route'ów |
+| `npm test` | 53 pliki, 313/313, exit 0 |
+| `npm run build` | exit 0; Turbopack 4.6 s, TypeScript i 130 route'ów |
 | `node scripts/validate-installation-order.mjs` | exit 0; `persistedStatus: ARCHIVED` |
-| `npm run test:e2e -- e2e/installations-order.spec.ts` | 1/1, exit 0 (6.6 s) |
+| `npm run test:e2e -- e2e/installations-order.spec.ts` | 1/1, exit 0 (6.9 s) |
 
 ## Dowód DB, API i UI
 
