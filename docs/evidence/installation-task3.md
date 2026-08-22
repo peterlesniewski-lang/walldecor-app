@@ -57,3 +57,18 @@ Nowa pętla: RED 1/5 potwierdził soft 200 dla dokumentu. GREEN 3/5: pełny Play
 - npm run build: GREEN — 133 tras, poprawne dynamiczne params Next 16.
 - node scripts/validate-installation-client-form.mjs: GREEN. Izolowane HTTP/auth/SQLite, SHA-256-only token, public leak checks, optional clear + restart, concurrent submit, extend/revoke/expiry/random generic 404 z no-store, odpowiedzi i parent revision DB guards, FK/integrity.
 - E2E Task3: GREEN 1/5 — pełny flow mobile + keyboard/focus, prerequisite snapshotu przed generowaniem, rapid autosave, extend, clarification/readiness, korekta, document 404 i replay po revoke.
+
+## Finalna wąska pętla retry po 93139d8
+
+1. Deterministyczny konflikt submit: RED — po HTTP 409 i prawidłowym odczycie DRAFT w wersji 1 kolejny klik nadal wysyłał zapamiętane mutation id oraz draftVersion 0. GREEN: 4xx najpierw wykonuje publiczny readback; DRAFT jest adoptowany do UI, stabilna próba jest kasowana dopiero po odczycie, a komunikat po polsku prosi o świadome ponowienie. Drugi klik tworzy nowe clientMutationId i wysyła wersję 1.
+2. Granica pewności odpowiedzi: test 400 potwierdza brak automatycznej pętli i widoczny błąd, zaś test utraconej odpowiedzi po commicie akceptuje sukces dopiero po readback SUBMITTED tej samej rewizji. Niepewny błąd transportu zachowuje stabilny payload/ID do tego uzgodnienia lub jawnego retry.
+
+## Bramka finalnej pętli retry
+
+- Focused: client-form UI 9/9 oraz public routes + real SQLite 27/27 GREEN.
+- Wszystkie installations: 24 pliki / 161 testów GREEN; obejmuje integrację fresh/upgrade migracji, FK i integrity.
+- npm test: GREEN — 75 plików / 439 testów.
+- npm run build: GREEN — 133 tras.
+- node scripts/validate-installation-client-form.mjs: GREEN — izolowane HTTP/auth/SQLite, SHA-256-only token oraz identyczne publiczne 404.
+- E2E Task3: GREEN 1/5 — pełny anonimowy flow pozostaje działający po zmianie retry.
+- ESLint zmienionych plików: zero błędów.

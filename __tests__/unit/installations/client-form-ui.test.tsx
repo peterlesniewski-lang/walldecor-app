@@ -123,6 +123,80 @@ describe('client installation form', () => {
     expect(screen.getByRole('button', { name: 'Nie wiem' }).getAttribute('aria-pressed')).toBe('true')
   })
 
+  it('restarts a submit from the read-back draft after a deterministic 409 conflict', async () => {
+    const readyProjection = {
+      ...projection,
+      submission: { status: 'DRAFT' as const, revisionNumber: 1, draftVersion: 0, submittedAt: null, answers: [{ questionKey: 'glify', value: 'UNKNOWN', isUnknown: true }] },
+    }
+    const currentDraft = {
+      ...readyProjection,
+      submission: { ...readyProjection.submission, draftVersion: 1 },
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Formularz został zapisany w nowszej wersji.' }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(currentDraft), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'SUBMITTED', revisionNumber: 1, draftVersion: 1, submittedAt: '2026-08-22T12:00:00.000Z', answers: [{ questionKey: 'glify', value: 'UNKNOWN', isUnknown: true }] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={readyProjection} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Wyślij formularz' }))
+    await act(async () => {})
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('alert').textContent).toMatch(/nowszej wersji|spróbuj ponownie/i)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Wyślij formularz' }))
+    await act(async () => {})
+
+    const first = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
+    const retry = JSON.parse(String(fetchMock.mock.calls[2][1]?.body))
+    expect(first).toMatchObject({ revisionNumber: 1, draftVersion: 0 })
+    expect(retry).toMatchObject({ revisionNumber: 1, draftVersion: 1 })
+    expect(retry.clientMutationId).not.toBe(first.clientMutationId)
+    expect(screen.getByText(/Formularz został wysłany/)).not.toBeNull()
+  })
+
+  it('does not retry a deterministic validation failure until the customer acts again', async () => {
+    const readyProjection = {
+      ...projection,
+      submission: { status: 'DRAFT' as const, revisionNumber: 1, draftVersion: 0, submittedAt: null, answers: [{ questionKey: 'glify', value: 'UNKNOWN', isUnknown: true }] },
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Uzupełnij wymagane widoczne odpowiedzi.' }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(readyProjection), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={readyProjection} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Wyślij formularz' }))
+    await act(async () => {})
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(screen.getByRole('alert').textContent).toContain('Uzupełnij wymagane widoczne odpowiedzi.')
+    expect(screen.getByRole('button', { name: 'Wyślij formularz' })).not.toBeNull()
+  })
+
+  it('accepts a lost submit response only after public readback confirms the same submitted revision', async () => {
+    const readyProjection = {
+      ...projection,
+      submission: { status: 'DRAFT' as const, revisionNumber: 1, draftVersion: 0, submittedAt: null, answers: [{ questionKey: 'glify', value: 'UNKNOWN', isUnknown: true }] },
+    }
+    const submittedProjection = {
+      ...readyProjection,
+      submission: { ...readyProjection.submission, status: 'SUBMITTED' as const, submittedAt: '2026-08-22T12:00:00.000Z' },
+    }
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('response lost after commit'))
+      .mockResolvedValueOnce(new Response(JSON.stringify(submittedProjection), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={readyProjection} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Wyślij formularz' }))
+    await act(async () => {})
+
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ revisionNumber: 1, draftVersion: 0 })
+    expect(screen.getByText(/Formularz został wysłany/)).not.toBeNull()
+  })
+
   it('sends an explicit clear for an optional visible text answer and keeps it blank after save', async () => {
     vi.useFakeTimers()
     const optionalProjection = {

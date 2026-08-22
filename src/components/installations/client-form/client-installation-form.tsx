@@ -235,7 +235,26 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
         body: JSON.stringify(attempt),
       })
       const data = await response.json() as Submission | { error?: string }
-      if (!response.ok) throw new Error('error' in data ? data.error : 'Nie udało się wysłać formularza.')
+      if (!response.ok) {
+        const message = 'error' in data && typeof data.error === 'string' ? data.error : 'Nie udało się wysłać formularza.'
+        // A concrete 4xx means this exact request did not commit. Rebase on
+        // the current draft and deliberately start a new logical submit only
+        // when the customer clicks again. Transport failures remain below.
+        if (response.status >= 400 && response.status < 500) {
+          const latest = await reloadLatestProjection().catch(() => null)
+          if (latest?.submission.status === 'SUBMITTED' && latest.submission.revisionNumber === attempt.revisionNumber) {
+            submitAttemptRef.current = null
+            setSaveState('saved')
+            return
+          }
+          submitAttemptRef.current = null
+          setError(response.status === 409
+            ? 'Formularz został zapisany w nowszej wersji. Odświeżyliśmy dane — sprawdź je i spróbuj ponownie.'
+            : message)
+          return
+        }
+        throw new Error(message)
+      }
       submitAttemptRef.current = null
       adoptSubmission(data as Submission); setSaveState('saved')
     } catch (caught) {
