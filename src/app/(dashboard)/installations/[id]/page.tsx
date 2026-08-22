@@ -9,6 +9,7 @@ import {
 } from '@/lib/installations/access'
 import { INSTALLATION_ROLES, type InstallationRole } from '@/lib/installations/constants'
 import { getInstallationOrder } from '@/lib/installations/order-service'
+import { getInstallationOrderRooms, listInstallationCatalog } from '@/lib/installations/catalog-service'
 import { InstallationOrderDetail } from '@/components/installations/order-detail'
 
 type Params = { params: Promise<{ id: string }> }
@@ -34,16 +35,22 @@ export default async function InstallationOrderPage({ params }: Params) {
   }
   if (!canViewInstallationOrder(viewer, order)) notFound()
 
-  const employees = await prisma.employee.findMany({
+  const [employees, rooms, catalog] = await Promise.all([
+    prisma.employee.findMany({
     where: { active: true },
     select: { id: true, firstName: true, lastName: true },
     orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
-  })
+    }),
+    getInstallationOrderRooms(prisma, id),
+    listInstallationCatalog(prisma),
+  ])
 
   return <InstallationOrderDetail
     order={order}
     employees={employees}
     canEdit={canEditInstallationOrder(viewer, order)}
     canArchive={canArchiveInstallationOrder(viewer, order)}
+    rooms={rooms}
+    catalog={catalog}
   />
 }

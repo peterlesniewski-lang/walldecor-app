@@ -1,0 +1,68 @@
+import { NextRequest } from 'next/server'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+
+const mocks = vi.hoisted(() => ({
+  session: null as null | { user: { id: string; role: string; employeeId?: string | null } },
+  employeeFindUnique: vi.fn(),
+  listCatalog: vi.fn(),
+  createCatalogCategory: vi.fn(),
+  getOrder: vi.fn(),
+  getRooms: vi.fn(),
+  createRoom: vi.fn(),
+}))
+
+vi.mock('next-auth', () => ({ getServerSession: vi.fn(async () => mocks.session) }))
+vi.mock('@/lib/auth', () => ({ authOptions: {} }))
+vi.mock('@/lib/prisma', () => ({ prisma: { employee: { findUnique: mocks.employeeFindUnique } } }))
+vi.mock('@/lib/installations/catalog-service', () => ({
+  listInstallationCatalog: mocks.listCatalog,
+  createCatalogCategory: mocks.createCatalogCategory,
+  getInstallationOrderRooms: mocks.getRooms,
+  createInstallationRoom: mocks.createRoom,
+  InstallationCatalogValidationError: class InstallationCatalogValidationError extends Error {
+    fieldErrors = { form: 'invalid' }
+  },
+}))
+vi.mock('@/lib/installations/order-service', () => ({ getInstallationOrder: mocks.getOrder }))
+
+import { GET as getCatalog, POST as postCatalog } from '@/app/api/installations/catalog/route'
+import { GET as getRooms, POST as postRoom } from '@/app/api/installations/[id]/rooms/route'
+
+const ownerOrder = {
+  primaryEmployeeId: 'employee-1', backupEmployeeId: 'employee-2', installerAssignments: [], delegations: [],
+}
+
+describe('installation catalog and room routes', () => {
+  beforeEach(() => {
+    mocks.session = null
+    mocks.employeeFindUnique.mockResolvedValue({ active: true })
+    mocks.listCatalog.mockResolvedValue([])
+    mocks.createCatalogCategory.mockResolvedValue({ id: 'category-1', name: 'Tapety' })
+    mocks.getOrder.mockResolvedValue(ownerOrder)
+    mocks.getRooms.mockResolvedValue([])
+    mocks.createRoom.mockResolvedValue({ id: 'room-1', name: 'Salon' })
+  })
+
+  it('keeps catalog reads authenticated but limits catalog mutation to ADMIN/MANAGER', async () => {
+    expect((await getCatalog()).status).toBe(401)
+
+    mocks.session = { user: { id: 'employee-user', role: 'EMPLOYEE', employeeId: 'employee-1' } }
+    expect((await postCatalog(new NextRequest('http://test/api/installations/catalog', { method: 'POST', body: JSON.stringify({ kind: 'category', name: 'Tapety' }) }))).status).toBe(403)
+
+    mocks.session = { user: { id: 'manager-user', role: 'MANAGER' } }
+    const response = await postCatalog(new NextRequest('http://test/api/installations/catalog', { method: 'POST', body: JSON.stringify({ kind: 'category', name: 'Tapety' }) }))
+    expect(response.status).toBe(201)
+    expect(mocks.createCatalogCategory).toHaveBeenCalledWith(expect.anything(), { name: 'Tapety' })
+  })
+
+  it('does not expose or mutate rooms before checking the same order policy', async () => {
+    mocks.session = { user: { id: 'outsider-user', role: 'EMPLOYEE', employeeId: 'outsider-employee' } }
+    expect((await getRooms(new NextRequest('http://test/api/installations/order-1/rooms'), { params: Promise.resolve({ id: 'order-1' }) })).status).toBe(403)
+    expect(mocks.getRooms).not.toHaveBeenCalled()
+
+    mocks.session = { user: { id: 'owner-user', role: 'EMPLOYEE', employeeId: 'employee-1' } }
+    const response = await postRoom(new NextRequest('http://test/api/installations/order-1/rooms', { method: 'POST', body: JSON.stringify({ name: 'Salon' }) }), { params: Promise.resolve({ id: 'order-1' }) })
+    expect(response.status).toBe(201)
+    expect(mocks.createRoom).toHaveBeenCalledWith(expect.anything(), 'order-1', { name: 'Salon' }, 'owner-user')
+  })
+})

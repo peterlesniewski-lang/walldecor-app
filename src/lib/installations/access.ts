@@ -54,6 +54,11 @@ export function canViewInstallationOrder(
 /** Backwards-compatible name for read access. */
 export const canAccessInstallationOrder = canViewInstallationOrder
 
+/** Catalog and form publication are global configuration, never field work. */
+export function canManageInstallationCatalog(viewer: InstallationOrderViewer): boolean {
+  return viewer.role === 'ADMIN' || viewer.role === 'MANAGER'
+}
+
 export function canEditInstallationOrder(
   viewer: InstallationOrderViewer,
   order: InstallationOrderAccessRecord,

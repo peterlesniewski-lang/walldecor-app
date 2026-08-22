@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation'
 import { Archive, ArrowLeft, MapPin, UsersRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { InstallationOrderForm, type InstallationEmployeeOption, type InstallationOrderFormValue } from './order-form'
+import { RoomScopeEditor } from './room-scope-editor'
 
 type InstallationOrderDetailValue = InstallationOrderFormValue & {
   number: string
@@ -20,11 +21,15 @@ export function InstallationOrderDetail({
   employees,
   canEdit = false,
   canArchive = false,
+  rooms = [],
+  catalog = [],
 }: {
   order: InstallationOrderDetailValue
   employees: InstallationEmployeeOption[]
   canEdit?: boolean
   canArchive?: boolean
+  rooms?: Parameters<typeof RoomScopeEditor>[0]['initialRooms']
+  catalog?: Parameters<typeof RoomScopeEditor>[0]['catalog']
 }) {
   const router = useRouter()
   const [archiving, setArchiving] = useState(false)
@@ -84,6 +89,7 @@ export function InstallationOrderDetail({
       ) : canEdit ? (
         <InstallationOrderForm mode="edit" order={order} employees={employees} />
       ) : null}
+      <RoomScopeEditor orderId={order.id} initialRooms={rooms} catalog={catalog} canEdit={canEdit} />
       {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
     </div>
   )

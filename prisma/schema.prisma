@@ -569,6 +569,8 @@ model InstallationOrder {
   delegations           InstallationDelegation[]
   installerAssignments  InstallationOrderInstaller[]
   auditEvents           InstallationAuditEvent[]
+  formSnapshots         InstallationOrderFormSnapshot[]
+  rooms                 InstallationRoom[]
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
@@ -620,6 +622,174 @@ model InstallationAuditEvent {
 
   @@index([orderId, createdAt])
   @@index([actorId])
+}
+
+model InstallationCatalogCategory {
+  id         String                    @id @default(cuid())
+  name       String
+  nameKey    String                    @unique
+  sortOrder  Int                       @default(0)
+  isActive   Boolean                   @default(true)
+  archivedAt DateTime?
+  types      InstallationCatalogType[]
+  createdAt  DateTime                  @default(now())
+  updatedAt  DateTime                  @updatedAt
+
+  @@index([isActive, sortOrder])
+}
+
+model InstallationCatalogType {
+  id         String                       @id @default(cuid())
+  categoryId String
+  category   InstallationCatalogCategory  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  name       String
+  nameKey    String
+  sortOrder  Int                          @default(0)
+  isActive   Boolean                      @default(true)
+  archivedAt DateTime?
+  products   InstallationCatalogProduct[]
+  createdAt  DateTime                     @default(now())
+  updatedAt  DateTime                     @updatedAt
+
+  @@unique([categoryId, nameKey])
+  @@index([categoryId, isActive, sortOrder])
+}
+
+model InstallationCatalogProduct {
+  id           String                    @id @default(cuid())
+  typeId       String
+  type         InstallationCatalogType   @relation(fields: [typeId], references: [id], onDelete: Restrict)
+  name         String
+  nameKey      String
+  manufacturer String?
+  collection   String?
+  code         String?
+  sortOrder    Int                       @default(0)
+  isActive     Boolean                   @default(true)
+  archivedAt   DateTime?
+  scopeProducts InstallationScopeProduct[]
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+
+  @@unique([typeId, nameKey])
+  @@index([typeId, isActive, sortOrder])
+}
+
+model InstallationFormTemplate {
+  id                  String                           @id @default(cuid())
+  familyId            String
+  name                String
+  nameKey             String
+  version             Int
+  status              String                           @default("DRAFT")
+  publishedAt         DateTime?
+  createdById         String?
+  questionDefinitions InstallationQuestionDefinition[]
+  formSnapshots       InstallationOrderFormSnapshot[]
+  createdAt           DateTime                         @default(now())
+  updatedAt           DateTime                         @updatedAt
+
+  @@unique([familyId, version])
+  @@index([nameKey, status])
+  @@index([familyId, status])
+}
+
+model InstallationQuestionDefinition {
+  id            String                   @id @default(cuid())
+  templateId    String
+  template      InstallationFormTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  key           String
+  type          String
+  label         String
+  help          String?
+  riskLevel     String                   @default("LOW")
+  optionsJson   String?
+  conditionJson String?
+  sortOrder     Int                      @default(0)
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+
+  @@unique([templateId, key])
+  @@index([templateId, sortOrder])
+}
+
+model InstallationOrderFormSnapshot {
+  id              String                   @id @default(cuid())
+  orderId         String                   @unique
+  order           InstallationOrder        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  templateId      String
+  template        InstallationFormTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  templateVersion Int
+  schemaJson      String
+  createdById     String?
+  createdAt       DateTime                 @default(now())
+
+  @@index([templateId, templateVersion])
+}
+
+model InstallationRoom {
+  id           String                   @id @default(cuid())
+  orderId      String
+  order        InstallationOrder        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  name         String
+  sortOrder    Int                      @default(0)
+  scopes       InstallationScope[]
+  measurements InstallationMeasurement[]
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+
+  @@index([orderId, sortOrder])
+}
+
+model InstallationScope {
+  id           String                     @id @default(cuid())
+  roomId       String
+  room         InstallationRoom           @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  name         String
+  sortOrder    Int                        @default(0)
+  scopeProducts InstallationScopeProduct[]
+  measurements InstallationMeasurement[]
+  createdAt    DateTime                   @default(now())
+  updatedAt    DateTime                   @updatedAt
+
+  @@index([roomId, sortOrder])
+}
+
+model InstallationScopeProduct {
+  id                          String                      @id @default(cuid())
+  scopeId                     String
+  scope                       InstallationScope           @relation(fields: [scopeId], references: [id], onDelete: Cascade)
+  catalogProductId            String
+  catalogProduct              InstallationCatalogProduct  @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
+  productNameSnapshot         String
+  productCodeSnapshot         String?
+  manufacturerSnapshot        String?
+  collectionSnapshot          String?
+  sortOrder                   Int                         @default(0)
+  createdAt                   DateTime                    @default(now())
+  updatedAt                   DateTime                    @updatedAt
+
+  @@index([scopeId, sortOrder])
+  @@index([catalogProductId])
+}
+
+model InstallationMeasurement {
+  id            String             @id @default(cuid())
+  roomId        String
+  room          InstallationRoom   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  scopeId       String?
+  scope         InstallationScope? @relation(fields: [scopeId], references: [id], onDelete: Cascade)
+  elementName   String
+  value         Decimal
+  unit          String
+  source        String
+  authorId      String?
+  authorContext String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@index([roomId, createdAt])
+  @@index([scopeId, createdAt])
 }
 
 // type: UOP | B2B | UZ
