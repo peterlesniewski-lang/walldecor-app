@@ -1,5 +1,5 @@
 import { createElement } from 'react'
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { InstallationOrderDetail } from '@/components/installations/order-detail'
@@ -17,6 +17,10 @@ const archivedOrder = {
 
 const rooms = [{ id: 'room-1', name: 'Salon', sortOrder: 0, measurements: [], scopes: [{ id: 'scope-1', name: 'Ściana', sortOrder: 0, measurements: [], scopeProducts: [] }] }]
 const catalog = [{ id: 'category-1', name: 'Tapety', types: [{ id: 'type-1', name: 'Winylowe', products: [{ id: 'product-1', name: 'Ciepły len', code: null }] }] }]
+const publishedTemplates = [{
+  id: 'template-v1', familyId: 'template-family', name: 'Wywiad o glifach', version: 1, status: 'PUBLISHED',
+  questionDefinitions: [{ id: 'question-1', key: 'glify', type: 'YES_NO_UNKNOWN', label: 'Czy są glify?', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: null, sortOrder: 0 }],
+}]
 
 describe('Task 2 corrective UI invariants', () => {
   beforeEach(() => vi.unstubAllGlobals())
@@ -31,6 +35,28 @@ describe('Task 2 corrective UI invariants', () => {
     expect(screen.queryByRole('button', { name: 'Edytuj pokój Salon' })).toBeNull()
     expect(screen.queryByLabelText('Produkt dla Ściana')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Archiwizuj zlecenie' })).toBeNull()
+    expect(screen.getByRole('heading', { name: 'Formularz klienta' })).toBeTruthy()
+    expect(screen.queryByLabelText('Wersja formularza dla zlecenia')).toBeNull()
+  })
+
+  it('lets an authorized editor pin exactly one published form snapshot from the order detail', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({ id: 'snapshot-1', templateId: 'template-v1', templateVersion: 1, schemaJson: JSON.stringify({ name: 'Wywiad o glifach', version: 1, questions: [{ label: 'Czy są glify?' }] }) }),
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(createElement(InstallationOrderDetail, {
+      order: { ...archivedOrder, id: 'active-order', archivedAt: null, status: 'NEW' }, employees: [], canEdit: true, canArchive: false, rooms, catalog, publishedTemplates,
+    } as never))
+
+    await user.selectOptions(screen.getByLabelText('Wersja formularza dla zlecenia'), 'template-v1')
+    await user.click(screen.getByRole('button', { name: 'Przypnij formularz' }))
+
+    await waitFor(() => expect(screen.getByText('Wywiad o glifach · wersja 1')).toBeTruthy())
+    expect(fetchMock).toHaveBeenCalledWith('/api/installations/active-order/form-snapshot', expect.objectContaining({ method: 'POST' }))
+    expect(JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({ templateId: 'template-v1' })
+    expect(screen.queryByLabelText('Wersja formularza dla zlecenia')).toBeNull()
   })
 
   it('does not put measurement provenance fields into the browser request', async () => {
@@ -62,5 +88,18 @@ describe('Task 2 corrective UI invariants', () => {
     await user.selectOptions(picker, older.id)
 
     expect(screen.getByRole('heading', { name: 'Starszy szkic' })).toBeTruthy()
+  })
+
+  it('renders the immutable collection snapshot beside historic product details', () => {
+    const roomsWithCollection = [{
+      id: 'room-collection', name: 'Salon kolekcji', sortOrder: 0, measurements: [], scopes: [{
+        id: 'scope-collection', name: 'Ściana kolekcji', sortOrder: 0, measurements: [], scopeProducts: [{
+          id: 'scope-product-collection', catalogProductId: 'product-collection', productNameSnapshot: 'Misty Grey', productCodeSnapshot: 'MG-01', manufacturerSnapshot: 'WallDecor', collectionSnapshot: 'Misty', sortOrder: 0,
+        }],
+      }],
+    }]
+    render(createElement(RoomScopeEditor, { orderId: 'order-collection', initialRooms: roomsWithCollection, catalog, canEdit: false }))
+
+    expect(screen.getByText('Kolekcja: Misty')).toBeTruthy()
   })
 })

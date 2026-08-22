@@ -315,6 +315,11 @@ export async function listInstallationFormTemplates(db: InstallationDb) {
   })
 }
 
+/** A card owns one immutable form instance; Task 3 reads this exact record. */
+export async function getInstallationOrderFormSnapshot(db: InstallationDb, orderId: string) {
+  return db.installationOrderFormSnapshot.findUnique({ where: { orderId } })
+}
+
 export async function createInstallationFormTemplate(db: PrismaClient, input: unknown) {
   const value = parse(templateCreateSchema, input)
   const familyId = randomUUID()
@@ -388,12 +393,13 @@ export async function createNextInstallationFormTemplateDraft(db: PrismaClient, 
 
 export async function createInstallationOrderFormSnapshot(db: PrismaClient, input: { orderId: string; templateId: string }, actorId: string) {
   return db.$transaction(async (tx) => {
-    const [order, template] = await Promise.all([
-      tx.installationOrder.findUnique({ where: { id: input.orderId }, select: { id: true } }),
+    const [, template] = await Promise.all([
+      assertActiveInstallationOrder(tx, input.orderId),
       getTemplateOrThrow(tx, input.templateId),
     ])
-    if (!order) validationError('orderId', 'Zlecenie nie istnieje.')
     if (template.status !== 'PUBLISHED') validationError('templateId', 'Snapshot wymaga opublikowanej wersji szablonu.')
+    const existing = await tx.installationOrderFormSnapshot.findUnique({ where: { orderId: input.orderId }, select: { id: true } })
+    if (existing) validationError('orderId', 'Karta ma już przypięty niezmienny formularz.')
     const questions = parsedPersistedQuestions(template.id, template.questionDefinitions)
     try {
       return await tx.installationOrderFormSnapshot.create({
@@ -405,7 +411,12 @@ export async function createInstallationOrderFormSnapshot(db: PrismaClient, inpu
           createdById: actorId,
         },
       })
-    } catch (error) { translateCatalogError(error) }
+    } catch (error) {
+      if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') {
+        validationError('orderId', 'Karta ma już przypięty niezmienny formularz.')
+      }
+      translateCatalogError(error)
+    }
   })
 }
 

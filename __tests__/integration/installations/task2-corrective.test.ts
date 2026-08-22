@@ -8,6 +8,8 @@ import { archiveInstallationOrder, createInstallationOrder } from '@/lib/install
 import {
   addInstallationMeasurement,
   addInstallationScopeProduct,
+  createInstallationFormTemplate,
+  createInstallationOrderFormSnapshot,
   createCatalogCategory,
   createCatalogProduct,
   createCatalogType,
@@ -23,6 +25,7 @@ import {
   updateInstallationMeasurement,
   updateInstallationRoom,
   updateInstallationScope,
+  publishInstallationFormTemplate,
 } from '@/lib/installations/catalog-service'
 
 const databaseDirectory = mkdtempSync(path.join(tmpdir(), 'walldecor-task2-corrective-'))
@@ -108,8 +111,14 @@ describe('Task 2 corrective service invariants on real SQLite', () => {
     const measurement = await addInstallationMeasurement(db, room.id, {
       elementName: 'Wysokość', value: '250', unit: 'CM', source: 'EMPLOYEE', authorId: primaryEmployeeId, authorContext: 'EMPLOYEE:before-archive',
     }, measurementActor)
+    const formDraft = await createInstallationFormTemplate(db, {
+      name: 'Archiwalny formularz Task 2', actorId: 'task2-admin',
+      questions: [{ key: 'glify', type: 'YES_NO_UNKNOWN', label: 'Czy są glify?' }],
+    })
+    const publishedForm = await publishInstallationFormTemplate(db, formDraft.id, 'task2-admin')
     await archiveInstallationOrder(db, orderId, 'task2-admin')
     const auditsBefore = await db.installationAuditEvent.count({ where: { orderId } })
+    const snapshotsBefore = await db.installationOrderFormSnapshot.count({ where: { orderId } })
 
     const mutations = [
       () => createInstallationRoom(db, orderId, { name: 'Niedozwolony pokój' }, 'task2-admin'),
@@ -126,11 +135,13 @@ describe('Task 2 corrective service invariants on real SQLite', () => {
       () => addInstallationMeasurement(db, room.id, { elementName: 'Niedozwolony pomiar', value: '1', unit: 'CM', source: 'EMPLOYEE' }, measurementActor),
       () => updateInstallationMeasurement(db, measurement.id, { value: '251' }, measurementActor),
       () => deleteInstallationMeasurement(db, measurement.id, measurementActor),
+      () => createInstallationOrderFormSnapshot(db, { orderId, templateId: publishedForm.id }, 'task2-admin'),
     ]
 
     for (const mutate of mutations) await expect(mutate()).rejects.toMatchObject({ fieldErrors: expect.objectContaining({ orderId: expect.any(String) }) })
 
     expect(await db.installationAuditEvent.count({ where: { orderId } })).toBe(auditsBefore)
+    expect(await db.installationOrderFormSnapshot.count({ where: { orderId } })).toBe(snapshotsBefore)
     expect(await db.installationRoom.findUniqueOrThrow({ where: { id: room.id } })).toMatchObject({ name: 'Archiwalny salon' })
     expect(await db.installationScope.findUniqueOrThrow({ where: { id: scope.id } })).toMatchObject({ name: 'Archiwalna ściana' })
     expect(await db.installationScopeProduct.findUniqueOrThrow({ where: { id: scopeProduct.id } })).toMatchObject({ scopeId: scope.id })

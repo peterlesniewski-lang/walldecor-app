@@ -7,6 +7,7 @@ import { Archive, ArrowLeft, MapPin, UsersRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { InstallationOrderForm, type InstallationEmployeeOption, type InstallationOrderFormValue } from './order-form'
 import { RoomScopeEditor } from './room-scope-editor'
+import { InstallationFormSnapshotPanel } from './form-snapshot-panel'
 
 type InstallationOrderDetailValue = InstallationOrderFormValue & {
   number: string
@@ -23,6 +24,8 @@ export function InstallationOrderDetail({
   canArchive = false,
   rooms = [],
   catalog = [],
+  publishedTemplates = [],
+  formSnapshot = null,
 }: {
   order: InstallationOrderDetailValue
   employees: InstallationEmployeeOption[]
@@ -30,11 +33,14 @@ export function InstallationOrderDetail({
   canArchive?: boolean
   rooms?: Parameters<typeof RoomScopeEditor>[0]['initialRooms']
   catalog?: Parameters<typeof RoomScopeEditor>[0]['catalog']
+  publishedTemplates?: Parameters<typeof InstallationFormSnapshotPanel>[0]['publishedTemplates']
+  formSnapshot?: Parameters<typeof InstallationFormSnapshotPanel>[0]['initialSnapshot']
 }) {
   const router = useRouter()
   const [archiving, setArchiving] = useState(false)
   const [error, setError] = useState('')
-  const canEditActiveOrder = canEdit && !order.archivedAt && order.status !== 'ARCHIVED'
+  const isArchived = Boolean(order.archivedAt) || order.status === 'ARCHIVED'
+  const canEditActiveOrder = canEdit && !isArchived
 
   async function archive() {
     setArchiving(true)
@@ -64,7 +70,7 @@ export function InstallationOrderDetail({
           <p className="num mt-5 text-xs font-bold tracking-wide" style={{ color: '#8C5718' }}>{order.number}</p>
           <h1 className="mt-1 text-3xl font-extrabold tracking-tight" style={{ color: 'var(--wd-dark)' }}>{order.client.name}</h1>
         </div>
-        {canArchive && !order.archivedAt && (
+        {canArchive && !isArchived && (
           <Button type="button" variant="outline" onClick={archive} disabled={archiving} className="min-h-11 border-red-200 text-red-800 hover:bg-red-50">
             <Archive /> {archiving ? 'Archiwizowanie…' : 'Archiwizuj zlecenie'}
           </Button>
@@ -83,13 +89,14 @@ export function InstallationOrderDetail({
         </div>
       </div>
 
-      {order.archivedAt ? (
+      {isArchived ? (
         <p className="rounded-xl border px-4 py-3 text-sm font-medium" style={{ background: 'var(--wd-sand-light)', borderColor: 'rgba(30, 30, 30, 0.12)', color: 'var(--wd-dark)' }}>
           Karta jest zarchiwizowana. Historia i odpowiedzialność pozostają zachowane.
         </p>
       ) : canEditActiveOrder ? (
         <InstallationOrderForm mode="edit" order={order} employees={employees} />
       ) : null}
+      <InstallationFormSnapshotPanel orderId={order.id} publishedTemplates={publishedTemplates} initialSnapshot={formSnapshot} canEdit={canEditActiveOrder} isArchived={isArchived} />
       <RoomScopeEditor orderId={order.id} initialRooms={rooms} catalog={catalog} canEdit={canEditActiveOrder} />
       {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
     </div>

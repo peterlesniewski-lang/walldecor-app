@@ -139,3 +139,63 @@ Próby Prisma są jawne i nie używają wrappera ani ręcznego `sqlite3` jako
 zamiennika: #1 direct i #2 npx były czerwone, #3 direct z `RUST_LOG=debug` i
 #4 npx z `RUST_LOG=debug` są niezależnymi zielonymi świeżymi bazami. Nie
 zmieniono entrypointu ani wcześniejszych migracji.
+
+## Corrective loop Task 2 — dostępny snapshot formularza i historia kolekcji
+
+### RED
+
+1. Świeży test SQLite wywołał bezpośrednio
+   `createInstallationOrderFormSnapshot()` po archiwizacji karty. Poprzednio
+   rekord snapshotu został zapisany zamiast odrzucenia i zerowej zmiany
+   snapshot/audit.
+2. Druga próba snapshotu na aktywnej karcie kończyła się ogólną kolizją
+   unikalności `name`, zamiast jednoznacznym błędem `orderId` dla już
+   niezmiennej instancji.
+3. Detail nie renderował panelu snapshotu: brakowało wyboru opublikowanej
+   wersji, stanu po przypięciu i stanu read-only archiwum. `RoomScopeEditor`
+   nie pokazywał zapisanego `collectionSnapshot`.
+4. Nowy E2E wymagał kliknięcia panelu przez opiekuna, zmiany nazwy produktu
+   przez panel katalogu oraz kontroli snapshotu name + collection po rename i
+   archive. Przed poprawką nie mógł znaleźć kontrolki wyboru formularza.
+
+### GREEN
+
+- `createInstallationOrderFormSnapshot()` korzysta z tego samego fail-closed
+  `assertActiveInstallationOrder()` co mutacje room/scope/measurement. Przed
+  insertem sprawdza również istniejący snapshot i przy kolizji wyścigu zwraca
+  ten sam jawny błąd `orderId`. Karta ma dokładnie jedną niezmienną instancję;
+  Task 3 może odczytać ją przez `getInstallationOrderFormSnapshot()`.
+- Detail pobiera wyłącznie opublikowane wersje, prawdziwy snapshot i przekazuje
+  je do panelu. Uprawniony opiekun/zastępca/delegat/admin/manager wybiera
+  wersję, wysyła wyłącznie `templateId` do istniejącego autoryzowanego API i
+  natychmiast widzi niezmienną nazwę, wersję oraz listę pytań. Panel ma stany
+  empty/loading/error/disabled/focus; archiwum nie renderuje aktywnej kontrolki.
+- `RoomScopeEditor` pokazuje `collectionSnapshot` obok historycznych
+  name/code/manufacturer. Integracja, HTTP readback i E2E dowodzą, że po
+  rename/archive katalogu pozostają stare `Misty Grey`, `MG-01`, `WallDecor`
+  i `Kolekcja: Misty`.
+- E2E zachowuje dwa pokoje i różne produkty; tworzy snapshot przez UI, zmienia
+  `Misty Grey` przez kontrolkę edycji katalogu (PATCH UI), znajduje nową nazwę
+  w aktywnym selektorze, a po archiwizacji dowodzi braku produktu w nowym
+  zakresie. Historyczny scope nadal pokazuje pierwotny snapshot.
+- Formalny blocker E2E z wcześniejszej sekcji dotyczył wyłącznie niejednoznacznej
+  ostatniej asercji selektora. Został zastąpiony ścisłą kontrolą opcji i bieżący
+  scenariusz kończy się GREEN; nie osłabiono wcześniejszych kroków.
+
+### Świeże bramki korekty
+
+| Bramka | Wynik |
+| --- | --- |
+| RED → targeted serwis/UI/route | 5 czerwonych asercji odtwarzających cztery luki; potem 4 pliki / 12/12 GREEN |
+| targeted Task 2 + installation | 11 plików / 80 testów, exit 0 |
+| `npm test` | 62 pliki / 358 testów, exit 0 |
+| `npm run build` | exit 0; TypeScript i 133 route'ów |
+| `node scripts/validate-installation-catalog.mjs` | exit 0; realny HTTP snapshot, zakaz zastąpienia immutable snapshotu, SSR panelu i collection readback |
+| `npm run test:e2e -- e2e/installations-catalog.spec.ts` | 1/1, exit 0 (14.7 s) |
+| fresh direct `node ./node_modules/prisma/build/index.js migrate deploy` | 20/20 migracji, nowa `/private/tmp` SQLite, exit 0 |
+| fresh `npx prisma migrate deploy` | 20/20 migracji, druga nowa `/private/tmp` SQLite, exit 0 |
+| `foreign_key_check` + `integrity_check` dla obu fresh DB | pusto + `ok` |
+
+W tym loopie nie zmieniono migracji ani entrypointu. Dwa realne `migrate
+deploy` są osobnymi zielonymi próbami; `sqlite3` służył wyłącznie do kontroli
+FK/integrity po sukcesie Prisma, nie jako substytut migracji.

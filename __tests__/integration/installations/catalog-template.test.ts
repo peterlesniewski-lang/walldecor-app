@@ -129,6 +129,10 @@ describe('installation catalog, templates and room history use real SQLite', () 
     const publishedV1 = await publishInstallationFormTemplate(db, draft.id, 'catalog-admin')
     const snapshot = await createInstallationOrderFormSnapshot(db, { orderId, templateId: publishedV1.id }, 'catalog-admin')
 
+    await expect(createInstallationOrderFormSnapshot(db, { orderId, templateId: publishedV1.id }, 'catalog-admin'))
+      .rejects.toMatchObject({ fieldErrors: expect.objectContaining({ orderId: expect.any(String) }) })
+    expect(await db.installationOrderFormSnapshot.count({ where: { orderId } })).toBe(1)
+
     const draftV2 = await createNextInstallationFormTemplateDraft(db, publishedV1.id, 'catalog-admin')
     await updateInstallationFormTemplateDraft(db, draftV2.id, {
       name: 'Wywiad o glifach v2',
@@ -155,7 +159,7 @@ describe('installation catalog, templates and room history use real SQLite', () 
 
     const activeCategory = await createCatalogCategory(db, { name: 'Sztukateria' })
     const activeType = await createCatalogType(db, { categoryId: activeCategory.id, name: 'Profil' })
-    const activeProduct = await createCatalogProduct(db, { typeId: activeType.id, name: 'Profil P-10', code: 'P-10', manufacturer: 'WallDecor' })
+    const activeProduct = await createCatalogProduct(db, { typeId: activeType.id, name: 'Profil P-10', code: 'P-10', manufacturer: 'WallDecor', collection: 'Profil klasyczny' })
     const scopeProduct = await addInstallationScopeProduct(db, renamedScope.id, { catalogProductId: activeProduct.id }, 'catalog-manager')
     await updateCatalogProduct(db, activeProduct.id, { name: 'Profil P-10 po zmianie', code: 'P-10-NEW' })
     await archiveCatalogProduct(db, activeProduct.id)
@@ -183,6 +187,7 @@ describe('installation catalog, templates and room history use real SQLite', () 
             productNameSnapshot: 'Profil P-10',
             productCodeSnapshot: 'P-10',
             manufacturerSnapshot: 'WallDecor',
+            collectionSnapshot: 'Profil klasyczny',
           })],
         })],
       }),

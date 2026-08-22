@@ -9,7 +9,7 @@ import {
 } from '@/lib/installations/access'
 import { INSTALLATION_ROLES, type InstallationRole } from '@/lib/installations/constants'
 import { getInstallationOrder } from '@/lib/installations/order-service'
-import { getInstallationOrderRooms, listInstallationCatalog } from '@/lib/installations/catalog-service'
+import { getInstallationOrderFormSnapshot, getInstallationOrderRooms, listInstallationCatalog, listInstallationFormTemplates } from '@/lib/installations/catalog-service'
 import { InstallationOrderDetail } from '@/components/installations/order-detail'
 
 type Params = { params: Promise<{ id: string }> }
@@ -35,7 +35,7 @@ export default async function InstallationOrderPage({ params }: Params) {
   }
   if (!canViewInstallationOrder(viewer, order)) notFound()
 
-  const [employees, rooms, catalog] = await Promise.all([
+  const [employees, rooms, catalog, templates, formSnapshot] = await Promise.all([
     prisma.employee.findMany({
     where: { active: true },
     select: { id: true, firstName: true, lastName: true },
@@ -43,6 +43,8 @@ export default async function InstallationOrderPage({ params }: Params) {
     }),
     getInstallationOrderRooms(prisma, id),
     listInstallationCatalog(prisma),
+    listInstallationFormTemplates(prisma),
+    getInstallationOrderFormSnapshot(prisma, id),
   ])
 
   return <InstallationOrderDetail
@@ -52,5 +54,7 @@ export default async function InstallationOrderPage({ params }: Params) {
     canArchive={canArchiveInstallationOrder(viewer, order)}
     rooms={rooms}
     catalog={catalog}
+    publishedTemplates={templates.filter((template) => template.status === 'PUBLISHED').map(({ id: templateId, name, version }) => ({ id: templateId, name, version }))}
+    formSnapshot={formSnapshot}
   />
 }
