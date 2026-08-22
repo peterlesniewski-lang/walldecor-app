@@ -153,12 +153,15 @@ test('admin sends an anonymous client link through autosave, clarification and i
   const expiredToken = randomBytes(32).toString('base64url')
   await db.installationClientLink.create({ data: { orderId, createdById: 'e2e', tokenHash: createHash('sha256').update(expiredToken).digest('hex'), expiresAt: new Date('2020-01-01') } })
   const unavailableBodies: string[] = []
-  for (const [index, pathName] of [new URL(clientUrl!).pathname, `/m/${expiredToken}`, `/m/${randomBytes(32).toString('base64url')}`].entries()) {
+  for (const [index, pathName] of [new URL(clientUrl!).pathname, `/m/${expiredToken}`, `/m/${randomBytes(32).toString('base64url')}`, '/m/not-a-token'].entries()) {
     // A unique query bypasses the browser document cache. The public page must
     // still take its server-side notFound branch for every unavailable token.
     const response = await client.goto(`${pathName}?unavailable=${index}`)
+    const body = await client.locator('body').innerText()
     expect(response?.status()).toBe(404)
-    unavailableBodies.push(await client.locator('body').innerText())
+    expect(body).toContain('Nie znaleziono strony')
+    for (const forbidden of ['Marta E2E', 'marta.e2e@example.test', 'Anna Opiekun', 'Puławska', 'revoked', 'expired', 'token']) expect(body).not.toContain(forbidden)
+    unavailableBodies.push(body)
   }
   expect(new Set(unavailableBodies).size).toBe(1)
   await clientContext.close()
