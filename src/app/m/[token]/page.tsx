@@ -13,13 +13,14 @@ export const dynamic = 'force-dynamic'
 
 export default async function ClientInstallationPage({ params }: Params) {
   const { token } = await params
+  let projection: Awaited<ReturnType<typeof loadPublicInstallationProjection>>
   try {
-    const projection = await loadPublicInstallationProjection(prisma, token)
-    return <div className={`${display.variable} ${sans.variable}`}>
-      <ClientInstallationForm token={token} initialProjection={projection as ClientFormProjection} />
-    </div>
+    projection = await loadPublicInstallationProjection(prisma, token)
   } catch (error) {
     if (error instanceof InstallationClientLinkNotFoundError) notFound()
     throw error
   }
+  return <div className={`${display.variable} ${sans.variable}`}>
+    <ClientInstallationForm token={token} initialProjection={projection as ClientFormProjection} />
+  </div>
 }

@@ -12,7 +12,8 @@ const autosaveSchema = z.object({
   clientMutationId: z.string().trim().min(12).max(160),
   answers: z.array(z.object({
     questionKey: z.string().trim().min(1).max(160),
-    value: z.union([z.string(), z.array(z.string())]),
+    // null means an intentional clear of an optional visible answer.
+    value: z.union([z.string(), z.array(z.string()), z.null()]),
   }).strict()).max(100),
 }).strict()
 const noStore = { 'Cache-Control': 'no-store' }

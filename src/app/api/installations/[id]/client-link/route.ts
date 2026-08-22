@@ -8,6 +8,7 @@ import {
   createClientLink,
   extendClientLink,
   InstallationClientLinkNotFoundError,
+  InstallationClientLinkPrerequisiteError,
   InstallationClientLinkValidationError,
   revokeClientLink,
 } from '@/lib/installations/client-link'
@@ -56,6 +57,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       url: new URL(`/m/${created.token}`, req.nextUrl.origin).toString(),
     }, { status: 201, headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
+    if (error instanceof InstallationClientLinkPrerequisiteError) return NextResponse.json({ error: 'Najpierw przypnij dokładnie jeden formularz klienta do zlecenia.' }, { status: 409 })
     if (error instanceof InstallationClientLinkValidationError) return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: 400 })
     if (error instanceof SyntaxError) return NextResponse.json({ error: 'Podaj poprawną datę wygaśnięcia.' }, { status: 400 })
     throw error
@@ -81,6 +83,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       url: new URL(`/m/${created.token}`, req.nextUrl.origin).toString(),
     }, { status: 201, headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
+    if (error instanceof InstallationClientLinkPrerequisiteError) return NextResponse.json({ error: 'Najpierw przypnij dokładnie jeden formularz klienta do zlecenia.' }, { status: 409 })
     if (error instanceof InstallationClientLinkNotFoundError) return NextResponse.json({ error: 'Nie znaleziono linku.' }, { status: 404 })
     if (error instanceof InstallationClientLinkValidationError) return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: 400 })
     if (error instanceof SyntaxError) return NextResponse.json({ error: 'Działanie dla linku jest niepoprawne.' }, { status: 400 })

@@ -39,6 +39,29 @@ describe('Task 2 corrective UI invariants', () => {
     expect(screen.queryByLabelText('Wersja formularza dla zlecenia')).toBeNull()
   })
 
+  it('does not render client answers, evidence or link controls for a non-coordinator detail view', () => {
+    render(createElement(InstallationOrderDetail, {
+      order: { ...archivedOrder, id: 'installer-order', archivedAt: null, status: 'NEW' },
+      employees: [],
+      canEdit: false,
+      rooms,
+      catalog,
+      clientLinks: [{ id: 'private-link', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-08-22T12:00:00.000Z', lastOpenedAt: null }],
+      clarifications: [{
+        id: 'private-clarification', status: 'OPEN', isBlocking: true, questionKey: 'glify',
+        reason: 'Klient wskazał odpowiedź.', revisionNumber: 1, answer: 'UNKNOWN',
+        createdAt: '2026-08-22T12:00:00.000Z', resolution: null, resolutionNote: null, evidenceReference: 'wewnętrzny-dowód',
+      }],
+      readiness: { isReady: false, openBlockingCount: 1, submittedCount: 1 },
+      formRevisions: [{ revisionNumber: 1, status: 'SUBMITTED', submittedAt: '2026-08-22T12:00:00.000Z', answers: [{ questionKey: 'glify', normalizedValue: 'UNKNOWN', isUnknown: true }] }],
+    } as never))
+
+    expect(screen.queryByText('Bezpieczny link do przygotowania montażu')).toBeNull()
+    expect(screen.queryByText('Wymaga ustalenia przed terminem montażu')).toBeNull()
+    expect(screen.queryByText('wewnętrzny-dowód')).toBeNull()
+    expect(screen.queryByText('Wersje odpowiedzi klienta')).toBeNull()
+  })
+
   it('lets an authorized editor pin exactly one published form snapshot from the order detail', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.fn().mockResolvedValue({

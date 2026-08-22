@@ -42,6 +42,14 @@ export class InstallationClientLinkValidationError extends Error {
   }
 }
 
+/** An internal generation prerequisite; it is never exposed on a public link path. */
+export class InstallationClientLinkPrerequisiteError extends Error {
+  constructor() {
+    super('Przed utworzeniem linku przypnij dokładnie jeden formularz klienta.')
+    this.name = 'InstallationClientLinkPrerequisiteError'
+  }
+}
+
 type PublicSubmission = {
   status: 'DRAFT' | 'SUBMITTED'
   revisionNumber: number
@@ -54,7 +62,7 @@ function dateInFuture(value: Date) {
   return Number.isFinite(value.getTime()) && value.getTime() > Date.now()
 }
 
-async function getActiveOrderSnapshot(db: InstallationDb, orderId: string) {
+async function getActiveOrderSnapshot(db: InstallationDb, orderId: string, forLinkGeneration = false) {
   const order = await db.installationOrder.findUnique({
     where: { id: orderId },
     include: {
@@ -82,7 +90,11 @@ async function getActiveOrderSnapshot(db: InstallationDb, orderId: string) {
       },
     },
   })
-  if (!order || order.archivedAt || order.status === 'ARCHIVED' || order.formSnapshots.length !== 1) {
+  if (!order || order.archivedAt || order.status === 'ARCHIVED') {
+    throw new InstallationClientLinkNotFoundError()
+  }
+  if (order.formSnapshots.length !== 1) {
+    if (forLinkGeneration) throw new InstallationClientLinkPrerequisiteError()
     throw new InstallationClientLinkNotFoundError()
   }
   return order
@@ -100,7 +112,7 @@ export async function createClientLink(
   const tokenHash = hashClientLinkSecret(token)
   const now = new Date()
   const link = await db.$transaction(async (tx) => {
-    await getActiveOrderSnapshot(tx, input.orderId)
+    await getActiveOrderSnapshot(tx, input.orderId, true)
     await tx.installationClientLink.updateMany({
       where: { orderId: input.orderId, revokedAt: null, expiresAt: { gt: now } },
       data: { revokedAt: now },

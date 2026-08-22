@@ -69,6 +69,8 @@ test('admin sends an anonymous client link through autosave, clarification and i
   await page.getByRole('button', { name: 'Utwórz kartę' }).click()
   await expect(page).not.toHaveURL(/\/installations\/new$/)
   const orderId = page.url().split('/').at(-1)!
+  await expect(page.getByText('Najpierw przypnij dokładnie jeden formularz klienta do zlecenia.')).toBeVisible()
+  await expect(page.getByRole('button', { name: 'Wygeneruj link' })).toBeDisabled()
 
   const setup = await page.evaluate(async ({ orderId, templateId }) => {
     const room = await fetch(`/api/installations/${orderId}/rooms`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Salon' }) })

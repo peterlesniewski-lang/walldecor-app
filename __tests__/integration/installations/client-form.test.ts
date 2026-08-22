@@ -71,6 +71,12 @@ beforeAll(async () => {
       { key: 'glify', type: 'YES_NO_UNKNOWN', label: 'Czy są glify?', required: true, riskLevel: 'HIGH' },
       { key: 'glify-cm', type: 'DIMENSION', label: 'Ile cm ma glif?', required: true, condition: { questionKey: 'glify', equals: 'YES' } },
       { key: 'kolor', type: 'SINGLE', label: 'Kolor ściany', required: true, options: ['biały', 'beżowy'] },
+      { key: 'opis', type: 'TEXT', label: 'Opis dodatkowy' },
+      { key: 'liczba', type: 'NUMBER', label: 'Liczba dodatkowa' },
+      { key: 'wymiar', type: 'DIMENSION', label: 'Wymiar dodatkowy' },
+      { key: 'wariant', type: 'SINGLE', label: 'Wariant dodatkowy', options: ['A', 'B'] },
+      { key: 'wykonczenie', type: 'MULTI', label: 'Wykończenie dodatkowe', options: ['mat', 'satyna'] },
+      { key: 'pytanie-opcjonalne', type: 'YES_NO_UNKNOWN', label: 'Opcjonalne pytanie' },
       { key: 'referencja', type: 'FILE', label: 'Zdjęcie referencyjne', required: true },
     ],
   })
@@ -169,6 +175,48 @@ describe('client form uses a real SQLite revision history', () => {
     expect(originalAnswer).toEqual([{ normalizedValue: 'UNKNOWN' }])
   })
 
+  it('deletes deliberately cleared optional answers of every supported input kind before submit', async () => {
+    const correction = await startClientFormCorrection(db, linkToken)
+    const filled = await autosaveClientForm(db, linkToken, {
+      revisionNumber: correction.revisionNumber,
+      draftVersion: correction.draftVersion,
+      clientMutationId: 'optional-fill-0001',
+      answers: [
+        { questionKey: 'opis', value: 'Przy oknie' },
+        { questionKey: 'liczba', value: '4,50' },
+        { questionKey: 'wymiar', value: '12.0' },
+        { questionKey: 'wariant', value: 'A' },
+        { questionKey: 'wykonczenie', value: ['mat', 'satyna'] },
+        { questionKey: 'pytanie-opcjonalne', value: 'NO' },
+      ],
+    })
+    expect(filled.answers.map((answer) => answer.questionKey)).toEqual(expect.arrayContaining([
+      'opis', 'liczba', 'wymiar', 'wariant', 'wykonczenie', 'pytanie-opcjonalne',
+    ]))
+
+    const cleared = await autosaveClientForm(db, linkToken, {
+      revisionNumber: correction.revisionNumber,
+      draftVersion: filled.draftVersion,
+      clientMutationId: 'optional-clear-0001',
+      answers: [
+        { questionKey: 'opis', value: null },
+        { questionKey: 'liczba', value: null },
+        { questionKey: 'wymiar', value: null },
+        { questionKey: 'wariant', value: null },
+        { questionKey: 'wykonczenie', value: [] },
+        { questionKey: 'pytanie-opcjonalne', value: null },
+      ],
+    })
+    expect(cleared.answers.map((answer) => answer.questionKey)).not.toEqual(expect.arrayContaining([
+      'opis', 'liczba', 'wymiar', 'wariant', 'wykonczenie', 'pytanie-opcjonalne',
+    ]))
+    await expect(submitClientForm(db, linkToken, {
+      revisionNumber: correction.revisionNumber,
+      draftVersion: cleared.draftVersion,
+      clientMutationId: 'optional-clear-submit-0001',
+    })).resolves.toMatchObject({ status: 'SUBMITTED' })
+  })
+
   it('never replays a previously accepted autosave or submit after its link is revoked', async () => {
     const correction = await startClientFormCorrection(db, linkToken)
     const autosaveRequest = {
@@ -210,5 +258,47 @@ describe('client form uses a real SQLite revision history', () => {
       valueJson: JSON.stringify({ type: 'TEXT', value: 'late' }), normalizedValue: 'late',
     } })).rejects.toBeTruthy()
     expect(await db.installationAnswer.count({ where: { submissionId: submitted.id } })).toBe(before)
+  })
+
+  it('rejects every direct mutation and deletion of a submitted revision while drafts remain writable', async () => {
+    const [submitted, correction] = await Promise.all([
+      db.installationFormSubmission.findFirstOrThrow({ where: { orderId, status: 'SUBMITTED', revisionNumber: 1 } }),
+      db.installationFormSubmission.findFirstOrThrow({ where: { orderId, status: 'SUBMITTED', revisionNumber: 2 } }),
+    ])
+    const rollback = new Error('ROLLBACK_SUBMITTED_PARENT_GUARD')
+
+    await expect(db.$transaction(async (tx) => {
+      for (const data of [
+        { status: 'DRAFT' },
+        { revisionOfId: null },
+        { revisionNumber: { increment: 100 } },
+        { draftVersion: { increment: 1 } },
+        { submittedAt: new Date('2026-08-22T12:00:00.000Z') },
+      ]) {
+        await expect(tx.installationFormSubmission.update({ where: { id: correction.id }, data })).rejects.toBeTruthy()
+      }
+      await expect(tx.$executeRawUnsafe(
+        'UPDATE "InstallationFormSubmission" SET "draftVersion" = "draftVersion" + 1 WHERE "id" = ?', correction.id,
+      )).rejects.toBeTruthy()
+      const disposable = await tx.installationFormSubmission.create({ data: {
+        orderId: submitted.orderId,
+        formSnapshotId: submitted.formSnapshotId,
+        revisionNumber: 99,
+        status: 'SUBMITTED',
+        submittedAt: new Date(),
+      } })
+      await expect(tx.installationFormSubmission.delete({ where: { id: disposable.id } })).rejects.toBeTruthy()
+      throw rollback
+    })).rejects.toBe(rollback)
+
+    const draft = await db.installationFormSubmission.create({ data: {
+      orderId: submitted.orderId,
+      formSnapshotId: submitted.formSnapshotId,
+      revisionNumber: 100,
+      status: 'DRAFT',
+      draftKey: `${submitted.orderId}-guard-draft`,
+    } })
+    await expect(db.installationFormSubmission.update({ where: { id: draft.id }, data: { draftVersion: 1 } })).resolves.toMatchObject({ draftVersion: 1 })
+    await expect(db.installationFormSubmission.delete({ where: { id: draft.id } })).resolves.toMatchObject({ id: draft.id })
   })
 })

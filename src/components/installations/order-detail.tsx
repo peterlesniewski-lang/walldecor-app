@@ -108,8 +108,8 @@ export function InstallationOrderDetail({
       ) : null}
       <InstallationFormSnapshotPanel orderId={order.id} publishedTemplates={publishedTemplates} initialSnapshot={formSnapshot} canEdit={canEditActiveOrder} isArchived={isArchived} />
       <RoomScopeEditor orderId={order.id} initialRooms={rooms} catalog={catalog} canEdit={canEditActiveOrder} />
-      <ClientLinkPanel orderId={order.id} initialLinks={clientLinks} canEdit={canEditActiveOrder} />
-      <InstallationClarificationPanel orderId={order.id} clarifications={clarifications} readiness={readiness} canEdit={canEditActiveOrder} formRevisions={formRevisions} />
+      {canEditActiveOrder && <ClientLinkPanel orderId={order.id} initialLinks={clientLinks} canEdit canGenerate={formSnapshot !== null} />}
+      {canEditActiveOrder && <InstallationClarificationPanel orderId={order.id} clarifications={clarifications} readiness={readiness} canEdit formRevisions={formRevisions} />}
       {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
     </div>
   )

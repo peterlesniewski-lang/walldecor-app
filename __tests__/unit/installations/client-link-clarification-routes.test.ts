@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   listLinks: vi.fn(),
   listClarifications: vi.fn(),
   resolveClarification: vi.fn(),
+  MissingSnapshot: function InstallationClientLinkPrerequisiteError(this: object) {},
 }))
 
 vi.mock('next-auth', () => ({ getServerSession: vi.fn(async () => mocks.session) }))
@@ -27,6 +28,7 @@ vi.mock('@/lib/installations/client-link', () => ({
   revokeClientLink: mocks.revokeLink,
   listClientLinkStatuses: mocks.listLinks,
   InstallationClientLinkNotFoundError: class InstallationClientLinkNotFoundError extends Error {},
+  InstallationClientLinkPrerequisiteError: mocks.MissingSnapshot,
   InstallationClientLinkValidationError: class InstallationClientLinkValidationError extends Error { fieldErrors = { form: 'bad' } },
 }))
 vi.mock('@/lib/installations/form-service', () => ({
@@ -79,6 +81,18 @@ describe('client-link and clarification internal routes', () => {
     expect(result.link).not.toHaveProperty('tokenHash')
   })
 
+  it('returns a deliberate Polish conflict instead of a server error when no single form snapshot is pinned', async () => {
+    mocks.session = { user: { id: 'owner-user', role: 'EMPLOYEE', employeeId: 'owner-employee' } }
+    mocks.createLink.mockRejectedValueOnce(new mocks.MissingSnapshot())
+
+    const response = await POST(new NextRequest('http://test/api/installations/order-1/client-link', {
+      method: 'POST', body: JSON.stringify({ expiresAt: '2027-01-01T00:00:00.000Z' }),
+    }), orderParams)
+
+    expect(response.status).toBe(409)
+    expect((await response.json()).error).toMatch(/dokładnie jeden formularz/i)
+  })
+
   it('limits revoke/extend and clarification resolution to editors while leaving listing read-only', async () => {
     mocks.session = { user: { id: 'owner-user', role: 'EMPLOYEE', employeeId: 'owner-employee' } }
     const revocation = await PATCH(new NextRequest('http://test/api/installations/order-1/client-link', { method: 'PATCH', body: JSON.stringify({ action: 'REVOKE', linkId: 'link-1' }) }), orderParams)
@@ -91,5 +105,17 @@ describe('client-link and clarification internal routes', () => {
 
     const listing = await listClarifications(new NextRequest('http://test/api/installations/order-1/clarifications'), orderParams)
     expect(listing.status).toBe(200)
+  })
+
+  it('never discloses client answers or clarification evidence to an assigned installer', async () => {
+    mocks.session = { user: { id: 'installer-user', role: 'INSTALLER', employeeId: 'installer-employee' } }
+    mocks.editable.mockResolvedValue({ response: new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 }) })
+
+    const listing = await listClarifications(new NextRequest('http://test/api/installations/order-1/clarifications'), orderParams)
+
+    expect(listing.status).toBe(403)
+    expect(await listing.json()).toEqual({ error: 'Forbidden' })
+    expect(mocks.listClarifications).not.toHaveBeenCalled()
+    expect(mocks.editable).toHaveBeenCalled()
   })
 })

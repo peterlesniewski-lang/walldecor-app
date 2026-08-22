@@ -46,6 +46,7 @@ try {
       { key: 'glify', type: 'YES_NO_UNKNOWN', label: 'Czy są glify?', required: true, riskLevel: 'HIGH', sortOrder: 0 },
       { key: 'glify-cm', type: 'DIMENSION', label: 'Ile cm ma glif?', required: true, conditionJson: JSON.stringify({ questionKey: 'glify', equals: 'YES' }), sortOrder: 1 },
       { key: 'kolor', type: 'SINGLE', label: 'Kolor ściany', optionsJson: JSON.stringify(['biały', 'beżowy']), sortOrder: 2 },
+      { key: 'opis', type: 'TEXT', label: 'Opis dodatkowy', sortOrder: 3 },
     ] },
   } })
   console.log(JSON.stringify({ primaryEmployeeId: primary.id, backupEmployeeId: backup.id, templateId: template.id }))
@@ -158,6 +159,11 @@ try {
   } catch { lateInsertBlocked = true }
   const answersAfterLateInsert = await db.installationAnswer.count({ where: { submissionId: immutableSubmission.id } })
   if (!lateInsertBlocked || answersAfterLateInsert !== answersBeforeLateInsert) throw new Error('SUBMITTED_ANSWER_INSERT_GUARD_FAILED')
+  let submittedRevisionUpdateBlocked = false
+  let submittedRevisionDeleteBlocked = false
+  try { await db.$executeRawUnsafe('UPDATE "InstallationFormSubmission" SET "draftVersion" = "draftVersion" + 1 WHERE "id" = ?', immutableSubmission.id) } catch { submittedRevisionUpdateBlocked = true }
+  try { await db.installationFormSubmission.delete({ where: { id: immutableSubmission.id } }) } catch { submittedRevisionDeleteBlocked = true }
+  if (!submittedRevisionUpdateBlocked || !submittedRevisionDeleteBlocked || (await db.installationAnswer.count({ where: { submissionId: immutableSubmission.id } })) !== answersBeforeLateInsert) throw new Error('SUBMITTED_REVISION_GUARD_FAILED')
   if (!submissions[0].answers.some((answer) => answer.questionKey === 'glify' && answer.isUnknown) || !submissions[1].answers.some((answer) => answer.questionKey === 'glify-cm' && answer.normalizedValue === '12.5')) throw new Error('ANSWER_READBACK_FAILED')
   if (clarifications.length !== 1 || clarifications[0].status !== 'RESOLVED' || !clarifications[0].resolvedAt || !clarifications[0].isBlocking) throw new Error('READINESS_CLARIFICATION_READBACK_FAILED')
   if (foreignKeys.length !== 0 || integrity[0]?.integrity_check !== 'ok') throw new Error('SQLITE_INTEGRITY_FAILED')
@@ -208,15 +214,22 @@ try {
   expectStatus(autosave, 200, 'Public autosave'); const saved = await autosave.json()
   const replay = await fetch(`${baseUrl}/api/public/installations/${token}/autosave`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mutation) })
   expectStatus(replay, 200, 'Idempotent autosave replay')
-  if (JSON.stringify(saved) !== JSON.stringify(await replay.json())) throw new Error('AUTOSAVE_REPLAY_FAILED')
-  const malformed = await fetch(`${baseUrl}/api/public/installations/${token}/autosave`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify([]) })
+ if (JSON.stringify(saved) !== JSON.stringify(await replay.json())) throw new Error('AUTOSAVE_REPLAY_FAILED')
+  const optionalFill = await fetch(`${baseUrl}/api/public/installations/${token}/autosave`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revisionNumber: saved.revisionNumber, draftVersion: saved.draftVersion, clientMutationId: 'validator-optional-fill-01', answers: [{ questionKey: 'opis', value: 'Przy oknie' }] }) })
+  expectStatus(optionalFill, 200, 'Optional answer autosave')
+  const optionalFilled = await optionalFill.json()
+  const optionalClear = await fetch(`${baseUrl}/api/public/installations/${token}/autosave`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ revisionNumber: optionalFilled.revisionNumber, draftVersion: optionalFilled.draftVersion, clientMutationId: 'validator-optional-clear-01', answers: [{ questionKey: 'opis', value: null }] }) })
+  expectStatus(optionalClear, 200, 'Optional answer clear')
+  const savedAfterClear = await optionalClear.json()
+  if (savedAfterClear.answers.some((answer) => answer.questionKey === 'opis')) throw new Error('OPTIONAL_CLEAR_READBACK_FAILED')
+ const malformed = await fetch(`${baseUrl}/api/public/installations/${token}/autosave`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify([]) })
   expectStatus(malformed, 400, 'Strict public autosave plain-object validation')
 
   await stopServer(running, port); running = startServer(port); await waitForServer(baseUrl, running)
   const afterRestart = await fetch(`${baseUrl}/api/public/installations/${token}`); expectStatus(afterRestart, 200, 'Public draft after server restart')
   const restartedProjection = await afterRestart.json()
-  if (restartedProjection.submission.draftVersion !== saved.draftVersion || !restartedProjection.submission.answers.some((answer) => answer.questionKey === 'glify' && answer.value === 'UNKNOWN')) throw new Error('AUTOSAVE_RESTART_READBACK_FAILED')
-  const submitPayload = { revisionNumber: saved.revisionNumber, draftVersion: saved.draftVersion, clientMutationId: 'validator-submit-0001' }
+  if (restartedProjection.submission.draftVersion !== savedAfterClear.draftVersion || !restartedProjection.submission.answers.some((answer) => answer.questionKey === 'glify' && answer.value === 'UNKNOWN') || restartedProjection.submission.answers.some((answer) => answer.questionKey === 'opis')) throw new Error('AUTOSAVE_RESTART_READBACK_FAILED')
+  const submitPayload = { revisionNumber: savedAfterClear.revisionNumber, draftVersion: savedAfterClear.draftVersion, clientMutationId: 'validator-submit-0001' }
   const [firstSubmit, secondSubmit] = await Promise.all([1, 2].map(() => fetch(`${baseUrl}/api/public/installations/${token}/submit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(submitPayload) })))
   expectStatus(firstSubmit, 200, 'Concurrent public submit first'); expectStatus(secondSubmit, 200, 'Concurrent public submit idempotent replay')
   const firstSubmitted = await firstSubmit.json(); const secondSubmitted = await secondSubmit.json()
@@ -228,7 +241,7 @@ try {
   if (!open?.isBlocking) throw new Error('READINESS_BLOCK_NOT_CREATED')
   const resolve = await request(baseUrl, admin, `/api/installations/${order.id}/clarifications/${open.id}`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'RESOLVE', resolution: 'Glif 12 cm', note: 'Potwierdzone z klientką.' }) })
   expectStatus(resolve, 200, 'Owner resolve clarification')
-  const correction = await fetch(`${baseUrl}/api/public/installations/${token}/correction`, { method: 'POST' }); expectStatus(correction, 201, 'Public correction')
+  const correction = await fetch(`${baseUrl}/api/public/installations/${token}/correction`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientMutationId: 'validator-correction-start-01' }) }); expectStatus(correction, 201, 'Public correction')
   const correctionDraft = await correction.json()
   const correctionMutation = { revisionNumber: correctionDraft.revisionNumber, draftVersion: correctionDraft.draftVersion, clientMutationId: 'validator-correction-save-01', answers: [{ questionKey: 'glify', value: 'YES' }, { questionKey: 'glify-cm', value: '12,5' }] }
   const correctionSave = await fetch(`${baseUrl}/api/public/installations/${token}/autosave`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(correctionMutation) })

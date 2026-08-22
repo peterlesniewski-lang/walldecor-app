@@ -36,6 +36,15 @@ describe('installation detail client-link and clarification panels', () => {
     expect(screen.queryByText(/\/m\//)).toBeNull()
   })
 
+  it('keeps generation unavailable until the order has exactly one form snapshot, without disabling an existing link lifecycle', async () => {
+    render(<ClientLinkPanel orderId="order-1" canEdit canGenerate={false} initialLinks={[{ id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null }]} />)
+
+    expect(screen.getByText('Najpierw przypnij dokładnie jeden formularz klienta do zlecenia.')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Wygeneruj nowy link' }).hasAttribute('disabled')).toBe(true)
+    expect(screen.getByRole('button', { name: 'Przedłuż o 14 dni' }).hasAttribute('disabled')).toBe(false)
+    expect(screen.getByRole('button', { name: 'Cofnij link' }).hasAttribute('disabled')).toBe(false)
+  })
+
   it('requires an actual resolution/note form instead of prompt before closing an open clarification', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ clarification: { id: 'clarification-1', status: 'RESOLVED' } }), { status: 200 }))

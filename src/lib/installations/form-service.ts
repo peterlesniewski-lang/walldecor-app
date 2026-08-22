@@ -156,7 +156,8 @@ type ClientFormMutation = {
   revisionNumber: number
   draftVersion: number
   clientMutationId: string
-  answers: Array<{ questionKey: string; value: ClientAnswerValue }>
+  /** null explicitly clears one optional answer instead of retaining stale data. */
+  answers: Array<{ questionKey: string; value: ClientAnswerValue | null }>
 }
 
 function questionsFromSnapshot(schemaJson: string): ClientFormQuestion[] {
@@ -208,7 +209,7 @@ function assertMutationShape(input: ClientFormMutation) {
   }
   const keys = new Set<string>()
   for (const answer of input.answers) {
-    if (!answer || typeof answer !== 'object' || typeof answer.questionKey !== 'string' || answer.questionKey.trim() === '' || (typeof answer.value !== 'string' && !Array.isArray(answer.value)) || (Array.isArray(answer.value) && !answer.value.every((value) => typeof value === 'string')) || keys.has(answer.questionKey)) {
+    if (!answer || typeof answer !== 'object' || typeof answer.questionKey !== 'string' || answer.questionKey.trim() === '' || (answer.value !== null && typeof answer.value !== 'string' && !Array.isArray(answer.value)) || (Array.isArray(answer.value) && !answer.value.every((value) => typeof value === 'string')) || keys.has(answer.questionKey)) {
       throw new InstallationFormValidationError({ form: 'Dane odpowiedzi są niepoprawne.' })
     }
     keys.add(answer.questionKey)
@@ -235,7 +236,10 @@ function mergedDraftAnswers(
 ): Record<string, ClientAnswerValue | undefined> {
   const answers: Record<string, ClientAnswerValue | undefined> = {}
   for (const answer of existing) answers[answer.questionKey] = answerValue(answer)
-  for (const answer of patch) answers[answer.questionKey] = answer.value
+  for (const answer of patch) {
+    if (answer.value === null) delete answers[answer.questionKey]
+    else answers[answer.questionKey] = answer.value
+  }
   return answers
 }
 
@@ -249,6 +253,11 @@ function assertAnswersAreVisible(
     const question = visible.get(answer.questionKey)
     if (!question) throw new InstallationFormValidationError({ [answer.questionKey]: 'To pytanie nie jest teraz widoczne.' })
     if (question.type === 'FILE') throw new InstallationFormValidationError({ [answer.questionKey]: 'Dokumenty i zdjęcia zostaną dodane w kroku plików.' })
+    const clearsAnswer = answer.value === null || (question.type === 'MULTI' && Array.isArray(answer.value) && answer.value.length === 0)
+    if (clearsAnswer) {
+      if (question.required) invalid(question, 'To pytanie wymaga odpowiedzi.')
+      continue
+    }
     normalizeClientAnswer(question, answer.value)
   }
   return visible
@@ -292,6 +301,11 @@ export async function autosaveClientForm(db: PrismaClient, token: string, input:
     }
     for (const answer of input.answers) {
       const question = questions.find((candidate) => candidate.key === answer.questionKey)!
+      const clearsAnswer = answer.value === null || (question.type === 'MULTI' && Array.isArray(answer.value) && answer.value.length === 0)
+      if (clearsAnswer) {
+        await tx.installationAnswer.deleteMany({ where: { submissionId: submission.id, questionKey: answer.questionKey } })
+        continue
+      }
       const normalized = normalizeClientAnswer(question, answer.value)
       await tx.installationAnswer.upsert({
         where: { submissionId_questionKey: { submissionId: submission.id, questionKey: answer.questionKey } },

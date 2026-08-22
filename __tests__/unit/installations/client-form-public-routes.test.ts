@@ -65,7 +65,9 @@ describe('public installation form routes', () => {
     const submitResponse = await submit(new NextRequest('http://test/api/public/installations/token/submit', {
       method: 'POST', body: JSON.stringify({ revisionNumber: 1, draftVersion: 1, clientMutationId: 'submit-mutation-0001' }), headers: { 'Content-Type': 'application/json' },
     }), params)
-    const correctionResponse = await correction(new NextRequest('http://test/api/public/installations/token/correction', { method: 'POST' }), params)
+    const correctionResponse = await correction(new NextRequest('http://test/api/public/installations/token/correction', {
+      method: 'POST', body: JSON.stringify({ clientMutationId: 'correction-mutation-0001' }), headers: { 'Content-Type': 'application/json' },
+    }), params)
 
     expect(autosaveResponse.status).toBe(200)
     expect(submitResponse.status).toBe(200)
@@ -73,10 +75,20 @@ describe('public installation form routes', () => {
     expect(mocks.autosave).toHaveBeenCalledWith(expect.anything(), 'a'.repeat(43), expect.objectContaining({ revisionNumber: 1 }))
   })
 
+  it('accepts correction only with a strict stable client mutation id', async () => {
+    const response = await correction(new NextRequest('http://test/api/public/installations/token/correction', {
+      method: 'POST', body: JSON.stringify({ clientMutationId: 'too-short', extra: true }), headers: { 'Content-Type': 'application/json' },
+    }), params)
+
+    expect(response.status).toBe(400)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(mocks.correction).not.toHaveBeenCalled()
+  })
+
   it.each([
     ['autosave', () => mocks.autosave.mockRejectedValueOnce(new mocks.NotFound()), () => PATCH(new NextRequest('http://test/api/public/installations/token/autosave', { method: 'PATCH', body: JSON.stringify({ revisionNumber: 1, draftVersion: 0, clientMutationId: 'client-mutation-0001', answers: [] }), headers: { 'Content-Type': 'application/json' } }), params)],
     ['submit', () => mocks.submit.mockRejectedValueOnce(new mocks.NotFound()), () => submit(new NextRequest('http://test/api/public/installations/token/submit', { method: 'POST', body: JSON.stringify({ revisionNumber: 1, draftVersion: 0, clientMutationId: 'submit-mutation-0001' }), headers: { 'Content-Type': 'application/json' } }), params)],
-    ['correction', () => mocks.correction.mockRejectedValueOnce(new mocks.NotFound()), () => correction(new NextRequest('http://test/api/public/installations/token/correction', { method: 'POST' }), params)],
+    ['correction', () => mocks.correction.mockRejectedValueOnce(new mocks.NotFound()), () => correction(new NextRequest('http://test/api/public/installations/token/correction', { method: 'POST', body: JSON.stringify({ clientMutationId: 'correction-mutation-0001' }), headers: { 'Content-Type': 'application/json' } }), params)],
   ])('returns the identical no-store 404 for unavailable %s mutations', async (_name, reject, call) => {
     reject()
     const response = await call()

@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import styles from './client-installation-form.module.css'
 
 type AnswerValue = string | string[]
+type PendingAnswerValue = AnswerValue | null
 type Question = {
   key: string
   type: 'YES_NO_UNKNOWN' | 'NUMBER' | 'DIMENSION' | 'TEXT' | 'SINGLE' | 'MULTI' | 'FILE'
@@ -50,6 +51,24 @@ function mutationId() {
   return globalThis.crypto?.randomUUID?.() ?? `client-${Date.now()}-${Math.random().toString(36).slice(2)}`
 }
 
+type AutosaveAttempt = {
+  revisionNumber: number
+  draftVersion: number
+  clientMutationId: string
+  answers: Record<string, PendingAnswerValue>
+}
+
+type SubmitAttempt = Omit<AutosaveAttempt, 'answers'>
+
+function isEmptyAnswer(value: PendingAnswerValue) {
+  return value === null || (Array.isArray(value) && value.length === 0)
+}
+
+function sameAnswerValue(left: PendingAnswerValue | undefined, right: PendingAnswerValue) {
+  if (left === right) return true
+  return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => value === right[index])
+}
+
 function JobMap({ rooms }: Pick<ClientFormProjection, 'rooms'>) {
   return <aside className={styles.map} aria-label="Mapa zlecenia">
     <h2>Mapa zlecenia</h2>
@@ -70,10 +89,13 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
   const answersRef = useRef(answers)
-  const pendingRef = useRef<Record<string, AnswerValue>>({})
+  const pendingRef = useRef<Record<string, PendingAnswerValue>>({})
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const submissionRef = useRef(projection.submission)
   const saveLoopRef = useRef<Promise<boolean> | null>(null)
+  const autosaveAttemptRef = useRef<AutosaveAttempt | null>(null)
+  const submitAttemptRef = useRef<SubmitAttempt | null>(null)
+  const correctionMutationIdRef = useRef<string | null>(null)
   const visible = useMemo(() => visibleQuestions(projection.form.questions, answers), [projection.form.questions, answers])
   const groups = useMemo(() => questionGroups(visible), [visible])
   const unknownSelected = Object.entries(answers).some(([key, value]) => projection.form.questions.find((question) => question.key === key)?.type === 'YES_NO_UNKNOWN' && value === 'UNKNOWN')
@@ -84,7 +106,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
 
   function adoptSubmission(submission: Submission, preservePending = false) {
     const pendingAnswers = preservePending
-      ? Object.fromEntries(Object.keys(pendingRef.current).flatMap((key) => answersRef.current[key] === undefined ? [] : [[key, answersRef.current[key]]]))
+      ? Object.fromEntries(Object.entries(pendingRef.current).flatMap(([key, value]) => value === null ? [] : [[key, value]]))
       : {}
     const nextAnswers = { ...mapAnswers(submission), ...pendingAnswers }
     submissionRef.current = submission
@@ -93,41 +115,74 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
     setAnswers(nextAnswers)
   }
 
-  async function reconcileAfterConflict(): Promise<boolean> {
+  async function reloadLatestProjection(): Promise<ClientFormProjection | null> {
     const response = await fetch(`/api/public/installations/${encodeURIComponent(token)}`, { cache: 'no-store' })
-    if (!response.ok) return false
+    if (!response.ok) return null
     const latest = await response.json() as ClientFormProjection
+    if (!latest?.submission) return null
     submissionRef.current = latest.submission
-    const pendingAnswers = Object.fromEntries(Object.keys(pendingRef.current).flatMap((key) => answersRef.current[key] === undefined ? [] : [[key, answersRef.current[key]]]))
+    const pendingAnswers = Object.fromEntries(Object.entries(pendingRef.current).flatMap(([key, value]) => value === null ? [] : [[key, value]]))
     answersRef.current = { ...mapAnswers(latest.submission), ...pendingAnswers }
     setProjection(latest)
     setAnswers(answersRef.current)
-    return true
+    return latest
+  }
+
+  function autosaveWasApplied(submission: Submission, attempt: AutosaveAttempt) {
+    if (submission.status !== 'DRAFT' || submission.revisionNumber !== attempt.revisionNumber || submission.draftVersion < attempt.draftVersion + 1) return false
+    const saved = mapAnswers(submission)
+    return Object.entries(attempt.answers).every(([key, value]) =>
+      isEmptyAnswer(value) ? saved[key] === undefined : sameAnswerValue(saved[key], value),
+    )
+  }
+
+  function acknowledgeAutosave(attempt: AutosaveAttempt) {
+    for (const [key, value] of Object.entries(attempt.answers)) {
+      if (sameAnswerValue(pendingRef.current[key], value)) delete pendingRef.current[key]
+    }
   }
 
   function persist(): Promise<boolean> {
     if (saveLoopRef.current) return saveLoopRef.current
     let drained = false
     const loop = (async () => {
-      while (Object.keys(pendingRef.current).length > 0) {
-        const submission = submissionRef.current
-        if (submission.status !== 'DRAFT') return false
-        const sent = Object.fromEntries(Object.entries(pendingRef.current))
+      while (Object.keys(pendingRef.current).length > 0 || autosaveAttemptRef.current) {
+        if (!autosaveAttemptRef.current) {
+          const submission = submissionRef.current
+          if (submission.status !== 'DRAFT') return false
+          autosaveAttemptRef.current = {
+            revisionNumber: submission.revisionNumber,
+            draftVersion: submission.draftVersion,
+            clientMutationId: mutationId(),
+            answers: { ...pendingRef.current },
+          }
+        }
+        const attempt = autosaveAttemptRef.current
         setSaveState('saving'); setError('')
         try {
-          const response = await fetch(`/api/public/installations/${encodeURIComponent(token)}/autosave`, {
+          const response = await fetch('/api/public/installations/' + encodeURIComponent(token) + '/autosave', {
             method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ revisionNumber: submission.revisionNumber, draftVersion: submission.draftVersion, clientMutationId: mutationId(), answers: Object.entries(sent).map(([questionKey, value]) => ({ questionKey, value })) }),
+            body: JSON.stringify({ revisionNumber: attempt.revisionNumber, draftVersion: attempt.draftVersion, clientMutationId: attempt.clientMutationId, answers: Object.entries(attempt.answers).map(([questionKey, value]) => ({ questionKey, value })) }),
           })
           if (response.status === 409) {
-            if (!await reconcileAfterConflict()) throw new Error('Nie udało się pobrać nowszej wersji formularza.')
+            const latest = await reloadLatestProjection()
+            if (!latest) throw new Error('Nie udało się pobrać nowszej wersji formularza.')
+            if (autosaveWasApplied(latest.submission, attempt)) acknowledgeAutosave(attempt)
+            autosaveAttemptRef.current = null
             continue
           }
           if (!response.ok) throw new Error('Nie udało się zapisać odpowiedzi.')
           const next = await response.json() as Submission
-          for (const [key, value] of Object.entries(sent)) if (pendingRef.current[key] === value) delete pendingRef.current[key]
+          acknowledgeAutosave(attempt)
+          autosaveAttemptRef.current = null
           adoptSubmission(next, true)
         } catch {
+          const latest = await reloadLatestProjection().catch(() => null)
+          if (latest && autosaveWasApplied(latest.submission, attempt)) {
+            acknowledgeAutosave(attempt)
+            autosaveAttemptRef.current = null
+            continue
+          }
           setSaveState('error'); setError('Nie udało się zapisać. Spróbuj ponownie — Twoje odpowiedzi pozostają na ekranie.')
           return false
         }
@@ -147,11 +202,14 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
     return loop
   }
 
-  function queueAnswer(questionKey: string, value: AnswerValue) {
-    const next = { ...answersRef.current, [questionKey]: value }
+  function queueAnswer(questionKey: string, value: PendingAnswerValue) {
+    const next = { ...answersRef.current }
+    if (value === null) delete next[questionKey]
+    else next[questionKey] = value
     answersRef.current = next
     setAnswers(next)
     pendingRef.current[questionKey] = value
+    submitAttemptRef.current = null
     // A local change is not saved until the queue reaches the server.  Mark it
     // immediately so a debounce window can never claim that a newer answer is
     // already persisted.
@@ -164,26 +222,44 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
     if (timerRef.current) clearTimeout(timerRef.current)
     if (!await persist()) return
     const submission = submissionRef.current
+    const attempt = submitAttemptRef.current ?? {
+      revisionNumber: submission.revisionNumber,
+      draftVersion: submission.draftVersion,
+      clientMutationId: mutationId(),
+    }
+    submitAttemptRef.current = attempt
     setSubmitting(true); setError('')
     try {
-      const response = await fetch(`/api/public/installations/${encodeURIComponent(token)}/submit`, {
+      const response = await fetch('/api/public/installations/' + encodeURIComponent(token) + '/submit', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ revisionNumber: submission.revisionNumber, draftVersion: submission.draftVersion, clientMutationId: mutationId() }),
+        body: JSON.stringify(attempt),
       })
       const data = await response.json() as Submission | { error?: string }
       if (!response.ok) throw new Error('error' in data ? data.error : 'Nie udało się wysłać formularza.')
+      submitAttemptRef.current = null
       adoptSubmission(data as Submission); setSaveState('saved')
     } catch (caught) {
+      const latest = await reloadLatestProjection().catch(() => null)
+      if (latest?.submission.status === 'SUBMITTED' && latest.submission.revisionNumber === attempt.revisionNumber) {
+        submitAttemptRef.current = null
+        setSaveState('saved')
+        return
+      }
       setError(caught instanceof Error ? caught.message : 'Nie udało się wysłać formularza.')
     } finally { setSubmitting(false) }
   }
 
   async function startCorrection() {
     setSubmitting(true); setError('')
+    const clientMutationId = correctionMutationIdRef.current ?? mutationId()
+    correctionMutationIdRef.current = clientMutationId
     try {
-      const response = await fetch(`/api/public/installations/${encodeURIComponent(token)}/correction`, { method: 'POST' })
+      const response = await fetch('/api/public/installations/' + encodeURIComponent(token) + '/correction', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ clientMutationId }),
+      })
       if (!response.ok) throw new Error('Nie udało się rozpocząć korekty.')
       const draft = await response.json() as Submission
+      correctionMutationIdRef.current = null
       pendingRef.current = {}; adoptSubmission(draft); setSaveState('saved')
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Nie udało się rozpocząć korekty.') } finally { setSubmitting(false) }
   }
@@ -221,19 +297,25 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
   </main>
 }
 
-function QuestionControl({ question, value, onChange }: { question: Question; value: AnswerValue | undefined; onChange: (value: AnswerValue) => void }) {
+function OptionalClear({ question, value, onChange }: { question: Question; value: AnswerValue | undefined; onChange: (value: PendingAnswerValue) => void }) {
+  if (question.required || value === undefined) return null
+  return <button type="button" className={styles.secondary} aria-label={'Wyczyść odpowiedź: ' + question.label} onClick={() => onChange(null)}>Wyczyść odpowiedź</button>
+}
+
+function QuestionControl({ question, value, onChange }: { question: Question; value: AnswerValue | undefined; onChange: (value: PendingAnswerValue) => void }) {
   if (question.type === 'FILE') return <article className={styles.question} data-testid="task5-file-step" data-task5-replace="private-upload-handoff">
     <strong>{question.label}</strong><p className={styles.fileNotice}>Dokumenty i zdjęcia dodamy w kroku plików. Ten etap nie blokuje teraz wysłania formularza.</p>{/* TASK5_FILE_UPLOAD_REPLACEMENT */}
   </article>
   if (question.type === 'YES_NO_UNKNOWN') return <fieldset className={styles.question}>
     <legend>{question.label}{question.required && <span className={styles.required}>*</span>}</legend>{question.help && <p className={styles.help}>{question.help}</p>}
     <div className={styles.choiceGrid}>{([['YES', 'Tak'], ['NO', 'Nie'], ['UNKNOWN', 'Nie wiem']] as const).map(([choice, label]) => <button type="button" key={choice} className={styles.choice} aria-pressed={value === choice} onClick={() => onChange(choice)}>{label}</button>)}</div>
+    <OptionalClear question={question} value={value} onChange={onChange} />
   </fieldset>
   if (question.type === 'MULTI') {
     const selected = Array.isArray(value) ? value : []
-    return <fieldset className={styles.question}><legend>{question.label}{question.required && <span className={styles.required}>*</span>}</legend><div className={styles.checkList}>{(question.options ?? []).map((option) => <label className={styles.check} key={option}><input type="checkbox" checked={selected.includes(option)} onChange={() => onChange(selected.includes(option) ? selected.filter((item) => item !== option) : [...selected, option])} />{option}</label>)}</div></fieldset>
+    return <fieldset className={styles.question}><legend>{question.label}{question.required && <span className={styles.required}>*</span>}</legend><div className={styles.checkList}>{(question.options ?? []).map((option) => <label className={styles.check} key={option}><input type="checkbox" checked={selected.includes(option)} onChange={() => onChange(selected.includes(option) ? selected.filter((item) => item !== option) : [...selected, option])} />{option}</label>)}</div><OptionalClear question={question} value={value} onChange={onChange} /></fieldset>
   }
-  if (question.type === 'SINGLE') return <div className={styles.question}><label htmlFor={question.key}>{question.label}{question.required && <span className={styles.required}>*</span>}</label><select id={question.key} className={styles.field} value={typeof value === 'string' ? value : ''} onChange={(event) => onChange(event.target.value)}><option value="">Wybierz odpowiedź</option>{(question.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}</select></div>
+  if (question.type === 'SINGLE') return <div className={styles.question}><label htmlFor={question.key}>{question.label}{question.required && <span className={styles.required}>*</span>}</label><select id={question.key} className={styles.field} value={typeof value === 'string' ? value : ''} onChange={(event) => onChange(event.target.value || null)}><option value="">Wybierz odpowiedź</option>{(question.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}</select><OptionalClear question={question} value={value} onChange={onChange} /></div>
   const multiline = question.type === 'TEXT'
-  return <div className={styles.question}><label htmlFor={question.key}>{question.label}{question.required && <span className={styles.required}>*</span>}</label>{multiline ? <textarea id={question.key} className={styles.field} value={typeof value === 'string' ? value : ''} onChange={(event) => onChange(event.target.value)} /> : <input id={question.key} className={styles.field} inputMode="decimal" value={typeof value === 'string' ? value : ''} onChange={(event) => onChange(event.target.value)} />}</div>
+  return <div className={styles.question}><label htmlFor={question.key}>{question.label}{question.required && <span className={styles.required}>*</span>}</label>{multiline ? <textarea id={question.key} className={styles.field} value={typeof value === 'string' ? value : ''} onChange={(event) => onChange(event.target.value || null)} /> : <input id={question.key} className={styles.field} inputMode="decimal" value={typeof value === 'string' ? value : ''} onChange={(event) => onChange(event.target.value || null)} />}<OptionalClear question={question} value={value} onChange={onChange} /></div>
 }

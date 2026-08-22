@@ -38,34 +38,40 @@ export default async function InstallationOrderPage({ params }: Params) {
   }
   if (!canViewInstallationOrder(viewer, order)) notFound()
 
-  const [employees, rooms, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions] = await Promise.all([
-    prisma.employee.findMany({
-    where: { active: true },
-    select: { id: true, firstName: true, lastName: true },
-    orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
-    }),
-    getInstallationOrderRooms(prisma, id),
-    listInstallationCatalog(prisma),
-    listInstallationFormTemplates(prisma),
-    getInstallationOrderFormSnapshot(prisma, id),
-    listClientLinkStatuses(prisma, id),
-    listInstallationClarifications(prisma, id),
-    getInstallationReadiness(prisma, id),
-    listInstallationFormRevisions(prisma, id),
-  ])
+  const canCoordinateClientForm = canEditInstallationOrder(viewer, order)
+  const rooms = await getInstallationOrderRooms(prisma, id)
+  // An installer gets the limited work-order view. Client answers, their
+  // clarification/evidence trail and client-link management are coordinator-only.
+  const coordinatorData = canCoordinateClientForm ? await (async () => {
+    const [employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions] = await Promise.all([
+      prisma.employee.findMany({
+        where: { active: true },
+        select: { id: true, firstName: true, lastName: true },
+        orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
+      }),
+      listInstallationCatalog(prisma),
+      listInstallationFormTemplates(prisma),
+      getInstallationOrderFormSnapshot(prisma, id),
+      listClientLinkStatuses(prisma, id),
+      listInstallationClarifications(prisma, id),
+      getInstallationReadiness(prisma, id),
+      listInstallationFormRevisions(prisma, id),
+    ])
+    return { employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions }
+  })() : null
 
   return <InstallationOrderDetail
     order={order}
-    employees={employees}
-    canEdit={canEditInstallationOrder(viewer, order)}
+    employees={coordinatorData?.employees ?? []}
+    canEdit={canCoordinateClientForm}
     canArchive={canArchiveInstallationOrder(viewer, order)}
     rooms={rooms}
-    catalog={catalog}
-    publishedTemplates={templates.filter((template) => template.status === 'PUBLISHED').map(({ id: templateId, name, version }) => ({ id: templateId, name, version }))}
-    formSnapshot={formSnapshot}
-    clientLinks={clientLinks}
-    clarifications={clarifications}
-    readiness={readiness}
-    formRevisions={formRevisions}
+    catalog={coordinatorData?.catalog ?? []}
+    publishedTemplates={coordinatorData?.templates.filter((template) => template.status === 'PUBLISHED').map(({ id: templateId, name, version }) => ({ id: templateId, name, version })) ?? []}
+    formSnapshot={coordinatorData?.formSnapshot ?? null}
+    clientLinks={coordinatorData?.clientLinks ?? []}
+    clarifications={coordinatorData?.clarifications ?? []}
+    readiness={coordinatorData?.readiness ?? { isReady: false, openBlockingCount: 0, submittedCount: 0 }}
+    formRevisions={coordinatorData?.formRevisions ?? []}
   />
 }

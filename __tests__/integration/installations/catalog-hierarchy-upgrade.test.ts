@@ -117,20 +117,26 @@ describe('installation catalog hierarchy migration upgrade', () => {
   it('applies the complete fresh chain, including client-form migration, with healthy SQLite integrity', async () => {
     runMigrate(freshDatabaseUrl)
     const db = new PrismaClient({ datasources: { db: { url: freshDatabaseUrl } } })
-    const [migrations, triggers, clientFormTriggers, foreignKeys, integrity] = await Promise.all([
+    const [migrations, triggers, clientFormTriggers, submittedRevisionTriggers, foreignKeys, integrity] = await Promise.all([
       db.$queryRawUnsafe<Array<{ migration_name: string }>>('SELECT migration_name FROM _prisma_migrations ORDER BY migration_name'),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationCatalog%' ORDER BY name"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationAnswer_submitted_%' ORDER BY name"),
+      db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationFormSubmission_submitted_%' ORDER BY name"),
       db.$queryRawUnsafe('PRAGMA foreign_key_check'), db.$queryRawUnsafe<Array<{ integrity_check: string }>>('PRAGMA integrity_check'),
     ])
-    expect(migrations).toHaveLength(24)
+    expect(migrations).toHaveLength(25)
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030000_installation_client_form')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030100_installation_submitted_answer_insert_guard')
+    expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030200_installation_submitted_revision_guard')
     expect(triggers).toHaveLength(6)
     expect(clientFormTriggers).toEqual([
       { name: 'InstallationAnswer_submitted_delete_guard' },
       { name: 'InstallationAnswer_submitted_insert_guard' },
       { name: 'InstallationAnswer_submitted_update_guard' },
+    ])
+    expect(submittedRevisionTriggers).toEqual([
+      { name: 'InstallationFormSubmission_submitted_delete_guard' },
+      { name: 'InstallationFormSubmission_submitted_update_guard' },
     ])
     expect(foreignKeys).toEqual([])
     expect(integrity[0]?.integrity_check).toBe('ok')

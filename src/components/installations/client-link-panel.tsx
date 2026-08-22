@@ -16,10 +16,11 @@ function defaultExpiry() {
   return date.toISOString().slice(0, 16)
 }
 
-export function ClientLinkPanel({ orderId, initialLinks, canEdit }: {
+export function ClientLinkPanel({ orderId, initialLinks, canEdit, canGenerate = true }: {
   orderId: string
   initialLinks: InstallationClientLinkStatus[]
   canEdit: boolean
+  canGenerate?: boolean
 }) {
   const [links, setLinks] = useState(initialLinks)
   const [expiresAt, setExpiresAt] = useState(defaultExpiry)
@@ -62,12 +63,13 @@ export function ClientLinkPanel({ orderId, initialLinks, canEdit }: {
     <p className="data-label">Formularz klienta</p>
     <h2 className="mt-1 text-xl font-extrabold tracking-tight" style={{ color: 'var(--wd-dark)' }}>Bezpieczny link do przygotowania montażu</h2>
     {active ? <p className="mt-2 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Aktywny do <span className="num">{new Date(active.expiresAt).toLocaleString('pl-PL')}</span>{active.lastOpenedAt ? ' · klient otworzył link' : ' · jeszcze nieotwarty'}.</p> : <p className="mt-2 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Brak aktywnego linku klienta.</p>}
+    {canEdit && !canGenerate && <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">Najpierw przypnij dokładnie jeden formularz klienta do zlecenia.</p>}
     {canEdit && <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
       <label className="grid gap-1 text-sm font-semibold" htmlFor={`client-link-expiry-${orderId}`}>Ważny do
-        <input id={`client-link-expiry-${orderId}`} className="min-h-11 rounded-md border px-3" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} disabled={state === 'loading'} />
+        <input id={`client-link-expiry-${orderId}`} className="min-h-11 rounded-md border px-3" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} disabled={state === 'loading' || !canGenerate} />
       </label>
       <div className="flex flex-wrap items-end gap-2">
-        <button type="button" className="min-h-11 rounded-md px-4 text-sm font-bold" style={{ background: '#E4DCD1', color: '#1E1E1E' }} onClick={() => void request({ expiresAt: new Date(expiresAt).toISOString() }, 'POST')} disabled={state === 'loading'}>{active ? 'Wygeneruj nowy link' : 'Wygeneruj link'}</button>
+        <button type="button" className="min-h-11 rounded-md px-4 text-sm font-bold" style={{ background: '#E4DCD1', color: '#1E1E1E' }} onClick={() => void request({ expiresAt: new Date(expiresAt).toISOString() }, 'POST')} disabled={state === 'loading' || !canGenerate}>{active ? 'Wygeneruj nowy link' : 'Wygeneruj link'}</button>
         {active && <button type="button" className="min-h-11 rounded-md border px-4 text-sm font-bold" onClick={() => void request({ action: 'EXTEND', linkId: active.id, expiresAt: extensionExpiry(14) }, 'PATCH')} disabled={state === 'loading'}>Przedłuż o 14 dni</button>}
         {active && <button type="button" className="min-h-11 rounded-md border px-4 text-sm font-bold" onClick={() => void request({ action: 'REVOKE', linkId: active.id }, 'PATCH')} disabled={state === 'loading'}>Cofnij link</button>}
       </div>

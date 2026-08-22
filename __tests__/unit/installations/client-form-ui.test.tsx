@@ -73,11 +73,16 @@ describe('client installation form', () => {
     expect(screen.getByRole('status').textContent).toContain('Wszystko zapisane')
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ revisionNumber: 1, draftVersion: 0 })
     expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({ revisionNumber: 1, draftVersion: 1 })
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body)).clientMutationId)
+      .not.toBe(JSON.parse(String(fetchMock.mock.calls[1][1]?.body)).clientMutationId)
   })
 
-  it('keeps a failed save pending for the explicit retry instead of starting an unbounded retry loop', async () => {
+  it('retries the exact same autosave mutation after a transport failure instead of minting a duplicate', async () => {
     vi.useFakeTimers()
-    const fetchMock = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(new Response(JSON.stringify({ status: 'DRAFT', revisionNumber: 1, draftVersion: 1, submittedAt: null, answers: [{ questionKey: 'glify', value: 'UNKNOWN', isUnknown: true }] }), { status: 200 }))
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockRejectedValueOnce(new Error('offline-readback'))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ status: 'DRAFT', revisionNumber: 1, draftVersion: 1, submittedAt: null, answers: [{ questionKey: 'glify', value: 'UNKNOWN', isUnknown: true }] }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
     render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={projection} />)
 
@@ -85,10 +90,59 @@ describe('client installation form', () => {
     act(() => { vi.advanceTimersByTime(550) })
     await act(async () => {})
 
-    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(fetchMock).toHaveBeenCalledTimes(2)
     expect(screen.getByRole('status').textContent).toContain('Wystąpił błąd zapisu')
     fireEvent.click(screen.getByRole('button', { name: 'Spróbuj ponownie' }))
     await act(async () => {})
+    expect(fetchMock).toHaveBeenCalledTimes(3)
+    const first = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
+    const retry = JSON.parse(String(fetchMock.mock.calls[2][1]?.body))
+    expect(retry).toEqual(first)
+    expect(screen.getByRole('status').textContent).toContain('Wszystko zapisane')
+  })
+
+  it('reconciles a committed autosave when its HTTP response is lost without issuing a duplicate save', async () => {
+    vi.useFakeTimers()
+    const committedProjection = {
+      ...projection,
+      submission: { status: 'DRAFT' as const, revisionNumber: 1, draftVersion: 1, submittedAt: null, answers: [{ questionKey: 'glify', value: 'UNKNOWN', isUnknown: true }] },
+    }
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('response lost after commit'))
+      .mockResolvedValueOnce(new Response(JSON.stringify(committedProjection), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={projection} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Nie wiem' }))
+    act(() => { vi.advanceTimersByTime(550) })
+    await act(async () => {})
+
     expect(fetchMock).toHaveBeenCalledTimes(2)
+    expect(fetchMock.mock.calls[1][0]).toContain('/api/public/installations/')
+    expect(screen.getByRole('status').textContent).toContain('Wszystko zapisane')
+    expect(screen.getByRole('button', { name: 'Nie wiem' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('sends an explicit clear for an optional visible text answer and keeps it blank after save', async () => {
+    vi.useFakeTimers()
+    const optionalProjection = {
+      ...projection,
+      form: { ...projection.form, questions: [{ key: 'opis', type: 'TEXT' as const, label: 'Opis dodatkowy' }] },
+      submission: { status: 'DRAFT' as const, revisionNumber: 1, draftVersion: 0, submittedAt: null, answers: [{ questionKey: 'opis', value: 'Było', isUnknown: false }] },
+    }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      status: 'DRAFT', revisionNumber: 1, draftVersion: 1, submittedAt: null, answers: [],
+    }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={optionalProjection} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Wyczyść odpowiedź: Opis dodatkowy' }))
+    act(() => { vi.advanceTimersByTime(550) })
+    await act(async () => {})
+
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
+    expect(body.answers).toEqual([{ questionKey: 'opis', value: null }])
+    expect((screen.getByLabelText('Opis dodatkowy') as HTMLTextAreaElement).value).toBe('')
+    expect(screen.getByRole('status').textContent).toContain('Wszystko zapisane')
   })
 })

@@ -40,3 +40,20 @@ Data: 2026-08-22
 ## E2E — GREEN po osobnej pętli dokumentowego 404
 
 Nowa pętla: RED 1/5 potwierdził soft 200 dla dokumentu. GREEN 3/5: pełny Playwright flow przechodzi od aktywnego anonimizowanego formularza do submit/resolve/korekty; active link pozostaje HTTP 200, a revoked, expired, random i malformed `/m/[token]?unavailable=*` dostają faktyczne HTTP 404, identyczny neutralny widoczny tekst i bez PII, powodu, tokenu ani wpływu query parametru.
+
+## Corrective loop po quality review b1b63b6
+
+1. Niemutowalna rewizja rodzica: RED — bezpośredni Prisma.update mógł zmienić status wysłanej rewizji na DRAFT. GREEN: addytywna migracja 20260822030200_installation_submitted_revision_guard ma SQLite BEFORE UPDATE i BEFORE DELETE dla InstallationFormSubmission ze statusem SUBMITTED. Integracja wykonuje warianty Prisma i raw SQL dla statusu, lineage, numeru, wersji i danych oraz potwierdza, że draft/korekta-draft nadal są mutowalne. Fresh chain ma 25 migracji i oba triggery rodzica.
+2. RBAC odpowiedzi klienta: RED — przypisany INSTALLER mógł odczytać listę clarification z pełną odpowiedzią/evidence. GREEN: endpoint listy wymaga tej samej aktywnej polityki koordynatora co mutacje i zwraca 403 bez danych; server page nie pobiera ani nie przekazuje instalatorowi linków, clarification, readiness ani rewizji, a panele są niewyrenderowane. Test route, render oraz test server page potwierdzają granicę.
+3. Odporne autosave i retry: RED — retry tworzył nowe clientMutationId, a utracona odpowiedź HTTP pokazywała błąd mimo zapisu na serwerze. GREEN: pojedyncza kolejka przechowuje stabilny in-flight payload/ID do potwierdzenia, scala nowe zmiany po nim i odczytuje publiczną projekcję po błędzie. Testy obejmują Tak → Nie wiem z różnymi ID dla nowych zmian, retry identycznego body oraz utracony response po commicie bez duplikatu.
+4. Jawne czyszczenie opcjonalnych wartości: RED — null odrzucał kontrakt autosave, więc stara wartość zostawała w DB. GREEN: null (oraz puste MULTI) usuwa odpowiedź atomowo dla opcjonalnych TEXT, NUMBER, DIMENSION, SINGLE, MULTI i YES_NO_UNKNOWN; wymagane czyszczenie ma błąd walidacji. UI ma dostępne „Wyczyść odpowiedź”, a integracja, UI i validator sprawdzają DB/reload/submit.
+5. Prerequisite linku: RED — panel proponował generowanie bez snapshotu, a błąd domenowy mógł skończyć się 500. GREEN: generowanie jest zablokowane z instrukcją „Najpierw przypnij dokładnie jeden formularz klienta…”, a istniejący link nadal można przedłużyć/cofnąć. Serwis rozróżnia wewnętrzny prerequisite od publicznego 404; internal API zwraca celowe polskie 409.
+6. Dokument publiczny i lint: /m/[token] ma try/catch ograniczone do odczytu danych, a JSX jest poza nim. Weryfikacja ESLint tylko plików Task3: zero błędów.
+
+## Bramka końcowa corrective loop
+
+- Targeted: 7 plików / 36 testów GREEN (serwis SQLite, fresh/upgrade migration, RBAC route/page/panel, public route, UI autosave/retry/clear).
+- npm test: GREEN — 75 plików / 436 testów.
+- npm run build: GREEN — 133 tras, poprawne dynamiczne params Next 16.
+- node scripts/validate-installation-client-form.mjs: GREEN. Izolowane HTTP/auth/SQLite, SHA-256-only token, public leak checks, optional clear + restart, concurrent submit, extend/revoke/expiry/random generic 404 z no-store, odpowiedzi i parent revision DB guards, FK/integrity.
+- E2E Task3: GREEN 1/5 — pełny flow mobile + keyboard/focus, prerequisite snapshotu przed generowaniem, rapid autosave, extend, clarification/readiness, korekta, document 404 i replay po revoke.
