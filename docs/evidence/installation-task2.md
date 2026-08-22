@@ -256,3 +256,59 @@ FK/integrity po sukcesie Prisma, nie jako substytut migracji.
 
 Kontrola triggerów po obu realnych `migrate deploy` użyła bezpośredniego
 Prisma na tych samych tymczasowych DB; nie zastępowała migracji ręcznym SQL.
+
+## Final quality corrective loop Task 2 — legacy repair i 409 constraint mapping
+
+### RED
+
+1. Baza dokładnie po pierwszych 20 migracjach mogła zawierać aktywny produkt
+   pod nieaktywnym typem, aktywny produkt pod typem należącym do nieaktywnej
+   kategorii oraz aktywny typ pod nieaktywną kategorią. Realny upgrade przez
+   `migrate deploy` do poprzedniego stanu pozostawiał wszystkie trzy naruszenia.
+2. Gdy trigger SQLite odrzucał spóźniony create po archiwizacji rodzica,
+   `P2003` przechodził przez serwis jako surowy błąd, a route zawsze zwracał
+   400 zamiast jednoznacznego konfliktu 409.
+
+### GREEN
+
+- Addytywna migracja
+  `20260822020300_installation_catalog_hierarchy_repair` naprawia wyłącznie
+  historyczne stany sprzed triggerów: najpierw archiwizuje aktywne produkty
+  pod nieaktywnym typem lub kategorią, potem aktywne typy pod nieaktywną
+  kategorią. Ustawia `updatedAt`, zachowuje istniejące `archivedAt` przez
+  `COALESCE` i niczego nie usuwa. Snapshot formularza i snapshot zakresu są
+  w teście odczytane bitowo jako te same wartości. Migracja nie tworzy audytu,
+  ponieważ nie ma uwierzytelnionego aktora — to jawnie udokumentowany repair
+  poziomu migracji.
+- Upgrade test tworzy bazę na dokładnie 20 migracjach, zapisuje wszystkie trzy
+  niespójne przypadki oraz historię, a następnie uruchamia prawdziwy
+  `node ./node_modules/prisma/build/index.js migrate deploy`. Po deployu jest
+  22/22 migracje, zero trzech klas niepoprawnych relacji, zachowane snapshoty,
+  sześć triggerów, puste `foreign_key_check` i `integrity_check=ok`. Drugi
+  deploy na tej samej bazie nie zmienia naprawionych danych; osobna świeża
+  SQLite przechodzi pełny łańcuch 22/22 z tymi samymi kontrolami.
+- Serwis rozpoznaje wyłącznie constraint `P2003`/`P2004`, a następnie ponownie
+  odczytuje właściwego rodzica. Dopiero potwierdzony zarchiwizowany category
+  lub type/category daje `InstallationCatalogValidationError` ze statusem 409
+  i polskim komunikatem „Rodzic został zarchiwizowany podczas zapisu…”.
+  Inny błąd `P2003` przy aktywnym rodzicu pozostaje surowym błędem — nie jest
+  maskowany jako conflict ani 500. Route propaguje status domenowy zamiast
+  bezwarunkowego 400.
+
+### Świeże bramki korekty
+
+| Bramka | Wynik |
+| --- | --- |
+| RED → repair / 409 mapping | 5 czerwonych asercji: trzy legacy invariant, fresh 21≠22, surowe P2003 oraz route 400 |
+| focused upgrade + route + mapping + concurrency | 4 pliki / 9 testów, exit 0 |
+| targeted Task 2 + installation | 14 plików / 99 testów, exit 0 |
+| `npm test` | 65 plików / 377 testów, exit 0 |
+| `npm run build` | exit 0; TypeScript i 133 route'ów |
+| `node scripts/validate-installation-catalog.mjs` | exit 0; realny HTTP/API/DB readback |
+| `npm run test:e2e -- e2e/installations-catalog.spec.ts` | 1/1, exit 0 (14.0 s) |
+| realny legacy upgrade + drugi deploy | 20→22/22, potem no-op; 6 triggerów, FK puste, integrity `ok` |
+| realny fresh deploy | 22/22; 6 triggerów, FK puste, integrity `ok` |
+
+Nie zmieniono committed `20260822020200` ani entrypointu. Test upgrade używa
+realnego Prisma `migrate deploy`; bezpośredni Prisma/PRAGMA służy wyłącznie
+do odczytu dowodów po udanym deployu.

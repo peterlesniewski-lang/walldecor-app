@@ -57,7 +57,7 @@ export async function POST(req: NextRequest) {
     if (!entity) return NextResponse.json({ error: 'Wskaż category, type albo product.' }, { status: 400 })
     return NextResponse.json(entity, { status: 201 })
   } catch (error) {
-    if (error instanceof InstallationCatalogValidationError) return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: 400 })
+    if (error instanceof InstallationCatalogValidationError) return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: error.status })
     if (error instanceof SyntaxError) return NextResponse.json({ error: 'Nieprawidłowy format danych.' }, { status: 400 })
     throw error
   }

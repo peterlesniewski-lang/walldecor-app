@@ -40,7 +40,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     if (!entity) return NextResponse.json({ error: 'Nieznany rodzaj katalogu.' }, { status: 404 })
     return NextResponse.json(entity)
   } catch (error) {
-    if (error instanceof InstallationCatalogValidationError) return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: 400 })
+    if (error instanceof InstallationCatalogValidationError) return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: error.status })
     if (error instanceof SyntaxError) return NextResponse.json({ error: 'Nieprawidłowy format danych.' }, { status: 400 })
     throw error
   }

@@ -11,7 +11,10 @@ import { INSTALLATION_ROLES, type InstallationRole } from './constants'
 type InstallationDb = PrismaClient | Prisma.TransactionClient
 
 export class InstallationCatalogValidationError extends Error {
-  constructor(public readonly fieldErrors: Record<string, string>) {
+  constructor(
+    public readonly fieldErrors: Record<string, string>,
+    public readonly status = 400,
+  ) {
     super(Object.values(fieldErrors).join(' ') || 'Dane katalogu montaży są niepoprawne.')
     this.name = 'InstallationCatalogValidationError'
   }
@@ -117,6 +120,40 @@ function duplicateNameError() {
   return new InstallationCatalogValidationError({ name: 'Nazwa musi być unikalna na tym poziomie katalogu.' })
 }
 
+const archivedCatalogParentMessage = 'Rodzic został zarchiwizowany podczas zapisu. Odśwież katalog i spróbuj ponownie.'
+
+function isCatalogHierarchyConstraintError(error: unknown) {
+  if (!error || typeof error !== 'object') return false
+  const code = (error as { code?: unknown }).code
+  return code === 'P2003' || code === 'P2004'
+}
+
+async function translateCatalogParentArchiveError(
+  error: unknown,
+  db: InstallationDb,
+  parent: { kind: 'category'; id: string } | { kind: 'type'; id: string },
+): Promise<never> {
+  if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw duplicateNameError()
+  if (!isCatalogHierarchyConstraintError(error)) throw error
+
+  if (parent.kind === 'category') {
+    const category = await db.installationCatalogCategory.findUnique({ where: { id: parent.id }, select: { isActive: true } })
+    if (category && !category.isActive) {
+      throw new InstallationCatalogValidationError({ categoryId: archivedCatalogParentMessage }, 409)
+    }
+  } else {
+    const type = await db.installationCatalogType.findUnique({
+      where: { id: parent.id },
+      include: { category: { select: { isActive: true } } },
+    })
+    if (type && (!type.isActive || !type.category.isActive)) {
+      throw new InstallationCatalogValidationError({ typeId: archivedCatalogParentMessage }, 409)
+    }
+  }
+
+  throw error
+}
+
 function translateCatalogError(error: unknown): never {
   if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2002') throw duplicateNameError()
   throw error
@@ -162,7 +199,7 @@ export async function createCatalogType(db: InstallationDb, input: unknown) {
     return await db.installationCatalogType.create({
       data: { categoryId: value.categoryId, name: value.name.trim().replace(/\s+/g, ' '), nameKey: normalizeInstallationCatalogName(value.name), sortOrder: value.sortOrder ?? await nextSortOrder(db, 'type', value.categoryId) },
     })
-  } catch (error) { translateCatalogError(error) }
+  } catch (error) { await translateCatalogParentArchiveError(error, db, { kind: 'category', id: value.categoryId }) }
 }
 
 export async function updateCatalogType(db: InstallationDb, id: string, input: unknown) {
@@ -201,7 +238,7 @@ export async function createCatalogProduct(db: InstallationDb, input: unknown) {
         sortOrder: value.sortOrder ?? await nextSortOrder(db, 'product', value.typeId),
       },
     })
-  } catch (error) { translateCatalogError(error) }
+  } catch (error) { await translateCatalogParentArchiveError(error, db, { kind: 'type', id: value.typeId }) }
 }
 
 export async function updateCatalogProduct(db: InstallationDb, id: string, input: unknown) {

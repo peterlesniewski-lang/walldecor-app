@@ -27,7 +27,7 @@ export async function PUT(req: NextRequest, { params }: Params) {
     else return NextResponse.json({ error: 'Nieprawidłowy rodzaj lub rodzic kolejności.' }, { status: 400 })
     return NextResponse.json({ ok: true })
   } catch (error) {
-    if (error instanceof InstallationCatalogValidationError) return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: 400 })
+    if (error instanceof InstallationCatalogValidationError) return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: error.status })
     if (error instanceof SyntaxError) return NextResponse.json({ error: 'Nieprawidłowy format danych.' }, { status: 400 })
     throw error
   }
