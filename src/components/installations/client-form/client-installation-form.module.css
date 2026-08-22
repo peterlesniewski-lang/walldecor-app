@@ -21,6 +21,8 @@
 .kicker { margin: 0; font-size: 12px; font-weight: 700; letter-spacing: .13em; text-transform: uppercase; color: #765d42; }
 .title { font-family: var(--font-client-display), sans-serif; font-size: clamp(34px, 8vw, 58px); font-weight: 800; letter-spacing: -.055em; line-height: .94; margin: 10px 0 12px; }
 .lead { color: #5b554d; font-size: 16px; line-height: 1.55; margin: 0; max-width: 52ch; }
+.contact { color: #655e55; font-size: 14px; margin: 12px 0 0; }
+.contact a { color: inherit; font-weight: 700; text-underline-offset: 3px; }
 .mono { font-family: var(--font-mono), monospace; font-variant-numeric: tabular-nums; }
 .map { margin: 28px 0; border: 1px solid rgba(39, 37, 34, .15); border-radius: 20px; background: rgba(255,253,248,.88); box-shadow: 0 10px 34px rgba(39,37,34,.07); padding: 20px; }
 .map h2 { font-family: var(--font-client-display), sans-serif; font-size: 24px; letter-spacing: -.03em; margin: 0 0 4px; }

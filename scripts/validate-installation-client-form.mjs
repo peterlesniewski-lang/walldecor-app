@@ -150,6 +150,14 @@ try {
   if (links.some((link) => link.tokenHash === token || !/^[a-f0-9]{64}$/.test(link.tokenHash))) throw new Error('TOKEN_STORAGE_FAILED')
   if (!links.some((link) => link.tokenHash === createHash('sha256').update(token).digest('hex') && link.revokedAt && link.lastOpenedAt)) throw new Error('LINK_LIFECYCLE_READBACK_FAILED')
   if (submissions.length !== 2 || submissions.some((submission) => submission.status !== 'SUBMITTED') || submissions[1].revisionOfId !== submissions[0].id) throw new Error('IMMUTABLE_REVISION_READBACK_FAILED')
+  const immutableSubmission = submissions[0]
+  const answersBeforeLateInsert = immutableSubmission.answers.length
+  let lateInsertBlocked = false
+  try {
+    await db.installationAnswer.create({ data: { submissionId: immutableSubmission.id, questionKey: 'late-validator-answer', questionType: 'TEXT', valueJson: JSON.stringify({ type: 'TEXT', value: 'late' }), normalizedValue: 'late' } })
+  } catch { lateInsertBlocked = true }
+  const answersAfterLateInsert = await db.installationAnswer.count({ where: { submissionId: immutableSubmission.id } })
+  if (!lateInsertBlocked || answersAfterLateInsert !== answersBeforeLateInsert) throw new Error('SUBMITTED_ANSWER_INSERT_GUARD_FAILED')
   if (!submissions[0].answers.some((answer) => answer.questionKey === 'glify' && answer.isUnknown) || !submissions[1].answers.some((answer) => answer.questionKey === 'glify-cm' && answer.normalizedValue === '12.5')) throw new Error('ANSWER_READBACK_FAILED')
   if (clarifications.length !== 1 || clarifications[0].status !== 'RESOLVED' || !clarifications[0].resolvedAt || !clarifications[0].isBlocking) throw new Error('READINESS_CLARIFICATION_READBACK_FAILED')
   if (foreignKeys.length !== 0 || integrity[0]?.integrity_check !== 'ok') throw new Error('SQLITE_INTEGRITY_FAILED')
@@ -181,14 +189,21 @@ try {
   expectStatus(linkResponse, 201, 'Backoffice generate one-time link'); const generated = await linkResponse.json()
   const token = new URL(generated.url).pathname.split('/').at(-1)
   if (!/^[A-Za-z0-9_-]{43}$/.test(token ?? '')) throw new Error('CSPRNG_TOKEN_FORMAT_FAILED')
+  const extendResponse = await request(baseUrl, admin, `/api/installations/${order.id}/client-link`, {
+    method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ action: 'EXTEND', linkId: generated.link.id, expiresAt: '2027-02-01T12:00:00.000Z' }),
+  })
+  expectStatus(extendResponse, 200, 'Backoffice extend link')
+  const extended = await extendResponse.json()
+  if (extended.url || extended.link?.expiresAt !== '2027-02-01T12:00:00.000Z') throw new Error('LINK_EXTENSION_PRIVACY_OR_READBACK_FAILED')
 
   const projectionResponse = await fetch(`${baseUrl}/api/public/installations/${token}`)
   expectStatus(projectionResponse, 200, 'Anonymous public projection'); const projection = await projectionResponse.json()
   const projectionText = JSON.stringify(projection)
-  for (const forbidden of ['private-client@example.test', 'Tajna', 'Warszawa', '501 222', 'price', 'audit', 'backupEmployee', 'employeeId']) if (projectionText.includes(forbidden)) throw new Error(`PUBLIC_PROJECTION_LEAK_${forbidden}`)
-  if (projection.brand !== 'WallDecor' || projection.clientName !== 'Marta Walidator' || !projection.rooms.some((room) => room.name === 'Salon')) throw new Error('PUBLIC_PROJECTION_REQUIRED_FIELDS_FAILED')
+  for (const forbidden of ['private-client@example.test', 'Tajna', 'Warszawa', '501 222', 'Marta Walidator', 'Anna Opiekun', 'clientName', 'coordinator', 'price', 'audit', 'backupEmployee', 'employeeId', 'orderId', 'linkId', 'templateId', 'revisionOfId']) if (projectionText.includes(forbidden)) throw new Error(`PUBLIC_PROJECTION_LEAK_${forbidden}`)
+  if (projection.brand !== 'WallDecor' || projection.contact?.label !== 'WallDecor' || projection.contact?.email !== 'info@walldecor.pl' || !projection.rooms.some((room) => room.name === 'Salon') || projection.submission?.id) throw new Error('PUBLIC_PROJECTION_REQUIRED_FIELDS_FAILED')
   const initial = projection.submission
-  const mutation = { submissionId: initial.id, draftVersion: initial.draftVersion, clientMutationId: 'validator-autosave-0001', answers: [{ questionKey: 'glify', value: 'UNKNOWN' }, { questionKey: 'kolor', value: 'biały' }] }
+  const mutation = { revisionNumber: initial.revisionNumber, draftVersion: initial.draftVersion, clientMutationId: 'validator-autosave-0001', answers: [{ questionKey: 'glify', value: 'UNKNOWN' }, { questionKey: 'kolor', value: 'biały' }] }
   const autosave = await fetch(`${baseUrl}/api/public/installations/${token}/autosave`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mutation) })
   expectStatus(autosave, 200, 'Public autosave'); const saved = await autosave.json()
   const replay = await fetch(`${baseUrl}/api/public/installations/${token}/autosave`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mutation) })
@@ -201,7 +216,7 @@ try {
   const afterRestart = await fetch(`${baseUrl}/api/public/installations/${token}`); expectStatus(afterRestart, 200, 'Public draft after server restart')
   const restartedProjection = await afterRestart.json()
   if (restartedProjection.submission.draftVersion !== saved.draftVersion || !restartedProjection.submission.answers.some((answer) => answer.questionKey === 'glify' && answer.value === 'UNKNOWN')) throw new Error('AUTOSAVE_RESTART_READBACK_FAILED')
-  const submitPayload = { submissionId: saved.id, draftVersion: saved.draftVersion, clientMutationId: 'validator-submit-0001' }
+  const submitPayload = { revisionNumber: saved.revisionNumber, draftVersion: saved.draftVersion, clientMutationId: 'validator-submit-0001' }
   const [firstSubmit, secondSubmit] = await Promise.all([1, 2].map(() => fetch(`${baseUrl}/api/public/installations/${token}/submit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(submitPayload) })))
   expectStatus(firstSubmit, 200, 'Concurrent public submit first'); expectStatus(secondSubmit, 200, 'Concurrent public submit idempotent replay')
   const firstSubmitted = await firstSubmit.json(); const secondSubmitted = await secondSubmit.json()
@@ -215,24 +230,47 @@ try {
   expectStatus(resolve, 200, 'Owner resolve clarification')
   const correction = await fetch(`${baseUrl}/api/public/installations/${token}/correction`, { method: 'POST' }); expectStatus(correction, 201, 'Public correction')
   const correctionDraft = await correction.json()
-  const correctionSave = await fetch(`${baseUrl}/api/public/installations/${token}/autosave`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ submissionId: correctionDraft.id, draftVersion: correctionDraft.draftVersion, clientMutationId: 'validator-correction-save-01', answers: [{ questionKey: 'glify', value: 'YES' }, { questionKey: 'glify-cm', value: '12,5' }] }) })
+  const correctionMutation = { revisionNumber: correctionDraft.revisionNumber, draftVersion: correctionDraft.draftVersion, clientMutationId: 'validator-correction-save-01', answers: [{ questionKey: 'glify', value: 'YES' }, { questionKey: 'glify-cm', value: '12,5' }] }
+  const correctionSave = await fetch(`${baseUrl}/api/public/installations/${token}/autosave`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(correctionMutation) })
   expectStatus(correctionSave, 200, 'Correction autosave'); const correctionSaved = await correctionSave.json()
-  const correctionSubmit = await fetch(`${baseUrl}/api/public/installations/${token}/submit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ submissionId: correctionSaved.id, draftVersion: correctionSaved.draftVersion, clientMutationId: 'validator-correction-submit-01' }) })
+  const correctionSubmitPayload = { revisionNumber: correctionSaved.revisionNumber, draftVersion: correctionSaved.draftVersion, clientMutationId: 'validator-correction-submit-01' }
+  const correctionSubmit = await fetch(`${baseUrl}/api/public/installations/${token}/submit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(correctionSubmitPayload) })
   expectStatus(correctionSubmit, 200, 'Correction submit')
   if ((await correctionSubmit.json()).revisionNumber !== 2) throw new Error('CORRECTION_REVISION_NUMBER_FAILED')
 
   const revoke = await request(baseUrl, admin, `/api/installations/${order.id}/client-link`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ action: 'REVOKE', linkId: generated.link.id }) })
   expectStatus(revoke, 200, 'Backoffice revoke link')
-  const expiredToken = randomBytes(32).toString('base64url')
-  const insertExpired = `
-import { createHash } from 'node:crypto'; import { PrismaClient } from './src/generated/prisma'
-const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } }); try { await db.installationClientLink.create({ data: { orderId: process.env.ORDER_ID, createdById: process.env.CREATED_BY, tokenHash: createHash('sha256').update(process.env.EXPIRED_TOKEN).digest('hex'), expiresAt: new Date('2020-01-01') } }) } finally { await db.$disconnect() }
-`
-  runChecked(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', insertExpired], { env: { ...process.env, DATABASE_URL: databaseUrl, ORDER_ID: order.id, CREATED_BY: 'validator-expired', EXPIRED_TOKEN: expiredToken } })
   const unavailable = []
-  for (const candidate of [token, expiredToken, randomBytes(32).toString('base64url')]) {
-    const response = await fetch(`${baseUrl}/api/public/installations/${candidate}`); expectStatus(response, 404, 'Generic unavailable link')
-    unavailable.push(await response.text())
+  const recordUnavailable = async (response, label) => {
+    expectStatus(response, 404, label)
+    if (response.headers.get('cache-control') !== 'no-store') throw new Error(`${label}: missing no-store`)
+    const body = await response.text()
+    if (body.includes(token) || body.includes(generated.link.id)) throw new Error(`${label}: leaked token or database id`)
+    unavailable.push(body)
+  }
+  // The exact two mutations were accepted before revocation. They still must
+  // take the indistinguishable 404 branch rather than replay stored payloads.
+  await recordUnavailable(await fetch(`${baseUrl}/api/public/installations/${token}/autosave`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mutation) }), 'Revoked autosave replay')
+  await recordUnavailable(await fetch(`${baseUrl}/api/public/installations/${token}/submit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(submitPayload) }), 'Revoked submit replay')
+
+  const replacementResponse = await request(baseUrl, admin, `/api/installations/${order.id}/client-link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ expiresAt: '2027-03-01T12:00:00.000Z' }) })
+  expectStatus(replacementResponse, 201, 'Backoffice generate replacement link')
+  const replacement = await replacementResponse.json()
+  const expiredToken = new URL(replacement.url).pathname.split('/').at(-1)
+  const expireReplacement = `
+import { PrismaClient } from './src/generated/prisma'
+const db = new PrismaClient({ datasources: { db: { url: process.env.DATABASE_URL } } })
+try { await db.installationClientLink.update({ where: { id: process.env.LINK_ID }, data: { expiresAt: new Date('2020-01-01') } }) } finally { await db.$disconnect() }
+`
+  runChecked(process.execPath, ['--import', 'tsx', '--input-type=module', '--eval', expireReplacement], { env: { ...process.env, DATABASE_URL: databaseUrl, LINK_ID: replacement.link.id } })
+  // Same correction mutations were also accepted before expiry; resolving the
+  // link must happen first, so neither stored response may be replayed.
+  await recordUnavailable(await fetch(`${baseUrl}/api/public/installations/${expiredToken}/autosave`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(correctionMutation) }), 'Expired autosave replay')
+  await recordUnavailable(await fetch(`${baseUrl}/api/public/installations/${expiredToken}/submit`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(correctionSubmitPayload) }), 'Expired submit replay')
+  const randomToken = randomBytes(32).toString('base64url')
+  await recordUnavailable(await fetch(`${baseUrl}/api/public/installations/${randomToken}/autosave`, { method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(mutation) }), 'Random autosave')
+  for (const candidate of [token, expiredToken, randomToken]) {
+    await recordUnavailable(await fetch(`${baseUrl}/api/public/installations/${candidate}`), 'Generic unavailable link')
   }
   if (new Set(unavailable).size !== 1) throw new Error('GENERIC_PUBLIC_404_FAILED')
   directEvidence({ orderId: order.id, token })

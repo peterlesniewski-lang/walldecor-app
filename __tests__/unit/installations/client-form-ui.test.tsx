@@ -1,13 +1,12 @@
-import { render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ClientInstallationForm } from '@/components/installations/client-form/client-installation-form'
 
 const projection = {
   brand: 'WallDecor' as const,
   number: 'MON-20260822-0001',
-  clientName: 'Marta',
-  coordinator: 'Anna Opiekun',
+  contact: { label: 'WallDecor', email: 'info@walldecor.pl' },
   rooms: [{ name: 'Salon', scopes: [{ name: 'Ściana z glifem', products: [{ name: 'Listwa L-10', code: 'L-10', manufacturer: 'WallDecor', collection: null }] }] }],
   form: {
     templateVersion: 1,
@@ -17,17 +16,20 @@ const projection = {
       { key: 'referencja', type: 'FILE', label: 'Zdjęcie referencyjne', required: true },
     ],
   },
-  submission: { id: 'draft-1', status: 'DRAFT' as const, revisionNumber: 1, draftVersion: 0, submittedAt: null, answers: [] },
+  submission: { status: 'DRAFT' as const, revisionNumber: 1, draftVersion: 0, submittedAt: null, answers: [] },
   canStartCorrection: false,
 }
 
 describe('client installation form', () => {
+  afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
   it('uses the job map and reveals cm only for YES while UNKNOWN is a clear nonblocking state', async () => {
     const user = userEvent.setup()
     render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={projection} />)
 
     expect(screen.getByRole('heading', { name: 'Mapa zlecenia' })).not.toBeNull()
     expect(screen.getByText('Salon')).not.toBeNull()
+    expect(screen.getByText(/Kontakt: WallDecor/i)).not.toBeNull()
+    expect(screen.queryByText('Marta')).toBeNull()
     expect(screen.getByRole('status').textContent).toContain('Wszystko zapisane')
     expect(screen.queryByLabelText(/Ile cm ma glif/)).toBeNull()
     await user.click(screen.getByRole('button', { name: 'Tak' }))
@@ -43,5 +45,50 @@ describe('client installation form', () => {
     expect(screen.getByText(/Dokumenty i zdjęcia dodamy w kroku plików/i)).not.toBeNull()
     expect(document.querySelector('input[type="file"]')).toBeNull()
     expect(screen.getByTestId('task5-file-step').getAttribute('data-task5-replace')).toBe('private-upload-handoff')
+  })
+
+  it('serializes rapid answer changes so an older delayed save cannot overwrite UNKNOWN', async () => {
+    vi.useFakeTimers()
+    const deferred: Array<{ resolve: (response: Response) => void }> = []
+    const fetchMock = vi.fn(() => new Promise<Response>((resolve) => deferred.push({ resolve })))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={projection} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Tak' }))
+    expect(screen.getByRole('status').textContent).toContain('Zapisywanie…')
+    act(() => { vi.advanceTimersByTime(550) })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    fireEvent.click(screen.getByRole('button', { name: 'Nie wiem' }))
+    act(() => { vi.advanceTimersByTime(550) })
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    await act(async () => { deferred[0].resolve(new Response(JSON.stringify({ status: 'DRAFT', revisionNumber: 1, draftVersion: 1, submittedAt: null, answers: [{ questionKey: 'glify', value: 'YES', isUnknown: false }] }), { status: 200 })) })
+    await act(async () => {})
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+    await act(async () => { deferred[1].resolve(new Response(JSON.stringify({ status: 'DRAFT', revisionNumber: 1, draftVersion: 2, submittedAt: null, answers: [{ questionKey: 'glify', value: 'UNKNOWN', isUnknown: true }] }), { status: 200 })) })
+    await act(async () => {})
+
+    expect(screen.getByRole('button', { name: 'Nie wiem' }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getByRole('button', { name: 'Tak' }).getAttribute('aria-pressed')).toBe('false')
+    expect(screen.getByRole('status').textContent).toContain('Wszystko zapisane')
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ revisionNumber: 1, draftVersion: 0 })
+    expect(JSON.parse(String(fetchMock.mock.calls[1][1]?.body))).toMatchObject({ revisionNumber: 1, draftVersion: 1 })
+  })
+
+  it('keeps a failed save pending for the explicit retry instead of starting an unbounded retry loop', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn().mockRejectedValueOnce(new Error('offline')).mockResolvedValueOnce(new Response(JSON.stringify({ status: 'DRAFT', revisionNumber: 1, draftVersion: 1, submittedAt: null, answers: [{ questionKey: 'glify', value: 'UNKNOWN', isUnknown: true }] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={projection} />)
+
+    fireEvent.click(screen.getByRole('button', { name: 'Nie wiem' }))
+    act(() => { vi.advanceTimersByTime(550) })
+    await act(async () => {})
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('status').textContent).toContain('Wystąpił błąd zapisu')
+    fireEvent.click(screen.getByRole('button', { name: 'Spróbuj ponownie' }))
+    await act(async () => {})
+    expect(fetchMock).toHaveBeenCalledTimes(2)
   })
 })

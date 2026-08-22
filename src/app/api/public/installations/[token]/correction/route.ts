@@ -4,6 +4,7 @@ import { InstallationClientLinkNotFoundError, publicClientLinkNotFound } from '@
 import { startClientFormCorrection, InstallationFormValidationError } from '@/lib/installations/form-service'
 
 type Params = { params: Promise<{ token: string }> }
+const noStore = { 'Cache-Control': 'no-store' }
 
 export async function POST(_req: NextRequest, { params }: Params) {
   const { token } = await params
@@ -12,7 +13,7 @@ export async function POST(_req: NextRequest, { params }: Params) {
     return NextResponse.json(submission, { status: 201, headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     if (error instanceof InstallationClientLinkNotFoundError) return publicClientLinkNotFound()
-    if (error instanceof InstallationFormValidationError) return NextResponse.json({ error: 'Nie można rozpocząć korekty formularza.' }, { status: 400 })
+    if (error instanceof InstallationFormValidationError) return NextResponse.json({ error: 'Nie można rozpocząć korekty formularza.' }, { status: 400, headers: noStore })
     throw error
   }
 }

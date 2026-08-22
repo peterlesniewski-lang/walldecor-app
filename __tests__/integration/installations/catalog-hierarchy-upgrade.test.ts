@@ -123,10 +123,15 @@ describe('installation catalog hierarchy migration upgrade', () => {
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationAnswer_submitted_%' ORDER BY name"),
       db.$queryRawUnsafe('PRAGMA foreign_key_check'), db.$queryRawUnsafe<Array<{ integrity_check: string }>>('PRAGMA integrity_check'),
     ])
-    expect(migrations).toHaveLength(23)
+    expect(migrations).toHaveLength(24)
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030000_installation_client_form')
+    expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030100_installation_submitted_answer_insert_guard')
     expect(triggers).toHaveLength(6)
-    expect(clientFormTriggers).toHaveLength(2)
+    expect(clientFormTriggers).toEqual([
+      { name: 'InstallationAnswer_submitted_delete_guard' },
+      { name: 'InstallationAnswer_submitted_insert_guard' },
+      { name: 'InstallationAnswer_submitted_update_guard' },
+    ])
     expect(foreignKeys).toEqual([])
     expect(integrity[0]?.integrity_check).toBe('ok')
     await db.$disconnect()

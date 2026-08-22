@@ -50,6 +50,14 @@ export function ClientLinkPanel({ orderId, initialLinks, canEdit }: {
     try { await navigator.clipboard.writeText(oneTimeUrl); setState('copied') } catch { setState('error'); setError('Skopiuj link ręcznie z pola powyżej.') }
   }
 
+  function extensionExpiry(days: number) {
+    const now = new Date()
+    const activeExpiry = active ? new Date(active.expiresAt) : now
+    const base = activeExpiry > now ? activeExpiry : now
+    base.setDate(base.getDate() + days)
+    return base.toISOString()
+  }
+
   return <section className="mt-6 rounded-xl border p-4" style={{ background: 'var(--wd-white)', borderColor: 'rgba(30,30,30,.12)', boxShadow: 'var(--card-shadow)' }}>
     <p className="data-label">Formularz klienta</p>
     <h2 className="mt-1 text-xl font-extrabold tracking-tight" style={{ color: 'var(--wd-dark)' }}>Bezpieczny link do przygotowania montażu</h2>
@@ -60,6 +68,7 @@ export function ClientLinkPanel({ orderId, initialLinks, canEdit }: {
       </label>
       <div className="flex flex-wrap items-end gap-2">
         <button type="button" className="min-h-11 rounded-md px-4 text-sm font-bold" style={{ background: '#E4DCD1', color: '#1E1E1E' }} onClick={() => void request({ expiresAt: new Date(expiresAt).toISOString() }, 'POST')} disabled={state === 'loading'}>{active ? 'Wygeneruj nowy link' : 'Wygeneruj link'}</button>
+        {active && <button type="button" className="min-h-11 rounded-md border px-4 text-sm font-bold" onClick={() => void request({ action: 'EXTEND', linkId: active.id, expiresAt: extensionExpiry(14) }, 'PATCH')} disabled={state === 'loading'}>Przedłuż o 14 dni</button>}
         {active && <button type="button" className="min-h-11 rounded-md border px-4 text-sm font-bold" onClick={() => void request({ action: 'REVOKE', linkId: active.id }, 'PATCH')} disabled={state === 'loading'}>Cofnij link</button>}
       </div>
     </div>}

@@ -22,6 +22,20 @@ describe('installation detail client-link and clarification panels', () => {
     expect(screen.getByText('https://app.example.test/m/secret-once')).not.toBeNull()
   })
 
+  it('extends an active link by fourteen days without rendering its token again', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      link: { id: 'link-1', expiresAt: '2027-01-15T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null },
+    }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientLinkPanel orderId="order-1" canEdit initialLinks={[{ id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null }]} />)
+
+    await user.click(screen.getByRole('button', { name: 'Przedłuż o 14 dni' }))
+    expect(fetchMock).toHaveBeenCalledWith('/api/installations/order-1/client-link', expect.objectContaining({ method: 'PATCH' }))
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ action: 'EXTEND', linkId: 'link-1' })
+    expect(screen.queryByText(/\/m\//)).toBeNull()
+  })
+
   it('requires an actual resolution/note form instead of prompt before closing an open clarification', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ clarification: { id: 'clarification-1', status: 'RESOLVED' } }), { status: 200 }))

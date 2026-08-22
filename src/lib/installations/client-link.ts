@@ -43,7 +43,6 @@ export class InstallationClientLinkValidationError extends Error {
 }
 
 type PublicSubmission = {
-  id: string
   status: 'DRAFT' | 'SUBMITTED'
   revisionNumber: number
   draftVersion: number
@@ -59,8 +58,6 @@ async function getActiveOrderSnapshot(db: InstallationDb, orderId: string) {
   const order = await db.installationOrder.findUnique({
     where: { id: orderId },
     include: {
-      client: { select: { name: true } },
-      primaryEmployee: { select: { firstName: true, lastName: true } },
       formSnapshots: { select: { id: true, templateVersion: true, schemaJson: true } },
       rooms: {
         orderBy: { sortOrder: 'asc' },
@@ -200,11 +197,10 @@ async function ensureCurrentDraft(db: InstallationDb, orderId: string, formSnaps
 }
 
 function publicSubmission(submission: {
-  id: string; status: string; revisionNumber: number; draftVersion: number; submittedAt: Date | null
+  status: string; revisionNumber: number; draftVersion: number; submittedAt: Date | null
   answers: Array<{ questionKey: string; valueJson: string; isUnknown: boolean }>
 }): PublicSubmission {
   return {
-    id: submission.id,
     status: submission.status === 'SUBMITTED' ? 'SUBMITTED' : 'DRAFT',
     revisionNumber: submission.revisionNumber,
     draftVersion: submission.draftVersion,
@@ -220,7 +216,12 @@ function publicSubmission(submission: {
   }
 }
 
-/** The only public projection: no address, email, IDs from the order, audit or staff directory. */
+function publicWallDecorContact() {
+  const email = process.env.WALLDECOR_PUBLIC_CONTACT_EMAIL?.trim() || 'info@walldecor.pl'
+  return { label: 'WallDecor' as const, email }
+}
+
+/** The only public projection: no client/staff PII or joinable database IDs. */
 export async function loadPublicInstallationProjection(db: PrismaClient, token: string) {
   const link = await resolveActiveClientLink(db, token)
   const order = await getActiveOrderSnapshot(db, link.orderId)
@@ -238,8 +239,7 @@ export async function loadPublicInstallationProjection(db: PrismaClient, token: 
   return {
     brand: 'WallDecor' as const,
     number: order.number,
-    clientName: order.client.name,
-    coordinator: `${order.primaryEmployee.firstName} ${order.primaryEmployee.lastName}`,
+    contact: publicWallDecorContact(),
     rooms: order.rooms.map((room) => ({
       name: room.name,
       scopes: room.scopes.map((scope) => ({

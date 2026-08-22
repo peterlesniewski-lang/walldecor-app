@@ -14,11 +14,11 @@ type Question = {
   condition?: { questionKey: string; equals: string }
 }
 type Submission = {
-  id: string; status: 'DRAFT' | 'SUBMITTED'; revisionNumber: number; draftVersion: number; submittedAt: string | null
+  status: 'DRAFT' | 'SUBMITTED'; revisionNumber: number; draftVersion: number; submittedAt: string | null
   answers: Array<{ questionKey: string; value: AnswerValue; isUnknown: boolean }>
 }
 export type ClientFormProjection = {
-  brand: 'WallDecor'; number: string; clientName: string; coordinator: string
+  brand: 'WallDecor'; number: string; contact: { label: 'WallDecor'; email: string }
   rooms: Array<{ name: string; scopes: Array<{ name: string; products: Array<{ name: string; code: string | null; manufacturer: string | null; collection: string | null }> }> }>
   form: { templateVersion: number; questions: Question[] }
   submission: Submission
@@ -73,6 +73,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
   const pendingRef = useRef<Record<string, AnswerValue>>({})
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
   const submissionRef = useRef(projection.submission)
+  const saveLoopRef = useRef<Promise<boolean> | null>(null)
   const visible = useMemo(() => visibleQuestions(projection.form.questions, answers), [projection.form.questions, answers])
   const groups = useMemo(() => questionGroups(visible), [visible])
   const unknownSelected = Object.entries(answers).some(([key, value]) => projection.form.questions.find((question) => question.key === key)?.type === 'YES_NO_UNKNOWN' && value === 'UNKNOWN')
@@ -81,34 +82,69 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
   useEffect(() => { submissionRef.current = projection.submission }, [projection.submission])
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
 
-  function adoptSubmission(submission: Submission) {
+  function adoptSubmission(submission: Submission, preservePending = false) {
+    const pendingAnswers = preservePending
+      ? Object.fromEntries(Object.keys(pendingRef.current).flatMap((key) => answersRef.current[key] === undefined ? [] : [[key, answersRef.current[key]]]))
+      : {}
+    const nextAnswers = { ...mapAnswers(submission), ...pendingAnswers }
+    submissionRef.current = submission
     setProjection((current) => ({ ...current, submission, canStartCorrection: submission.status === 'SUBMITTED' }))
-    setAnswers(mapAnswers(submission))
+    answersRef.current = nextAnswers
+    setAnswers(nextAnswers)
   }
 
-  async function persist(): Promise<boolean> {
-    const pending = pendingRef.current
-    const keys = Object.keys(pending)
-    if (keys.length === 0) return true
-    const submission = submissionRef.current
-    if (submission.status !== 'DRAFT') return false
-    const sent = Object.fromEntries(keys.map((key) => [key, pending[key]]))
-    setSaveState('saving'); setError('')
-    try {
-      const response = await fetch(`/api/public/installations/${encodeURIComponent(token)}/autosave`, {
-        method: 'PATCH', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ submissionId: submission.id, draftVersion: submission.draftVersion, clientMutationId: mutationId(), answers: Object.entries(sent).map(([questionKey, value]) => ({ questionKey, value })) }),
-      })
-      if (!response.ok) throw new Error('Nie udało się zapisać odpowiedzi.')
-      const next = await response.json() as Submission
-      for (const [key, value] of Object.entries(sent)) if (pendingRef.current[key] === value) delete pendingRef.current[key]
-      adoptSubmission(next)
+  async function reconcileAfterConflict(): Promise<boolean> {
+    const response = await fetch(`/api/public/installations/${encodeURIComponent(token)}`, { cache: 'no-store' })
+    if (!response.ok) return false
+    const latest = await response.json() as ClientFormProjection
+    submissionRef.current = latest.submission
+    const pendingAnswers = Object.fromEntries(Object.keys(pendingRef.current).flatMap((key) => answersRef.current[key] === undefined ? [] : [[key, answersRef.current[key]]]))
+    answersRef.current = { ...mapAnswers(latest.submission), ...pendingAnswers }
+    setProjection(latest)
+    setAnswers(answersRef.current)
+    return true
+  }
+
+  function persist(): Promise<boolean> {
+    if (saveLoopRef.current) return saveLoopRef.current
+    let drained = false
+    const loop = (async () => {
+      while (Object.keys(pendingRef.current).length > 0) {
+        const submission = submissionRef.current
+        if (submission.status !== 'DRAFT') return false
+        const sent = Object.fromEntries(Object.entries(pendingRef.current))
+        setSaveState('saving'); setError('')
+        try {
+          const response = await fetch(`/api/public/installations/${encodeURIComponent(token)}/autosave`, {
+            method: 'PATCH', headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ revisionNumber: submission.revisionNumber, draftVersion: submission.draftVersion, clientMutationId: mutationId(), answers: Object.entries(sent).map(([questionKey, value]) => ({ questionKey, value })) }),
+          })
+          if (response.status === 409) {
+            if (!await reconcileAfterConflict()) throw new Error('Nie udało się pobrać nowszej wersji formularza.')
+            continue
+          }
+          if (!response.ok) throw new Error('Nie udało się zapisać odpowiedzi.')
+          const next = await response.json() as Submission
+          for (const [key, value] of Object.entries(sent)) if (pendingRef.current[key] === value) delete pendingRef.current[key]
+          adoptSubmission(next, true)
+        } catch {
+          setSaveState('error'); setError('Nie udało się zapisać. Spróbuj ponownie — Twoje odpowiedzi pozostają na ekranie.')
+          return false
+        }
+      }
+      drained = true
       setSaveState('saved')
       return true
-    } catch {
-      setSaveState('error'); setError('Nie udało się zapisać. Spróbuj ponownie — Twoje odpowiedzi pozostają na ekranie.')
-      return false
-    }
+    })()
+    saveLoopRef.current = loop
+    void loop.finally(() => {
+      if (saveLoopRef.current === loop) saveLoopRef.current = null
+      // Continue only after a successful drain to catch a change made in the
+      // tiny gap before finalization. Failures keep their pending value and
+      // remain visible until the client explicitly chooses retry.
+      if (drained && Object.keys(pendingRef.current).length > 0) void persist()
+    })
+    return loop
   }
 
   function queueAnswer(questionKey: string, value: AnswerValue) {
@@ -116,6 +152,10 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
     answersRef.current = next
     setAnswers(next)
     pendingRef.current[questionKey] = value
+    // A local change is not saved until the queue reaches the server.  Mark it
+    // immediately so a debounce window can never claim that a newer answer is
+    // already persisted.
+    setSaveState('saving'); setError('')
     if (timerRef.current) clearTimeout(timerRef.current)
     timerRef.current = setTimeout(() => { void persist() }, 550)
   }
@@ -128,7 +168,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
     try {
       const response = await fetch(`/api/public/installations/${encodeURIComponent(token)}/submit`, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ submissionId: submission.id, draftVersion: submission.draftVersion, clientMutationId: mutationId() }),
+        body: JSON.stringify({ revisionNumber: submission.revisionNumber, draftVersion: submission.draftVersion, clientMutationId: mutationId() }),
       })
       const data = await response.json() as Submission | { error?: string }
       if (!response.ok) throw new Error('error' in data ? data.error : 'Nie udało się wysłać formularza.')
@@ -152,8 +192,9 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
   return <main className={styles.shell}>
     <div className={styles.frame}>
       <p className={styles.kicker}>{projection.brand} · przygotowanie montażu</p>
-      <h1 className={styles.title}>Dzień dobry, {projection.clientName}.</h1>
+      <h1 className={styles.title}>Dzień dobry.</h1>
       <p className={styles.lead}>Kilka krótkich odpowiedzi pomoże nam przygotować montaż. W razie niepewności wybierz „Nie wiem” — ustalimy to razem przed terminem.</p>
+      <p className={styles.contact}>Kontakt: {projection.contact.label} · <a href={`mailto:${projection.contact.email}`}>{projection.contact.email}</a></p>
       <p className={`${styles.kicker} ${styles.mono}`} style={{ marginTop: 16 }}>{projection.number} · wersja formularza {projection.form.templateVersion}</p>
       <JobMap rooms={projection.rooms} />
       {submitted ? <section className={styles.confirmation} aria-live="polite">

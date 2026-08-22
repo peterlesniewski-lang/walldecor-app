@@ -20,14 +20,22 @@ Data: 2026-08-22
 6. Public UI i panele backoffice: RED przy braku komponentów; GREEN: 2 testy UI klienta i 2 testy paneli.
 7. Persistencja `required`: wykryto w validatorze, że pole było walidowane, ale nie przechodziło template → snapshot. Dodano kolumnę oraz serializację; targeted suite GREEN 41/41.
 
+## Corrective loop po spec review
+
+1. Replay po revoke/expiry: RED w integracji — autosave zwracał zapisaną odpowiedź idempotentną przed sprawdzeniem linku. GREEN: każda mutacja najpierw rozwiązuje aktywny hash tokenu wewnątrz transakcji; test serwisowy, test HTTP i validator potwierdzają identyczne `404` + `no-store` dla replay autosave i submit po revoke oraz expiry.
+2. Prywatny kontrakt: RED — projekcja i mutacje ujawniały `clientName` / identyfikator submission. GREEN: publicznie jest tylko firmowy kontakt WallDecor, brak klienta i pracownika, a mutacje przyjmują `revisionNumber` i `draftVersion`; serwer sam rozwiązuje rewizję dla ważnego linku.
+3. Race autosave: RED — dwa opóźnione żądania mogły kończyć widok starszym stanem. GREEN: jedna kolejka in-flight, coalescing najnowszych zmian i merge po 409; unit symuluje odwrócone odpowiedzi `Tak → Nie wiem` i wymaga końcowego `UNKNOWN`. Dodatkowy RED wykazał, że debounce przez chwilę pokazywał „Wszystko zapisane”; GREEN natychmiast zmienia status na `Zapisywanie…` po lokalnej zmianie. Kolejny RED wykrył automatyczną pętlę retry po błędzie; GREEN zatrzymuje kolejkę z widocznym błędem i wysyła ponownie wyłącznie po jawnym „Spróbuj ponownie”.
+4. Przedłużenie linku: RED — panel nie miał akcji mimo istniejącego API. GREEN: bezpieczna akcja `Przedłuż o 14 dni`, stan loading/error i brak ponownego pokazania URL tokenu.
+5. Niemutowalność: RED — bezpośredni Prisma INSERT do wysłanej rewizji był możliwy. GREEN: addytywna migracja `20260822030100_installation_submitted_answer_insert_guard`, test integracyjny i validator sprawdzają odrzucenie INSERT oraz niezmieniony historyczny count odpowiedzi.
+
 ## Dowody bramek
 
-- `npm test -- <Task 3 suite>`: 9 plików, 41/41 GREEN po migracji `required`.
-- `node scripts/validate-installation-client-form.mjs`: GREEN. Izolowana baza, realne HTTP i auth, jednorazowy link, DB SHA-256-only, minimalna projekcja publiczna, autosave/restart/replay, równoległy idempotent submit, resolve, korekta, revoke/expired/random identyczne 404 oraz `foreign_key_check` i `integrity_check`.
+- Ostatni targeted rerun: 19/19 GREEN (public routes, UI queue z retry oraz client-form real SQLite); link panel i fresh/upgrade migrations pozostały GREEN w pełnej bramce.
+- `node scripts/validate-installation-client-form.mjs`: GREEN. Izolowana baza, realne HTTP i auth, SHA-256-only token, projekcja bez PII/joinable ID, extend bez zwrotu tokenu, autosave/restart/replay, równoległy idempotent submit, resolve/korekta, replay po revoke/expiry i random z identycznym `404` + `no-store`, direct INSERT guard oraz `foreign_key_check` i `integrity_check`.
   Wynik: `{"status":"ok","revisions":2,"public404":"identical","tokenStorage":"sha256-only"}`.
-- `npm test`: GREEN, 74 pliki / 418 testów. Integracyjny upgrade wykonuje rzeczywiste `prisma migrate deploy` od 20-migration legacy DB oraz fresh chain 23 migracji; sprawdza FK, integrity i dwa triggery niemutowalnych odpowiedzi.
+- `npm test`: GREEN, 74 pliki / 425 testów. Integracyjny upgrade wykonuje rzeczywiste `prisma migrate deploy` od 20-migration legacy DB oraz fresh chain 24 migracji; sprawdza FK, integrity i trzy triggery niemutowalnych odpowiedzi.
 - `npm run build`: GREEN, 133 tras. Zweryfikowane także dynamiczne `Promise` params Next 16 dla tras publicznych i internal.
 
 ## E2E — BLOCKED po limicie iteracji
 
-Playwright `e2e/installations-client-form.spec.ts` był wykonywany pięć razy. Przepływ dochodził do owner resolve i korekty; ostatnia próba zatrzymała się tylko na asercji przejściowego tekstu `Zapisywanie…`: zapis już przeszedł do potwierdzonego `Wszystko zapisane` przed odczytem asercji. Nie jest to błąd zapisu; stabilizowano test, pozostawiając asercję końcowego potwierdzenia oraz readback po refreshu. Zgodnie z limitem nie wykonano szóstej próby E2E w tym loopie.
+Playwright `e2e/installations-client-form.spec.ts` wykonano pięć razy w corrective loop. Przepływ dochodzi do publicznej projekcji bez PII, mobile keyboard/focus, rapid `Tak → Nie wiem` z DB readback, submit, owner resolve, korekty, dwóch rewizji, przedłużenia i API replay po revoke (`404` + `no-store`). Ostatnia próba zatrzymuje się na końcowej asercji dokumentu `/m/[revoked-token]`: Playwright otrzymuje HTTP 200 zamiast oczekiwanego 404, mimo potwierdzonego `revokedAt` i poprawnego 404 dla publicznego API. Nie wykonano szóstej próby zgodnie z limitem; ten punkt pozostaje BLOCKED do osobnej pętli E2E.

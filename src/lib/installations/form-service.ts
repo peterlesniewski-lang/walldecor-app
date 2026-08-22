@@ -145,7 +145,6 @@ export class InstallationClarificationValidationError extends Error {
 type PersistedAnswer = { questionKey: string; valueJson: string; isUnknown: boolean }
 
 type SubmissionForClient = {
-  id: string
   status: 'DRAFT' | 'SUBMITTED'
   revisionNumber: number
   draftVersion: number
@@ -154,7 +153,7 @@ type SubmissionForClient = {
 }
 
 type ClientFormMutation = {
-  submissionId: string
+  revisionNumber: number
   draftVersion: number
   clientMutationId: string
   answers: Array<{ questionKey: string; value: ClientAnswerValue }>
@@ -192,10 +191,9 @@ function answerValue(answer: PersistedAnswer): ClientAnswerValue {
 }
 
 function clientSubmission(submission: {
-  id: string; status: string; revisionNumber: number; draftVersion: number; submittedAt: Date | null; answers: PersistedAnswer[]
+  status: string; revisionNumber: number; draftVersion: number; submittedAt: Date | null; answers: PersistedAnswer[]
 }): SubmissionForClient {
   return {
-    id: submission.id,
     status: submission.status === 'SUBMITTED' ? 'SUBMITTED' : 'DRAFT',
     revisionNumber: submission.revisionNumber,
     draftVersion: submission.draftVersion,
@@ -205,7 +203,7 @@ function clientSubmission(submission: {
 }
 
 function assertMutationShape(input: ClientFormMutation) {
-  if (!input || typeof input !== 'object' || !Array.isArray(input.answers) || typeof input.submissionId !== 'string' || input.submissionId.trim() === '' || !Number.isInteger(input.draftVersion) || input.draftVersion < 0 || typeof input.clientMutationId !== 'string' || input.clientMutationId.trim().length < 12) {
+  if (!input || typeof input !== 'object' || !Array.isArray(input.answers) || !Number.isInteger(input.revisionNumber) || input.revisionNumber < 1 || !Number.isInteger(input.draftVersion) || input.draftVersion < 0 || typeof input.clientMutationId !== 'string' || input.clientMutationId.trim().length < 12) {
     throw new InstallationFormValidationError({ form: 'Dane zapisu formularza są niepoprawne.' })
   }
   const keys = new Set<string>()
@@ -217,16 +215,15 @@ function assertMutationShape(input: ClientFormMutation) {
   }
 }
 
-async function draftForClientLink(db: InstallationDb, token: string, submissionId: string) {
-  const link = await resolveActiveClientLink(db, token)
+async function submissionForClientLink(db: InstallationDb, link: { orderId: string }, revisionNumber: number) {
   const submission = await db.installationFormSubmission.findUnique({
-    where: { id: submissionId },
+    where: { orderId_revisionNumber: { orderId: link.orderId, revisionNumber } },
     include: {
       formSnapshot: { select: { schemaJson: true } },
       answers: { orderBy: { questionKey: 'asc' } },
     },
   })
-  if (!submission || submission.orderId !== link.orderId || submission.status !== 'DRAFT') {
+  if (!submission || submission.orderId !== link.orderId) {
     throw new InstallationFormValidationError({ form: 'Ten szkic formularza nie jest dostępny.' })
   }
   return { link, submission, questions: questionsFromSnapshot(submission.formSnapshot.schemaJson) }
@@ -270,22 +267,25 @@ function replayMutation(mutation: { operation: string; responseJson: string }, o
 export async function autosaveClientForm(db: PrismaClient, token: string, input: ClientFormMutation): Promise<SubmissionForClient> {
   assertMutationShape(input)
   return db.$transaction(async (tx) => {
+    // Link validity intentionally precedes any idempotency lookup. A revoked,
+    // expired or malformed token must never replay a formerly valid response.
+    const link = await resolveActiveClientLink(tx, token)
+    const { submission, questions } = await submissionForClientLink(tx, link, input.revisionNumber)
     const firstReplay = await tx.installationFormSubmissionMutation.findUnique({
-      where: { submissionId_draftVersion_clientMutationId: { submissionId: input.submissionId, draftVersion: input.draftVersion, clientMutationId: input.clientMutationId } },
+      where: { submissionId_draftVersion_clientMutationId: { submissionId: submission.id, draftVersion: input.draftVersion, clientMutationId: input.clientMutationId } },
     })
     if (firstReplay) return replayMutation(firstReplay, 'AUTOSAVE')
-
-    const { submission, questions } = await draftForClientLink(tx, token, input.submissionId)
+    if (submission.status !== 'DRAFT') throw new InstallationFormValidationError({ form: 'Ten szkic formularza nie jest dostępny.' })
     if (submission.draftVersion !== input.draftVersion) throw new InstallationFormConflictError()
     const values = mergedDraftAnswers(submission.answers, input.answers)
     const visible = assertAnswersAreVisible(questions, values, input.answers)
     const claimed = await tx.installationFormSubmission.updateMany({
-      where: { id: input.submissionId, status: 'DRAFT', draftVersion: input.draftVersion },
+      where: { id: submission.id, status: 'DRAFT', draftVersion: input.draftVersion },
       data: { draftVersion: { increment: 1 } },
     })
     if (claimed.count !== 1) {
       const replay = await tx.installationFormSubmissionMutation.findUnique({
-        where: { submissionId_draftVersion_clientMutationId: { submissionId: input.submissionId, draftVersion: input.draftVersion, clientMutationId: input.clientMutationId } },
+        where: { submissionId_draftVersion_clientMutationId: { submissionId: submission.id, draftVersion: input.draftVersion, clientMutationId: input.clientMutationId } },
       })
       if (replay) return replayMutation(replay, 'AUTOSAVE')
       throw new InstallationFormConflictError()
@@ -294,22 +294,22 @@ export async function autosaveClientForm(db: PrismaClient, token: string, input:
       const question = questions.find((candidate) => candidate.key === answer.questionKey)!
       const normalized = normalizeClientAnswer(question, answer.value)
       await tx.installationAnswer.upsert({
-        where: { submissionId_questionKey: { submissionId: input.submissionId, questionKey: answer.questionKey } },
-        create: { submissionId: input.submissionId, questionKey: answer.questionKey, questionType: question.type, ...normalized },
+        where: { submissionId_questionKey: { submissionId: submission.id, questionKey: answer.questionKey } },
+        create: { submissionId: submission.id, questionKey: answer.questionKey, questionType: question.type, ...normalized },
         update: { questionType: question.type, ...normalized },
       })
     }
     // A changed controlling answer can hide a nested question. Its old value
     // must not survive as an invisible answer in the draft or a later revision.
     await tx.installationAnswer.deleteMany({
-      where: { submissionId: input.submissionId, questionKey: { notIn: [...visible.keys()] } },
+      where: { submissionId: submission.id, questionKey: { notIn: [...visible.keys()] } },
     })
     const updated = await tx.installationFormSubmission.findUniqueOrThrow({
-      where: { id: input.submissionId }, include: { answers: { orderBy: { questionKey: 'asc' } } },
+      where: { id: submission.id }, include: { answers: { orderBy: { questionKey: 'asc' } } },
     })
     const response = clientSubmission(updated)
     await tx.installationFormSubmissionMutation.create({
-      data: { submissionId: input.submissionId, draftVersion: input.draftVersion, clientMutationId: input.clientMutationId, operation: 'AUTOSAVE', responseJson: JSON.stringify(response) },
+      data: { submissionId: submission.id, draftVersion: input.draftVersion, clientMutationId: input.clientMutationId, operation: 'AUTOSAVE', responseJson: JSON.stringify(response) },
     })
     return response
   })
@@ -337,12 +337,15 @@ function createClarificationCandidates(questions: ClientFormQuestion[], answers:
 export async function submitClientForm(db: PrismaClient, token: string, input: SubmitMutation): Promise<SubmissionForClient> {
   assertMutationShape({ ...input, answers: [] })
   return db.$transaction(async (tx) => {
+    // See autosave: authorization is always established before replaying a
+    // mutation bound to a historic submission revision.
+    const link = await resolveActiveClientLink(tx, token)
+    const { submission, questions } = await submissionForClientLink(tx, link, input.revisionNumber)
     const firstReplay = await tx.installationFormSubmissionMutation.findUnique({
-      where: { submissionId_draftVersion_clientMutationId: { submissionId: input.submissionId, draftVersion: input.draftVersion, clientMutationId: input.clientMutationId } },
+      where: { submissionId_draftVersion_clientMutationId: { submissionId: submission.id, draftVersion: input.draftVersion, clientMutationId: input.clientMutationId } },
     })
     if (firstReplay) return replayMutation(firstReplay, 'SUBMIT')
-
-    const { link, submission, questions } = await draftForClientLink(tx, token, input.submissionId)
+    if (submission.status !== 'DRAFT') throw new InstallationFormValidationError({ form: 'Ten szkic formularza nie jest dostępny.' })
     if (submission.draftVersion !== input.draftVersion) throw new InstallationFormConflictError()
     const values = mergedDraftAnswers(submission.answers, [])
     validateVisibleSubmission(questions, values)
@@ -354,7 +357,7 @@ export async function submitClientForm(db: PrismaClient, token: string, input: S
     })
     if (claimed.count !== 1) {
       const replay = await tx.installationFormSubmissionMutation.findUnique({
-        where: { submissionId_draftVersion_clientMutationId: { submissionId: input.submissionId, draftVersion: input.draftVersion, clientMutationId: input.clientMutationId } },
+        where: { submissionId_draftVersion_clientMutationId: { submissionId: submission.id, draftVersion: input.draftVersion, clientMutationId: input.clientMutationId } },
       })
       if (replay) return replayMutation(replay, 'SUBMIT')
       throw new InstallationFormConflictError()
@@ -379,8 +382,10 @@ export async function submitClientForm(db: PrismaClient, token: string, input: S
 
 /** Creates a separate draft revision; it never reopens or mutates a submitted record. */
 export async function startClientFormCorrection(db: PrismaClient, token: string): Promise<SubmissionForClient> {
-  const link = await resolveActiveClientLink(db, token)
   return db.$transaction(async (tx) => {
+    // Keep correction on the same authorization boundary as autosave and
+    // submit.  No draft lookup is allowed before an active link is resolved.
+    const link = await resolveActiveClientLink(tx, token)
     const existing = await tx.installationFormSubmission.findUnique({
       where: { draftKey: link.orderId }, include: { answers: { orderBy: { questionKey: 'asc' } } },
     })
