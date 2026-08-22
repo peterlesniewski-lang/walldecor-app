@@ -7,6 +7,7 @@ import { PrismaClient } from '@/generated/prisma'
 import {
   archiveInstallationOrder,
   createInstallationOrder,
+  deactivateEmployeeIfNoActiveInstallationOrder,
   getInstallationOrder,
   listInstallationOrders,
   updateInstallationOrder,
@@ -294,5 +295,41 @@ describe('installation order CRUD persists in a real SQLite database', () => {
     } finally {
       rmSync(legacyDirectory, { recursive: true, force: true })
     }
+  })
+
+  it('does not deactivate an owner when a card is inserted between the legacy check and atomic write', async () => {
+    const legacyCount = await db.installationOrder.count({
+      where: {
+        archivedAt: null,
+        OR: [
+          { primaryEmployeeId: installerEmployeeId },
+          { backupEmployeeId: installerEmployeeId },
+        ],
+      },
+    })
+    expect(legacyCount).toBe(0)
+
+    const created = await createInstallationOrder(db, {
+      client: { name: 'Wyścig właściciela', email: 'race-owner@example.pl', phone: '+48 504 111 222' },
+      address: { street: 'Wyścigowa', buildingNumber: '7', postalCode: '00-950', city: 'Warszawa' },
+      primaryEmployeeId: installerEmployeeId,
+      backupEmployeeId: primaryEmployeeId,
+    }, 'admin-user')
+    const updatedRows = await deactivateEmployeeIfNoActiveInstallationOrder(db, installerEmployeeId)
+    const employeeAfterInterleaving = await db.employee.findUnique({
+      where: { id: installerEmployeeId },
+      select: { active: true },
+    })
+    const activeOrderAfterInterleaving = await db.installationOrder.findUnique({
+      where: { id: created.id },
+      select: { archivedAt: true, primaryEmployeeId: true },
+    })
+
+    expect(updatedRows).toBe(0)
+    expect(employeeAfterInterleaving?.active).toBe(true)
+    expect(activeOrderAfterInterleaving).toMatchObject({
+      archivedAt: null,
+      primaryEmployeeId: installerEmployeeId,
+    })
   })
 })

@@ -45,12 +45,11 @@ Spacing: wszystkie grupy i kontrolki utrzymują siatkę bazową 4 px.
 
 | Komenda | Wynik |
 | --- | --- |
-| `npm test -- __tests__/unit/installations/order-rules.test.ts` | 42/42, exit 0 |
-| `npm test -- __tests__/integration/installations/order-crud.test.ts` | 4/4, exit 0 |
-| `npm test` | 53 pliki, 324/324, exit 0 |
-| `npm run build` | exit 0; Turbopack 3.4 s, TypeScript i 130 route'ów |
-| `node scripts/validate-installation-order.mjs` | exit 0; `persistedStatus: ARCHIVED` |
-| `npm run test:e2e -- e2e/installations-order.spec.ts` | 1/1, exit 0 (6.9 s) |
+| targeted unit + integration | 3 pliki, 51/51, exit 0 |
+| `npm test` | 54 pliki, 329/329, exit 0 |
+| `npm run build` | exit 0; Turbopack 3.5 s, TypeScript i 130 route'ów |
+| `node scripts/validate-installation-order.mjs` ×2 | oba exit 0; oba `persistedStatus: ARCHIVED` |
+| `npm run test:e2e -- e2e/installations-order.spec.ts` | 1/1, exit 0 (7.8 s) |
 | `prisma migrate deploy` na świeżej SQLite | 18/18 migracji, `foreign_key_check` puste, `integrity_check: ok` |
 
 ## Dowód DB, API i UI
@@ -153,3 +152,38 @@ produkcji: przed deployem wymagany jest osobny gate baseline/reconcile na
 klonie produkcyjnej SQLite (backup, porównanie `_prisma_migrations`,
 `foreign_key_check`, `integrity_check` i plan rollbacku), zanim zmieni się
 tryb entrypointu lub zastosuje migracje na produkcji.
+
+## Re-review jakości Tasku 1 — atomowa dezaktywacja ownera
+
+### RED → GREEN
+
+1. Test route interleaving był czerwony: przy dawnej sekwencji `count` →
+   `employee.update` odpowiedź była 200 i testowy pracownik stawał się
+   nieaktywny, mimo że w przerwie pojawiła się aktywna karta. Realny test
+   SQLite odtwarza tę samą kolejność: legacy count zwraca 0, następnie tworzy
+   kartę, a próba dezaktywacji musi zachować `Employee.active=true`.
+2. GREEN: `deactivateEmployeeIfNoActiveInstallationOrder()` wykonuje jeden
+   `UPDATE "Employee" ... WHERE id = ? AND NOT EXISTS (aktywny primary/backup)`.
+   `affectedRows=0` jest rozróżniane dopiero potem jako 404 albo zachowane 409
+   z polskim komunikatem. SQLite serializuje writerów, więc create/update
+   ownera i ten warunkowy zapis nie zostawiają stanu `active=false` z aktywną
+   kartą ownera. Targeted wynik: 51/51; realna integracja: 5/5.
+3. Test helpera walidatora był czerwony, bo helper nie istniał. GREEN:
+   `stopServerGracefully` przyjmuje wyłącznie SIGTERM wysłany przez harness,
+   sprawdza zwolnienie tego samego portu przez bind/close i nadal odrzuca crash
+   przed shutdownem albo inny sygnał. Unit helpera: 3/3.
+
+### Świeży dowód wykonania
+
+- `npm test`: 54 pliki, 329/329, exit 0; świeży build zakończył się exit 0
+  i wygenerował 130 route'ów. Wcześniejszy build po testach był aktywny bez
+  postępu przez ponad 2 minuty (PID 2243, rodzic PID 1692), więc został
+  kontrolowanie zatrzymany SIGTERM po potwierdzeniu żywego locka; locku nie
+  usuwano ręcznie. Następny build był zielony.
+- Walidator HTTP uruchomiono **dwa razy z rzędu** na niezależnych temp SQLite:
+  oba pełne roundtripy zwróciły exit 0 i `persistedStatus: ARCHIVED`, co jest
+  realnym dowodem kontrolowanego SIGTERM i zwolnienia portu przed restartem.
+- E2E workflow: 1/1, exit 0 (7.8 s). Fresh `migrate deploy` po pierwszym
+  pustym `Schema engine error` został diagnostycznie ponowiony na tym samym
+  pustym pliku: 18/18 migracji, puste `foreign_key_check`,
+  `integrity_check: ok`; plik temp i sidecary zostały usunięte.

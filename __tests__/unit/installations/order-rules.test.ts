@@ -18,6 +18,7 @@ import {
 import {
   archiveInstallationOrder,
   createInstallationOrder,
+  deactivateEmployeeIfNoActiveInstallationOrder,
   getInstallationOrder,
   listInstallationOrders,
   updateInstallationOrder,
@@ -41,6 +42,7 @@ vi.mock('@/lib/auth', () => ({ authOptions: {} }))
 vi.mock('@/lib/installations/order-service', () => ({
   archiveInstallationOrder: vi.fn(),
   createInstallationOrder: vi.fn(),
+  deactivateEmployeeIfNoActiveInstallationOrder: vi.fn(),
   getInstallationOrder: vi.fn(),
   listInstallationOrders: vi.fn(),
   updateInstallationOrder: vi.fn(),
@@ -73,6 +75,7 @@ vi.mock('next/navigation', () => ({
 const mockGetServerSession = vi.mocked(getServerSession)
 const mockArchiveInstallationOrder = vi.mocked(archiveInstallationOrder)
 const mockCreateInstallationOrder = vi.mocked(createInstallationOrder)
+const mockDeactivateEmployeeIfNoActiveInstallationOrder = vi.mocked(deactivateEmployeeIfNoActiveInstallationOrder)
 const mockGetInstallationOrder = vi.mocked(getInstallationOrder)
 const mockListInstallationOrders = vi.mocked(listInstallationOrders)
 const mockUpdateInstallationOrder = vi.mocked(updateInstallationOrder)
@@ -520,7 +523,7 @@ describe('employee deletion installation protection', () => {
   it('returns 409 before deactivating an owner of an active installation order', async () => {
     mockGetServerSession.mockResolvedValue(session('ADMIN') as never)
     vi.mocked(prisma.employee.findUnique).mockResolvedValue({ id: 'employee-1', active: true } as never)
-    vi.mocked(prisma.installationOrder.count).mockResolvedValue(1 as never)
+    mockDeactivateEmployeeIfNoActiveInstallationOrder.mockResolvedValue(0 as never)
 
     const response = await updateEmployee(jsonRequest({ active: false }, 'PATCH'), {
       params: Promise.resolve({ id: 'employee-1' }),
@@ -530,6 +533,32 @@ describe('employee deletion installation protection', () => {
     expect(await response.json()).toEqual({
       error: 'Pracownik jest opiekunem aktywnych kart montaży. Najpierw przypnij karty do innego opiekuna.',
     })
+    expect(mockDeactivateEmployeeIfNoActiveInstallationOrder).toHaveBeenCalledWith(prisma, 'employee-1')
+    expect(prisma.installationOrder.count).not.toHaveBeenCalled()
+    expect(prisma.employee.update).not.toHaveBeenCalled()
+  })
+
+  it('keeps an employee active when an order appears during an atomic deactivation attempt', async () => {
+    let employeeActive = true
+    let activeOrderAppeared = false
+    mockGetServerSession.mockResolvedValue(session('ADMIN') as never)
+    vi.mocked(prisma.employee.findUnique).mockResolvedValue({ id: 'employee-1', active: true } as never)
+    mockDeactivateEmployeeIfNoActiveInstallationOrder.mockImplementation(async () => {
+      activeOrderAppeared = true
+      return 0
+    })
+    vi.mocked(prisma.employee.update).mockImplementation(async () => {
+      employeeActive = false
+      return { id: 'employee-1', active: false } as never
+    })
+
+    const response = await updateEmployee(jsonRequest({ active: false }, 'PATCH'), {
+      params: Promise.resolve({ id: 'employee-1' }),
+    })
+
+    expect(response.status).toBe(409)
+    expect(activeOrderAppeared).toBe(true)
+    expect(employeeActive).toBe(true)
     expect(prisma.employee.update).not.toHaveBeenCalled()
   })
 })

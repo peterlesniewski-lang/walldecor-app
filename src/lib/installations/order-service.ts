@@ -70,6 +70,26 @@ async function assertActiveOwners(db: InstallationDb, primaryEmployeeId: string,
   if (Object.keys(fieldErrors).length > 0) throw new InstallationOrderValidationError(fieldErrors)
 }
 
+/**
+ * SQLite serializes writers, so this one statement either sees a committed
+ * active order or marks the employee inactive before a later order can pass
+ * its active-owner validation. Do not split this into a count followed by an
+ * update: that would reopen the ownership race.
+ */
+export async function deactivateEmployeeIfNoActiveInstallationOrder(db: PrismaClient, employeeId: string) {
+  return db.$executeRaw`
+    UPDATE "Employee"
+    SET "active" = ${false}
+    WHERE "id" = ${employeeId}
+      AND NOT EXISTS (
+        SELECT 1
+        FROM "InstallationOrder"
+        WHERE "archivedAt" IS NULL
+          AND ("primaryEmployeeId" = ${employeeId} OR "backupEmployeeId" = ${employeeId})
+      )
+  `
+}
+
 async function nextInstallationNumber(db: InstallationDb) {
   const date = new Date().toISOString().slice(0, 10).replaceAll('-', '')
   for (let attempt = 0; attempt < 20; attempt += 1) {

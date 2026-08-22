@@ -1,9 +1,9 @@
 import { spawn, spawnSync } from 'node:child_process'
-import { once } from 'node:events'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { createServer } from 'node:net'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { stopServerGracefully } from './validate-installation-order-utils.mjs'
 
 const workspace = process.cwd()
 const databaseDirectory = mkdtempSync(path.join(tmpdir(), 'walldecor-installation-validator-'))
@@ -108,19 +108,17 @@ async function waitForServer(baseUrl, runningServer) {
   throw new Error(`Przekroczono czas startu serwera walidatora: ${runningServer.output()}`)
 }
 
-async function stopServer(runningServer) {
-  if (runningServer.server.exitCode !== null) {
-    if (runningServer.server.exitCode !== 0) {
-      throw new Error(`Serwer walidatora zakończył się kodem ${runningServer.server.exitCode}: ${runningServer.output()}`)
-    }
-    return
-  }
-  const exit = once(runningServer.server, 'exit')
-  runningServer.server.kill('SIGTERM')
-  const [code, signal] = await exit
-  if (code !== 0) {
-    throw new Error(`Serwer walidatora zatrzymał się niepoprawnie (kod ${code}, sygnał ${signal}): ${runningServer.output()}`)
-  }
+async function assertPortReleased(port) {
+  const probe = createServer()
+  await new Promise((resolve, reject) => {
+    probe.once('error', (error) => reject(new Error(`Port walidatora ${port} nadal jest zajęty: ${error.message}`)))
+    probe.listen(port, '127.0.0.1', resolve)
+  })
+  await new Promise((resolve, reject) => probe.close((error) => error ? reject(error) : resolve()))
+}
+
+async function stopServer(runningServer, port) {
+  await stopServerGracefully(runningServer, () => assertPortReleased(port))
 }
 
 function createCookieJar() {
@@ -195,10 +193,12 @@ try {
 }
 
 let runningServer
+let validatorPort
 try {
   applyCommittedMigrations()
   const { primaryEmployeeId, backupEmployeeId } = seedDatabase()
   const port = await getFreePort()
+  validatorPort = port
   const baseUrl = `http://127.0.0.1:${port}`
   runningServer = startServer(port)
   await waitForServer(baseUrl, runningServer)
@@ -247,7 +247,7 @@ try {
   const archived = await archiveResponse.json()
   if (archived.status !== 'ARCHIVED' || !archived.archivedAt) throw new Error('HTTP_ARCHIVE_READBACK_FAILED')
 
-  await stopServer(runningServer)
+  await stopServer(runningServer, port)
   runningServer = startServer(port)
   await waitForServer(baseUrl, runningServer)
   const restartedAdmin = await login(baseUrl, 'validatoradmin')
@@ -257,10 +257,10 @@ try {
   if (persisted.status !== 'ARCHIVED' || persisted.addressBuildingNumber !== '19B') throw new Error('HTTP_RESTART_PERSISTENCE_FAILED')
   verifyDatabase(created.id)
 
-  await stopServer(runningServer)
+  await stopServer(runningServer, port)
   runningServer = undefined
   console.log(JSON.stringify({ status: 'ok', orderId: created.id, number: created.number, persistedStatus: persisted.status }))
 } finally {
-  if (runningServer) await stopServer(runningServer)
+  if (runningServer) await stopServer(runningServer, validatorPort)
   rmSync(databaseDirectory, { recursive: true, force: true })
 }
