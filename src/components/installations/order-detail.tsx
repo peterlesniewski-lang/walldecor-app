@@ -34,6 +34,7 @@ export function InstallationOrderDetail({
   const router = useRouter()
   const [archiving, setArchiving] = useState(false)
   const [error, setError] = useState('')
+  const canEditActiveOrder = canEdit && !order.archivedAt && order.status !== 'ARCHIVED'
 
   async function archive() {
     setArchiving(true)
@@ -86,10 +87,10 @@ export function InstallationOrderDetail({
         <p className="rounded-xl border px-4 py-3 text-sm font-medium" style={{ background: 'var(--wd-sand-light)', borderColor: 'rgba(30, 30, 30, 0.12)', color: 'var(--wd-dark)' }}>
           Karta jest zarchiwizowana. Historia i odpowiedzialność pozostają zachowane.
         </p>
-      ) : canEdit ? (
+      ) : canEditActiveOrder ? (
         <InstallationOrderForm mode="edit" order={order} employees={employees} />
       ) : null}
-      <RoomScopeEditor orderId={order.id} initialRooms={rooms} catalog={catalog} canEdit={canEdit} />
+      <RoomScopeEditor orderId={order.id} initialRooms={rooms} catalog={catalog} canEdit={canEditActiveOrder} />
       {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
     </div>
   )

@@ -61,7 +61,7 @@ export function RoomScopeEditor({ orderId, initialRooms, catalog, canEdit }: { o
 
   async function addMeasurement(room: Room, event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); const form = measurementForms[room.id] ?? { elementName: '', value: '', unit: 'CM', scopeId: '' }
-    await run(`add-measurement-${room.id}`, async () => { await requestJson(`/api/installations/${orderId}/rooms/${room.id}/measurements`, { method: 'POST', body: JSON.stringify({ ...form, scopeId: form.scopeId || null, source: 'EMPLOYEE', authorContext: 'EMPLOYEE' }) }); setMeasurementForms((current) => ({ ...current, [room.id]: { elementName: '', value: '', unit: 'CM', scopeId: '' } })); await reload() })
+    await run(`add-measurement-${room.id}`, async () => { await requestJson(`/api/installations/${orderId}/rooms/${room.id}/measurements`, { method: 'POST', body: JSON.stringify({ ...form, scopeId: form.scopeId || null }) }); setMeasurementForms((current) => ({ ...current, [room.id]: { elementName: '', value: '', unit: 'CM', scopeId: '' } })); await reload() })
   }
 
   async function reorder(path: string, ids: string[], id: string, direction: -1 | 1) {

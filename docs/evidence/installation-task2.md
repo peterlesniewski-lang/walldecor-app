@@ -63,3 +63,79 @@ Nie wykonano szóstej naprawy ani nie osłabiono scenariusza, zgodnie z limitem.
 ## Ograniczenie środowiska Prisma
 
 `DATABASE_URL=file:/private/tmp/... npx prisma migrate deploy` na świeżej bazie zwrócił ogólny `Schema engine error` bez nazwy migracji (powtórzone także poza sandboxem i przy `prisma db push`). Lokalny `schema-engine-darwin-arm64 --version` uruchamia się poprawnie, a identyczny pełny łańcuch SQL przechodzi przez `sqlite3 -bail` wraz z kontrolami FK i integralności. To jest zarejestrowany blocker narzędzia Prisma/środowiska, a nie obejście migracji produkcyjnych: nie zmieniono wcześniejszych migracji ani entrypointu.
+
+## Corrective loop Task 2 — provenance, archiwum i bramka migracji
+
+### RED
+
+1. Nowy test SQLite `task2-corrective.test.ts` przekazał zaufany kontekst
+   pracownika oraz body ze `source: CLIENT`, cudzym `authorId` i
+   `authorContext`. Poprzedni serwis przyjmował te pola bezpośrednio, a jego
+   audit przyjmował wyłącznie string zamiast kontekstu aktora. To odtworzyło
+   brak granicy provenance przed wykonaniem zapisu.
+2. Ten sam test po archiwizacji karty wywołał bezpośrednio wszystkie mutacje
+   room/scope/scopeProduct/measurement (create, update, delete, reorder).
+   Pierwszy niechroniony przypadek `updateInstallationRoom()` zwrócił 200 i
+   zmienił nazwę `Archiwalny salon` na `Niedozwolona zmiana`.
+3. Test UI odtworzył zarchiwizowaną kartę ze starym `canEdit=true`: renderował
+   pole `Nazwa pomieszczenia`, przyciski edycji oraz selektor produktu. Drugi
+   przypadek pokazał `source: EMPLOYEE` w body przeglądarki; trzeci nie znalazł
+   kontrolki wyboru starszego z dwóch draftów.
+4. Route test odtworzył surowe przekazanie `CLIENT`, `foreign-employee` i
+   `CLIENT:spoofed` do serwisu zamiast kontekstu sesji. Osobne przypadki
+   potwierdziły wymagane 401 dla braku sesji i 403 dla INSTALLER/CLIENT.
+5. Pierwsze dwie celowane próby Prisma na dwóch nowych bazach były formalnie
+   czerwone: bezpośredni
+   `node ./node_modules/prisma/build/index.js migrate deploy` oraz `npx prisma
+   migrate deploy` zakończyły się `Schema engine error` bez dodatkowego stderr
+   i bez utworzenia schematu. Engine `schema-engine-darwin-arm64 --version`
+   działał; plik ma tylko atrybut `com.apple.provenance`.
+
+### GREEN
+
+- Dodano wyłącznie addytywną migrację
+  `20260822020100_installation_measurement_provenance`: nullable
+  `actorUserId` i `actorRole` oraz indeks czasu aktora. Committed
+  `20260822020000_installation_catalog` pozostaje niezmieniona.
+- Internal API usuwa z requestu `source`, `authorId`, `authorContext` oraz
+  pola aktora. `measurementActorFromSession()` odczytuje rolę i aktywny
+  `session.employeeId`. Serwis zapisuje niemutowalne provenance: EMPLOYEE lub
+  INSTALLER jako source, employee ID wyłącznie gdy aktywne, a zawsze bezpieczny
+  `actorUserId`, `actorRole` i `ROLE:userId`. ADMIN/MANAGER bez Employee FK
+  zapisuje `authorId=null`, nie podszywa się pod pracownika. PATCH nie ma już
+  pól provenance w schema ani w update data.
+- Walidator HTTP wysyła teraz rzeczywiste spoofowane create i PATCH; odczyt
+  zwraca `source=EMPLOYEE`, `authorId=null`, `actorRole=ADMIN`, bezpieczny
+  context `ADMIN:*` i ten sam provenance po korekcie. UI nie wysyła żadnego
+  pola provenance.
+- Wspólny guard serwisowy odrzuca nieistniejącą albo archiwalną kartę przed
+  każdą mutacją room/scope/scopeProduct/measurement, także przy reorder.
+  Reorder wykonuje guard i zapis w jednej transakcji. Test dowodzi braku zmian
+  rekordów i braku nowego audytu po odrzuceniu wszystkich 14 operacji.
+- `canEditInstallationOrder()` i detail uwzględniają `archivedAt` oraz status
+  `ARCHIVED`; detail przekazuje do edytora zakresów tylko aktywną możliwość
+  edycji. Karta archiwalna ma czytelny stan read-only, bez aktywnych kontrolek.
+- Builder pokazuje każdy istniejący draft w deterministycznym selektorze.
+  Test wybiera starszy z dwóch szkiców. Opublikowane wersje i snapshot v1
+  nadal przechodzą istniejący test niemutowalności.
+- Ostatnia asercja E2E nie jest już ogólnym `not.toContainText`: potwierdza
+  dokładnie brak opcji `Misty Grey` i obecność aktywnej opcji `Ciepły len` w
+  selekcie nowego zakresu.
+
+### Świeże bramki korekty
+
+| Bramka | Wynik |
+| --- | --- |
+| targeted Task 2 + installation | 10 plików, 76/76, exit 0 |
+| `npm test` | 61 plików, 354/354, exit 0 |
+| `npm run build` | exit 0; TypeScript i 133 route'ów |
+| `node scripts/validate-installation-catalog.mjs` | exit 0; realny HTTP/API/DB readback spoof provenance |
+| `npm run test:e2e -- e2e/installations-catalog.spec.ts` | 1/1, exit 0 (13.1 s) |
+| fresh direct `migrate deploy` #3 | 20/20 migracji, exit 0 |
+| fresh `npx prisma migrate deploy` #4 | 20/20 migracji, exit 0 |
+| `foreign_key_check` + `integrity_check` dla obu fresh DB | pusto + `ok` |
+
+Próby Prisma są jawne i nie używają wrappera ani ręcznego `sqlite3` jako
+zamiennika: #1 direct i #2 npx były czerwone, #3 direct z `RUST_LOG=debug` i
+#4 npx z `RUST_LOG=debug` są niezależnymi zielonymi świeżymi bazami. Nie
+zmieniono entrypointu ani wcześniejszych migracji.

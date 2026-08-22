@@ -6,6 +6,7 @@ import {
   InstallationQuestionSchemaError,
   validateInstallationQuestionDefinitions,
 } from './question-schema'
+import { INSTALLATION_ROLES, type InstallationRole } from './constants'
 
 type InstallationDb = PrismaClient | Prisma.TransactionClient
 
@@ -49,19 +50,20 @@ const measurementCreateSchema = z.object({
   elementName: requiredName,
   value: z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/, 'Wartość musi być dziesiętnym tekstem bez notacji float.'),
   unit: z.enum(['MM', 'CM', 'M', 'M2']),
-  source: z.enum(['CLIENT', 'EMPLOYEE', 'INSTALLER']),
-  authorId: z.string().trim().min(1).nullish(),
-  authorContext: z.string().trim().min(1).max(80).nullish(),
-}).strict()
+})
 const measurementUpdateSchema = z.object({
   scopeId: z.string().trim().min(1).nullable().optional(),
   elementName: requiredName.optional(),
   value: z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/, 'Wartość musi być dziesiętnym tekstem bez notacji float.').optional(),
   unit: z.enum(['MM', 'CM', 'M', 'M2']).optional(),
-  source: z.enum(['CLIENT', 'EMPLOYEE', 'INSTALLER']).optional(),
-  authorId: z.string().trim().min(1).nullable().optional(),
-  authorContext: z.string().trim().min(1).max(80).nullable().optional(),
-}).strict()
+})
+
+export type InstallationMeasurementActor = {
+  userId: string
+  role: InstallationRole
+  /** Active employee identity derived from the authenticated session, when one exists. */
+  employeeId: string | null
+}
 
 function fieldErrors(error: z.ZodError) {
   return Object.fromEntries(error.issues.map((issue) => [issue.path.join('.') || 'form', issue.message]))
@@ -427,6 +429,20 @@ async function getScopeOrThrow(db: InstallationDb, id: string) {
   return scope
 }
 
+async function assertActiveInstallationOrder(db: InstallationDb, orderId: string) {
+  const order = await db.installationOrder.findUnique({ where: { id: orderId }, select: { archivedAt: true, status: true } })
+  if (!order || order.archivedAt || order.status === 'ARCHIVED') validationError('orderId', 'Nie można zmienić nieistniejącej lub zarchiwizowanej karty.')
+  return order
+}
+
+async function assertActiveRoomOrder(db: InstallationDb, room: { orderId: string }) {
+  await assertActiveInstallationOrder(db, room.orderId)
+}
+
+async function assertActiveScopeOrder(db: InstallationDb, scope: { room: { orderId: string } }) {
+  await assertActiveInstallationOrder(db, scope.room.orderId)
+}
+
 async function audit(db: InstallationDb, orderId: string, actorId: string, action: string, beforeJson?: string | null, afterJson?: string | null) {
   return db.installationAuditEvent.create({ data: { orderId, actorId, action, beforeJson: beforeJson ?? null, afterJson: afterJson ?? null } })
 }
@@ -434,8 +450,7 @@ async function audit(db: InstallationDb, orderId: string, actorId: string, actio
 export async function createInstallationRoom(db: PrismaClient, orderId: string, input: unknown, actorId: string) {
   const value = parse(roomCreateSchema, input)
   return db.$transaction(async (tx) => {
-    const order = await tx.installationOrder.findUnique({ where: { id: orderId }, select: { archivedAt: true } })
-    if (!order || order.archivedAt) validationError('orderId', 'Nie można zmienić nieistniejącej lub zarchiwizowanej karty.')
+    await assertActiveInstallationOrder(tx, orderId)
     const room = await tx.installationRoom.create({ data: { orderId, name: value.name.trim().replace(/\s+/g, ' '), sortOrder: value.sortOrder ?? await nextSortOrder(tx, 'room', orderId) }, include: roomInclude })
     await audit(tx, orderId, actorId, 'INSTALLATION_ROOM_CREATED', null, JSON.stringify({ id: room.id, name: room.name }))
     return room
@@ -447,6 +462,7 @@ export async function updateInstallationRoom(db: PrismaClient, id: string, input
   if (Object.keys(value).length === 0) validationError('form', 'Wskaż zmianę pomieszczenia.')
   return db.$transaction(async (tx) => {
     const current = await getRoomOrThrow(tx, id)
+    await assertActiveRoomOrder(tx, current)
     const updated = await tx.installationRoom.update({ where: { id }, data: { ...(value.name === undefined ? {} : { name: value.name.trim().replace(/\s+/g, ' ') }), ...(value.sortOrder === undefined ? {} : { sortOrder: value.sortOrder }) }, include: roomInclude })
     await audit(tx, current.orderId, actorId, 'INSTALLATION_ROOM_UPDATED', JSON.stringify({ id: current.id, name: current.name, sortOrder: current.sortOrder }), JSON.stringify({ id: updated.id, name: updated.name, sortOrder: updated.sortOrder }))
     return updated
@@ -456,6 +472,7 @@ export async function updateInstallationRoom(db: PrismaClient, id: string, input
 export async function deleteInstallationRoom(db: PrismaClient, id: string, actorId: string) {
   return db.$transaction(async (tx) => {
     const current = await getRoomOrThrow(tx, id)
+    await assertActiveRoomOrder(tx, current)
     await tx.installationRoom.delete({ where: { id } })
     await audit(tx, current.orderId, actorId, 'INSTALLATION_ROOM_DELETED', JSON.stringify({ id: current.id, name: current.name }), null)
   })
@@ -465,6 +482,7 @@ export async function createInstallationScope(db: PrismaClient, roomId: string, 
   const value = parse(scopeCreateSchema, input)
   return db.$transaction(async (tx) => {
     const room = await getRoomOrThrow(tx, roomId)
+    await assertActiveRoomOrder(tx, room)
     const scope = await tx.installationScope.create({ data: { roomId, name: value.name.trim().replace(/\s+/g, ' '), sortOrder: value.sortOrder ?? await nextSortOrder(tx, 'scope', roomId) }, include: { scopeProducts: true, measurements: true } })
     await audit(tx, room.orderId, actorId, 'INSTALLATION_SCOPE_CREATED', null, JSON.stringify({ id: scope.id, name: scope.name, roomId }))
     return scope
@@ -476,6 +494,7 @@ export async function updateInstallationScope(db: PrismaClient, id: string, inpu
   if (Object.keys(value).length === 0) validationError('form', 'Wskaż zmianę zakresu.')
   return db.$transaction(async (tx) => {
     const current = await getScopeOrThrow(tx, id)
+    await assertActiveScopeOrder(tx, current)
     const updated = await tx.installationScope.update({ where: { id }, data: { ...(value.name === undefined ? {} : { name: value.name.trim().replace(/\s+/g, ' ') }), ...(value.sortOrder === undefined ? {} : { sortOrder: value.sortOrder }) }, include: { scopeProducts: true, measurements: true } })
     await audit(tx, current.room.orderId, actorId, 'INSTALLATION_SCOPE_UPDATED', JSON.stringify({ id: current.id, name: current.name, sortOrder: current.sortOrder }), JSON.stringify({ id: updated.id, name: updated.name, sortOrder: updated.sortOrder }))
     return updated
@@ -485,6 +504,7 @@ export async function updateInstallationScope(db: PrismaClient, id: string, inpu
 export async function deleteInstallationScope(db: PrismaClient, id: string, actorId: string) {
   return db.$transaction(async (tx) => {
     const current = await getScopeOrThrow(tx, id)
+    await assertActiveScopeOrder(tx, current)
     await tx.installationScope.delete({ where: { id } })
     await audit(tx, current.room.orderId, actorId, 'INSTALLATION_SCOPE_DELETED', JSON.stringify({ id: current.id, name: current.name }), null)
   })
@@ -497,6 +517,7 @@ export async function addInstallationScopeProduct(db: PrismaClient, scopeId: str
       getScopeOrThrow(tx, scopeId),
       tx.installationCatalogProduct.findUnique({ where: { id: value.catalogProductId }, include: { type: { include: { category: true } } } }),
     ])
+    await assertActiveScopeOrder(tx, scope)
     if (!product?.isActive || !product.type.isActive || !product.type.category.isActive) validationError('catalogProductId', 'Nowy zakres może użyć tylko aktywnego produktu katalogowego.')
     const scopeProduct = await tx.installationScopeProduct.create({
       data: {
@@ -514,13 +535,26 @@ export async function deleteInstallationScopeProduct(db: PrismaClient, id: strin
   return db.$transaction(async (tx) => {
     const current = await tx.installationScopeProduct.findUnique({ where: { id }, include: { scope: { include: { room: { select: { orderId: true } } } } } })
     if (!current) validationError('scopeProductId', 'Produkt zakresu nie istnieje.')
+    await assertActiveInstallationOrder(tx, current.scope.room.orderId)
     await tx.installationScopeProduct.delete({ where: { id } })
     await audit(tx, current.scope.room.orderId, actorId, 'INSTALLATION_SCOPE_PRODUCT_DELETED', JSON.stringify({ id: current.id, productNameSnapshot: current.productNameSnapshot }), null)
   })
 }
 
-function measurementAuditSnapshot(measurement: { id: string; roomId: string; scopeId: string | null; elementName: string; value: { toString(): string }; unit: string; source: string; authorId: string | null; authorContext: string | null; createdAt: Date }) {
-  return { id: measurement.id, roomId: measurement.roomId, scopeId: measurement.scopeId, elementName: measurement.elementName, value: measurement.value.toString(), unit: measurement.unit, source: measurement.source, authorId: measurement.authorId, authorContext: measurement.authorContext, createdAt: measurement.createdAt.toISOString() }
+function measurementAuditSnapshot(measurement: { id: string; roomId: string; scopeId: string | null; elementName: string; value: { toString(): string }; unit: string; source: string; authorId: string | null; authorContext: string | null; actorUserId: string | null; actorRole: string | null; createdAt: Date }) {
+  return { id: measurement.id, roomId: measurement.roomId, scopeId: measurement.scopeId, elementName: measurement.elementName, value: measurement.value.toString(), unit: measurement.unit, source: measurement.source, authorId: measurement.authorId, authorContext: measurement.authorContext, actorUserId: measurement.actorUserId, actorRole: measurement.actorRole, createdAt: measurement.createdAt.toISOString() }
+}
+
+function measurementProvenance(actor: InstallationMeasurementActor) {
+  if (!actor.userId || !INSTALLATION_ROLES.includes(actor.role)) validationError('actor', 'Brak poprawnego kontekstu uwierzytelnionego użytkownika.')
+  if ((actor.role === 'EMPLOYEE' || actor.role === 'INSTALLER') && !actor.employeeId) validationError('actor', 'Brak aktywnego pracownika dla autora pomiaru.')
+  return {
+    source: actor.role === 'INSTALLER' ? 'INSTALLER' : 'EMPLOYEE',
+    authorId: actor.employeeId,
+    authorContext: `${actor.role}:${actor.userId}`,
+    actorUserId: actor.userId,
+    actorRole: actor.role,
+  }
 }
 
 async function assertMeasurementScopeBelongsToRoom(db: InstallationDb, roomId: string, scopeId: string | null | undefined) {
@@ -529,23 +563,26 @@ async function assertMeasurementScopeBelongsToRoom(db: InstallationDb, roomId: s
   if (!scope || scope.roomId !== roomId) validationError('scopeId', 'Zakres pomiaru musi należeć do tego samego pomieszczenia.')
 }
 
-export async function addInstallationMeasurement(db: PrismaClient, roomId: string, input: unknown, actorId: string) {
+export async function addInstallationMeasurement(db: PrismaClient, roomId: string, input: unknown, actor: InstallationMeasurementActor) {
   const value = parse(measurementCreateSchema, input)
   return db.$transaction(async (tx) => {
     const room = await getRoomOrThrow(tx, roomId)
+    await assertActiveRoomOrder(tx, room)
     await assertMeasurementScopeBelongsToRoom(tx, roomId, value.scopeId)
-    const measurement = await tx.installationMeasurement.create({ data: { roomId, scopeId: value.scopeId ?? null, elementName: value.elementName.trim().replace(/\s+/g, ' '), value: value.value, unit: value.unit, source: value.source, authorId: value.authorId ?? null, authorContext: value.authorContext ?? null } })
-    await audit(tx, room.orderId, actorId, 'INSTALLATION_MEASUREMENT_CREATED', null, JSON.stringify(measurementAuditSnapshot(measurement)))
+    const measurement = await tx.installationMeasurement.create({ data: { roomId, scopeId: value.scopeId ?? null, elementName: value.elementName.trim().replace(/\s+/g, ' '), value: value.value, unit: value.unit, ...measurementProvenance(actor) } })
+    await audit(tx, room.orderId, actor.userId, 'INSTALLATION_MEASUREMENT_CREATED', null, JSON.stringify(measurementAuditSnapshot(measurement)))
     return measurement
   })
 }
 
-export async function updateInstallationMeasurement(db: PrismaClient, id: string, input: unknown, actorId: string) {
+export async function updateInstallationMeasurement(db: PrismaClient, id: string, input: unknown, actor: InstallationMeasurementActor) {
   const value = parse(measurementUpdateSchema, input)
   if (Object.keys(value).length === 0) validationError('form', 'Wskaż zmianę pomiaru.')
   return db.$transaction(async (tx) => {
+    measurementProvenance(actor)
     const current = await tx.installationMeasurement.findUnique({ where: { id }, include: { room: { select: { orderId: true } } } })
     if (!current) validationError('measurementId', 'Pomiar nie istnieje.')
+    await assertActiveInstallationOrder(tx, current.room.orderId)
     const nextScopeId = value.scopeId === undefined ? current.scopeId : value.scopeId
     await assertMeasurementScopeBelongsToRoom(tx, current.roomId, nextScopeId)
     const updated = await tx.installationMeasurement.update({
@@ -555,22 +592,21 @@ export async function updateInstallationMeasurement(db: PrismaClient, id: string
         ...(value.elementName === undefined ? {} : { elementName: value.elementName.trim().replace(/\s+/g, ' ') }),
         ...(value.value === undefined ? {} : { value: value.value }),
         ...(value.unit === undefined ? {} : { unit: value.unit }),
-        ...(value.source === undefined ? {} : { source: value.source }),
-        ...(value.authorId === undefined ? {} : { authorId: value.authorId }),
-        ...(value.authorContext === undefined ? {} : { authorContext: value.authorContext }),
       },
     })
-    await audit(tx, current.room.orderId, actorId, 'INSTALLATION_MEASUREMENT_UPDATED', JSON.stringify(measurementAuditSnapshot(current)), JSON.stringify(measurementAuditSnapshot(updated)))
+    await audit(tx, current.room.orderId, actor.userId, 'INSTALLATION_MEASUREMENT_UPDATED', JSON.stringify(measurementAuditSnapshot(current)), JSON.stringify(measurementAuditSnapshot(updated)))
     return updated
   })
 }
 
-export async function deleteInstallationMeasurement(db: PrismaClient, id: string, actorId: string) {
+export async function deleteInstallationMeasurement(db: PrismaClient, id: string, actor: InstallationMeasurementActor) {
   return db.$transaction(async (tx) => {
+    measurementProvenance(actor)
     const current = await tx.installationMeasurement.findUnique({ where: { id }, include: { room: { select: { orderId: true } } } })
     if (!current) validationError('measurementId', 'Pomiar nie istnieje.')
+    await assertActiveInstallationOrder(tx, current.room.orderId)
     await tx.installationMeasurement.delete({ where: { id } })
-    await audit(tx, current.room.orderId, actorId, 'INSTALLATION_MEASUREMENT_DELETED', JSON.stringify(measurementAuditSnapshot(current)), null)
+    await audit(tx, current.room.orderId, actor.userId, 'INSTALLATION_MEASUREMENT_DELETED', JSON.stringify(measurementAuditSnapshot(current)), null)
   })
 }
 
@@ -578,17 +614,26 @@ export async function getInstallationOrderRooms(db: InstallationDb, orderId: str
   return db.installationRoom.findMany({ where: { orderId }, include: roomInclude, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] })
 }
 
-export async function reorderInstallationRooms(db: InstallationDb, orderId: string, orderedIds: string[]) {
-  const rows = await db.installationRoom.findMany({ where: { orderId }, select: { id: true } })
-  return reorderRows(rows, orderedIds, (id, sortOrder) => db.installationRoom.update({ where: { id }, data: { sortOrder } }))
+export async function reorderInstallationRooms(db: PrismaClient, orderId: string, orderedIds: string[]) {
+  return db.$transaction(async (tx) => {
+    await assertActiveInstallationOrder(tx, orderId)
+    const rows = await tx.installationRoom.findMany({ where: { orderId }, select: { id: true } })
+    return reorderRows(rows, orderedIds, (id, sortOrder) => tx.installationRoom.update({ where: { id }, data: { sortOrder } }))
+  })
 }
 
-export async function reorderInstallationScopes(db: InstallationDb, roomId: string, orderedIds: string[]) {
-  const rows = await db.installationScope.findMany({ where: { roomId }, select: { id: true } })
-  return reorderRows(rows, orderedIds, (id, sortOrder) => db.installationScope.update({ where: { id }, data: { sortOrder } }))
+export async function reorderInstallationScopes(db: PrismaClient, roomId: string, orderedIds: string[]) {
+  return db.$transaction(async (tx) => {
+    await assertActiveRoomOrder(tx, await getRoomOrThrow(tx, roomId))
+    const rows = await tx.installationScope.findMany({ where: { roomId }, select: { id: true } })
+    return reorderRows(rows, orderedIds, (id, sortOrder) => tx.installationScope.update({ where: { id }, data: { sortOrder } }))
+  })
 }
 
-export async function reorderInstallationScopeProducts(db: InstallationDb, scopeId: string, orderedIds: string[]) {
-  const rows = await db.installationScopeProduct.findMany({ where: { scopeId }, select: { id: true } })
-  return reorderRows(rows, orderedIds, (id, sortOrder) => db.installationScopeProduct.update({ where: { id }, data: { sortOrder } }))
+export async function reorderInstallationScopeProducts(db: PrismaClient, scopeId: string, orderedIds: string[]) {
+  return db.$transaction(async (tx) => {
+    await assertActiveScopeOrder(tx, await getScopeOrThrow(tx, scopeId))
+    const rows = await tx.installationScopeProduct.findMany({ where: { scopeId }, select: { id: true } })
+    return reorderRows(rows, orderedIds, (id, sortOrder) => tx.installationScopeProduct.update({ where: { id }, data: { sortOrder } }))
+  })
 }

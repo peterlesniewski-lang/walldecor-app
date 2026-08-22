@@ -160,15 +160,16 @@ describe('installation catalog, templates and room history use real SQLite', () 
     await updateCatalogProduct(db, activeProduct.id, { name: 'Profil P-10 po zmianie', code: 'P-10-NEW' })
     await archiveCatalogProduct(db, activeProduct.id)
 
+    const measurementActor = { userId: 'catalog-manager', role: 'MANAGER' as const, employeeId: null }
     const measurement = await addInstallationMeasurement(db, renamedRoom.id, {
       scopeId: renamedScope.id,
       elementName: 'Szerokość glifu', value: '12.50', unit: 'CM', source: 'EMPLOYEE', authorId: 'catalog-manager', authorContext: 'MANAGER',
-    }, 'catalog-manager')
-    const correctedMeasurement = await updateInstallationMeasurement(db, measurement.id, { value: '13.25', unit: 'CM' }, 'catalog-manager')
-    await deleteInstallationMeasurement(db, correctedMeasurement.id, 'catalog-manager')
+    }, measurementActor)
+    const correctedMeasurement = await updateInstallationMeasurement(db, measurement.id, { value: '13.25', unit: 'CM' }, measurementActor)
+    await deleteInstallationMeasurement(db, correctedMeasurement.id, measurementActor)
     await expect(addInstallationMeasurement(db, renamedRoom.id, {
       elementName: 'Pomiary błędne', value: 12.5, unit: 'CM', source: 'EMPLOYEE', authorId: 'catalog-manager', authorContext: 'MANAGER',
-    }, 'catalog-manager')).rejects.toBeInstanceOf(InstallationCatalogValidationError)
+    }, measurementActor)).rejects.toBeInstanceOf(InstallationCatalogValidationError)
 
     const rooms = await getInstallationOrderRooms(db, orderId)
     expect(renamedRoom.name).toBe('Salon z glifem')

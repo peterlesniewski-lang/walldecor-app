@@ -8,6 +8,8 @@ export type InstallationOrderViewer = {
 }
 
 export type InstallationOrderAccessRecord = {
+  archivedAt?: Date | string | null
+  status?: string
   primaryEmployeeId: string
   backupEmployeeId: string
   installerAssignments: Array<{
@@ -64,6 +66,7 @@ export function canEditInstallationOrder(
   order: InstallationOrderAccessRecord,
   now = new Date(),
 ): boolean {
+  if (order.archivedAt || order.status === 'ARCHIVED') return false
   if (viewer.role === 'ADMIN' || viewer.role === 'MANAGER') return true
   if (viewer.role !== 'EMPLOYEE' || !viewer.employeeId || viewer.employeeActive !== true) return false
   return viewer.employeeId === order.primaryEmployeeId ||
@@ -75,6 +78,7 @@ export function canArchiveInstallationOrder(
   viewer: InstallationOrderViewer,
   order: InstallationOrderAccessRecord,
 ): boolean {
+  if (order.archivedAt || order.status === 'ARCHIVED') return false
   if (viewer.role === 'ADMIN' || viewer.role === 'MANAGER') return true
   return viewer.role === 'EMPLOYEE' &&
     viewer.employeeActive === true &&
