@@ -199,3 +199,60 @@ zmieniono entrypointu ani wcześniejszych migracji.
 W tym loopie nie zmieniono migracji ani entrypointu. Dwa realne `migrate
 deploy` są osobnymi zielonymi próbami; `sqlite3` służył wyłącznie do kontroli
 FK/integrity po sukcesie Prisma, nie jako substytut migracji.
+
+## Quality corrective loop Task 2 — trwały hierarchy guard i request validation
+
+### RED
+
+1. Odtworzono finding review bezpośrednim Prisma: aktywny
+   `InstallationCatalogType` powstał pod zarchiwizowaną kategorią. Ten sam
+   zestaw testów wykazał aktywne dzieci pod nieaktywnym rodzicu w równoległym
+   archive-versus-write przebiegu.
+2. Test 40 rund na dwóch klientach SQLite uruchamiał category archive z create
+   type/product oraz type archive z create/reactivate product, na zmianę w obu
+   porządkach startu. Przed migracją odczyt znalazł aktywne typy pod
+   nieaktywną kategorią.
+3. `YES_NO_UNKNOWN`, `NUMBER`, `DIMENSION`, `TEXT` i `FILE` przyjmowały
+   `options`, choć nie są pytaniami wyboru.
+4. Route snapshotu dereferencjował `null` (500), nie trimował `templateId` i
+   przekazywał `{}`, tablicę, string, puste oraz rozszerzone body do serwisu.
+
+### GREEN
+
+- Addytywna migracja
+  `20260822020200_installation_catalog_active_hierarchy` dodaje sześć
+  triggerów SQLite. Blokują one INSERT/UPDATE (aktywację i reassignment)
+  aktywnego type pod inactive category oraz aktywnego product pod inactive
+  type/category. Dwa symetryczne trigery blokują także direct SQL/Prisma
+  archive rodzica z aktywnymi dziećmi. Nie zmieniono wcześniejszych migracji.
+- Istniejące archive category/type pozostają pojedynczą transakcją children
+  first, parent last. Z triggerami każdy porządek współbieżnych writerów kończy
+  się albo odrzuceniem write/archive, albo zarchiwizowaniem wszystkich dzieci;
+  baza nie może zapisać niedozwolonego końcowego stanu.
+- Test direct Prisma pokrywa create, direct parent archive, reactivation oraz
+  parent reassignment. Test równoległości ma 40 deterministycznych rund i po
+  każdej sprawdza trzy niedozwolone relacje w bazie; akceptuje wyłącznie
+  odrzucenia constraintu triggera (`P2003`/`P2004`), nie maskuje locków ani
+  timeoutów.
+- `options` są wymagane, niepuste i unikalne dla `SINGLE`/`MULTI`; wszystkie
+  pozostałe typy odrzucają je z polskim błędem. Istniejący schemat glifów
+  (YES/NO/UNKNOWN + conditional DIMENSION) pozostaje poprawny.
+- POST snapshotu waliduje strict Zod plain object `{ templateId }`, trimuje ID
+  i dla `null`, `{}`, `[]`, stringa, pustego oraz dodatkowego pola zwraca
+  polski 400 bez wywołania serwisu.
+
+### Świeże bramki korekty
+
+| Bramka | Wynik |
+| --- | --- |
+| RED → focused invariants/schema/route | 14 czerwonych asercji; następnie 3 pliki / 24/24 GREEN |
+| targeted Task 2 + installation | 12 plików / 94 testy, exit 0 |
+| `npm test` | 63 pliki / 372 testy, exit 0 |
+| `npm run build` | exit 0; TypeScript i 133 route'ów |
+| `node scripts/validate-installation-catalog.mjs` | exit 0; prawdziwy HTTP/API/DB readback |
+| `npm run test:e2e -- e2e/installations-catalog.spec.ts` | 1/1, exit 0 (13.8 s) |
+| fresh direct `migrate deploy` | 21/21 migracji, exit 0; 6 triggerów, child + parent direct Prisma blocked, FK puste, integrity `ok` |
+| upgrade `npx prisma migrate deploy` | kopia SQLite z 20 migracjami → zastosowano wyłącznie `20260822020200`; 6 triggerów, child + parent blocked, FK puste, integrity `ok` |
+
+Kontrola triggerów po obu realnych `migrate deploy` użyła bezpośredniego
+Prisma na tych samych tymczasowych DB; nie zastępowała migracji ręcznym SQL.

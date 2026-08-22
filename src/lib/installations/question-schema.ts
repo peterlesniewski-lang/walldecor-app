@@ -82,6 +82,9 @@ export function validateInstallationQuestionDefinitions(
     if ((question.type === 'SINGLE' || question.type === 'MULTI') && !question.options) {
       issues.push(`Pytanie „${question.key}” typu ${question.type} wymaga listy opcji.`)
     }
+    if (question.options && question.type !== 'SINGLE' && question.type !== 'MULTI') {
+      issues.push(`Opcje pytania „${question.key}” są dozwolone tylko dla SINGLE lub MULTI.`)
+    }
     if (question.options && new Set(question.options).size !== question.options.length) {
       issues.push(`Opcje pytania „${question.key}” powtarzają się.`)
     }

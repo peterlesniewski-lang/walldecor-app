@@ -21,6 +21,8 @@ import { POST } from '@/app/api/installations/[id]/form-snapshot/route'
 describe('installation form snapshot route', () => {
   beforeEach(() => {
     mocks.session = null
+    mocks.editable.mockClear()
+    mocks.createSnapshot.mockClear()
     mocks.editable.mockResolvedValue({ order: { id: 'order-1' } })
     mocks.createSnapshot.mockResolvedValue({ id: 'snapshot-1', orderId: 'order-1', templateId: 'template-v1', templateVersion: 1 })
   })
@@ -38,9 +40,18 @@ describe('installation form snapshot route', () => {
 
   it('pins only the selected published template for the authenticated editor', async () => {
     mocks.session = { user: { id: 'owner-user', role: 'EMPLOYEE', employeeId: 'employee-1' } }
-    const response = await POST(new NextRequest('http://test/api/installations/order-1/form-snapshot', { method: 'POST', body: JSON.stringify({ templateId: 'template-v1' }) }), { params: Promise.resolve({ id: 'order-1' }) })
+    const response = await POST(new NextRequest('http://test/api/installations/order-1/form-snapshot', { method: 'POST', body: JSON.stringify({ templateId: ' template-v1 ' }) }), { params: Promise.resolve({ id: 'order-1' }) })
 
     expect(response.status).toBe(201)
     expect(mocks.createSnapshot).toHaveBeenCalledWith(expect.anything(), { orderId: 'order-1', templateId: 'template-v1' }, 'owner-user')
+  })
+
+  it.each([null, {}, [], 'template-v1', { templateId: '   ' }, { templateId: 'template-v1', extra: true }])('returns a Polish 400 and never calls the service for invalid body %j', async (body) => {
+    mocks.session = { user: { id: 'owner-user', role: 'EMPLOYEE', employeeId: 'employee-1' } }
+    const response = await POST(new NextRequest('http://test/api/installations/order-1/form-snapshot', { method: 'POST', body: JSON.stringify(body) }), { params: Promise.resolve({ id: 'order-1' }) })
+
+    expect(response.status).toBe(400)
+    expect((await response.json()).error).toMatch(/identyfikator szablonu/i)
+    expect(mocks.createSnapshot).not.toHaveBeenCalled()
   })
 })

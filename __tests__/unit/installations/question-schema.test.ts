@@ -83,4 +83,21 @@ describe('installation question schema', () => {
       { key: 'wall-area', type: 'NUMBER', label: 'Pole ściany', condition: { questionKey: 'note', equals: 'Tak' } },
     ])).toThrow(/nie może być celem/)
   })
+
+  it.each(['YES_NO_UNKNOWN', 'NUMBER', 'DIMENSION', 'TEXT', 'FILE'] as const)('rejects options on %s because only choice questions may define them', (type) => {
+    expect(() => validateInstallationQuestionDefinitions('template-v1', [
+      { key: `invalid-${type}`, type, label: 'Pytanie bez listy wyboru', options: ['Jedna opcja'] },
+    ])).toThrow(/opcje.*tylko/i)
+  })
+
+  it('accepts nonempty unique options only for SINGLE and MULTI questions', () => {
+    expect(validateInstallationQuestionDefinitions('template-v1', [
+      { key: 'single', type: 'SINGLE', label: 'Jedna odpowiedź', options: ['A', 'B'] },
+      { key: 'multi', type: 'MULTI', label: 'Wiele odpowiedzi', options: ['C', 'D'] },
+    ])).toHaveLength(2)
+
+    expect(() => validateInstallationQuestionDefinitions('template-v1', [
+      { key: 'invalid-multi', type: 'MULTI', label: 'Duplikaty', options: ['A', 'A'] },
+    ])).toThrow(/powtarzają się/)
+  })
 })
