@@ -15,10 +15,6 @@ function serverExitError(runningServer) {
 export async function stopServerGracefully(runningServer, assertPortReleased) {
   const { server } = runningServer
   if (server.exitCode !== null || server.signalCode !== null) {
-    if (server.exitCode === 0 && server.signalCode === null) {
-      await assertPortReleased()
-      return
-    }
     throw serverExitError(runningServer)
   }
 

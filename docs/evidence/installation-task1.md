@@ -187,3 +187,35 @@ tryb entrypointu lub zastosuje migracje na produkcji.
   pustym `Schema engine error` został diagnostycznie ponowiony na tym samym
   pustym pliku: 18/18 migracji, puste `foreign_key_check`,
   `integrity_check: ok`; plik temp i sidecary zostały usunięte.
+
+## Finalny minor — własność shutdownu walidatora
+
+### RED → GREEN
+
+1. Nowy test helpera ustawił `exitCode=0` przed wywołaniem shutdownu. RED:
+   promise błędnie się rozwiązywał, `kill` nie był wywołany, a helper mimo to
+   sprawdzał port. Po usunięciu tej ścieżki każdy już zakończony proces — także
+   z kodem 0 — kończy walidację błędem i nie wykonuje ani `kill`, ani proby
+   portu. Test jednostkowy: 5/5.
+2. Zbadano również rzeczywisty proces Next. Po SIGTERM wysłanym przez harness
+   Next kończy się kontrolowanie z `exitCode=0`, a nie `signalCode=SIGTERM`.
+   To prawidłowe graceful shutdown, ale jest akceptowane tylko po potwierdzonym
+   `server.kill('SIGTERM')`; helper czeka na jego exit i dopiero potem robi
+   bind/close tego samego portu. Proces z wcześniejszym crashem, SIGKILL albo
+   kodem 0 sprzed własnego SIGTERM pozostaje błędem.
+
+### Świeża bramka końcowa
+
+| Komenda | Wynik |
+| --- | --- |
+| targeted validator + order rules + integration | 3 pliki, 53/53, exit 0 |
+| `npm test` | 54 pliki, 331/331, exit 0 |
+| `npm run build` | exit 0; Turbopack 3.4 s, TypeScript i 130 route'ów |
+| `node scripts/validate-installation-order.mjs` ×2 | oba exit 0, `persistedStatus: ARCHIVED` |
+| `npm run test:e2e -- e2e/installations-order.spec.ts` | 1/1, exit 0 (8.0 s) |
+| `prisma migrate deploy` na świeżej SQLite | 18/18 migracji; `foreign_key_check` puste, `integrity_check: ok` |
+
+Pierwsze dwa zwykłe wywołania `migrate deploy` zwróciły wyłącznie `Schema engine
+error` bez utworzenia DB. Diagnostyczne ponowienie z `RUST_LOG=debug` na tym
+samym pustym pliku zastosowało pełne 18/18 migracji. Tymczasowe DB i
+`test-results/` zostały usunięte po bramce.

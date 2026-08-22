@@ -37,6 +37,36 @@ describe('installation validator server shutdown', () => {
     expect(assertPortReleased).not.toHaveBeenCalled()
   })
 
+  it('rejects a process that exited successfully before the harness sent SIGTERM', async () => {
+    const server = new ControlledServer()
+    server.exitCode = 0
+    const assertPortReleased = vi.fn()
+
+    await expect(stopServerGracefully({ server, output: () => 'already stopped' }, assertPortReleased))
+      .rejects.toThrow(/zakończył się kodem 0/)
+
+    expect(server.kill).not.toHaveBeenCalled()
+    expect(assertPortReleased).not.toHaveBeenCalled()
+  })
+
+  it('accepts a graceful exit only after its own SIGTERM request', async () => {
+    const server = new ControlledServer()
+    server.kill.mockImplementation((signal: NodeJS.Signals) => {
+      queueMicrotask(() => {
+        server.exitCode = 0
+        server.emit('exit', 0, null)
+      })
+      return signal === 'SIGTERM'
+    })
+    const assertPortReleased = vi.fn().mockResolvedValue(undefined)
+
+    await expect(stopServerGracefully({ server, output: () => 'handled signal' }, assertPortReleased))
+      .resolves.toBeUndefined()
+
+    expect(server.kill).toHaveBeenCalledWith('SIGTERM')
+    expect(assertPortReleased).toHaveBeenCalledTimes(1)
+  })
+
   it('rejects a different signal that arrived before the harness shutdown', async () => {
     const server = new ControlledServer()
     server.signalCode = 'SIGKILL'
