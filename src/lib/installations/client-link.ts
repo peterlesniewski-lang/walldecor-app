@@ -1,6 +1,7 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { Prisma, PrismaClient } from '@/generated/prisma'
+import { isClientVisitFeeActive } from './delegation-service'
 
 const CLIENT_LINK_SECRET_BYTES = 32
 const CLIENT_LINK_SECRET_PATTERN = /^[A-Za-z0-9_-]{43}$/
@@ -56,6 +57,13 @@ type PublicSubmission = {
   draftVersion: number
   submittedAt: string | null
   answers: Array<{ questionKey: string; value: string | string[]; isUnknown: boolean }>
+}
+
+type PublicVisitFee = {
+  grossAmount: string
+  clauseText: string
+  clauseVersion: number
+  clientAcceptedAt: string | null
 }
 
 function dateInFuture(value: Date) {
@@ -233,6 +241,30 @@ function publicWallDecorContact() {
   return { label: 'WallDecor' as const, email }
 }
 
+function publicVisitFee(order: {
+  visitFeeStatus: string
+  visitFeeGrossAmount: Prisma.Decimal | null
+  visitFeeClauseText: string | null
+  visitFeeClauseVersion: number | null
+  visitFeeLegalApprovedAt: Date | null
+  visitFeeClientAcceptedAt: Date | null
+}): PublicVisitFee | null {
+  const grossAmount = order.visitFeeGrossAmount?.toFixed(2) ?? null
+  if (!isClientVisitFeeActive({
+    status: order.visitFeeStatus,
+    grossAmount,
+    clauseText: order.visitFeeClauseText,
+    clauseVersion: order.visitFeeClauseVersion,
+    legalApprovedAt: order.visitFeeLegalApprovedAt,
+  })) return null
+  return {
+    grossAmount: grossAmount!,
+    clauseText: order.visitFeeClauseText!,
+    clauseVersion: order.visitFeeClauseVersion!,
+    clientAcceptedAt: order.visitFeeClientAcceptedAt?.toISOString() ?? null,
+  }
+}
+
 /** The only public projection: no client/staff PII or joinable database IDs. */
 export async function loadPublicInstallationProjection(db: PrismaClient, token: string) {
   const link = await resolveActiveClientLink(db, token)
@@ -267,6 +299,7 @@ export async function loadPublicInstallationProjection(db: PrismaClient, token: 
     form: { templateVersion: snapshot.templateVersion, questions: schema.questions ?? [] },
     submission: publicSubmission(submission),
     canStartCorrection: submission.status === 'SUBMITTED',
+    visitFee: publicVisitFee(order),
   }
 }
 

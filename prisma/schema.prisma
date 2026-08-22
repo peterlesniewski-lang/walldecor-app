@@ -574,12 +574,88 @@ model InstallationOrder {
   formSubmissions       InstallationFormSubmission[]
   clarifications        InstallationClarification[]
   rooms                 InstallationRoom[]
+  visitFeePolicyId      String?
+  visitFeePolicy        InstallationVisitFeePolicy? @relation("InstallationOrderVisitFeePolicy", fields: [visitFeePolicyId], references: [id], onDelete: Restrict)
+  visitFeeStatus        String   @default("NONE")
+  visitFeeGrossAmount   Decimal?
+  visitFeeClauseText    String?
+  visitFeeClauseVersion Int?
+  visitFeeLegalApprovedAt DateTime?
+  visitFeeSelectedById  String?
+  visitFeeSelectedAt    DateTime?
+  visitFeeOverrideReason String?
+  visitFeeApprovedById  String?
+  visitFeeApprovedAt    DateTime?
+  visitFeeClientAcceptedAt DateTime?
+  visitFeeClientIpHash  String?
+  visitFeeClientUserAgent String?
+  mismatches            InstallationMismatch[]
+  billingTasks          InstallationBillingTask[]
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
   @@index([status, archivedAt])
   @@index([primaryEmployeeId])
   @@index([backupEmployeeId])
+  @@index([visitFeeStatus])
+}
+
+/// Versioned company wording; rows are retained because every order stores a legal snapshot.
+model InstallationVisitFeePolicy {
+  id              String   @id @default(cuid())
+  version         Int      @unique
+  grossAmount     Decimal
+  clauseText      String
+  legalApprovedAt DateTime?
+  legalApprovedById String?
+  isDefault       Boolean  @default(false)
+  archivedAt      DateTime?
+  createdById     String?
+  orders          InstallationOrder[] @relation("InstallationOrderVisitFeePolicy")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([isDefault, archivedAt])
+  @@index([legalApprovedAt])
+}
+
+/// A field report is intentionally separate from billing: finance is only enabled by an explicit approval.
+model InstallationMismatch {
+  id                      String   @id @default(cuid())
+  orderId                 String
+  order                   InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  description             String
+  reason                  String
+  evidenceReference       String
+  reportedById            String
+  reportedAt              DateTime @default(now())
+  coordinatorApprovedById String?
+  coordinatorApprovedAt   DateTime?
+  approvalNote            String?
+  billingTask             InstallationBillingTask?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([orderId, reportedAt])
+  @@index([coordinatorApprovedAt])
+}
+
+/// Foundation for Task 10; creation from a mismatch is DB-guarded and never automatic.
+model InstallationBillingTask {
+  id              String   @id @default(cuid())
+  orderId         String
+  order           InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  mismatchId      String?  @unique
+  mismatch        InstallationMismatch? @relation(fields: [mismatchId], references: [id], onDelete: Restrict)
+  kind            String
+  status          String   @default("PENDING")
+  grossAmount     Decimal
+  description     String
+  createdById     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orderId, status])
 }
 
 model InstallationOrderInstaller {

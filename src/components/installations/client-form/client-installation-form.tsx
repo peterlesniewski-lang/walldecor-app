@@ -24,6 +24,12 @@ export type ClientFormProjection = {
   form: { templateVersion: number; questions: Question[] }
   submission: Submission
   canStartCorrection: boolean
+  visitFee: null | {
+    grossAmount: string
+    clauseText: string
+    clauseVersion: number
+    clientAcceptedAt: string | null
+  }
 }
 
 function mapAnswers(submission: Submission): Record<string, AnswerValue> {
@@ -58,7 +64,7 @@ type AutosaveAttempt = {
   answers: Record<string, PendingAnswerValue>
 }
 
-type SubmitAttempt = Omit<AutosaveAttempt, 'answers'>
+type SubmitAttempt = Omit<AutosaveAttempt, 'answers'> & { visitFeeAccepted?: boolean }
 
 function isEmptyAnswer(value: PendingAnswerValue) {
   return value === null || (Array.isArray(value) && value.length === 0)
@@ -88,6 +94,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error'>('saved')
   const [error, setError] = useState('')
   const [submitting, setSubmitting] = useState(false)
+  const [visitFeeAccepted, setVisitFeeAccepted] = useState(Boolean(initialProjection.visitFee?.clientAcceptedAt))
   const answersRef = useRef(answers)
   const pendingRef = useRef<Record<string, PendingAnswerValue>>({})
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -102,6 +109,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
 
   useEffect(() => { answersRef.current = answers }, [answers])
   useEffect(() => { submissionRef.current = projection.submission }, [projection.submission])
+  useEffect(() => { setVisitFeeAccepted(Boolean(projection.visitFee?.clientAcceptedAt)) }, [projection.visitFee?.clientAcceptedAt])
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
 
   function adoptSubmission(submission: Submission, preservePending = false) {
@@ -226,6 +234,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
       revisionNumber: submission.revisionNumber,
       draftVersion: submission.draftVersion,
       clientMutationId: mutationId(),
+      ...(projection.visitFee && !projection.visitFee.clientAcceptedAt ? { visitFeeAccepted } : {}),
     }
     submitAttemptRef.current = attempt
     setSubmitting(true); setError('')
@@ -284,6 +293,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
   }
 
   const submitted = projection.submission.status === 'SUBMITTED'
+  const requiresVisitFeeAcceptance = Boolean(projection.visitFee && !projection.visitFee.clientAcceptedAt)
   return <main className={styles.shell}>
     <div className={styles.frame}>
       <p className={styles.kicker}>{projection.brand} · przygotowanie montażu</p>
@@ -304,13 +314,30 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
           </div>)}</div>
         </section>
         {unknownSelected && <p className={styles.unknown}><strong>Ustalimy przed montażem.</strong> Nie musisz teraz wpisywać przybliżonego wymiaru.</p>}
+        {projection.visitFee && <section className={styles.fee} aria-labelledby="visit-fee-heading">
+          <p className={styles.feeKicker}>Przed wysłaniem</p>
+          <h2 id="visit-fee-heading">Informacja o ewentualnej opłacie za podjazd</h2>
+          <p className={styles.feeAmount}><strong>{projection.visitFee.grossAmount.replace('.', ',')} zł brutto</strong></p>
+          <p className={styles.feeClause}>{projection.visitFee.clauseText}</p>
+          {projection.visitFee.clientAcceptedAt ? <p className={styles.feeAccepted}>Informację potwierdzono wraz z formularzem.</p> : <label className={styles.feeCheck}>
+            <input
+              type="checkbox"
+              checked={visitFeeAccepted}
+              onChange={(event) => {
+                setVisitFeeAccepted(event.target.checked)
+                submitAttemptRef.current = null
+              }}
+            />
+            <span>Akceptuję informację o opłacie w dokładnej kwocie {projection.visitFee.grossAmount.replace('.', ',')} zł brutto.</span>
+          </label>}
+        </section>}
         <div className={styles.statusRow} role="status" aria-live="polite">
           {saveState === 'saving' && <span className={styles.statusSaving}>Zapisywanie…</span>}
           {saveState === 'saved' && <span className={styles.statusSaved}>Wszystko zapisane</span>}
           {saveState === 'error' && <><span>Wystąpił błąd zapisu.</span><button type="button" className={styles.secondary} onClick={() => void persist()}>Spróbuj ponownie</button></>}
         </div>
         {error && <p role="alert" className={styles.error}>{error}</p>}
-        <button type="submit" className={styles.submit} disabled={submitting}>{submitting ? 'Wysyłanie…' : 'Wyślij formularz'}</button>
+        <button type="submit" className={styles.submit} disabled={submitting || (requiresVisitFeeAcceptance && !visitFeeAccepted)}>{submitting ? 'Wysyłanie…' : 'Wyślij formularz'}</button>
       </form>}
     </div>
   </main>

@@ -98,12 +98,15 @@ export function InstallationOrderForm({
   order,
   onSaved,
   primaryEmployeeIdLocked,
+  canManageOwners = mode === 'create',
 }: {
   mode: 'create' | 'edit'
   employees: InstallationEmployeeOption[]
   order?: InstallationOrderFormValue
   onSaved?: () => void
   primaryEmployeeIdLocked?: string
+  /** Named owners are changed only through the audited governance panel after creation. */
+  canManageOwners?: boolean
 }) {
   const router = useRouter()
   const initial = useMemo(() => ({
@@ -117,7 +120,7 @@ export function InstallationOrderForm({
     city: order?.addressCity ?? '',
     primaryEmployeeId: primaryEmployeeIdLocked ?? order?.primaryEmployeeId ?? '',
     backupEmployeeId: order?.backupEmployeeId ?? '',
-  }), [order])
+  }), [order, primaryEmployeeIdLocked])
   const [form, setForm] = useState(initial)
   const [errors, setErrors] = useState<Record<string, string>>({})
   const [message, setMessage] = useState('')
@@ -146,8 +149,10 @@ export function InstallationOrderForm({
         postalCode: form.postalCode,
         city: form.city,
       },
-      primaryEmployeeId: primaryEmployeeIdLocked ?? form.primaryEmployeeId,
-      backupEmployeeId: form.backupEmployeeId,
+      ...((mode === 'create' || canManageOwners) ? {
+        primaryEmployeeId: primaryEmployeeIdLocked ?? form.primaryEmployeeId,
+        backupEmployeeId: form.backupEmployeeId,
+      } : {}),
     }
 
     try {
@@ -252,7 +257,7 @@ export function InstallationOrderForm({
         <section className="rounded-2xl border p-5 sm:p-6" style={{ background: 'var(--wd-white)', borderColor: 'rgba(30, 30, 30, 0.12)', boxShadow: 'var(--card-shadow)' }}>
           <p className="data-label" style={{ color: '#8C5718' }}>03 · Odpowiedzialność</p>
           <p className="mt-2 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Karta wymaga dwóch różnych aktywnych pracowników. Zastępca nie jest opcją awaryjną — jest widoczną odpowiedzialnością.</p>
-          <div className="mt-4 grid gap-4 sm:grid-cols-2">
+          {mode === 'create' || canManageOwners ? <div className="mt-4 grid gap-4 sm:grid-cols-2">
             <div>
               <Label>Główny opiekun</Label>
               <div className="mt-2">
@@ -267,7 +272,7 @@ export function InstallationOrderForm({
               </div>
               {fieldError(errors, 'backupEmployeeId') && <p className="mt-1 text-xs text-red-700">{fieldError(errors, 'backupEmployeeId')}</p>}
             </div>
-          </div>
+          </div> : <p className="mt-4 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Zmianę opiekuna, zastępcy i czasowe zastępstwo zapisuje administrator lub manager w audytowanej sekcji poniżej.</p>}
         </section>
       </div>
 

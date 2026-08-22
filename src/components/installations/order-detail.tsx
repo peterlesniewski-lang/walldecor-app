@@ -10,6 +10,8 @@ import { RoomScopeEditor } from './room-scope-editor'
 import { InstallationFormSnapshotPanel } from './form-snapshot-panel'
 import { ClientLinkPanel, type InstallationClientLinkStatus } from './client-link-panel'
 import { InstallationClarificationPanel, type InstallationClarificationView } from './installation-clarification-panel'
+import { OwnershipPanel } from './ownership-panel'
+import { VisitFeePanel } from './visit-fee-panel'
 
 type InstallationOrderDetailValue = InstallationOrderFormValue & {
   number: string
@@ -32,6 +34,9 @@ export function InstallationOrderDetail({
   clarifications = [],
   readiness = { isReady: false, openBlockingCount: 0, submittedCount: 0 },
   formRevisions = [],
+  ownership = null,
+  visitFee = null,
+  canManageGovernance = false,
 }: {
   order: InstallationOrderDetailValue
   employees: InstallationEmployeeOption[]
@@ -45,6 +50,9 @@ export function InstallationOrderDetail({
   clarifications?: InstallationClarificationView[]
   readiness?: { isReady: boolean; openBlockingCount: number; submittedCount: number }
   formRevisions?: Parameters<typeof InstallationClarificationPanel>[0]['formRevisions']
+  ownership?: Awaited<ReturnType<typeof import('@/lib/installations/delegation-service').getInstallationOwnershipView>> | null
+  visitFee?: Awaited<ReturnType<typeof import('@/lib/installations/delegation-service').getInstallationVisitFeeView>> | null
+  canManageGovernance?: boolean
 }) {
   const router = useRouter()
   const [archiving, setArchiving] = useState(false)
@@ -104,8 +112,23 @@ export function InstallationOrderDetail({
           Karta jest zarchiwizowana. Historia i odpowiedzialność pozostają zachowane.
         </p>
       ) : canEditActiveOrder ? (
-        <InstallationOrderForm mode="edit" order={order} employees={employees} />
+        <InstallationOrderForm mode="edit" order={order} employees={employees} canManageOwners={false} />
       ) : null}
+      {canEditActiveOrder && ownership && <OwnershipPanel
+        orderId={order.id}
+        employees={employees}
+        owners={{ primary: ownership.primaryEmployee, backup: ownership.backupEmployee }}
+        delegations={ownership.delegations}
+        history={ownership.auditEvents}
+        canManage={canManageGovernance}
+      />}
+      {canEditActiveOrder && visitFee && <VisitFeePanel
+        orderId={order.id}
+        fee={visitFee.fee}
+        defaultPolicy={visitFee.defaultPolicy}
+        canEdit
+        canApprove={canManageGovernance}
+      />}
       <InstallationFormSnapshotPanel orderId={order.id} publishedTemplates={publishedTemplates} initialSnapshot={formSnapshot} canEdit={canEditActiveOrder} isArchived={isArchived} />
       <RoomScopeEditor orderId={order.id} initialRooms={rooms} catalog={catalog} canEdit={canEditActiveOrder} />
       {canEditActiveOrder && <ClientLinkPanel orderId={order.id} initialLinks={clientLinks} canEdit canGenerate={formSnapshot !== null} />}

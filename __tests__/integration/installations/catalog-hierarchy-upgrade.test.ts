@@ -4,7 +4,6 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, describe, expect, it } from 'vitest'
 import { PrismaClient } from '@/generated/prisma'
-import { createInstallationOrder } from '@/lib/installations/order-service'
 
 const workspace = process.cwd()
 const databaseDirectory = mkdtempSync(path.join(tmpdir(), 'walldecor-installation-hierarchy-upgrade-'))
@@ -50,11 +49,20 @@ async function seedLegacyInconsistentHierarchy(db: PrismaClient) {
     db.employee.create({ data: { firstName: 'Anna', lastName: 'Legacy', email: 'legacy.primary@example.test', position: 'Koordynatorka', costCenterId: 'LGC', startDate: new Date('2026-01-01T00:00:00.000Z'), active: true } }),
     db.employee.create({ data: { firstName: 'Bartek', lastName: 'Legacy', email: 'legacy.backup@example.test', position: 'Koordynator', costCenterId: 'LGC', startDate: new Date('2026-01-01T00:00:00.000Z'), active: true } }),
   ])
-  const order = await createInstallationOrder(db, {
-    client: { name: 'Legacy history', email: 'legacy.history@example.test', phone: '+48 501 000 001' },
-    address: { street: 'Dobra', buildingNumber: '1', postalCode: '00-001', city: 'Warszawa' },
-    primaryEmployeeId: primary.id, backupEmployeeId: backup.id,
-  }, 'legacy-migration')
+  // This database intentionally stops at migration 20. Do not use the
+  // current Prisma InstallationOrder model: Task 4 adds columns which the
+  // historic schema legitimately does not have yet.
+  const order = { id: 'legacy-upgrade-order' }
+  const client = await db.installationClient.create({ data: { name: 'Legacy history', email: 'legacy.history@example.test', phone: '+48 501 000 001' } })
+  await db.$executeRaw`
+    INSERT INTO "InstallationOrder" (
+      "id", "number", "status", "clientId", "addressStreet", "addressBuildingNumber",
+      "addressPostalCode", "addressCity", "primaryEmployeeId", "backupEmployeeId", "updatedAt"
+    ) VALUES (
+      ${order.id}, 'MON-LEGACY-UPGRADE', 'DRAFT', ${client.id}, 'Dobra', '1',
+      '00-001', 'Warszawa', ${primary.id}, ${backup.id}, ${legacyUpdatedAt}
+    )
+  `
   const template = await db.installationFormTemplate.create({ data: { id: 'legacy-template', familyId: 'legacy-family', name: 'Legacy form', nameKey: 'legacy-form', version: 1, status: 'PUBLISHED', publishedAt: new Date('2026-08-01T00:00:00.000Z') } })
   const snapshot = await db.installationOrderFormSnapshot.create({ data: { id: 'legacy-snapshot', orderId: order.id, templateId: template.id, templateVersion: 1, schemaJson: '{"name":"Legacy form","version":1,"questions":[]}', createdById: 'legacy-migration' } })
   const room = await db.installationRoom.create({ data: { orderId: order.id, name: 'Legacy room', sortOrder: 0 } })
@@ -114,20 +122,22 @@ describe('installation catalog hierarchy migration upgrade', () => {
     await db.$disconnect()
   })
 
-  it('applies the complete fresh chain, including client-form migration, with healthy SQLite integrity', async () => {
+  it('applies the complete fresh chain, including client-form and governance migrations, with healthy SQLite integrity', async () => {
     runMigrate(freshDatabaseUrl)
     const db = new PrismaClient({ datasources: { db: { url: freshDatabaseUrl } } })
-    const [migrations, triggers, clientFormTriggers, submittedRevisionTriggers, foreignKeys, integrity] = await Promise.all([
+    const [migrations, triggers, clientFormTriggers, submittedRevisionTriggers, governanceTriggers, foreignKeys, integrity] = await Promise.all([
       db.$queryRawUnsafe<Array<{ migration_name: string }>>('SELECT migration_name FROM _prisma_migrations ORDER BY migration_name'),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationCatalog%' ORDER BY name"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationAnswer_submitted_%' ORDER BY name"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationFormSubmission_submitted_%' ORDER BY name"),
+      db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND (name LIKE 'InstallationOrder_visitFeePolicy_%' OR name LIKE 'InstallationVisitFeePolicy_referenced_%' OR name LIKE 'InstallationBillingTask_mismatch_%') ORDER BY name"),
       db.$queryRawUnsafe('PRAGMA foreign_key_check'), db.$queryRawUnsafe<Array<{ integrity_check: string }>>('PRAGMA integrity_check'),
     ])
-    expect(migrations).toHaveLength(25)
+    expect(migrations).toHaveLength(26)
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030000_installation_client_form')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030100_installation_submitted_answer_insert_guard')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030200_installation_submitted_revision_guard')
+    expect(migrations.map((migration) => migration.migration_name)).toContain('20260822040000_installation_governance')
     expect(triggers).toHaveLength(6)
     expect(clientFormTriggers).toEqual([
       { name: 'InstallationAnswer_submitted_delete_guard' },
@@ -137,6 +147,14 @@ describe('installation catalog hierarchy migration upgrade', () => {
     expect(submittedRevisionTriggers).toEqual([
       { name: 'InstallationFormSubmission_submitted_delete_guard' },
       { name: 'InstallationFormSubmission_submitted_update_guard' },
+    ])
+    expect(governanceTriggers).toEqual([
+      { name: 'InstallationBillingTask_mismatch_approval_guard' },
+      { name: 'InstallationBillingTask_mismatch_approval_update_guard' },
+      { name: 'InstallationOrder_visitFeePolicy_insert_guard' },
+      { name: 'InstallationOrder_visitFeePolicy_update_guard' },
+      { name: 'InstallationVisitFeePolicy_referenced_delete_guard' },
+      { name: 'InstallationVisitFeePolicy_referenced_id_update_guard' },
     ])
     expect(foreignKeys).toEqual([])
     expect(integrity[0]?.integrity_check).toBe('ok')

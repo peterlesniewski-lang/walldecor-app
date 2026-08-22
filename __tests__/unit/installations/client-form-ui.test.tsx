@@ -18,6 +18,7 @@ const projection = {
   },
   submission: { status: 'DRAFT' as const, revisionNumber: 1, draftVersion: 0, submittedAt: null, answers: [] },
   canStartCorrection: false,
+  visitFee: null,
 }
 
 describe('client installation form', () => {
@@ -45,6 +46,26 @@ describe('client installation form', () => {
     expect(screen.getByText(/Dokumenty i zdjęcia dodamy w kroku plików/i)).not.toBeNull()
     expect(document.querySelector('input[type="file"]')).toBeNull()
     expect(screen.getByTestId('task5-file-step').getAttribute('data-task5-replace')).toBe('private-upload-handoff')
+  })
+
+  it('shows an approved visit-fee clause and keeps submit unavailable until the customer explicitly accepts it', async () => {
+    const user = userEvent.setup()
+    const feeProjection = {
+      ...projection,
+      visitFee: {
+        grossAmount: '249.90',
+        clauseText: 'Jeżeli rzeczywisty stan odbiega od formularza, może obowiązywać opłata za bezskuteczny podjazd.',
+        clauseVersion: 3,
+        clientAcceptedAt: null,
+      },
+    }
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={feeProjection} />)
+
+    expect(screen.getAllByText(/249,90 zł/i)).not.toHaveLength(0)
+    expect((screen.getByRole('checkbox', { name: /akceptuję informację o opłacie/i }) as HTMLInputElement).checked).toBe(false)
+    expect((screen.getByRole('button', { name: 'Wyślij formularz' }) as HTMLButtonElement).disabled).toBe(true)
+    await user.click(screen.getByRole('checkbox', { name: /akceptuję informację o opłacie/i }))
+    expect((screen.getByRole('button', { name: 'Wyślij formularz' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
   it('serializes rapid answer changes so an older delayed save cannot overwrite UNKNOWN', async () => {

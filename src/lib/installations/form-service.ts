@@ -1,6 +1,8 @@
+import { createHash } from 'node:crypto'
 import { Prisma, PrismaClient } from '@/generated/prisma'
 import { resolveActiveClientLink } from './client-link'
 import { validateInstallationQuestionDefinitions } from './question-schema'
+import { isClientVisitFeeActive } from './delegation-service'
 
 export { getInstallationReadiness } from './readiness'
 
@@ -329,7 +331,51 @@ export async function autosaveClientForm(db: PrismaClient, token: string, input:
   })
 }
 
-type SubmitMutation = Omit<ClientFormMutation, 'answers'>
+type SubmitMutation = Omit<ClientFormMutation, 'answers'> & {
+  visitFeeAccepted?: boolean
+  /** Trusted request metadata supplied by the public route, never client JSON. */
+  clientIp?: string
+  clientUserAgent?: string
+}
+
+function visitFeeMoney(value: Prisma.Decimal | null) {
+  return value?.toFixed(2) ?? null
+}
+
+function hashClientIp(value: string | undefined) {
+  // The public route passes the proxy/client address when available. We retain
+  // a deterministic marker hash rather than silently persisting the raw IP.
+  return createHash('sha256').update(value?.trim() || 'unavailable', 'utf8').digest('hex')
+}
+
+async function requireAndRecordVisitFeeAcceptance(
+  tx: Prisma.TransactionClient,
+  orderId: string,
+  input: SubmitMutation,
+) {
+  const order = await tx.installationOrder.findUniqueOrThrow({ where: { id: orderId } })
+  const active = isClientVisitFeeActive({
+    status: order.visitFeeStatus,
+    grossAmount: visitFeeMoney(order.visitFeeGrossAmount),
+    clauseText: order.visitFeeClauseText,
+    clauseVersion: order.visitFeeClauseVersion,
+    legalApprovedAt: order.visitFeeLegalApprovedAt,
+  })
+  if (!active || order.visitFeeClientAcceptedAt) return
+  if (input.visitFeeAccepted !== true) {
+    throw new InstallationFormValidationError({
+      visitFeeAccepted: 'Potwierdź zapoznanie się z kwotą opłaty za bezskuteczny podjazd.',
+    })
+  }
+  await tx.installationOrder.update({
+    where: { id: orderId },
+    data: {
+      visitFeeClientAcceptedAt: new Date(),
+      visitFeeClientIpHash: hashClientIp(input.clientIp),
+      visitFeeClientUserAgent: input.clientUserAgent?.trim().slice(0, 1_000) || 'unknown',
+    },
+  })
+}
 
 function createClarificationCandidates(questions: ClientFormQuestion[], answers: PersistedAnswer[]) {
   const values = mergedDraftAnswers(answers, [])
@@ -363,6 +409,7 @@ export async function submitClientForm(db: PrismaClient, token: string, input: S
     if (submission.draftVersion !== input.draftVersion) throw new InstallationFormConflictError()
     const values = mergedDraftAnswers(submission.answers, [])
     validateVisibleSubmission(questions, values)
+    await requireAndRecordVisitFeeAcceptance(tx, link.orderId, input)
     const clarificationCandidates = createClarificationCandidates(questions, submission.answers)
     const submittedAt = new Date()
     const claimed = await tx.installationFormSubmission.updateMany({

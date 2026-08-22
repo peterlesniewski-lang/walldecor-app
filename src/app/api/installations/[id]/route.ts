@@ -69,7 +69,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     const changesOwners = isPlainObject(body) && (
       Object.hasOwn(body, 'primaryEmployeeId') || Object.hasOwn(body, 'backupEmployeeId')
     )
-    if (!canArchiveInstallationOrder(viewer, loaded.order) && changesOwners) {
+    if (changesOwners) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
     const order = await updateInstallationOrder(prisma, id, body, session.user.id)
