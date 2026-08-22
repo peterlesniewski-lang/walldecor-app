@@ -23,6 +23,7 @@ const installationQuestionDefinitionSchema = z.object({
   type: z.enum(INSTALLATION_QUESTION_TYPES),
   label: z.string().trim().min(1, 'Każde pytanie musi mieć etykietę.'),
   help: z.string().trim().min(1).optional(),
+  required: z.boolean().optional(),
   riskLevel: z.enum(INSTALLATION_QUESTION_RISK_LEVELS).optional(),
   options: z.array(z.string().trim().min(1)).min(1).optional(),
   condition: questionConditionSchema.optional(),

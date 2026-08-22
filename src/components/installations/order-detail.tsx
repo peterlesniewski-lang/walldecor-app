@@ -8,6 +8,8 @@ import { Button } from '@/components/ui/button'
 import { InstallationOrderForm, type InstallationEmployeeOption, type InstallationOrderFormValue } from './order-form'
 import { RoomScopeEditor } from './room-scope-editor'
 import { InstallationFormSnapshotPanel } from './form-snapshot-panel'
+import { ClientLinkPanel, type InstallationClientLinkStatus } from './client-link-panel'
+import { InstallationClarificationPanel, type InstallationClarificationView } from './installation-clarification-panel'
 
 type InstallationOrderDetailValue = InstallationOrderFormValue & {
   number: string
@@ -26,6 +28,10 @@ export function InstallationOrderDetail({
   catalog = [],
   publishedTemplates = [],
   formSnapshot = null,
+  clientLinks = [],
+  clarifications = [],
+  readiness = { isReady: false, openBlockingCount: 0, submittedCount: 0 },
+  formRevisions = [],
 }: {
   order: InstallationOrderDetailValue
   employees: InstallationEmployeeOption[]
@@ -35,6 +41,10 @@ export function InstallationOrderDetail({
   catalog?: Parameters<typeof RoomScopeEditor>[0]['catalog']
   publishedTemplates?: Parameters<typeof InstallationFormSnapshotPanel>[0]['publishedTemplates']
   formSnapshot?: Parameters<typeof InstallationFormSnapshotPanel>[0]['initialSnapshot']
+  clientLinks?: InstallationClientLinkStatus[]
+  clarifications?: InstallationClarificationView[]
+  readiness?: { isReady: boolean; openBlockingCount: number; submittedCount: number }
+  formRevisions?: Parameters<typeof InstallationClarificationPanel>[0]['formRevisions']
 }) {
   const router = useRouter()
   const [archiving, setArchiving] = useState(false)
@@ -98,6 +108,8 @@ export function InstallationOrderDetail({
       ) : null}
       <InstallationFormSnapshotPanel orderId={order.id} publishedTemplates={publishedTemplates} initialSnapshot={formSnapshot} canEdit={canEditActiveOrder} isArchived={isArchived} />
       <RoomScopeEditor orderId={order.id} initialRooms={rooms} catalog={catalog} canEdit={canEditActiveOrder} />
+      <ClientLinkPanel orderId={order.id} initialLinks={clientLinks} canEdit={canEditActiveOrder} />
+      <InstallationClarificationPanel orderId={order.id} clarifications={clarifications} readiness={readiness} canEdit={canEditActiveOrder} formRevisions={formRevisions} />
       {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
     </div>
   )

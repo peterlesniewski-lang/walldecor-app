@@ -306,6 +306,7 @@ function toPersistedQuestions(templateId: string, questions: InstallationQuestio
     type: question.type,
     label: question.label,
     help: question.help ?? null,
+    required: question.required ?? false,
     riskLevel: question.riskLevel ?? 'LOW',
     optionsJson: question.options ? JSON.stringify(question.options) : null,
     conditionJson: question.condition ? JSON.stringify({ questionKey: question.condition.questionKey, equals: question.condition.equals }) : null,
@@ -313,12 +314,13 @@ function toPersistedQuestions(templateId: string, questions: InstallationQuestio
   }))
 }
 
-function parsedPersistedQuestions(templateId: string, questions: Array<{ key: string; type: string; label: string; help: string | null; riskLevel: string; optionsJson: string | null; conditionJson: string | null }>) {
+function parsedPersistedQuestions(templateId: string, questions: Array<{ key: string; type: string; label: string; help: string | null; required: boolean; riskLevel: string; optionsJson: string | null; conditionJson: string | null }>) {
   const result = questions.map((question) => ({
     key: question.key,
     type: question.type,
     label: question.label,
     ...(question.help ? { help: question.help } : {}),
+    ...(question.required ? { required: true } : {}),
     ...(question.riskLevel === 'LOW' ? {} : { riskLevel: question.riskLevel }),
     ...(question.optionsJson ? { options: JSON.parse(question.optionsJson) } : {}),
     ...(question.conditionJson ? { condition: JSON.parse(question.conditionJson) } : {}),

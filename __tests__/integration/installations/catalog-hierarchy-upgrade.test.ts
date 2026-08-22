@@ -114,16 +114,19 @@ describe('installation catalog hierarchy migration upgrade', () => {
     await db.$disconnect()
   })
 
-  it('applies the complete fresh chain with the hierarchy repair migration and healthy SQLite integrity', async () => {
+  it('applies the complete fresh chain, including client-form migration, with healthy SQLite integrity', async () => {
     runMigrate(freshDatabaseUrl)
     const db = new PrismaClient({ datasources: { db: { url: freshDatabaseUrl } } })
-    const [migrations, triggers, foreignKeys, integrity] = await Promise.all([
+    const [migrations, triggers, clientFormTriggers, foreignKeys, integrity] = await Promise.all([
       db.$queryRawUnsafe<Array<{ migration_name: string }>>('SELECT migration_name FROM _prisma_migrations ORDER BY migration_name'),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationCatalog%' ORDER BY name"),
+      db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationAnswer_submitted_%' ORDER BY name"),
       db.$queryRawUnsafe('PRAGMA foreign_key_check'), db.$queryRawUnsafe<Array<{ integrity_check: string }>>('PRAGMA integrity_check'),
     ])
-    expect(migrations).toHaveLength(22)
+    expect(migrations).toHaveLength(23)
+    expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030000_installation_client_form')
     expect(triggers).toHaveLength(6)
+    expect(clientFormTriggers).toHaveLength(2)
     expect(foreignKeys).toEqual([])
     expect(integrity[0]?.integrity_check).toBe('ok')
     await db.$disconnect()

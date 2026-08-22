@@ -570,6 +570,9 @@ model InstallationOrder {
   installerAssignments  InstallationOrderInstaller[]
   auditEvents           InstallationAuditEvent[]
   formSnapshots         InstallationOrderFormSnapshot[]
+  clientLinks           InstallationClientLink[]
+  formSubmissions       InstallationFormSubmission[]
+  clarifications        InstallationClarification[]
   rooms                 InstallationRoom[]
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -702,6 +705,7 @@ model InstallationQuestionDefinition {
   type          String
   label         String
   help          String?
+  required      Boolean                  @default(false)
   riskLevel     String                   @default("LOW")
   optionsJson   String?
   conditionJson String?
@@ -722,9 +726,104 @@ model InstallationOrderFormSnapshot {
   templateVersion Int
   schemaJson      String
   createdById     String?
+  submissions     InstallationFormSubmission[]
   createdAt       DateTime                 @default(now())
 
   @@index([templateId, templateVersion])
+}
+
+model InstallationClientLink {
+  id           String            @id @default(cuid())
+  orderId      String
+  order        InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  tokenHash    String            @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  createdById  String
+  createdAt    DateTime          @default(now())
+  lastOpenedAt DateTime?
+
+  @@index([orderId, expiresAt])
+  @@index([orderId, revokedAt])
+}
+
+model InstallationFormSubmission {
+  id             String                          @id @default(cuid())
+  orderId        String
+  order          InstallationOrder               @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  formSnapshotId String
+  formSnapshot   InstallationOrderFormSnapshot   @relation(fields: [formSnapshotId], references: [id], onDelete: Restrict)
+  revisionOfId   String?
+  revisionOf     InstallationFormSubmission?     @relation("InstallationSubmissionCorrections", fields: [revisionOfId], references: [id], onDelete: Restrict)
+  corrections    InstallationFormSubmission[]    @relation("InstallationSubmissionCorrections")
+  revisionNumber Int
+  status         String                          @default("DRAFT")
+  draftKey       String?                         @unique
+  draftVersion   Int                             @default(0)
+  submittedAt    DateTime?
+  answers        InstallationAnswer[]
+  mutations      InstallationFormSubmissionMutation[]
+  clarifications InstallationClarification[]
+  createdAt      DateTime                        @default(now())
+  updatedAt      DateTime                        @updatedAt
+
+  @@unique([orderId, revisionNumber])
+  @@index([orderId, status, createdAt])
+  @@index([revisionOfId])
+}
+
+model InstallationAnswer {
+  id              String                     @id @default(cuid())
+  submissionId    String
+  submission      InstallationFormSubmission @relation(fields: [submissionId], references: [id], onDelete: Restrict)
+  questionKey     String
+  questionType    String
+  valueJson       String
+  normalizedValue String
+  isUnknown       Boolean                    @default(false)
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+
+  @@unique([submissionId, questionKey])
+  @@index([submissionId, isUnknown])
+}
+
+model InstallationFormSubmissionMutation {
+  id               String                     @id @default(cuid())
+  submissionId     String
+  submission       InstallationFormSubmission @relation(fields: [submissionId], references: [id], onDelete: Restrict)
+  draftVersion     Int
+  clientMutationId String
+  operation        String
+  responseJson     String
+  createdAt        DateTime                   @default(now())
+
+  @@unique([submissionId, draftVersion, clientMutationId])
+  @@index([submissionId, createdAt])
+}
+
+model InstallationClarification {
+  id                 String                     @id @default(cuid())
+  orderId            String
+  order              InstallationOrder          @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  sourceSubmissionId String
+  sourceSubmission   InstallationFormSubmission @relation(fields: [sourceSubmissionId], references: [id], onDelete: Restrict)
+  questionKey        String
+  reasonCode         String
+  reason             String
+  isBlocking         Boolean                    @default(true)
+  status             String                     @default("OPEN")
+  resolution         String?
+  resolutionNote     String?
+  evidenceReference  String?
+  resolvedById       String?
+  resolvedAt         DateTime?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+
+  @@unique([sourceSubmissionId, questionKey, reasonCode])
+  @@index([orderId, status, isBlocking])
+  @@index([sourceSubmissionId])
 }
 
 model InstallationRoom {

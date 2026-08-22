@@ -5,6 +5,7 @@ import {
   parseCreateInstallationOrder,
   parseUpdateInstallationOrder,
 } from './schemas'
+import { assertInstallationOrderCanUseStatus } from './readiness'
 
 type InstallationDb = PrismaClient | Prisma.TransactionClient
 
@@ -223,6 +224,7 @@ export async function updateInstallationOrder(
       isEmployeeActive: async (employeeId) => (await findActiveEmployeeIds(tx, [employeeId])).has(employeeId),
     })
     await assertActiveOwners(tx, parsed.primaryEmployeeId, parsed.backupEmployeeId)
+    await assertInstallationOrderCanUseStatus(tx, id, current.status, parsed.status ?? current.status)
 
     await tx.installationClient.update({
       where: { id: current.clientId },
