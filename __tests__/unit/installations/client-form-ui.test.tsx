@@ -68,6 +68,65 @@ describe('client installation form', () => {
     expect((screen.getByRole('button', { name: 'Wyślij formularz' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
+  it('accepts a fee selected after submission without restarting the form correction flow', async () => {
+    const user = userEvent.setup()
+    const submittedFeeProjection = {
+      ...projection,
+      submission: { status: 'SUBMITTED' as const, revisionNumber: 1, draftVersion: 1, submittedAt: '2026-08-23T12:00:00.000Z', answers: [{ questionKey: 'glify', value: 'NO', isUnknown: false }] },
+      canStartCorrection: true,
+      visitFee: {
+        grossAmount: '279.90',
+        clauseText: 'Informacja o opłacie została wybrana po wcześniejszym wysłaniu formularza.',
+        clauseVersion: 7,
+        clientAcceptedAt: null,
+      },
+    }
+    const acceptedProjection = {
+      ...submittedFeeProjection,
+      visitFee: { ...submittedFeeProjection.visitFee, clientAcceptedAt: '2026-08-23T12:05:00.000Z' },
+    }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify(acceptedProjection), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={submittedFeeProjection} />)
+
+    expect(screen.getByText(/Formularz został wysłany/i)).not.toBeNull()
+    await user.click(screen.getByRole('checkbox', { name: /akceptuję informację o opłacie/i }))
+    await user.click(screen.getByRole('button', { name: 'Potwierdź informację o opłacie' }))
+
+    expect(fetchMock).toHaveBeenCalledWith('/api/public/installations/' + 'a'.repeat(43) + '/accept-visit-fee', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ grossAmount: '279.90', clauseVersion: 7 }),
+    }))
+    expect(await screen.findByText(/Informację o opłacie potwierdzono/i)).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Zgłoś korektę' })).not.toBeNull()
+  })
+
+  it('requires a fresh checkbox when a 409 reload reveals a different fee snapshot', async () => {
+    const user = userEvent.setup()
+    const initialFeeProjection = {
+      ...projection,
+      submission: { status: 'SUBMITTED' as const, revisionNumber: 1, draftVersion: 1, submittedAt: '2026-08-23T12:00:00.000Z', answers: [{ questionKey: 'glify', value: 'NO', isUnknown: false }] },
+      canStartCorrection: true,
+      visitFee: { grossAmount: '279.90', clauseText: 'Pierwotna wersja klauzuli.', clauseVersion: 7, clientAcceptedAt: null },
+    }
+    const changedFeeProjection = {
+      ...initialFeeProjection,
+      visitFee: { grossAmount: '319.00', clauseText: 'Nowsza wersja klauzuli.', clauseVersion: 8, clientAcceptedAt: null },
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Informacja zmieniła się.' }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(changedFeeProjection), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={initialFeeProjection} />)
+
+    const checkbox = screen.getByRole('checkbox', { name: /akceptuję informację o opłacie/i }) as HTMLInputElement
+    await user.click(checkbox)
+    await user.click(screen.getByRole('button', { name: 'Potwierdź informację o opłacie' }))
+
+    expect((await screen.findAllByText(/319,00 zł brutto/i)).length).toBeGreaterThan(0)
+    expect((screen.getByRole('checkbox', { name: /akceptuję informację o opłacie/i }) as HTMLInputElement).checked).toBe(false)
+    expect((screen.getByRole('button', { name: 'Potwierdź informację o opłacie' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
   it('serializes rapid answer changes so an older delayed save cannot overwrite UNKNOWN', async () => {
     vi.useFakeTimers()
     const deferred: Array<{ resolve: (response: Response) => void }> = []

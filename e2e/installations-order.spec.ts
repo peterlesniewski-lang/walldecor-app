@@ -1,6 +1,3 @@
-import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
-import path from 'node:path'
 import { PrismaClient } from '@/generated/prisma'
 import bcrypt from 'bcryptjs'
 import { expect, test, type Page } from '@playwright/test'
@@ -12,31 +9,9 @@ if (!databaseUrl?.startsWith('file:/tmp/walldecor-installations-e2e-')) {
   throw new Error('E2E montaży wymaga izolowanego E2E_DATABASE_URL=file:/tmp/walldecor-installations-e2e-*.db')
 }
 
-const databasePath = databaseUrl.replace(/^file:/, '')
 let db: PrismaClient
 
-function applyCommittedMigrations() {
-  const migrationRoot = path.join(process.cwd(), 'prisma', 'migrations')
-  const migrationSqlPaths = readdirSync(migrationRoot)
-    .sort()
-    .map((directory) => path.join(migrationRoot, directory, 'migration.sql'))
-    .filter(existsSync)
-
-  for (const migrationSqlPath of migrationSqlPaths) {
-    const result = spawnSync('sqlite3', ['-bail', databasePath], {
-      cwd: process.cwd(),
-      input: readFileSync(migrationSqlPath, 'utf8'),
-      encoding: 'utf8',
-    })
-    if (result.status !== 0) {
-      throw new Error(`Nie udało się zastosować migracji ${migrationSqlPath}: ${result.stderr || result.stdout}`)
-    }
-  }
-}
-
 test.beforeAll(async () => {
-  rmSync(databasePath, { force: true })
-  applyCommittedMigrations()
   db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
   await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
   await db.costCenter.create({ data: { id: 'JAG', name: 'Jagiellońska' } })
@@ -75,7 +50,6 @@ test.beforeAll(async () => {
 
 test.afterAll(async () => {
   await db?.$disconnect()
-  if (existsSync(databasePath)) rmSync(databasePath, { force: true })
 })
 
 async function createEmployee(page: Page, suffix: string, firstName: string, lastName: string) {
@@ -105,8 +79,8 @@ test.describe('Installation order workflow', () => {
     await page.click('button[type="submit"]')
     await expect(page).toHaveURL(/\/dashboard/)
 
-    const primary = await createEmployee(page, suffix, 'Anna', 'Opiekun')
-    const backup = await createEmployee(page, suffix, 'Bartek', 'Zastępca')
+    const primary = await createEmployee(page, suffix, 'Anna', 'Zamówienie')
+    const backup = await createEmployee(page, suffix, 'Bartek', 'Zamówienie')
     expect(primary.status).toBe(201)
     expect(backup.status).toBe(201)
 
@@ -119,9 +93,9 @@ test.describe('Installation order workflow', () => {
     await page.getByLabel('Kod pocztowy').fill('02-515')
     await page.getByLabel('Miejscowość').fill('Warszawa')
     await page.getByRole('button', { name: 'Wybierz głównego opiekuna' }).click()
-    await page.getByRole('option', { name: 'Ustaw Anna Opiekun jako głównego opiekuna' }).click()
+    await page.getByRole('option', { name: 'Ustaw Anna Zamówienie jako głównego opiekuna' }).click()
     await page.getByRole('button', { name: 'Wybierz zastępcę opiekuna' }).click()
-    await page.getByRole('option', { name: 'Ustaw Bartek Zastępca jako zastępcę opiekuna' }).click()
+    await page.getByRole('option', { name: 'Ustaw Bartek Zamówienie jako zastępcę opiekuna' }).click()
     await page.getByRole('button', { name: 'Utwórz kartę' }).click()
 
     await expect(page).not.toHaveURL(/\/installations\/new$/)
@@ -133,8 +107,8 @@ test.describe('Installation order workflow', () => {
     await orderCard.click()
     await expect(page).toHaveURL(orderUrl)
     await expect(page.getByRole('heading', { name: 'Jan E2E Kowalski' })).toBeVisible()
-    await expect(page.getByText('Opiekun: Anna Opiekun')).toBeVisible()
-    await expect(page.getByText('Zastępca: Bartek Zastępca')).toBeVisible()
+    await expect(page.getByText('Opiekun: Anna Zamówienie')).toBeVisible()
+    await expect(page.getByText('Zastępca: Bartek Zamówienie')).toBeVisible()
 
     const orderId = page.url().split('/').at(-1)
     const outsiderContext = await browser.newContext({ baseURL: 'http://localhost:3000' })
@@ -143,7 +117,7 @@ test.describe('Installation order workflow', () => {
     await outsiderPage.fill('input[name="username"]', 'installationoutsider')
     await outsiderPage.fill('input[type="password"]', e2ePassword)
     await outsiderPage.click('button[type="submit"]')
-    await expect(outsiderPage).toHaveURL(/\/dashboard/)
+    await expect(outsiderPage).toHaveURL(/\/(dashboard|finance)/)
     const deniedResponse = await outsiderPage.goto(`/api/installations/${orderId}`)
     expect(deniedResponse?.status()).toBe(403)
     await outsiderContext.close()
@@ -156,6 +130,6 @@ test.describe('Installation order workflow', () => {
 
     await page.getByRole('button', { name: 'Archiwizuj zlecenie' }).click()
     await expect(page).toHaveURL(/\/installations$/)
-    await expect(page.getByText('Brak aktywnych kart')).toBeVisible()
+    await expect(page.getByRole('link', { name: /Jan E2E Kowalski/ })).toHaveCount(0)
   })
 })

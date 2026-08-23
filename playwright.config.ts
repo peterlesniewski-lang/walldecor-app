@@ -10,6 +10,10 @@ process.env.E2E_DATABASE_URL = e2eDatabaseUrl
 
 export default defineConfig({
   testDir: './e2e',
+  globalSetup: './e2e/global-setup.ts',
+  // All installation E2E specs deliberately use the one database passed to
+  // the shared web server. SQLite cannot safely migrate that file in parallel.
+  workers: 1,
   use: {
     baseURL: 'http://localhost:3000',
     trace: 'on-first-retry',

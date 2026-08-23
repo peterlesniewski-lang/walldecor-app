@@ -627,6 +627,9 @@ model InstallationMismatch {
   description             String
   reason                  String
   evidenceReference       String
+  evidenceStatus          String   @default("PENDING_PRIVATE_FILE")
+  evidenceFileId          String?
+  evidenceVerifiedAt      DateTime?
   reportedById            String
   reportedAt              DateTime @default(now())
   coordinatorApprovedById String?
@@ -638,6 +641,7 @@ model InstallationMismatch {
 
   @@index([orderId, reportedAt])
   @@index([coordinatorApprovedAt])
+  @@index([evidenceStatus])
 }
 
 /// Foundation for Task 10; creation from a mismatch is DB-guarded and never automatic.

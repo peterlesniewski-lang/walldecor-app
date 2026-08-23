@@ -18,8 +18,9 @@ import {
   requestInstallationVisitFeeOverride,
   selectDefaultInstallationVisitFee,
 } from '@/lib/installations/delegation-service'
-import { autosaveClientForm, InstallationFormValidationError, submitClientForm } from '@/lib/installations/form-service'
+import { acceptClientVisitFee, autosaveClientForm, InstallationFormValidationError, submitClientForm } from '@/lib/installations/form-service'
 import { createInstallationOrder, getInstallationOrder } from '@/lib/installations/order-service'
+import { getInstallationReadiness } from '@/lib/installations/readiness'
 
 const databaseDirectory = mkdtempSync(path.join(tmpdir(), 'walldecor-installations-governance-'))
 const databasePath = path.join(databaseDirectory, 'governance.db')
@@ -139,7 +140,71 @@ describe('visit fee clause and documented mismatch', () => {
     expect(projection.visitFee).toBeNull()
   })
 
-  it('requires an explicit client acceptance of the approved amount, stores evidence, and needs coordinator approval before billing exists', async () => {
+  it('blocks readiness after a submitted form when an approved legal fee is selected but not yet accepted', async () => {
+    const order = await createInstallationOrder(db, {
+      client: { name: 'Klientka po formularzu', email: 'fee-after-submit@example.test', phone: '+48 503 111 222' },
+      address: { street: 'Testowa', buildingNumber: '3', postalCode: '00-003', city: 'Warszawa' },
+      primaryEmployeeId: replacementOwnerId,
+      backupEmployeeId: backupId,
+    }, 'admin-user')
+    const token = await createClientFormLink(order.id)
+    const initial = await loadPublicInstallationProjection(db, token)
+    const saved = await autosaveClientForm(db, token, {
+      revisionNumber: initial.submission.revisionNumber,
+      draftVersion: initial.submission.draftVersion,
+      clientMutationId: 'fee-after-submit-answer-0001',
+      answers: [{ questionKey: 'glify', value: 'NO' }],
+    })
+    await submitClientForm(db, token, {
+      revisionNumber: saved.revisionNumber,
+      draftVersion: saved.draftVersion,
+      clientMutationId: 'fee-after-submit-submit-0001',
+    })
+    await createInstallationVisitFeePolicy(db, {
+      grossAmount: '279.90',
+      clauseText: 'Po wysłaniu formularza wybrano prawnie zatwierdzoną informację o możliwej opłacie za bezskuteczny podjazd.',
+      isDefault: true,
+      legalApprovedAt: new Date('2026-08-21T10:00:00.000Z'),
+    }, 'admin-user')
+    await selectDefaultInstallationVisitFee(db, order.id, 'owner-user')
+
+    expect(await getInstallationReadiness(db, order.id)).toMatchObject({
+      isReady: false,
+      submittedCount: 1,
+      visitFeeAcceptanceRequired: true,
+    })
+
+    const feeProjection = await loadPublicInstallationProjection(db, token)
+    const [firstAcceptance, secondAcceptance] = await Promise.all([
+      acceptClientVisitFee(db, token, {
+        grossAmount: feeProjection.visitFee!.grossAmount,
+        clauseVersion: feeProjection.visitFee!.clauseVersion,
+        clientIp: '203.0.113.55',
+        clientUserAgent: 'WallDecor post-submit fee acceptance test A',
+      }),
+      acceptClientVisitFee(db, token, {
+        grossAmount: feeProjection.visitFee!.grossAmount,
+        clauseVersion: feeProjection.visitFee!.clauseVersion,
+        clientIp: '203.0.113.56',
+        clientUserAgent: 'WallDecor post-submit fee acceptance test B',
+      }),
+    ])
+    expect(firstAcceptance.acceptedAt).toEqual(secondAcceptance.acceptedAt)
+    const feeAcceptanceAudits = await db.installationAuditEvent.findMany({
+      where: { orderId: order.id, action: 'INSTALLATION_VISIT_FEE_CLIENT_ACCEPTED' },
+    })
+    expect(feeAcceptanceAudits).toHaveLength(1)
+    expect(feeAcceptanceAudits[0].actorId).toBe('PUBLIC_CLIENT')
+    expect(feeAcceptanceAudits[0].afterJson).toContain('279.90')
+    expect(feeAcceptanceAudits[0].afterJson).not.toContain('203.0.113.')
+    expect(feeAcceptanceAudits[0].afterJson).not.toContain(token)
+    expect(await getInstallationReadiness(db, order.id)).toMatchObject({
+      isReady: true,
+      visitFeeAcceptanceRequired: false,
+    })
+  })
+
+  it('requires an explicit client acceptance of the approved amount, and coordinator approval waits for a Task 5 verified private file before billing', async () => {
     const policy = await createInstallationVisitFeePolicy(db, {
       grossAmount: '249.90',
       clauseText: 'Jeżeli stan faktyczny odbiega od informacji potwierdzonych w formularzu, może obowiązywać opłata za bezskuteczny podjazd w zatwierdzonej kwocie.',
@@ -180,11 +245,23 @@ describe('visit fee clause and documented mismatch', () => {
     const mismatch = await createInstallationMismatch(db, orderId, {
       description: 'Glif przy drzwiach ukrytych nie odpowiada opisowi z formularza.',
       reason: 'CANNOT_PERFORM',
-      evidenceReference: 'installation-file:pending-task5-proof',
+      evidenceReference: 'installation-report:awaiting-private-file',
     }, 'installer-user')
+    expect(mismatch.evidenceStatus).toBe('PENDING_PRIVATE_FILE')
     expect(await db.installationBillingTask.count({ where: { mismatchId: mismatch.id } })).toBe(0)
-    await approveInstallationMismatchForBilling(db, orderId, mismatch.id, { note: 'Potwierdzone przez koordynatora.' }, 'owner-user')
-    expect(await db.installationBillingTask.count({ where: { mismatchId: mismatch.id } })).toBe(1)
+    const approval = await approveInstallationMismatchForBilling(db, orderId, mismatch.id, { note: 'Potwierdzone przez koordynatora.' }, {
+      userId: 'owner-user', role: 'EMPLOYEE', employeeId: replacementOwnerId, employeeActive: true,
+    })
+    expect(approval.status).toBe('AWAITING_VERIFIED_PRIVATE_FILE')
+    expect(await db.installationBillingTask.count({ where: { mismatchId: mismatch.id } })).toBe(0)
+    expect(await db.installationMismatch.findUniqueOrThrow({ where: { id: mismatch.id } })).toMatchObject({
+      coordinatorApprovedAt: expect.any(Date),
+      evidenceStatus: 'PENDING_PRIVATE_FILE',
+      evidenceFileId: null,
+    })
+    await expect(approveInstallationMismatchForBilling(db, orderId, mismatch.id, { note: 'Próba obcego użytkownika.' }, {
+      userId: 'attacker-user', role: 'EMPLOYEE', employeeId: delegateId, employeeActive: true,
+    })).rejects.toBeInstanceOf(InstallationGovernanceValidationError)
   })
 
   it('records another amount as pending until an administrator or manager approves it', async () => {
@@ -217,6 +294,76 @@ describe('visit fee clause and documented mismatch', () => {
         description: 'Próba ominięcia zatwierdzenia niezgodności.',
         createdById: 'owner-user',
       },
+    })).rejects.toBeTruthy()
+  })
+
+  it('keeps direct billing behind verified private evidence and every approved fee snapshot field', async () => {
+    const protectedOrder = await createInstallationOrder(db, {
+      client: { name: 'Kontrola migawki', email: 'snapshot.governance.client@example.test', phone: '+48 504 444 555' },
+      address: { street: 'Testowa', buildingNumber: '9', postalCode: '00-004', city: 'Warszawa' },
+      primaryEmployeeId: replacementOwnerId,
+      backupEmployeeId: backupId,
+    }, 'admin-user')
+    await selectDefaultInstallationVisitFee(db, protectedOrder.id, 'owner-user')
+    await db.installationOrder.update({ where: { id: protectedOrder.id }, data: { visitFeeClientAcceptedAt: new Date('2026-08-23T09:00:00.000Z') } })
+    const complete = await db.installationOrder.findUniqueOrThrow({ where: { id: protectedOrder.id } })
+    const verifiedMismatch = await db.installationMismatch.create({
+      data: {
+        orderId: protectedOrder.id,
+        description: 'Zweryfikowany prywatny dowód niezgodności dla ochrony integralności rozliczenia.',
+        reason: 'CANNOT_PERFORM',
+        evidenceReference: 'private-file:task5-will-verify',
+        evidenceStatus: 'VERIFIED_PRIVATE_FILE',
+        evidenceFileId: 'private-file-verified-by-task5',
+        evidenceVerifiedAt: new Date('2026-08-23T09:01:00.000Z'),
+        reportedById: 'installer-user',
+        coordinatorApprovedAt: new Date('2026-08-23T09:02:00.000Z'),
+        coordinatorApprovedById: 'owner-user',
+      },
+    })
+    const billingData = {
+      orderId: protectedOrder.id,
+      mismatchId: verifiedMismatch.id,
+      kind: 'MISMATCH_VISIT_FEE',
+      status: 'PENDING',
+      grossAmount: complete.visitFeeGrossAmount!,
+      description: 'Próba utworzenia zadania rozliczeniowego z niepełną migawką.',
+      createdById: 'owner-user',
+    }
+    const rejectDirectBilling = () => expect(db.installationBillingTask.create({ data: billingData })).rejects.toBeTruthy()
+
+    await db.installationMismatch.update({ where: { id: verifiedMismatch.id }, data: { evidenceStatus: 'PENDING_PRIVATE_FILE' } })
+    await rejectDirectBilling()
+    await db.installationMismatch.update({ where: { id: verifiedMismatch.id }, data: { evidenceStatus: 'VERIFIED_PRIVATE_FILE' } })
+
+    await db.installationOrder.update({ where: { id: protectedOrder.id }, data: { visitFeePolicyId: null } })
+    await rejectDirectBilling()
+    await db.installationOrder.update({ where: { id: protectedOrder.id }, data: { visitFeePolicyId: complete.visitFeePolicyId! } })
+
+    await db.installationOrder.update({ where: { id: protectedOrder.id }, data: { visitFeeGrossAmount: null } })
+    await rejectDirectBilling()
+    await db.installationOrder.update({ where: { id: protectedOrder.id }, data: { visitFeeGrossAmount: complete.visitFeeGrossAmount! } })
+
+    await db.installationOrder.update({ where: { id: protectedOrder.id }, data: { visitFeeClauseText: '   ' } })
+    await rejectDirectBilling()
+    await db.installationOrder.update({ where: { id: protectedOrder.id }, data: { visitFeeClauseText: complete.visitFeeClauseText! } })
+
+    await db.installationOrder.update({ where: { id: protectedOrder.id }, data: { visitFeeClauseVersion: null } })
+    await rejectDirectBilling()
+    await db.installationOrder.update({ where: { id: protectedOrder.id }, data: { visitFeeClauseVersion: complete.visitFeeClauseVersion! } })
+
+    await db.installationOrder.update({ where: { id: protectedOrder.id }, data: { visitFeeLegalApprovedAt: null } })
+    await rejectDirectBilling()
+    await db.installationOrder.update({ where: { id: protectedOrder.id }, data: { visitFeeLegalApprovedAt: complete.visitFeeLegalApprovedAt! } })
+
+    await db.installationOrder.update({ where: { id: protectedOrder.id }, data: { visitFeeClientAcceptedAt: null } })
+    await rejectDirectBilling()
+    await db.installationOrder.update({ where: { id: protectedOrder.id }, data: { visitFeeClientAcceptedAt: complete.visitFeeClientAcceptedAt! } })
+
+    await expect(db.installationBillingTask.create({ data: { ...billingData, grossAmount: '1.00' } })).rejects.toBeTruthy()
+    await expect(db.installationVisitFeePolicy.update({
+      where: { id: complete.visitFeePolicyId! },
+      data: { clauseText: 'Zmiana historycznej klauzuli po zapisaniu jej na karcie montażu.' },
     })).rejects.toBeTruthy()
   })
 })

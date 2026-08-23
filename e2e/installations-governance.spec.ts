@@ -1,16 +1,13 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
-import path from 'node:path'
 import bcrypt from 'bcryptjs'
 import { expect, test, type Page } from '@playwright/test'
 import { PrismaClient } from '@/generated/prisma'
+import { getInstallationReadiness } from '@/lib/installations/readiness'
 
 const databaseUrl = process.env.E2E_DATABASE_URL
-const databasePath = databaseUrl?.replace(/^file:/, '')
 const password = 'E2E-Governance-2026!'
 
-if (!databaseUrl?.startsWith('file:/tmp/walldecor-installations-e2e-') || !databasePath) {
+if (!databaseUrl?.startsWith('file:/tmp/walldecor-installations-e2e-')) {
   throw new Error('E2E governance wymaga izolowanego E2E_DATABASE_URL.')
 }
 
@@ -18,14 +15,8 @@ let db: PrismaClient
 let orderId: string
 let clientToken: string
 let unapprovedToken: string
-
-function applyMigrations() {
-  for (const migrationPath of readdirSync(path.join(process.cwd(), 'prisma', 'migrations')).sort()
-    .map((directory) => path.join(process.cwd(), 'prisma', 'migrations', directory, 'migration.sql')).filter(existsSync)) {
-    const result = spawnSync('sqlite3', ['-bail', databasePath], { cwd: process.cwd(), input: readFileSync(migrationPath, 'utf8'), encoding: 'utf8' })
-    if (result.status !== 0) throw new Error(result.stderr || result.stdout)
-  }
-}
+let postSubmitOrderId: string
+let postSubmitToken: string
 
 async function makeOrder(number: string, ownerId: string, backupId: string, templateId: string, email: string) {
   const client = await db.installationClient.create({ data: { name: `Klient ${number}`, email, phone: '+48 501 888 111' } })
@@ -50,17 +41,15 @@ async function login(page: Page, username: string) {
 }
 
 test.beforeAll(async () => {
-  rmSync(databasePath, { force: true })
-  applyMigrations()
   db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
   await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
   await db.costCenter.create({ data: { id: 'GOV', name: 'E2E Governance' } })
   const passwordHash = await bcrypt.hash(password, 10)
   await db.user.create({ data: { username: 'governanceadmin', email: 'governance-admin@example.test', name: 'Administrator', role: 'ADMIN', passwordHash, passwordChangedAt: new Date() } })
   const [owner, backup, delegate] = await Promise.all([
-    db.employee.create({ data: { firstName: 'Anna', lastName: 'Opiekun', email: 'governance.e2e.owner@example.test', position: 'Koordynator', costCenterId: 'GOV', startDate: new Date('2026-01-01'), active: true } }),
-    db.employee.create({ data: { firstName: 'Bartek', lastName: 'Zastępca', email: 'governance.e2e.backup@example.test', position: 'Koordynator', costCenterId: 'GOV', startDate: new Date('2026-01-01'), active: true } }),
-    db.employee.create({ data: { firstName: 'Celina', lastName: 'Delegatka', email: 'governance.e2e.delegate@example.test', position: 'Koordynator', costCenterId: 'GOV', startDate: new Date('2026-01-01'), active: true } }),
+    db.employee.create({ data: { firstName: 'Anna', lastName: 'Governance', email: 'governance.e2e.owner@example.test', position: 'Koordynator', costCenterId: 'GOV', startDate: new Date('2026-01-01'), active: true } }),
+    db.employee.create({ data: { firstName: 'Bartek', lastName: 'Governance', email: 'governance.e2e.backup@example.test', position: 'Koordynator', costCenterId: 'GOV', startDate: new Date('2026-01-01'), active: true } }),
+    db.employee.create({ data: { firstName: 'Celina', lastName: 'Governance', email: 'governance.e2e.delegate@example.test', position: 'Koordynator', costCenterId: 'GOV', startDate: new Date('2026-01-01'), active: true } }),
   ])
   await db.user.create({ data: { username: 'governancebackup', email: 'governance-backup-user@example.test', name: 'Zastępca', role: 'EMPLOYEE', employeeId: backup.id, passwordHash, passwordChangedAt: new Date() } })
   await db.user.create({ data: { username: 'governancedelegate', email: 'governance-delegate-user@example.test', name: 'Delegatka', role: 'EMPLOYEE', employeeId: delegate.id, passwordHash, passwordChangedAt: new Date() } })
@@ -70,11 +59,14 @@ test.beforeAll(async () => {
   clientToken = main.token
   const unapproved = await makeOrder('MON-GOV-E2E-2', owner.id, backup.id, template.id, 'governance-unapproved@example.test')
   unapprovedToken = unapproved.token
+  const postSubmit = await makeOrder('MON-GOV-E2E-3', owner.id, backup.id, template.id, 'governance-post-submit@example.test')
+  postSubmitOrderId = postSubmit.order.id
+  postSubmitToken = postSubmit.token
   await db.installationVisitFeePolicy.create({ data: { version: 1, grossAmount: '249.90', clauseText: 'Jeżeli stan rzeczywisty jest niezgodny z formularzem, może obowiązywać opłata za bezskuteczny podjazd w zaakceptowanej kwocie.', legalApprovedAt: new Date('2026-08-20'), isDefault: true, createdById: 'e2e-admin' } })
   await db.installationOrder.update({ where: { id: unapproved.order.id }, data: { visitFeeStatus: 'APPROVED', visitFeeGrossAmount: '249.90', visitFeeClauseText: 'Nieaktywna obrona warstwy publicznej.', visitFeeClauseVersion: 99, visitFeeLegalApprovedAt: null } })
 })
 
-test.afterAll(async () => { await db?.$disconnect(); rmSync(databasePath, { force: true }) })
+test.afterAll(async () => { await db?.$disconnect() })
 
 test('backup takes over, admin delegates, and the client must accept an approved fee', async ({ page, browser }) => {
   await login(page, 'governanceadmin')
@@ -83,12 +75,12 @@ test('backup takes over, admin delegates, and the client must accept an approved
   await page.getByRole('button', { name: 'Użyj domyślnej kwoty' }).click()
   await expect(page.getByText(/Zatwierdzona kwota: 249,90 zł brutto/i)).toBeVisible()
 
-  await page.getByLabel('Osoba przejmująca').selectOption({ label: 'Celina Delegatka' })
+  await page.getByLabel('Osoba przejmująca').selectOption({ label: 'Celina Governance' })
   await page.getByLabel('Początek delegacji').fill('2026-08-20T08:00')
   await page.getByLabel('Koniec delegacji').fill('2026-08-24T18:00')
   await page.getByLabel('Powód delegacji').fill('Zaplanowane przejęcie kontaktu.')
   await page.getByRole('button', { name: 'Ustanów czasowe zastępstwo' }).click()
-  await expect(page.locator('li').filter({ hasText: 'Celina Delegatka' })).toBeVisible()
+  await expect(page.locator('li').filter({ hasText: 'Celina Governance' })).toBeVisible()
   await expect.poll(async () => db.installationDelegation.count({ where: { orderId } })).toBe(1)
 
   const delegateContext = await browser.newContext({ baseURL: 'http://localhost:3000' })
@@ -132,5 +124,32 @@ test('backup takes over, admin delegates, and the client must accept an approved
   const unapprovedPage = await clientContext.newPage()
   await unapprovedPage.goto(`/m/${unapprovedToken}`)
   await expect(unapprovedPage.getByRole('checkbox', { name: /Akceptuję informację o opłacie/i })).toHaveCount(0)
+  await clientContext.close()
+})
+
+test('a fee chosen after form submission is accepted without restarting the questionnaire', async ({ page, browser }) => {
+  const clientContext = await browser.newContext({ baseURL: 'http://localhost:3000', viewport: { width: 390, height: 844 } })
+  const clientPage = await clientContext.newPage()
+  await clientPage.goto(`/m/${postSubmitToken}`)
+  await clientPage.getByRole('button', { name: 'Nie', exact: true }).click()
+  await expect(clientPage.getByRole('status')).toContainText('Wszystko zapisane')
+  await clientPage.getByRole('button', { name: 'Wyślij formularz' }).click()
+  await expect(clientPage.getByText(/Formularz został wysłany/i)).toBeVisible()
+  await expect(await getInstallationReadiness(db, postSubmitOrderId)).toMatchObject({ isReady: true, visitFeeAcceptanceRequired: false })
+
+  await login(page, 'governanceadmin')
+  await page.goto(`/installations/${postSubmitOrderId}`)
+  await page.getByRole('button', { name: 'Użyj domyślnej kwoty' }).click()
+  await expect(page.getByText(/Zatwierdzona kwota: 249,90 zł brutto/i)).toBeVisible()
+  await expect(await getInstallationReadiness(db, postSubmitOrderId)).toMatchObject({ isReady: false, visitFeeAcceptanceRequired: true })
+
+  await clientPage.reload()
+  await expect(clientPage.getByText(/Formularz został wysłany/i)).toBeVisible()
+  await expect(clientPage.getByText(/249,90 zł brutto/i).first()).toBeVisible()
+  await expect(clientPage.getByRole('button', { name: 'Potwierdź informację o opłacie' })).toBeDisabled()
+  await clientPage.getByRole('checkbox', { name: /Akceptuję informację o opłacie/i }).check()
+  await clientPage.getByRole('button', { name: 'Potwierdź informację o opłacie' }).click()
+  await expect(clientPage.getByText(/Informację o opłacie potwierdzono/i)).toBeVisible()
+  await expect(await getInstallationReadiness(db, postSubmitOrderId)).toMatchObject({ isReady: true, visitFeeAcceptanceRequired: false })
   await clientContext.close()
 })

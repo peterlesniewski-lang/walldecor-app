@@ -1,7 +1,4 @@
 import { createHash, randomBytes } from 'node:crypto'
-import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
-import path from 'node:path'
 import bcrypt from 'bcryptjs'
 import { expect, test } from '@playwright/test'
 import { PrismaClient } from '@/generated/prisma'
@@ -9,29 +6,18 @@ import { PrismaClient } from '@/generated/prisma'
 const databaseUrl = process.env.E2E_DATABASE_URL
 const password = 'E2E-Client-Form-2026!'
 if (!databaseUrl?.startsWith('file:/tmp/walldecor-installations-e2e-')) throw new Error('E2E_DATABASE_URL musi wskazywać izolowaną SQLite montaży.')
-const databasePath = databaseUrl.replace(/^file:/, '')
 let db: PrismaClient
 let templateId: string
 
-function applyMigrations() {
-  for (const migrationPath of readdirSync(path.join(process.cwd(), 'prisma', 'migrations')).sort()
-    .map((directory) => path.join(process.cwd(), 'prisma', 'migrations', directory, 'migration.sql')).filter(existsSync)) {
-    const result = spawnSync('sqlite3', ['-bail', databasePath], { cwd: process.cwd(), input: readFileSync(migrationPath, 'utf8'), encoding: 'utf8' })
-    if (result.status !== 0) throw new Error(result.stderr || result.stdout)
-  }
-}
-
 test.beforeAll(async () => {
-  rmSync(databasePath, { force: true })
-  applyMigrations()
   db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
   await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
   await db.costCenter.create({ data: { id: 'FORM', name: 'E2E formularza klienta' } })
   const passwordHash = await bcrypt.hash(password, 10)
   await db.user.create({ data: { username: 'formadmin', email: 'formadmin@example.test', name: 'Administrator formularza', role: 'ADMIN', passwordHash, passwordChangedAt: new Date() } })
   await Promise.all([
-    db.employee.create({ data: { firstName: 'Anna', lastName: 'Opiekun', email: 'e2e.form.owner@example.test', position: 'Koordynator', costCenterId: 'FORM', startDate: new Date('2026-01-01'), active: true } }),
-    db.employee.create({ data: { firstName: 'Bartek', lastName: 'Zastępca', email: 'e2e.form.backup@example.test', position: 'Koordynator', costCenterId: 'FORM', startDate: new Date('2026-01-01'), active: true } }),
+    db.employee.create({ data: { firstName: 'Anna', lastName: 'Formularz', email: 'e2e.form.owner@example.test', position: 'Koordynator', costCenterId: 'FORM', startDate: new Date('2026-01-01'), active: true } }),
+    db.employee.create({ data: { firstName: 'Bartek', lastName: 'Formularz', email: 'e2e.form.backup@example.test', position: 'Koordynator', costCenterId: 'FORM', startDate: new Date('2026-01-01'), active: true } }),
   ])
   const template = await db.installationFormTemplate.create({ data: {
     familyId: 'e2e-client-form', name: 'E2E klient', nameKey: 'e2e-klient', version: 1, status: 'PUBLISHED', publishedAt: new Date(), createdById: 'e2e',
@@ -45,7 +31,7 @@ test.beforeAll(async () => {
   templateId = template.id
 })
 
-test.afterAll(async () => { await db?.$disconnect(); rmSync(databasePath, { force: true }) })
+test.afterAll(async () => { await db?.$disconnect() })
 
 test('admin sends an anonymous client link through autosave, clarification and immutable correction', async ({ page, browser }) => {
   await page.goto('/login')
@@ -63,9 +49,9 @@ test('admin sends an anonymous client link through autosave, clarification and i
   await page.getByLabel('Kod pocztowy').fill('02-515')
   await page.getByLabel('Miejscowość').fill('Warszawa')
   await page.getByRole('button', { name: 'Wybierz głównego opiekuna' }).click()
-  await page.getByRole('option', { name: 'Ustaw Anna Opiekun jako głównego opiekuna' }).click()
+  await page.getByRole('option', { name: 'Ustaw Anna Formularz jako głównego opiekuna' }).click()
   await page.getByRole('button', { name: 'Wybierz zastępcę opiekuna' }).click()
-  await page.getByRole('option', { name: 'Ustaw Bartek Zastępca jako zastępcę opiekuna' }).click()
+  await page.getByRole('option', { name: 'Ustaw Bartek Formularz jako zastępcę opiekuna' }).click()
   await page.getByRole('button', { name: 'Utwórz kartę' }).click()
   await expect(page).not.toHaveURL(/\/installations\/new$/)
   const orderId = page.url().split('/').at(-1)!
@@ -99,7 +85,7 @@ test('admin sends an anonymous client link through autosave, clarification and i
   })
   expect(publicProjection.status).toBe(200)
   const publicProjectionText = JSON.stringify(publicProjection.projection)
-  for (const forbidden of ['Marta E2E', 'marta.e2e@example.test', 'Anna Opiekun', 'Puławska', 'orderId', 'linkId', 'templateId', 'revisionOfId']) expect(publicProjectionText).not.toContain(forbidden)
+  for (const forbidden of ['Marta E2E', 'marta.e2e@example.test', 'Anna Formularz', 'Puławska', 'orderId', 'linkId', 'templateId', 'revisionOfId']) expect(publicProjectionText).not.toContain(forbidden)
   expect(publicProjection.projection).toMatchObject({ contact: { label: 'WallDecor', email: 'info@walldecor.pl' } })
   expect(publicProjection.projection.submission).not.toHaveProperty('id')
   await client.getByRole('button', { name: 'Tak' }).focus()
@@ -162,7 +148,7 @@ test('admin sends an anonymous client link through autosave, clarification and i
     const body = await client.locator('body').innerText()
     expect(response?.status()).toBe(404)
     expect(body).toContain('Nie znaleziono strony')
-    for (const forbidden of ['Marta E2E', 'marta.e2e@example.test', 'Anna Opiekun', 'Puławska', 'revoked', 'expired', 'token']) expect(body).not.toContain(forbidden)
+  for (const forbidden of ['Marta E2E', 'marta.e2e@example.test', 'Anna Formularz', 'Puławska', 'revoked', 'expired', 'token']) expect(body).not.toContain(forbidden)
     unavailableBodies.push(body)
   }
   expect(new Set(unavailableBodies).size).toBe(1)

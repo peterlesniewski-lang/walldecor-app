@@ -130,14 +130,15 @@ describe('installation catalog hierarchy migration upgrade', () => {
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationCatalog%' ORDER BY name"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationAnswer_submitted_%' ORDER BY name"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationFormSubmission_submitted_%' ORDER BY name"),
-      db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND (name LIKE 'InstallationOrder_visitFeePolicy_%' OR name LIKE 'InstallationVisitFeePolicy_referenced_%' OR name LIKE 'InstallationBillingTask_mismatch_%') ORDER BY name"),
+      db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND (name LIKE 'InstallationOrder_visitFeePolicy_%' OR name LIKE 'InstallationVisitFeePolicy_referenced_%' OR name LIKE 'InstallationVisitFeePolicy_historic_%' OR name LIKE 'InstallationBillingTask_mismatch_%') ORDER BY name"),
       db.$queryRawUnsafe('PRAGMA foreign_key_check'), db.$queryRawUnsafe<Array<{ integrity_check: string }>>('PRAGMA integrity_check'),
     ])
-    expect(migrations).toHaveLength(26)
+    expect(migrations).toHaveLength(27)
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030000_installation_client_form')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030100_installation_submitted_answer_insert_guard')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030200_installation_submitted_revision_guard')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822040000_installation_governance')
+    expect(migrations.map((migration) => migration.migration_name)).toContain('20260823010000_installation_mismatch_verified_evidence')
     expect(triggers).toHaveLength(6)
     expect(clientFormTriggers).toEqual([
       { name: 'InstallationAnswer_submitted_delete_guard' },
@@ -153,6 +154,7 @@ describe('installation catalog hierarchy migration upgrade', () => {
       { name: 'InstallationBillingTask_mismatch_approval_update_guard' },
       { name: 'InstallationOrder_visitFeePolicy_insert_guard' },
       { name: 'InstallationOrder_visitFeePolicy_update_guard' },
+      { name: 'InstallationVisitFeePolicy_historic_snapshot_update_guard' },
       { name: 'InstallationVisitFeePolicy_referenced_delete_guard' },
       { name: 'InstallationVisitFeePolicy_referenced_id_update_guard' },
     ])

@@ -1,6 +1,6 @@
 # Task 4 — opiekun, delegacja i klauzula podjazdu
 
-Data: 2026-08-22
+Data: 2026-08-23
 
 ## Zakres dostarczony
 
@@ -8,14 +8,15 @@ Data: 2026-08-22
 - Administrator lub manager ustanawia delegację z początkiem, końcem i powodem oraz może ją zakończyć wcześniej. Dostęp pracownika-delegata wynika wyłącznie z tych dat, nie z urlopów.
 - Firma tworzy wersje polityki opłaty za podjazd. Wersja bez `legalApprovedAt` pozostaje nieaktywna: nie można jej wybrać do karty i nie pojawia się w formularzu klienta. Nie dodano automatycznej treści prawnej ani seeda zatwierdzenia.
 - Opiekun, zastępca albo aktywny delegat może wybrać zatwierdzoną domyślną kwotę. Inna kwota trafia do `PENDING_APPROVAL`, a decyzję podejmuje wyłącznie administrator/manager.
-- Publiczny formularz pokazuje dokładną zatwierdzoną kwotę i wymaga checkboxa przed wysłaniem. Zapisuje czas przyjęcia, wersję klauzuli z migawki zlecenia, SHA-256 adresu IP i user-agent.
-- `InstallationMismatch` wymaga opisu, powodu (`CANNOT_PERFORM` albo `EXECUTION_RISK`) i zweryfikowanej referencji dowodu. Zadanie rozliczeniowe powstaje wyłącznie po decyzji koordynatora i tylko wtedy, gdy opłata jest zatwierdzona prawnie, zaakceptowana przez klienta, a kwota zadania jest identyczna z migawką zlecenia.
+- Publiczny formularz pokazuje dokładną zatwierdzoną kwotę i wymaga checkboxa. Jeżeli opłata zostanie wybrana dopiero po wysłaniu formularza, klient dostaje osobne, proste potwierdzenie — bez ponownego wypełniania odpowiedzi. Zapis obejmuje czas przyjęcia, wersję klauzuli z migawki zlecenia, SHA-256 adresu IP i user-agent.
+- `InstallationMismatch` wymaga opisu, powodu (`CANNOT_PERFORM` albo `EXECUTION_RISK`) i referencji dowodu. Ma status dowodu `PENDING_PRIVATE_FILE` aż do przyszłego kroku plików. Koordynator może zapisać decyzję, ale zadanie rozliczeniowe powstanie dopiero po rzeczywistym `VERIFIED_PRIVATE_FILE` z identyfikatorem pliku i czasem weryfikacji — Task 4 nie udaje tej czynności.
 
 ## Integralność i granice
 
-- Migracja dodaje FK dla mismatch/billing oraz sześć triggerów SQLite. Triggery chronią referencję `visitFeePolicyId` w addytywnie zmienianej tabeli `InstallationOrder`, więc nie można zapisać osieroconej polityki ani usunąć/zmienić ID polityki użytej przez kartę.
-- Trigger billingowy odrzuca `MISMATCH_VISIT_FEE` z pustym `mismatchId`, bez zatwierdzenia koordynatora, bez akceptacji klienta albo z inną kwotą.
-- Task 5 nie jest udawany: nie powstał upload. Model przyjmuje tylko `evidenceReference`, czyli już zweryfikowane odwołanie do dowodu.
+- Migracja dodaje status i pola prywatnego dowodu oraz wzmacnia triggery SQLite. Triggery chronią referencję `visitFeePolicyId` w addytywnie zmienianej tabeli `InstallationOrder`, więc nie można zapisać osieroconej polityki ani usunąć/zmienić ID polityki użytej przez kartę. Polityka użyta w historycznej migawce nie pozwala już na zmianę kwoty, tekstu, wersji ani akceptacji prawnej.
+- Trigger billingowy odrzuca `MISMATCH_VISIT_FEE` z pustym `mismatchId`, bez decyzji koordynatora, bez zweryfikowanego prywatnego pliku, bez kompletnej prawnie zatwierdzonej migawki (`policyId`, kwota, niepusta klauzula, wersja, akceptacja prawna i klienta) albo z inną kwotą.
+- Akceptacja wybranej później opłaty jest compare-and-set: `updateMany` warunkuje zapis na niezaakceptowanej, dokładnie tej samej migawce. Równoległe identyczne żądanie jest idempotentne; zmieniona kwota albo wersja zwraca konflikt. Audyt publicznej akceptacji nie zawiera tokenu, IP ani user-agenta.
+- Task 5 nie jest udawany: nie powstał upload ani endpoint fałszywej weryfikacji.
 
 ## Checkpoint interfejsu
 
@@ -26,13 +27,15 @@ Data: 2026-08-22
 ## RED → GREEN i dowody
 
 1. Unit/integration: walidacja dat odrzuca `null` i pusty string (bez epoch z `z.coerce.date`), właściciele muszą być aktywni i różni, delegacja jest ograniczona czasowo oraz audytowana. Kwoty są kanonicznymi centami tekstowymi (bez `Number`).
-2. Integracja SQLite: testuje pełny wybór polityki, akceptację klienta, `PENDING_APPROVAL`, mismatch/billing oraz negatywne zapisy osieroconej polityki i billing bez `mismatchId`.
-3. Migracja: test realnego deploy od 20-migracyjnej bazy legacy oraz fresh chain 26 migracji potwierdza `foreign_key_check`, `integrity_check` i komplet triggerów governance.
-4. E2E Chromium: administrator wybiera domyślną kwotę, tworzy i kończy delegację, delegat traci dostęp po zakończeniu, zastępca edytuje kartę, a klient nie wyśle formularza bez checkboxa. Drugi link z brakiem zatwierdzenia prawnego nie pokazuje checkboxa.
+2. Integracja SQLite: formularz wysłany bez opłaty staje się niegotowy do planowania po późniejszym wybraniu zatwierdzonej opłaty, a wraca do gotowości dopiero po akceptacji klienta. Dwa równoległe potwierdzenia tworzą jeden zapis i jeden bezpieczny audyt.
+3. Integracja SQLite: mismatch zatwierdzony przez primary/backup nadal nie tworzy billing task bez `VERIFIED_PRIVATE_FILE`; bezpośredni zapis do bazy jest odrzucany dla każdego brakującego elementu migawki i dowodu.
+4. Migracja: test realnego deploy od 20-migracyjnej bazy legacy oraz fresh chain 27 migracji potwierdza `foreign_key_check`, `integrity_check` i komplet triggerów governance.
+5. E2E Chromium: administrator wybiera domyślną kwotę, tworzy i kończy delegację, delegat traci dostęp po zakończeniu, zastępca edytuje kartę, a klient nie wyśle formularza bez checkboxa. Drugi scenariusz wysyła formularz bez opłaty, wybiera opłatę później i pozwala klientowi potwierdzić ją bez korekty formularza. Brak zatwierdzenia prawnego nie pokazuje checkboxa.
+6. E2E używa pojedynczego globalnego przygotowania SQLite i jednego workera: migracje i seed wykonują się raz przed suite, a scenariusze mają unikalne dane. Dzięki temu uruchomienie pełnej bramki nie wymienia pliku bazy spod działającego serwera Prisma.
 
 ## Bramka końcowa
 
-- `npm test`: GREEN — 80 plików / 453 testy.
-- `npx playwright test e2e/installations-governance.spec.ts`: GREEN — 1 scenariusz Chromium.
+- `npm test`: GREEN — 81 plików / 459 testów.
+- `npx playwright test`: GREEN — 9 scenariuszy Chromium; dwa scenariusze governance obejmują także opłatę wybraną po submit.
 - `npm run build`: GREEN — 134 tras, w tym dynamiczne trasy Task 4 z `params: Promise`.
 - ESLint plików Task 4: GREEN. Globalne `npm run lint` nadal zgłasza istniejące błędy poza zakresem (m.in. wygenerowany Prisma i komponenty finansowo-HR); nie zostały one ukryte ani zmienione w tym zadaniu.

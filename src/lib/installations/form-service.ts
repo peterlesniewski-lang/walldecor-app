@@ -137,6 +137,14 @@ export class InstallationFormConflictError extends Error {
   }
 }
 
+/** The client saw an older fee snapshot; it must reload before accepting it. */
+export class InstallationVisitFeeAcceptanceConflictError extends Error {
+  constructor() {
+    super('Informacja o opłacie zmieniła się. Odśwież stronę i sprawdź aktualną kwotę.')
+    this.name = 'InstallationVisitFeeAcceptanceConflictError'
+  }
+}
+
 export class InstallationClarificationValidationError extends Error {
   constructor(public readonly fieldErrors: Record<string, string>) {
     super('Ustalenie wymaga uzupełnienia.')
@@ -346,6 +354,105 @@ function hashClientIp(value: string | undefined) {
   // The public route passes the proxy/client address when available. We retain
   // a deterministic marker hash rather than silently persisting the raw IP.
   return createHash('sha256').update(value?.trim() || 'unavailable', 'utf8').digest('hex')
+}
+
+type VisitFeeAcceptanceMutation = {
+  /** Must be the exact two-decimal amount displayed in the public projection. */
+  grossAmount: string
+  clauseVersion: number
+  /** Trusted request metadata supplied only by the route handler. */
+  clientIp?: string
+  clientUserAgent?: string
+}
+
+/**
+ * Lets a client accept a fee selected after the form was already submitted.
+ * It never touches answers or starts a correction. Repeating the same accepted
+ * snapshot is idempotent; a changed amount/version is an explicit conflict.
+ */
+export async function acceptClientVisitFee(
+  db: PrismaClient,
+  token: string,
+  input: VisitFeeAcceptanceMutation,
+) {
+  if (!/^\d+\.\d{2}$/.test(input.grossAmount) || !Number.isInteger(input.clauseVersion) || input.clauseVersion < 1) {
+    throw new InstallationFormValidationError({ visitFeeAccepted: 'Potwierdź aktualną kwotę i wersję klauzuli.' })
+  }
+  return db.$transaction(async (tx) => {
+    const link = await resolveActiveClientLink(tx, token)
+    const [submittedCount, currentDraft, order] = await Promise.all([
+      tx.installationFormSubmission.count({ where: { orderId: link.orderId, status: 'SUBMITTED' } }),
+      tx.installationFormSubmission.count({ where: { orderId: link.orderId, status: 'DRAFT', draftKey: link.orderId } }),
+      tx.installationOrder.findUniqueOrThrow({ where: { id: link.orderId } }),
+    ])
+    if (submittedCount === 0 || currentDraft > 0) {
+      throw new InstallationFormValidationError({ visitFeeAccepted: 'Najpierw wyślij aktualną wersję formularza.' })
+    }
+    const currentGrossAmount = visitFeeMoney(order.visitFeeGrossAmount)
+    const active = isClientVisitFeeActive({
+      status: order.visitFeeStatus,
+      grossAmount: currentGrossAmount,
+      clauseText: order.visitFeeClauseText,
+      clauseVersion: order.visitFeeClauseVersion,
+      legalApprovedAt: order.visitFeeLegalApprovedAt,
+    })
+    if (!active || currentGrossAmount !== input.grossAmount || order.visitFeeClauseVersion !== input.clauseVersion) {
+      throw new InstallationVisitFeeAcceptanceConflictError()
+    }
+    if (order.visitFeeClientAcceptedAt) return { acceptedAt: order.visitFeeClientAcceptedAt }
+    const acceptedAt = new Date()
+    // This must be a compare-and-set rather than a read followed by an
+    // unconditional update. Two browser requests may both read the unaccepted
+    // snapshot; exactly one owns the acceptance timestamp and audit event.
+    const updated = await tx.installationOrder.updateMany({
+      where: {
+        id: link.orderId,
+        visitFeeClientAcceptedAt: null,
+        visitFeeStatus: order.visitFeeStatus,
+        visitFeePolicyId: order.visitFeePolicyId,
+        visitFeeGrossAmount: order.visitFeeGrossAmount,
+        visitFeeClauseText: order.visitFeeClauseText,
+        visitFeeClauseVersion: order.visitFeeClauseVersion,
+        visitFeeLegalApprovedAt: order.visitFeeLegalApprovedAt,
+      },
+      data: {
+        visitFeeClientAcceptedAt: acceptedAt,
+        visitFeeClientIpHash: hashClientIp(input.clientIp),
+        visitFeeClientUserAgent: input.clientUserAgent?.trim().slice(0, 1_000) || 'unknown',
+      },
+    })
+    if (updated.count === 1) {
+      await tx.installationAuditEvent.create({
+        data: {
+          orderId: link.orderId,
+          actorId: 'PUBLIC_CLIENT',
+          action: 'INSTALLATION_VISIT_FEE_CLIENT_ACCEPTED',
+          // Deliberately do not place the token, IP hash or user agent in the
+          // audit payload; those are private request metadata, not history.
+          afterJson: JSON.stringify({ grossAmount: input.grossAmount, clauseVersion: input.clauseVersion, acceptedAt: acceptedAt.toISOString() }),
+        },
+      })
+      return { acceptedAt }
+    }
+
+    // A concurrent request can legitimately arrive after the compare-and-set
+    // succeeded. It is idempotent only when it still addresses this exact
+    // approved snapshot; a changed fee remains a 409 so the checkbox is reset.
+    const latest = await tx.installationOrder.findUniqueOrThrow({ where: { id: link.orderId } })
+    const latestGrossAmount = visitFeeMoney(latest.visitFeeGrossAmount)
+    const latestIsActive = isClientVisitFeeActive({
+      status: latest.visitFeeStatus,
+      grossAmount: latestGrossAmount,
+      clauseText: latest.visitFeeClauseText,
+      clauseVersion: latest.visitFeeClauseVersion,
+      legalApprovedAt: latest.visitFeeLegalApprovedAt,
+    })
+    if (!latestIsActive || latestGrossAmount !== input.grossAmount || latest.visitFeeClauseVersion !== input.clauseVersion) {
+      throw new InstallationVisitFeeAcceptanceConflictError()
+    }
+    if (latest.visitFeeClientAcceptedAt) return { acceptedAt: latest.visitFeeClientAcceptedAt }
+    throw new InstallationVisitFeeAcceptanceConflictError()
+  })
 }
 
 async function requireAndRecordVisitFeeAcceptance(

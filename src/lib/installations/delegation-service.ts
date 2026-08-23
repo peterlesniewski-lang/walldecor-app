@@ -10,6 +10,13 @@ export class InstallationGovernanceValidationError extends Error {
   }
 }
 
+export type InstallationGovernanceActor = {
+  userId: string
+  role: string
+  employeeId: string | null | undefined
+  employeeActive: boolean | undefined
+}
+
 const requiredDate = z.preprocess(
   (value) => value === null || value === '' ? undefined : value,
   z.union([
@@ -392,24 +399,49 @@ export async function createInstallationMismatch(db: PrismaClient, orderId: stri
   })
 }
 
-export async function approveInstallationMismatchForBilling(db: PrismaClient, orderId: string, mismatchId: string, input: unknown, actorId: string) {
+async function assertMismatchBillingCoordinator(
+  tx: Prisma.TransactionClient,
+  order: { primaryEmployeeId: string; backupEmployeeId: string },
+  actor: InstallationGovernanceActor,
+) {
+  if (!actor.userId.trim()) governanceError({ actor: 'Brakuje uwierzytelnionego użytkownika zatwierdzającego.' })
+  if (actor.role === 'ADMIN' || actor.role === 'MANAGER') return
+  if (actor.role !== 'EMPLOYEE' || !actor.employeeId || actor.employeeActive !== true || (actor.employeeId !== order.primaryEmployeeId && actor.employeeId !== order.backupEmployeeId)) {
+    governanceError({ actor: 'Tę decyzję może podjąć wyłącznie administrator, manager lub aktywny opiekun karty.' })
+  }
+  const employee = await tx.employee.findUnique({ where: { id: actor.employeeId }, select: { active: true } })
+  if (!employee?.active) governanceError({ actor: 'Opiekun karty nie jest aktywnym pracownikiem.' })
+}
+
+export async function approveInstallationMismatchForBilling(
+  db: PrismaClient,
+  orderId: string,
+  mismatchId: string,
+  input: unknown,
+  actor: InstallationGovernanceActor,
+) {
   const parsed = mismatchApprovalSchema.safeParse(input)
   if (!parsed.success) governanceError(fieldErrors(parsed.error))
   return db.$transaction(async (tx) => {
     const order = await activeOrderOrThrow(tx, orderId)
+    await assertMismatchBillingCoordinator(tx, order, actor)
     if (!isClientVisitFeeActive({ status: order.visitFeeStatus, grossAmount: toMoneyString(order.visitFeeGrossAmount), clauseText: order.visitFeeClauseText, clauseVersion: order.visitFeeClauseVersion, legalApprovedAt: order.visitFeeLegalApprovedAt }) || !order.visitFeeClientAcceptedAt || !order.visitFeeGrossAmount) {
       governanceError({ visitFee: 'Nie można utworzyć zadania bez zaakceptowanej przez klienta, zatwierdzonej klauzuli.' })
     }
     const mismatch = await tx.installationMismatch.findUnique({ where: { id: mismatchId } })
     if (!mismatch || mismatch.orderId !== orderId) governanceError({ mismatchId: 'Nie znaleziono niezgodności tej karty.' })
     const now = new Date()
+    let approvedMismatch = mismatch
     if (!mismatch.coordinatorApprovedAt) {
-      await tx.installationMismatch.update({ where: { id: mismatchId }, data: { coordinatorApprovedAt: now, coordinatorApprovedById: actorId, approvalNote: parsed.data.note } })
-      await tx.installationAuditEvent.create({ data: { orderId, actorId, action: 'INSTALLATION_MISMATCH_APPROVED_FOR_BILLING', afterJson: JSON.stringify({ mismatchId, approvedAt: now.toISOString() }) } })
+      approvedMismatch = await tx.installationMismatch.update({ where: { id: mismatchId }, data: { coordinatorApprovedAt: now, coordinatorApprovedById: actor.userId, approvalNote: parsed.data.note } })
+      await tx.installationAuditEvent.create({ data: { orderId, actorId: actor.userId, action: 'INSTALLATION_MISMATCH_APPROVED_FOR_BILLING', afterJson: JSON.stringify({ mismatchId, approvedAt: now.toISOString(), evidenceStatus: approvedMismatch.evidenceStatus }) } })
+    }
+    if (approvedMismatch.evidenceStatus !== 'VERIFIED_PRIVATE_FILE' || !approvedMismatch.evidenceFileId || !approvedMismatch.evidenceVerifiedAt) {
+      return { status: 'AWAITING_VERIFIED_PRIVATE_FILE' as const, mismatch: approvedMismatch, billingTask: null }
     }
     const existing = await tx.installationBillingTask.findUnique({ where: { mismatchId } })
-    if (existing) return existing
-    return tx.installationBillingTask.create({
+    if (existing) return { status: 'BILLING_TASK_CREATED' as const, mismatch: approvedMismatch, billingTask: existing }
+    const billingTask = await tx.installationBillingTask.create({
       data: {
         orderId,
         mismatchId,
@@ -417,9 +449,10 @@ export async function approveInstallationMismatchForBilling(db: PrismaClient, or
         status: 'PENDING',
         grossAmount: order.visitFeeGrossAmount,
         description: mismatch.description,
-        createdById: actorId,
+        createdById: actor.userId,
       },
     })
+    return { status: 'BILLING_TASK_CREATED' as const, mismatch: approvedMismatch, billingTask }
   })
 }
 

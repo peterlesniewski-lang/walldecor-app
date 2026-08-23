@@ -109,7 +109,14 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
 
   useEffect(() => { answersRef.current = answers }, [answers])
   useEffect(() => { submissionRef.current = projection.submission }, [projection.submission])
-  useEffect(() => { setVisitFeeAccepted(Boolean(projection.visitFee?.clientAcceptedAt)) }, [projection.visitFee?.clientAcceptedAt])
+  // A 409 may refresh this screen with a different amount or clause version.
+  // In that case the customer must explicitly tick the confirmation again;
+  // only a persisted acceptance can carry state between fee snapshots.
+  useEffect(() => { setVisitFeeAccepted(Boolean(projection.visitFee?.clientAcceptedAt)) }, [
+    projection.visitFee?.grossAmount,
+    projection.visitFee?.clauseVersion,
+    projection.visitFee?.clientAcceptedAt,
+  ])
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
 
   function adoptSubmission(submission: Submission, preservePending = false) {
@@ -292,6 +299,30 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Nie udało się rozpocząć korekty.') } finally { setSubmitting(false) }
   }
 
+  async function acceptVisitFee() {
+    const fee = projection.visitFee
+    if (!fee || fee.clientAcceptedAt || !visitFeeAccepted) return
+    setSubmitting(true); setError('')
+    try {
+      const response = await fetch('/api/public/installations/' + encodeURIComponent(token) + '/accept-visit-fee', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ grossAmount: fee.grossAmount, clauseVersion: fee.clauseVersion }),
+      })
+      if (!response.ok) {
+        const data = await response.json().catch(() => null) as { error?: string } | null
+        if (response.status === 409) await reloadLatestProjection()
+        throw new Error(data?.error ?? 'Nie udało się potwierdzić informacji o opłacie.')
+      }
+      const refreshed = await response.json() as ClientFormProjection
+      submissionRef.current = refreshed.submission
+      setProjection(refreshed)
+      setAnswers(mapAnswers(refreshed.submission))
+      setVisitFeeAccepted(Boolean(refreshed.visitFee?.clientAcceptedAt))
+    } catch (caught) {
+      setError(caught instanceof Error ? caught.message : 'Nie udało się potwierdzić informacji o opłacie.')
+    } finally { setSubmitting(false) }
+  }
+
   const submitted = projection.submission.status === 'SUBMITTED'
   const requiresVisitFeeAcceptance = Boolean(projection.visitFee && !projection.visitFee.clientAcceptedAt)
   return <main className={styles.shell}>
@@ -305,6 +336,20 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
       {submitted ? <section className={styles.confirmation} aria-live="polite">
         <strong>Formularz został wysłany.</strong><br />Zapisaliśmy wersję {projection.submission.revisionNumber}. Odpowiedzi wymagające ustalenia omówimy przed montażem.
         <div style={{ marginTop: 12 }}><button type="button" className={styles.secondary} onClick={() => void startCorrection()} disabled={submitting}>Zgłoś korektę</button></div>
+        {projection.visitFee && <section className={styles.fee} aria-labelledby="visit-fee-heading">
+          <p className={styles.feeKicker}>Do potwierdzenia przed montażem</p>
+          <h2 id="visit-fee-heading">Informacja o ewentualnej opłacie za podjazd</h2>
+          <p className={styles.feeAmount}><strong>{projection.visitFee.grossAmount.replace('.', ',')} zł brutto</strong></p>
+          <p className={styles.feeClause}>{projection.visitFee.clauseText}</p>
+          {projection.visitFee.clientAcceptedAt ? <p className={styles.feeAccepted}>Informację o opłacie potwierdzono.</p> : <>
+            <label className={styles.feeCheck}>
+              <input type="checkbox" checked={visitFeeAccepted} onChange={(event) => setVisitFeeAccepted(event.target.checked)} />
+              <span>Akceptuję informację o opłacie w dokładnej kwocie {projection.visitFee.grossAmount.replace('.', ',')} zł brutto.</span>
+            </label>
+            <button type="button" className={styles.submit} disabled={submitting || !visitFeeAccepted} onClick={() => void acceptVisitFee()}>{submitting ? 'Potwierdzanie…' : 'Potwierdź informację o opłacie'}</button>
+          </>}
+        </section>}
+        {error && <p role="alert" className={styles.error}>{error}</p>}
       </section> : <form className={styles.form} onSubmit={(event) => { event.preventDefault(); void submit() }}>
         <section className={styles.section} aria-labelledby="questions-heading">
           <h2 id="questions-heading" className={styles.sectionHeading}>Krótka rozmowa o miejscu montażu</h2>
