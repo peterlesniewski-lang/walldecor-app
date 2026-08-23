@@ -82,6 +82,28 @@ Na szerokim ekranie szerokość i wysokość stoją obok siebie z widocznym znak
 opisanej jako powierzchnia. Każde pole ma własną etykietę, komunikat błędu oraz
 minimum 44 px wysokości.
 
+## Odnajdywalność katalogu i formularzy
+
+Ekran `/installations` otrzyma w nagłówku przycisk `Katalog i formularze`,
+umieszczony obok `Nowa karta`. Przycisk prowadzi do `/installations/catalog` i
+jest widoczny wyłącznie dla administratora oraz managera, czyli tych samych ról,
+które mogą zarządzać katalogiem. Pozostali pracownicy nie zobaczą martwego
+odnośnika do strony, do której nie mają dostępu.
+
+Na karcie zlecenia komunikat o braku przypiętego formularza przestanie być
+samym ostrzeżeniem. Otrzyma działanie `Wybierz lub utwórz formularz`:
+
+- gdy istnieje opublikowany formularz, prowadzi do panelu wyboru formularza na
+  tej samej karcie;
+- gdy nie ma żadnej opublikowanej wersji i użytkownik może zarządzać katalogiem,
+  prowadzi do `/installations/catalog`;
+- użytkownik bez uprawnień administracyjnych otrzymuje jasną informację, że
+  formularz musi opublikować administrator lub manager.
+
+Oba wejścia używają istniejącej hierarchii przycisków: `Nowa karta` pozostaje
+głównym działaniem, a `Katalog i formularze` działaniem drugorzędnym. Nie
+dodajemy nowej pozycji do globalnego sidebara w tym zadaniu.
+
 ## Testy i kryteria akceptacji
 
 1. Integracja zapisuje i odczytuje `500 × 260 cm` jako jeden pomiar
@@ -95,7 +117,11 @@ minimum 44 px wysokości.
 5. Zmiana na pomiar pojedynczy usuwa drugą wartość.
 6. Interfejs dodaje, wyświetla i edytuje jeden rekord w formacie
    `szerokość × wysokość` na komputerze i telefonie.
-7. Pełne testy aplikacji, build oraz migracja świeżej i istniejącej bazy są
+7. Administrator i manager widzą na `/installations` działający przycisk
+   `Katalog i formularze`; pozostałe role go nie widzą.
+8. Ostrzeżenie o braku przypiętego formularza prowadzi do panelu wyboru albo do
+   katalogu zależnie od dostępnych formularzy i uprawnień użytkownika.
+9. Pełne testy aplikacji, build oraz migracja świeżej i istniejącej bazy są
    zielone.
 
 ## Poza zakresem
