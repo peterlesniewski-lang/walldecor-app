@@ -7,7 +7,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { PrismaClient } from '@/generated/prisma'
 import { createInstallationFormTemplate, createInstallationOrderFormSnapshot, publishInstallationFormTemplate } from '@/lib/installations/catalog-service'
 import { createClientLink } from '@/lib/installations/client-link'
-import { submitClientForm, InstallationFormValidationError } from '@/lib/installations/form-service'
+import { autosaveClientForm, startClientFormCorrection, submitClientForm, InstallationFormValidationError } from '@/lib/installations/form-service'
 import { createInstallationOrder } from '@/lib/installations/order-service'
 import {
   createClientQuestionFile,
@@ -59,7 +59,10 @@ async function seedOrder(email: string, number: string) {
   }, 'admin')
   const draft = await createInstallationFormTemplate(db, {
     name: `Pliki ${number}`, actorId: 'admin',
-    questions: [{ key: 'zdjecie-sciany', type: 'FILE', label: 'Dodaj zdjęcie ściany', required: true }],
+    questions: [
+      { key: 'opis-sciany', type: 'TEXT', label: 'Opis ściany' },
+      { key: 'zdjecie-sciany', type: 'FILE', label: 'Dodaj zdjęcie ściany', required: true },
+    ],
   })
   const template = await publishInstallationFormTemplate(db, draft.id, 'admin')
   await createInstallationOrderFormSnapshot(db, { orderId: order.id, templateId: template.id }, 'admin')
@@ -90,7 +93,7 @@ afterAll(async () => {
 })
 
 describe('private client files', () => {
-  it('requires a real ready file for a required FILE question and immediately hides a soft-deleted file', async () => {
+  it('requires an explicit correction after submit and preserves its prior answers and files', async () => {
     await expect(submitClientForm(db, token, { revisionNumber: 1, draftVersion: 0, clientMutationId: 'media-required-file-before-upload' }))
       .rejects.toBeInstanceOf(InstallationFormValidationError)
 
@@ -102,7 +105,43 @@ describe('private client files', () => {
     expect(await listClientQuestionFiles(db, token, 'zdjecie-sciany')).toHaveLength(1)
     await expect(listClientQuestionFiles(db, otherToken, 'zdjecie-sciany')).resolves.toEqual([])
 
-    await submitClientForm(db, token, { revisionNumber: 1, draftVersion: 0, clientMutationId: 'media-required-file-after-upload' })
+    const saved = await autosaveClientForm(db, token, {
+      revisionNumber: 1,
+      draftVersion: 0,
+      clientMutationId: 'media-answer-before-submit',
+      answers: [{ questionKey: 'opis-sciany', value: 'Ściana przy oknie.' }],
+    })
+    const preSubmitHandoff = await createMobileUploadHandoff(db, token, { questionKey: 'zdjecie-sciany' })
+    const dormantPreSubmitHandoff = await createMobileUploadHandoff(db, token, { questionKey: 'zdjecie-sciany' })
+    const preSubmitMobile = await redeemMobileUploadHandoff(db, preSubmitHandoff.code)
+    await submitClientForm(db, token, { revisionNumber: 1, draftVersion: saved.draftVersion, clientMutationId: 'media-required-file-after-upload' })
+    const submitted = await db.installationFormSubmission.findUniqueOrThrow({ where: { orderId_revisionNumber: { orderId, revisionNumber: 1 } } })
+
+    await expect(uploadMobileHandoffFile(db, preSubmitMobile.cookieValue, {
+      filename: 'po-wyslaniu.png', contentType: 'image/png', bytes: imageBytes,
+    }, media)).rejects.toBeInstanceOf(InstallationMediaAccessError)
+    await expect(redeemMobileUploadHandoff(db, dormantPreSubmitHandoff.code)).rejects.toBeInstanceOf(InstallationMediaAccessError)
+    await expect(listClientQuestionFiles(db, token, 'zdjecie-sciany')).rejects.toBeInstanceOf(InstallationMediaAccessError)
+    await expect(createClientQuestionFile(db, token, {
+      questionKey: 'zdjecie-sciany', filename: 'niejawna-korekta.png', contentType: 'image/png', bytes: imageBytes,
+    }, media)).rejects.toBeInstanceOf(InstallationMediaAccessError)
+    await expect(createMobileUploadHandoff(db, token, { questionKey: 'zdjecie-sciany' })).rejects.toBeInstanceOf(InstallationMediaAccessError)
+    await expect(db.installationFormSubmission.count({ where: { orderId } })).resolves.toBe(1)
+    await expect(db.installationFormSubmission.findUnique({ where: { draftKey: orderId } })).resolves.toBeNull()
+    await expect(db.installationFile.count({ where: { orderId } })).resolves.toBe(1)
+    await expect(db.mobileUploadHandoff.count({ where: { orderId } })).resolves.toBe(2)
+
+    const correction = await startClientFormCorrection(db, token)
+    expect(correction).toMatchObject({ revisionNumber: 2, status: 'DRAFT' })
+    expect(correction.answers).toEqual(expect.arrayContaining([
+      expect.objectContaining({ questionKey: 'opis-sciany', value: 'Ściana przy oknie.' }),
+    ]))
+    await expect(db.installationFormSubmission.findUniqueOrThrow({ where: { draftKey: orderId } }))
+      .resolves.toMatchObject({ id: expect.any(String), revisionOfId: submitted.id })
+    await expect(listClientQuestionFiles(db, token, 'zdjecie-sciany')).resolves.toEqual([
+      expect.objectContaining({ id: created.id, originalFilename: 'sciana.png' }),
+    ])
+
     await softDeleteInstallationFile(db, orderId, created.id, 'owner-user', media)
     await expect(listClientQuestionFiles(db, token, 'zdjecie-sciany')).resolves.toEqual([])
   })

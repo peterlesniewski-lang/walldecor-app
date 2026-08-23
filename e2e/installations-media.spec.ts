@@ -34,7 +34,10 @@ test.beforeAll(async () => {
   orderId = order.id
   const draft = await createInstallationFormTemplate(db, {
     name: 'E2E przekazanie zdjęcia', actorId: 'admin',
-    questions: [{ key: 'zdjecie-przed-montazem', type: 'FILE', label: 'Zdjęcie przed montażem', required: true }],
+    questions: [
+      { key: 'uwagi-do-sciany', type: 'TEXT', label: 'Uwagi do ściany' },
+      { key: 'zdjecie-przed-montazem', type: 'FILE', label: 'Zdjęcie przed montażem', required: true },
+    ],
   })
   const template = await publishInstallationFormTemplate(db, draft.id, 'admin')
   await createInstallationOrderFormSnapshot(db, { orderId, templateId: template.id }, 'admin')
@@ -47,6 +50,8 @@ test.afterAll(async () => { await db?.$disconnect() })
 test('desktop QR handoff streams a mobile file through the app and revokes every later access', async ({ page, browser }) => {
   await page.goto(`/m/${clientToken}`)
   await expect(page.getByText('Zdjęcie przed montażem')).toBeVisible()
+  await page.locator('#uwagi-do-sciany').fill('Ściana przy oknie — zachować ostrożność.')
+  await expect(page.getByRole('status')).toContainText('Wszystko zapisane', { timeout: 5_000 })
   const handoffResponse = page.waitForResponse((response) => response.url().endsWith(`/api/public/installations/${clientToken}/handoffs`) && response.request().method() === 'POST')
   await page.getByRole('button', { name: 'Dodaj z telefonu' }).click()
   const handoff = await (await handoffResponse).json() as { handoffId: string; handoffUrl: string }
@@ -71,6 +76,40 @@ test('desktop QR handoff streams a mobile file through the app and revokes every
   await expect(page.getByRole('list', { name: 'Dodane pliki: Zdjęcie przed montażem' })).toContainText('mobilne-zdjecie.png', { timeout: 12_000 })
   await page.getByRole('button', { name: 'Wyślij formularz' }).click()
   await expect(page.getByText(/Formularz został wysłany/i)).toBeVisible()
+
+  const deniedSubmittedMobileSession = await mobile.evaluate(async ({ bytes }) => {
+    const body = new FormData()
+    body.set('file', new File([Uint8Array.from(bytes)], 'po-wyslaniu.png', { type: 'image/png' }))
+    return (await fetch('/api/public/mobile-upload/session/files', { method: 'POST', body })).status
+  }, { bytes: [...uploadedBytes] })
+  expect(deniedSubmittedMobileSession).toBe(404)
+
+  const deniedBeforeCorrection = await page.evaluate(async ({ token, bytes }) => {
+    const upload = new FormData()
+    upload.set('questionKey', 'zdjecie-przed-montazem')
+    upload.set('file', new File([Uint8Array.from(bytes)], 'niejawna-korekta.png', { type: 'image/png' }))
+    const [files, newFile, handoff] = await Promise.all([
+      fetch(`/api/public/installations/${token}/files?questionKey=zdjecie-przed-montazem`, { cache: 'no-store' }),
+      fetch(`/api/public/installations/${token}/files`, { method: 'POST', body: upload }),
+      fetch(`/api/public/installations/${token}/handoffs`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionKey: 'zdjecie-przed-montazem' }),
+      }),
+    ])
+    return [files.status, newFile.status, handoff.status]
+  }, { token: clientToken, bytes: [...uploadedBytes] })
+  expect(deniedBeforeCorrection).toEqual([404, 404, 404])
+  await expect(db.installationFormSubmission.count({ where: { orderId } })).resolves.toBe(1)
+  await expect(db.installationFormSubmission.findUnique({ where: { draftKey: orderId } })).resolves.toBeNull()
+
+  await page.getByRole('button', { name: 'Zgłoś korektę' }).click()
+  await expect(page.locator('#uwagi-do-sciany')).toHaveValue('Ściana przy oknie — zachować ostrożność.')
+  await expect(page.getByRole('list', { name: 'Dodane pliki: Zdjęcie przed montażem' })).toContainText('mobilne-zdjecie.png')
+  const correction = await db.installationFormSubmission.findUniqueOrThrow({ where: { draftKey: orderId }, include: { answers: true } })
+  const submitted = await db.installationFormSubmission.findFirstOrThrow({ where: { orderId, status: 'SUBMITTED' }, orderBy: { revisionNumber: 'desc' } })
+  expect(correction).toMatchObject({ revisionNumber: 2, revisionOfId: submitted.id, status: 'DRAFT' })
+  expect(correction.answers).toEqual(expect.arrayContaining([
+    expect.objectContaining({ questionKey: 'uwagi-do-sciany', normalizedValue: 'Ściana przy oknie — zachować ostrożność.' }),
+  ]))
 
   const stored = await db.installationFile.findFirstOrThrow({ where: { orderId, originalFilename: 'mobilne-zdjecie.png', status: 'READY', softDeletedAt: null } })
   expect(stored.sha256).toBe(uploadedSha256)

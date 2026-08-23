@@ -75,20 +75,22 @@ function questionsFromSchema(schemaJson: string) {
   }
 }
 
-/** Matches the public form's lazy-draft behaviour so an upload URL remains
- * usable even when the desktop has not rendered the questionnaire first. */
+/** Matches the public form's lazy first-draft behaviour, but never starts a
+ * correction. After the first submit only the explicit correction action may
+ * create another DRAFT because it also records revisionOfId and copies answers. */
 async function ensureCurrentFileSubmission(db: InstallationDb, orderId: string) {
   const existing = await db.installationFormSubmission.findUnique({
     where: { draftKey: orderId },
     include: { formSnapshot: { select: { schemaJson: true } }, answers: { select: { questionKey: true, normalizedValue: true } } },
   })
   if (existing) return existing
+  const latest = await db.installationFormSubmission.findFirst({ where: { orderId }, select: { revisionNumber: true }, orderBy: { revisionNumber: 'desc' } })
+  if (latest) throw new InstallationMediaAccessError()
   const snapshot = await db.installationOrderFormSnapshot.findUnique({ where: { orderId }, select: { id: true, schemaJson: true } })
   if (!snapshot) throw new InstallationMediaAccessError()
-  const latest = await db.installationFormSubmission.findFirst({ where: { orderId }, select: { revisionNumber: true }, orderBy: { revisionNumber: 'desc' } })
   try {
     return await db.installationFormSubmission.create({
-      data: { orderId, formSnapshotId: snapshot.id, revisionNumber: (latest?.revisionNumber ?? 0) + 1, status: 'DRAFT', draftKey: orderId },
+      data: { orderId, formSnapshotId: snapshot.id, revisionNumber: 1, status: 'DRAFT', draftKey: orderId },
       include: { formSnapshot: { select: { schemaJson: true } }, answers: { select: { questionKey: true, normalizedValue: true } } },
     })
   } catch (error) {
@@ -98,6 +100,9 @@ async function ensureCurrentFileSubmission(db: InstallationDb, orderId: string) 
         include: { formSnapshot: { select: { schemaJson: true } }, answers: { select: { questionKey: true, normalizedValue: true } } },
       })
       if (raced) return raced
+      // A concurrent submit may have cleared draftKey after winning the first
+      // revision. Treat it as a closed form, never as permission to mint v2.
+      throw new InstallationMediaAccessError()
     }
     throw error
   }
@@ -194,7 +199,10 @@ export async function createClientQuestionFile(db: PrismaClient, token: string, 
 export async function listClientQuestionFiles(db: InstallationDb, token: string, questionKey: string) {
   const target = await currentFileTarget(db, token, questionKey)
   return db.installationFile.findMany({
-    where: { orderId: target.link.orderId, formSubmissionId: target.submission.id, purpose: 'CLIENT_QUESTION', questionKey, status: 'READY', softDeletedAt: null },
+    // Files already supplied for this immutable order snapshot remain visible
+    // in an explicit correction. The current DRAFT is still required above,
+    // so this never exposes historic files through a submitted-only link.
+    where: { orderId: target.link.orderId, purpose: 'CLIENT_QUESTION', questionKey, status: 'READY', softDeletedAt: null },
     select: { id: true, originalFilename: true, contentType: true, byteSize: true, sha256: true, createdAt: true },
     orderBy: { createdAt: 'asc' },
   })
@@ -203,7 +211,7 @@ export async function listClientQuestionFiles(db: InstallationDb, token: string,
 export async function getClientQuestionFile(db: InstallationDb, token: string, questionKey: string, fileId: string) {
   const target = await currentFileTarget(db, token, questionKey)
   const file = await db.installationFile.findFirst({
-    where: { id: fileId, orderId: target.link.orderId, formSubmissionId: target.submission.id, purpose: 'CLIENT_QUESTION', questionKey, status: 'READY', softDeletedAt: null },
+    where: { id: fileId, orderId: target.link.orderId, purpose: 'CLIENT_QUESTION', questionKey, status: 'READY', softDeletedAt: null },
   })
   if (!file) throw new InstallationMediaAccessError()
   return file
@@ -237,8 +245,8 @@ export async function createMobileUploadHandoff(db: PrismaClient, token: string,
 export async function redeemMobileUploadHandoff(db: PrismaClient, code: string) {
   const codeHash = hashSecret(code)
   const now = new Date()
-  const handoff = await db.mobileUploadHandoff.findUnique({ where: { codeHash }, include: { clientLink: true } })
-  if (!handoff || handoff.redeemedAt || handoff.revokedAt || handoff.expiresAt <= now || handoff.clientLink.revokedAt || handoff.clientLink.expiresAt <= now) {
+  const handoff = await db.mobileUploadHandoff.findUnique({ where: { codeHash }, include: { clientLink: true, formSubmission: { select: { orderId: true, status: true } } } })
+  if (!handoff || handoff.redeemedAt || handoff.revokedAt || handoff.expiresAt <= now || handoff.clientLink.revokedAt || handoff.clientLink.expiresAt <= now || handoff.formSubmission.status !== 'DRAFT' || handoff.formSubmission.orderId !== handoff.orderId) {
     throw new InstallationMediaAccessError()
   }
   const sessionSecret = secret()
@@ -269,8 +277,8 @@ function allowedTypesFromHandoff(value: string) {
 export async function uploadMobileHandoffFile(db: PrismaClient, cookieValue: string, input: UploadInput, media: InstallationMediaAdapter) {
   const { handoffId, sessionSecret } = parseMobileCookie(cookieValue)
   const now = new Date()
-  const handoff = await db.mobileUploadHandoff.findUnique({ where: { id: handoffId }, include: { clientLink: true } })
-  if (!handoff || handoff.sessionSecretHash !== hashSecret(sessionSecret) || !handoff.redeemedAt || handoff.revokedAt || handoff.expiresAt <= now || handoff.clientLink.revokedAt || handoff.clientLink.expiresAt <= now) throw new InstallationMediaAccessError()
+  const handoff = await db.mobileUploadHandoff.findUnique({ where: { id: handoffId }, include: { clientLink: true, formSubmission: { select: { orderId: true, status: true } } } })
+  if (!handoff || handoff.sessionSecretHash !== hashSecret(sessionSecret) || !handoff.redeemedAt || handoff.revokedAt || handoff.expiresAt <= now || handoff.clientLink.revokedAt || handoff.clientLink.expiresAt <= now || handoff.formSubmission.status !== 'DRAFT' || handoff.formSubmission.orderId !== handoff.orderId) throw new InstallationMediaAccessError()
   const valid = validateUpload(input, handoff.maxByteSize, allowedTypesFromHandoff(handoff.allowedMimeJson))
   try {
     return await storeFile(db, {

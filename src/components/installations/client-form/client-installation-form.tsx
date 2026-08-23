@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import styles from './client-installation-form.module.css'
 
 type AnswerValue = string | string[]
@@ -360,7 +360,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
           <h2 id="questions-heading" className={styles.sectionHeading}>Krótka rozmowa o miejscu montażu</h2>
           <p className={styles.sectionHelp}>Odpowiadaj po kolei. Formularz zapisuje zmiany automatycznie.</p>
           <div className={styles.questions}>{groups.map((group, index) => <div className={styles.questionGroup} key={group.map((question) => question.key).join(':')} aria-label={`Część ${index + 1} formularza`}>
-            {group.map((question) => <QuestionControl key={question.key} token={token} question={question} value={answers[question.key]} onChange={(value) => queueAnswer(question.key, value)} />)}
+            {group.map((question) => <QuestionControl key={question.key} token={token} question={question} value={answers[question.key]} loadExistingFiles={projection.submission.revisionNumber > 1} onChange={(value) => queueAnswer(question.key, value)} />)}
           </div>)}</div>
         </section>
         {unknownSelected && <p className={styles.unknown}><strong>Ustalimy przed montażem.</strong> Nie musisz teraz wpisywać przybliżonego wymiaru.</p>}
@@ -398,19 +398,24 @@ function OptionalClear({ question, value, onChange }: { question: Question; valu
   return <button type="button" className={styles.secondary} aria-label={'Wyczyść odpowiedź: ' + question.label} onClick={() => onChange(null)}>Wyczyść odpowiedź</button>
 }
 
-function ClientFileControl({ token, question }: { token: string; question: Question }) {
+function ClientFileControl({ token, question, loadExistingFiles }: { token: string; question: Question; loadExistingFiles: boolean }) {
   const [files, setFiles] = useState<Array<{ id: string; originalFilename: string }>>([])
   const [uploading, setUploading] = useState(false)
   const [message, setMessage] = useState('')
   const [handoff, setHandoff] = useState<null | { id: string; qrSvg: string; expiresAt: string }>(null)
 
-  async function refreshFiles() {
+  const refreshFiles = useCallback(async () => {
     const response = await fetch(`/api/public/installations/${encodeURIComponent(token)}/files?questionKey=${encodeURIComponent(question.key)}`, { cache: 'no-store' })
     if (!response.ok) return false
     const data = await response.json() as { files?: Array<{ id: string; originalFilename: string }> }
     setFiles(data.files ?? [])
     return true
-  }
+  }, [question.key, token])
+
+  // A FILE control can mount with files inherited from a submitted revision
+  // after the customer explicitly opens a correction. Load them without
+  // requiring a new QR handoff or a duplicate upload.
+  useEffect(() => { if (loadExistingFiles) void refreshFiles() }, [loadExistingFiles, refreshFiles])
 
   useEffect(() => {
     if (!handoff) return
@@ -419,7 +424,7 @@ function ClientFileControl({ token, question }: { token: string; question: Quest
     poll()
     const interval = window.setInterval(poll, 2_500)
     return () => { stopped = true; window.clearInterval(interval) }
-  }, [handoff?.id]) // Polling exists only during a live desktop-to-phone handoff.
+  }, [handoff, refreshFiles]) // Polling exists only during a live desktop-to-phone handoff.
 
   async function upload(file: File | undefined) {
     if (!file || uploading) return
@@ -478,8 +483,8 @@ function ClientFileControl({ token, question }: { token: string; question: Quest
   </article>
 }
 
-function QuestionControl({ token, question, value, onChange }: { token: string; question: Question; value: AnswerValue | undefined; onChange: (value: PendingAnswerValue) => void }) {
-  if (question.type === 'FILE') return <ClientFileControl token={token} question={question} />
+function QuestionControl({ token, question, value, loadExistingFiles, onChange }: { token: string; question: Question; value: AnswerValue | undefined; loadExistingFiles: boolean; onChange: (value: PendingAnswerValue) => void }) {
+  if (question.type === 'FILE') return <ClientFileControl token={token} question={question} loadExistingFiles={loadExistingFiles} />
   if (question.type === 'YES_NO_UNKNOWN') return <fieldset className={styles.question}>
     <legend>{question.label}{question.required && <span className={styles.required}>*</span>}</legend>{question.help && <p className={styles.help}>{question.help}</p>}
     <div className={styles.choiceGrid}>{([['YES', 'Tak'], ['NO', 'Nie'], ['UNKNOWN', 'Nie wiem']] as const).map(([choice, label]) => <button type="button" key={choice} className={styles.choice} aria-pressed={value === choice} onClick={() => onChange(choice)}>{label}</button>)}</div>

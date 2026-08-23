@@ -23,3 +23,13 @@
 ## Ograniczenia środowiska
 
 E2E używa jawnego `INSTALLATION_MEDIA_TEST_ADAPTER=filesystem` wyłącznie poza produkcją, w kontrolowanym katalogu `/tmp/walldecor-installations-e2e-media-*`; adapter odmawia pracy w `NODE_ENV=production`. Produkcyjny serwer mediów oraz backup Google Drive nie są deklarowane jako wdrożone w tym zadaniu. `qrcode` nie dodał nowych wyników audytu; repo miało baseline 9 produkcyjnych podatności, które wymagają osobnej klasyfikacji w Task 12.
+
+## Korekta P1 po przeglądzie — 2026-08-23
+
+- endpointy plików nie tworzą niejawnej korekty: po `SUBMITTED` publiczne `GET files`, `POST files` i `POST handoff` zwracają 404, a w bazie pozostaje wyłącznie przesłana rewizja bez `draftKey`;
+- wcześniej otwarta sesja telefonu także traci prawo dodawania po wysłaniu formularza;
+- dopiero jawne „Zgłoś korektę” tworzy rewizję 2 z prawidłowym `revisionOfId`, kopią odpowiedzi oraz dostępem do gotowych, nieusuniętych plików wcześniejszej rewizji;
+- regresja usług była najpierw czerwona na niejawnym pustym szkicu, po poprawce: **6/6 green**;
+- po poprawce `npm test`: **88 plików / 504 testy**, `npm run build`: green, świeży/upgrade łańcuch migracji: green w `catalog-hierarchy-upgrade`;
+- dedykowany Playwright `e2e/installations-media.spec.ts`: **1/1 green** z realnymi bajtami PNG, trzema odmowami endpointów po submit i odtworzeniem odpowiedzi/pliku po jawnej korekcie;
+- `npm run validate:installation-media`: green, `restart=verified`, SHA-256 `0698f85f451be29efe982f6c5b3404ef75e0c894f569758dd2ad152f559f3816`.
