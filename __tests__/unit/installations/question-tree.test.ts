@@ -10,13 +10,13 @@ import {
   removeQuestionSubtree,
 } from '@/lib/installations/question-tree'
 
-const questions = [
+const questions: FormQuestion[] = [
   { key: 'pokoj-a', type: 'YES_NO_UNKNOWN', label: 'Pokój A' },
   { key: 'okna', type: 'YES_NO_UNKNOWN', label: 'Czy są okna?', condition: { questionKey: 'pokoj-a', equals: 'YES' } },
   { key: 'glify', type: 'YES_NO_UNKNOWN', label: 'Czy tapetujemy glify?', condition: { questionKey: 'okna', equals: 'YES' } },
   { key: 'glebokosc', type: 'DIMENSION', label: 'Głębokość glifów', condition: { questionKey: 'glify', equals: 'YES' } },
   { key: 'pokoj-b', type: 'YES_NO_UNKNOWN', label: 'Pokój B' },
-] satisfies FormQuestion[]
+]
 
 const keys = (items: readonly FormQuestion[]) => items.map((question) => question.key)
 
@@ -31,6 +31,19 @@ describe('installation question tree', () => {
     ])
   })
 
+  it('preserves detached records when a forest is copied without identity metadata', () => {
+    const withOrphan: FormQuestion[] = [
+      questions[0],
+      { key: 'osierocone', type: 'TEXT', label: 'Osierocone', condition: { questionKey: 'brak', equals: 'YES' } },
+      questions[4],
+    ]
+    const forest = buildQuestionForest(withOrphan)
+    const copied = { ...forest, roots: [...forest.roots], detached: [...forest.detached] }
+
+    expect(keys(copied.detached)).toEqual(['osierocone'])
+    expect(keys(flattenQuestionForest(copied))).toEqual(['pokoj-a', 'pokoj-b', 'osierocone'])
+  })
+
   it('places children in explicit YES/NO/UNKNOWN and SINGLE branches', () => {
     const branchedQuestions = [
       ...questions,
@@ -39,8 +52,8 @@ describe('installation question tree', () => {
       { key: 'klej', type: 'TEXT', label: 'Klej', condition: { questionKey: 'material', equals: 'Tapeta' } },
     ] satisfies FormQuestion[]
     const forest = buildQuestionForest(branchedQuestions)
-    const okna = forest[0].branches.find((branch) => branch.value === 'YES')?.children[0]
-    const material = forest.find((node) => node.question.key === 'material')
+    const okna = forest.roots[0].branches.find((branch) => branch.value === 'YES')?.children[0]
+    const material = forest.roots.find((node) => node.question.key === 'material')
 
     expect(okna?.branches.find((branch) => branch.value === 'YES')).toMatchObject({
       value: 'YES',
@@ -67,6 +80,30 @@ describe('installation question tree', () => {
       'glify',
       'glebokosc',
     ])
+  })
+
+  it('moves conditional siblings up and down with no-op branch boundaries', () => {
+    const conditionalSiblings: FormQuestion[] = [
+      { key: 'parent', type: 'YES_NO_UNKNOWN', label: 'Parent' },
+      { key: 'first', type: 'YES_NO_UNKNOWN', label: 'First', condition: { questionKey: 'parent', equals: 'YES' } },
+      { key: 'first-child', type: 'TEXT', label: 'First child', condition: { questionKey: 'first', equals: 'YES' } },
+      { key: 'second', type: 'TEXT', label: 'Second', condition: { questionKey: 'parent', equals: 'YES' } },
+    ]
+
+    expect(keys(moveQuestionWithinBranch(conditionalSiblings, 'second', 'UP'))).toEqual([
+      'parent',
+      'second',
+      'first',
+      'first-child',
+    ])
+    expect(keys(moveQuestionWithinBranch(conditionalSiblings, 'first', 'DOWN'))).toEqual([
+      'parent',
+      'second',
+      'first',
+      'first-child',
+    ])
+    expect(keys(moveQuestionWithinBranch(conditionalSiblings, 'first', 'UP'))).toEqual(keys(conditionalSiblings))
+    expect(keys(moveQuestionWithinBranch(conditionalSiblings, 'second', 'DOWN'))).toEqual(keys(conditionalSiblings))
   })
 
   it('does not move a question outside its exact sibling branch', () => {
@@ -112,6 +149,9 @@ describe('installation question tree', () => {
 
     expect(nextQuestionKey(existing)).toBe('question-8')
     expect(keys(existing)).toEqual(['question-1', 'question-7', 'custom'])
+    expect(nextQuestionKey([{ key: 'question-9007199254740992', type: 'TEXT', label: 'Big' }])).toBe(
+      'question-9007199254740993',
+    )
   })
 
   it('returns labelled branches for YES/NO/UNKNOWN and declared choices for SINGLE', () => {
@@ -159,6 +199,19 @@ describe('installation question tree', () => {
     ])
   })
 
+  it('keeps duplicate-key records and their ambiguous child as detached data', () => {
+    const duplicates: FormQuestion[] = [
+      { key: 'duplicate', type: 'TEXT', label: 'Pierwszy' },
+      { key: 'duplicate', type: 'TEXT', label: 'Drugi' },
+      { key: 'ambiguous-child', type: 'TEXT', label: 'Potomek', condition: { questionKey: 'duplicate', equals: 'YES' } },
+      { key: 'root', type: 'TEXT', label: 'Root' },
+    ]
+    const forest = buildQuestionForest(duplicates)
+
+    expect(keys(forest.detached)).toEqual(['ambiguous-child'])
+    expect(keys(flattenQuestionForest(forest))).toEqual(['duplicate', 'duplicate', 'root', 'ambiguous-child'])
+  })
+
   it('does not remove an orphan when the requested key is absent', () => {
     const withOrphan = [
       questions[0],
@@ -177,5 +230,20 @@ describe('installation question tree', () => {
     ] satisfies FormQuestion[]
 
     expect(keys(flattenQuestionForest(buildQuestionForest(malformed)))).toEqual(['root', 'a', 'b', 'broken'])
+  })
+
+  it('does not mutate the input records or their order', () => {
+    const original = questions.map((question) => ({
+      ...question,
+      options: question.options ? [...question.options] : undefined,
+      condition: question.condition ? { ...question.condition } : undefined,
+    }))
+
+    buildQuestionForest(questions)
+    moveQuestionWithinBranch(questions, 'pokoj-b', 'UP')
+    removeQuestionSubtree(questions, 'okna')
+    appendQuestionAtPlacement(questions, { key: 'new', type: 'TEXT', label: 'Nowe' }, { parentKey: null, equals: null })
+
+    expect(questions).toEqual(original)
   })
 })

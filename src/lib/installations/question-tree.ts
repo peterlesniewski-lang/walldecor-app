@@ -16,17 +16,15 @@ export type QuestionTreeBranch<T extends FormQuestion = FormQuestion> = {
   children: QuestionTreeNode<T>[]
 }
 
+export type QuestionForest<T extends FormQuestion = FormQuestion> = {
+  roots: QuestionTreeNode<T>[]
+  detached: T[]
+}
+
 export type QuestionBranchChoice = {
   value: string
   label: string
 }
-
-type ForestMetadata = {
-  source: readonly FormQuestion[]
-  nodeIndexes: WeakMap<object, number>
-}
-
-const forestMetadata = new WeakMap<object, ForestMetadata>()
 
 const yesNoUnknownChoices: readonly QuestionBranchChoice[] = [
   { value: 'YES', label: 'Tak' },
@@ -45,10 +43,10 @@ export function branchChoices(question: FormQuestion): QuestionBranchChoice[] {
 
 /**
  * Builds the renderable part of the question graph. Records that cannot be
- * connected to a root remain in the source metadata and are restored by
- * flattenQuestionForest, so the schema validator can still diagnose them.
+ * connected to a root remain in detached, so callers can surface a warning
+ * while the schema validator still receives every original record.
  */
-export function buildQuestionForest<T extends FormQuestion>(questions: readonly T[]): QuestionTreeNode<T>[] {
+export function buildQuestionForest<T extends FormQuestion>(questions: readonly T[]): QuestionForest<T> {
   const keyCounts = new Map<string, number>()
   for (const question of questions) {
     keyCounts.set(question.key, (keyCounts.get(question.key) ?? 0) + 1)
@@ -63,11 +61,11 @@ export function buildQuestionForest<T extends FormQuestion>(questions: readonly 
     question,
     branches: branchChoices(question).map(({ value, label }) => ({ value, label, children: [] })),
   }) as QuestionTreeNode<T>)
-  const forest: QuestionTreeNode<T>[] = []
+  const roots: QuestionTreeNode<T>[] = []
 
   questions.forEach((question, index) => {
     if (!question.condition) {
-      forest.push(nodes[index])
+      roots.push(nodes[index])
       return
     }
 
@@ -79,33 +77,19 @@ export function buildQuestionForest<T extends FormQuestion>(questions: readonly 
     branch.children.push(nodes[index])
   })
 
-  const nodeIndexes = new WeakMap<object, number>()
+  const nodeIndexes = new Map<QuestionTreeNode<T>, number>()
   nodes.forEach((node, index) => nodeIndexes.set(node, index))
-  forestMetadata.set(forest, { source: questions, nodeIndexes })
-
-  return forest
-}
-
-/**
- * Serializes a forest in preorder. Any record not reached from a root is
- * appended in source order instead of being silently discarded.
- */
-export function flattenQuestionForest<T extends FormQuestion>(forest: readonly QuestionTreeNode<T>[]): T[] {
-  const metadata = forestMetadata.get(forest)
-  const result: T[] = []
-  const visitedNodes = new Set<object>()
-  const visitedIndexes = new Set<number>()
-  const stack = [...forest].reverse()
+  const reachableIndexes = new Set<number>()
+  const visited = new Set<QuestionTreeNode<T>>()
+  const stack = [...roots].reverse()
 
   while (stack.length > 0) {
     const node = stack.pop()
-    if (!node || visitedNodes.has(node)) continue
+    if (!node || visited.has(node)) continue
 
-    visitedNodes.add(node)
-    result.push(node.question)
-
-    const sourceIndex = metadata?.nodeIndexes.get(node)
-    if (sourceIndex !== undefined) visitedIndexes.add(sourceIndex)
+    visited.add(node)
+    const index = nodeIndexes.get(node)
+    if (index !== undefined) reachableIndexes.add(index)
 
     for (let branchIndex = node.branches.length - 1; branchIndex >= 0; branchIndex -= 1) {
       const children = node.branches[branchIndex].children
@@ -115,13 +99,37 @@ export function flattenQuestionForest<T extends FormQuestion>(forest: readonly Q
     }
   }
 
-  if (metadata) {
-    metadata.source.forEach((question, index) => {
-      if (!visitedIndexes.has(index)) result.push(question as T)
-    })
+  return {
+    roots,
+    detached: questions.filter((_question, index) => !reachableIndexes.has(index)),
+  }
+}
+
+/**
+ * Serializes a forest in preorder. Any record not reached from a root is
+ * appended in source order instead of being silently discarded.
+ */
+export function flattenQuestionForest<T extends FormQuestion>(forest: QuestionForest<T>): T[] {
+  const result: T[] = []
+  const visitedNodes = new Set<QuestionTreeNode<T>>()
+  const stack = [...forest.roots].reverse()
+
+  while (stack.length > 0) {
+    const node = stack.pop()
+    if (!node || visitedNodes.has(node)) continue
+
+    visitedNodes.add(node)
+    result.push(node.question)
+
+    for (let branchIndex = node.branches.length - 1; branchIndex >= 0; branchIndex -= 1) {
+      const children = node.branches[branchIndex].children
+      for (let index = children.length - 1; index >= 0; index -= 1) {
+        stack.push(children[index])
+      }
+    }
   }
 
-  return result
+  return [...result, ...forest.detached]
 }
 
 type NodeLocation<T extends FormQuestion> = {
@@ -165,13 +173,13 @@ function findNodeLocation<T extends FormQuestion>(
 export type QuestionMoveDirection = 'UP' | 'DOWN'
 
 /** Moves a node, including its descendants, only inside its placement branch. */
-export function moveQuestionWithinBranch<T extends FormQuestion>(
-  questions: readonly T[],
+export function moveQuestionWithinBranch(
+  questions: readonly FormQuestion[],
   key: string,
   direction: QuestionMoveDirection,
-): T[] {
+): FormQuestion[] {
   const forest = buildQuestionForest(questions)
-  const location = findNodeLocation(forest, key)
+  const location = findNodeLocation(forest.roots, key)
   if (!location) return flattenQuestionForest(forest)
 
   const destinationIndex = direction === 'UP' ? location.index - 1 : location.index + 1
@@ -187,7 +195,7 @@ export function moveQuestionWithinBranch<T extends FormQuestion>(
 }
 
 /** Removes the selected question and every question whose ancestor chain reaches it. */
-export function removeQuestionSubtree<T extends FormQuestion>(questions: readonly T[], key: string): T[] {
+export function removeQuestionSubtree(questions: readonly FormQuestion[], key: string): FormQuestion[] {
   if (!questions.some((question) => question.key === key)) {
     return flattenQuestionForest(buildQuestionForest(questions))
   }
@@ -210,33 +218,34 @@ export function removeQuestionSubtree<T extends FormQuestion>(questions: readonl
 }
 
 /** Adds a new root or conditional child without inheriting a stale condition. */
-export function appendQuestionAtPlacement<T extends FormQuestion>(
-  questions: readonly T[],
-  question: T,
+export function appendQuestionAtPlacement(
+  questions: readonly FormQuestion[],
+  question: FormQuestion,
   placement: QuestionPlacement,
-): T[] {
-  const questionWithoutCondition = Object.fromEntries(
-    Object.entries(question).filter(([field]) => field !== 'condition'),
-  ) as Omit<T, 'condition'>
+): FormQuestion[] {
+  const questionWithoutCondition = { ...question }
+  delete questionWithoutCondition.condition
   const appended = placement.parentKey === null
-    ? questionWithoutCondition as T
+    ? questionWithoutCondition
     : {
       ...questionWithoutCondition,
       condition: {
         questionKey: placement.parentKey,
         equals: placement.equals ?? '',
       },
-    } as T
+    }
 
   return flattenQuestionForest(buildQuestionForest([...questions, appended]))
 }
 
 /** Returns a fresh internal key without mutating or renaming any existing question. */
 export function nextQuestionKey(questions: readonly FormQuestion[]): string {
-  const highest = questions.reduce((currentHighest, question) => {
-    const match = /^question-([1-9]\d*)$/.exec(question.key)
-    return match ? Math.max(currentHighest, Number(match[1])) : currentHighest
-  }, 0)
+  let highest = BigInt(0)
 
-  return `question-${highest + 1}`
+  for (const question of questions) {
+    const match = /^question-([1-9]\d*)$/.exec(question.key)
+    if (match) highest = highest > BigInt(match[1]) ? highest : BigInt(match[1])
+  }
+
+  return `question-${highest + BigInt(1)}`
 }
