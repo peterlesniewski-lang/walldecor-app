@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   submit: vi.fn(),
   correction: vi.fn(),
   NotFound: class InstallationClientLinkNotFoundError extends Error {},
+  FeeConflict: class InstallationVisitFeeAcceptanceConflictError extends Error {},
 }))
 
 vi.mock('@/lib/prisma', () => ({ prisma: {} }))
@@ -21,6 +22,7 @@ vi.mock('@/lib/installations/form-service', () => ({
   startClientFormCorrection: mocks.correction,
   InstallationFormValidationError: class InstallationFormValidationError extends Error { fieldErrors = { form: 'bad' } },
   InstallationFormConflictError: class InstallationFormConflictError extends Error {},
+  InstallationVisitFeeAcceptanceConflictError: mocks.FeeConflict,
 }))
 
 import { GET } from '@/app/api/public/installations/[token]/route'
@@ -73,6 +75,55 @@ describe('public installation form routes', () => {
     expect(submitResponse.status).toBe(200)
     expect(correctionResponse.status).toBe(201)
     expect(mocks.autosave).toHaveBeenCalledWith(expect.anything(), 'a'.repeat(43), expect.objectContaining({ revisionNumber: 1 }))
+  })
+
+  it('forwards the exact initial-submit fee digest while ignoring spoofed XFF by default', async () => {
+    vi.stubEnv('INSTALLATION_TRUSTED_CLIENT_IP_HEADER', '')
+    const response = await submit(new NextRequest('http://test/api/public/installations/token/submit', {
+      method: 'POST',
+      body: JSON.stringify({
+        revisionNumber: 1,
+        draftVersion: 0,
+        clientMutationId: 'submit-fee-snapshot-0001',
+        visitFeeAccepted: true,
+        visitFeeSnapshotDigest: `sha256:${'d'.repeat(64)}`,
+      }),
+      headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': '198.51.100.99' },
+    }), params)
+
+    expect(response.status).toBe(200)
+    expect(mocks.submit).toHaveBeenCalledWith({}, 'a'.repeat(43), expect.objectContaining({
+      visitFeeAccepted: true,
+      visitFeeSnapshotDigest: `sha256:${'d'.repeat(64)}`,
+      clientIp: null,
+    }))
+    vi.unstubAllEnvs()
+  })
+
+  it('returns a dedicated 409 when the initial-submit fee snapshot changed', async () => {
+    mocks.submit.mockRejectedValueOnce(new mocks.FeeConflict())
+    const response = await submit(new NextRequest('http://test/api/public/installations/token/submit', {
+      method: 'POST', body: JSON.stringify({
+        revisionNumber: 1,
+        draftVersion: 0,
+        clientMutationId: 'submit-fee-conflict-0001',
+        visitFeeAccepted: true,
+        visitFeeSnapshotDigest: `sha256:${'e'.repeat(64)}`,
+      }), headers: { 'Content-Type': 'application/json' },
+    }), params)
+
+    expect(response.status).toBe(409)
+  })
+
+  it.each([
+    { revisionNumber: 1, draftVersion: 0, clientMutationId: 'submit-fee-partial-0001', visitFeeAccepted: true },
+    { revisionNumber: 1, draftVersion: 0, clientMutationId: 'submit-fee-partial-0002', visitFeeSnapshotDigest: `sha256:${'f'.repeat(64)}` },
+  ])('rejects a partial initial-submit fee confirmation: %j', async (body) => {
+    const response = await submit(new NextRequest('http://test/api/public/installations/token/submit', {
+      method: 'POST', body: JSON.stringify(body), headers: { 'Content-Type': 'application/json' },
+    }), params)
+    expect(response.status).toBe(400)
+    expect(mocks.submit).not.toHaveBeenCalled()
   })
 
   it('accepts correction only with a strict stable client mutation id', async () => {

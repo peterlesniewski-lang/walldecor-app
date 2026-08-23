@@ -40,6 +40,11 @@ async function login(page: Page, username: string) {
   await expect(page).toHaveURL(/\/(dashboard|finance)/)
 }
 
+function localDateTimeInput(value: Date) {
+  const part = (number: number) => String(number).padStart(2, '0')
+  return `${value.getFullYear()}-${part(value.getMonth() + 1)}-${part(value.getDate())}T${part(value.getHours())}:${part(value.getMinutes())}`
+}
+
 test.beforeAll(async () => {
   db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
   await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
@@ -76,8 +81,8 @@ test('backup takes over, admin delegates, and the client must accept an approved
   await expect(page.getByText(/Zatwierdzona kwota: 249,90 zł brutto/i)).toBeVisible()
 
   await page.getByLabel('Osoba przejmująca').selectOption({ label: 'Celina Governance' })
-  await page.getByLabel('Początek delegacji').fill('2026-08-20T08:00')
-  await page.getByLabel('Koniec delegacji').fill('2026-08-24T18:00')
+  await page.getByLabel('Początek delegacji').fill(localDateTimeInput(new Date(Date.now() - 5 * 60_000)))
+  await page.getByLabel('Koniec delegacji').fill(localDateTimeInput(new Date(Date.now() + 24 * 60 * 60_000)))
   await page.getByLabel('Powód delegacji').fill('Zaplanowane przejęcie kontaktu.')
   await page.getByRole('button', { name: 'Ustanów czasowe zastępstwo' }).click()
   await expect(page.locator('li').filter({ hasText: 'Celina Governance' })).toBeVisible()
@@ -116,6 +121,18 @@ test('backup takes over, admin delegates, and the client must accept an approved
   await clientPage.getByRole('button', { name: 'Nie', exact: true }).click()
   await expect(clientPage.getByRole('status')).toContainText('Wszystko zapisane')
   await expect(clientPage.getByRole('button', { name: 'Wyślij formularz' })).toBeDisabled()
+  await clientPage.getByRole('checkbox', { name: /Akceptuję informację o opłacie/i }).check()
+  const feeBeforeConflict = await db.installationOrder.findUniqueOrThrow({ where: { id: orderId } })
+  await db.installationOrder.update({ where: { id: orderId }, data: {
+    // Same policy, amount and version: the full digest must still catch the
+    // changed legal text between what was ticked and what reaches POST.
+    visitFeeClauseText: `${feeBeforeConflict.visitFeeClauseText} Aktualne doprecyzowanie przed wysłaniem.`,
+  } })
+  await clientPage.getByRole('button', { name: 'Wyślij formularz' }).click()
+  await expect(clientPage.getByText(/Aktualne doprecyzowanie przed wysłaniem/i)).toBeVisible()
+  await expect(clientPage.getByRole('checkbox', { name: /Akceptuję informację o opłacie/i })).not.toBeChecked()
+  await expect(clientPage.getByRole('button', { name: 'Wyślij formularz' })).toBeDisabled()
+  expect((await db.installationOrder.findUniqueOrThrow({ where: { id: orderId } })).visitFeeClientAcceptedAt).toBeNull()
   await clientPage.getByRole('checkbox', { name: /Akceptuję informację o opłacie/i }).check()
   await clientPage.getByRole('button', { name: 'Wyślij formularz' }).click()
   await expect(clientPage.getByText(/Formularz został wysłany/i)).toBeVisible()

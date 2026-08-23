@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import { NextResponse } from 'next/server'
 import { Prisma, PrismaClient } from '@/generated/prisma'
 import { isClientVisitFeeActive } from './delegation-service'
+import { createVisitFeeSnapshotDigest } from './visit-fee-snapshot'
 
 const CLIENT_LINK_SECRET_BYTES = 32
 const CLIENT_LINK_SECRET_PATTERN = /^[A-Za-z0-9_-]{43}$/
@@ -63,6 +64,7 @@ type PublicVisitFee = {
   grossAmount: string
   clauseText: string
   clauseVersion: number
+  snapshotDigest: string
   clientAcceptedAt: string | null
 }
 
@@ -242,6 +244,7 @@ function publicWallDecorContact() {
 }
 
 function publicVisitFee(order: {
+  visitFeePolicyId: string | null
   visitFeeStatus: string
   visitFeeGrossAmount: Prisma.Decimal | null
   visitFeeClauseText: string | null
@@ -257,10 +260,19 @@ function publicVisitFee(order: {
     clauseVersion: order.visitFeeClauseVersion,
     legalApprovedAt: order.visitFeeLegalApprovedAt,
   })) return null
+  const snapshotDigest = createVisitFeeSnapshotDigest({
+    policyId: order.visitFeePolicyId,
+    status: order.visitFeeStatus,
+    grossAmount,
+    clauseText: order.visitFeeClauseText,
+    clauseVersion: order.visitFeeClauseVersion,
+    legalApprovedAt: order.visitFeeLegalApprovedAt,
+  })
   return {
     grossAmount: grossAmount!,
     clauseText: order.visitFeeClauseText!,
     clauseVersion: order.visitFeeClauseVersion!,
+    snapshotDigest,
     clientAcceptedAt: order.visitFeeClientAcceptedAt?.toISOString() ?? null,
   }
 }

@@ -109,9 +109,12 @@ function canonicalGrossAmount(input: string): string {
   return `${integer}.${cents}`
 }
 
-function parseVisitFeePolicyInput(input: unknown) {
+function parseVisitFeePolicyInput(input: unknown, now = new Date()) {
   const parsed = visitFeePolicySchema.safeParse(input)
   if (!parsed.success) governanceError(fieldErrors(parsed.error))
+  if (parsed.data.legalApprovedAt && parsed.data.legalApprovedAt.getTime() > now.getTime()) {
+    governanceError({ legalApprovedAt: 'Data zatwierdzenia prawnego nie może przypadać w przyszłości.' })
+  }
   return {
     grossAmount: canonicalGrossAmount(parsed.data.grossAmount),
     clauseText: parsed.data.clauseText,
@@ -176,8 +179,8 @@ async function activeOrderOrThrow(db: InstallationDb, orderId: string) {
   return order
 }
 
-async function assertLegalPolicy(policy: { legalApprovedAt: Date | null }) {
-  if (!policy.legalApprovedAt) {
+async function assertLegalPolicy(policy: { legalApprovedAt: Date | null }, now = new Date()) {
+  if (!policy.legalApprovedAt || !Number.isFinite(policy.legalApprovedAt.getTime()) || policy.legalApprovedAt.getTime() > now.getTime()) {
     governanceError({ visitFee: 'Nie można aktywować klauzuli bez zapisanej daty zatwierdzenia prawnego.' })
   }
 }
@@ -362,10 +365,10 @@ export async function requestInstallationVisitFeeOverride(db: PrismaClient, orde
 export async function approveInstallationVisitFeeOverride(db: PrismaClient, orderId: string, actorId: string) {
   return db.$transaction(async (tx) => {
     const current = await activeOrderOrThrow(tx, orderId)
-    if (current.visitFeeStatus !== 'PENDING_APPROVAL' || !current.visitFeeLegalApprovedAt || !current.visitFeeGrossAmount || !current.visitFeeClauseText || !current.visitFeeClauseVersion) {
+    const now = new Date()
+    if (current.visitFeeStatus !== 'PENDING_APPROVAL' || !current.visitFeeLegalApprovedAt || current.visitFeeLegalApprovedAt.getTime() > now.getTime() || !current.visitFeeGrossAmount || !current.visitFeeClauseText || !current.visitFeeClauseVersion) {
       governanceError({ visitFee: 'Nie ma oczekującej, kompletnej opłaty do zatwierdzenia.' })
     }
-    const now = new Date()
     const updated = await tx.installationOrder.update({
       where: { id: orderId },
       data: { visitFeeStatus: 'APPROVED', visitFeeApprovedById: actorId, visitFeeApprovedAt: now, visitFeeClientAcceptedAt: null, visitFeeClientIpHash: null, visitFeeClientUserAgent: null },
@@ -536,10 +539,12 @@ export type ClientVisitFeeCandidate = {
 }
 
 /** An unapproved legal clause is invisible and cannot change public submit requirements. */
-export function isClientVisitFeeActive(candidate: ClientVisitFeeCandidate): boolean {
+export function isClientVisitFeeActive(candidate: ClientVisitFeeCandidate, now = new Date()): boolean {
   return candidate.status === 'APPROVED' &&
     candidate.grossAmount !== null &&
     candidate.clauseText !== null && candidate.clauseText.trim() !== '' &&
     candidate.clauseVersion !== null &&
-    candidate.legalApprovedAt !== null
+    candidate.legalApprovedAt !== null &&
+    Number.isFinite(candidate.legalApprovedAt.getTime()) &&
+    candidate.legalApprovedAt.getTime() <= now.getTime()
 }

@@ -7,12 +7,13 @@ import {
   InstallationFormValidationError,
   InstallationVisitFeeAcceptanceConflictError,
 } from '@/lib/installations/form-service'
+import { InstallationClientIpConfigurationError, readTrustedClientIp } from '@/lib/installations/client-ip'
 
 type Params = { params: Promise<{ token: string }> }
 
 const bodySchema = z.object({
-  grossAmount: z.string().regex(/^\d+\.\d{2}$/),
-  clauseVersion: z.number().int().min(1),
+  accepted: z.literal(true),
+  snapshotDigest: z.string().regex(/^sha256:[a-f0-9]{64}$/),
 }).strict()
 const noStore = { 'Cache-Control': 'no-store' }
 
@@ -22,10 +23,9 @@ export async function POST(req: NextRequest, { params }: Params) {
   try {
     const parsed = bodySchema.safeParse(await req.json())
     if (!parsed.success) return NextResponse.json({ error: 'Potwierdź aktualną kwotę i wersję klauzuli.' }, { status: 400, headers: noStore })
-    const forwarded = req.headers.get('x-forwarded-for')?.split(',')[0]?.trim()
     await acceptClientVisitFee(prisma, token, {
       ...parsed.data,
-      clientIp: forwarded || req.headers.get('x-real-ip')?.trim() || undefined,
+      clientIp: readTrustedClientIp(req.headers),
       clientUserAgent: req.headers.get('user-agent')?.trim() || undefined,
     })
     return NextResponse.json(await loadPublicInstallationProjection(prisma, token), { headers: noStore })
@@ -33,6 +33,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     if (error instanceof InstallationClientLinkNotFoundError) return publicClientLinkNotFound()
     if (error instanceof InstallationVisitFeeAcceptanceConflictError) return NextResponse.json({ error: error.message }, { status: 409, headers: noStore })
     if (error instanceof InstallationFormValidationError) return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: 400, headers: noStore })
+    if (error instanceof InstallationClientIpConfigurationError) return NextResponse.json({ error: 'Nie udało się bezpiecznie odczytać metadanych połączenia.' }, { status: 400, headers: noStore })
     if (error instanceof SyntaxError) return NextResponse.json({ error: 'Potwierdź aktualną kwotę i wersję klauzuli.' }, { status: 400, headers: noStore })
     throw error
   }

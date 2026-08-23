@@ -33,6 +33,12 @@ export async function POST(req: NextRequest) {
   try {
     const parsed = policySchema.safeParse(await req.json())
     if (!parsed.success) return NextResponse.json({ error: 'Podaj kwotę i pełną treść wersji klauzuli.' }, { status: 400 })
+    if (parsed.data.legalApprovedAt) {
+      const legalApprovedAt = parsed.data.legalApprovedAt instanceof Date ? parsed.data.legalApprovedAt : new Date(parsed.data.legalApprovedAt)
+      if (!Number.isFinite(legalApprovedAt.getTime()) || legalApprovedAt.getTime() > Date.now()) {
+        return NextResponse.json({ error: 'Data zatwierdzenia prawnego nie może przypadać w przyszłości.' }, { status: 400 })
+      }
+    }
     const policy = await createInstallationVisitFeePolicy(prisma, { ...parsed.data, isDefault: true }, session.user.id)
     return NextResponse.json({ policy }, { status: 201 })
   } catch (error) {

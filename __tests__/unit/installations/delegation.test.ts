@@ -63,6 +63,13 @@ describe('installation governance rules', () => {
       clauseText: 'Treść sprawdzona prawnie.',
       clauseVersion: 2,
       legalApprovedAt: new Date('2026-08-01T00:00:00.000Z'),
-    })).toBe(true)
+    }, new Date('2026-08-23T00:00:00.000Z'))).toBe(true)
+    expect(isClientVisitFeeActive({
+      status: 'APPROVED',
+      grossAmount: '249.90',
+      clauseText: 'Treść z datą zatwierdzenia dopiero w przyszłości.',
+      clauseVersion: 3,
+      legalApprovedAt: new Date('2026-08-24T00:00:00.000Z'),
+    }, new Date('2026-08-23T00:00:00.000Z'))).toBe(false)
   })
 })

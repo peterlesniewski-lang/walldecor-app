@@ -1,8 +1,9 @@
-import { createHash } from 'node:crypto'
 import { Prisma, PrismaClient } from '@/generated/prisma'
 import { resolveActiveClientLink } from './client-link'
 import { validateInstallationQuestionDefinitions } from './question-schema'
 import { isClientVisitFeeActive } from './delegation-service'
+import { hashTrustedClientIp } from './client-ip'
+import { createVisitFeeSnapshotDigest } from './visit-fee-snapshot'
 
 export { getInstallationReadiness } from './readiness'
 
@@ -340,9 +341,10 @@ export async function autosaveClientForm(db: PrismaClient, token: string, input:
 }
 
 type SubmitMutation = Omit<ClientFormMutation, 'answers'> & {
-  visitFeeAccepted?: boolean
+  visitFeeAccepted?: true
+  visitFeeSnapshotDigest?: string
   /** Trusted request metadata supplied by the public route, never client JSON. */
-  clientIp?: string
+  clientIp?: string | null
   clientUserAgent?: string
 }
 
@@ -350,33 +352,45 @@ function visitFeeMoney(value: Prisma.Decimal | null) {
   return value?.toFixed(2) ?? null
 }
 
-function hashClientIp(value: string | undefined) {
-  // The public route passes the proxy/client address when available. We retain
-  // a deterministic marker hash rather than silently persisting the raw IP.
-  return createHash('sha256').update(value?.trim() || 'unavailable', 'utf8').digest('hex')
+function feeSnapshot(order: {
+  visitFeePolicyId: string | null
+  visitFeeStatus: string
+  visitFeeGrossAmount: Prisma.Decimal | null
+  visitFeeClauseText: string | null
+  visitFeeClauseVersion: number | null
+  visitFeeLegalApprovedAt: Date | null
+}) {
+  return {
+    policyId: order.visitFeePolicyId,
+    status: order.visitFeeStatus,
+    grossAmount: visitFeeMoney(order.visitFeeGrossAmount),
+    clauseText: order.visitFeeClauseText,
+    clauseVersion: order.visitFeeClauseVersion,
+    legalApprovedAt: order.visitFeeLegalApprovedAt,
+  }
 }
 
 type VisitFeeAcceptanceMutation = {
-  /** Must be the exact two-decimal amount displayed in the public projection. */
-  grossAmount: string
-  clauseVersion: number
+  accepted: true
+  /** Must be the exact opaque digest displayed in the public projection. */
+  snapshotDigest: string
   /** Trusted request metadata supplied only by the route handler. */
-  clientIp?: string
+  clientIp?: string | null
   clientUserAgent?: string
 }
 
 /**
  * Lets a client accept a fee selected after the form was already submitted.
  * It never touches answers or starts a correction. Repeating the same accepted
- * snapshot is idempotent; a changed amount/version is an explicit conflict.
+ * snapshot is idempotent; any changed legal-snapshot field is a conflict.
  */
 export async function acceptClientVisitFee(
   db: PrismaClient,
   token: string,
   input: VisitFeeAcceptanceMutation,
 ) {
-  if (!/^\d+\.\d{2}$/.test(input.grossAmount) || !Number.isInteger(input.clauseVersion) || input.clauseVersion < 1) {
-    throw new InstallationFormValidationError({ visitFeeAccepted: 'Potwierdź aktualną kwotę i wersję klauzuli.' })
+  if (input.accepted !== true || !/^sha256:[a-f0-9]{64}$/.test(input.snapshotDigest)) {
+    throw new InstallationFormValidationError({ visitFeeAccepted: 'Potwierdź aktualną informację o opłacie.' })
   }
   return db.$transaction(async (tx) => {
     const link = await resolveActiveClientLink(tx, token)
@@ -388,15 +402,9 @@ export async function acceptClientVisitFee(
     if (submittedCount === 0 || currentDraft > 0) {
       throw new InstallationFormValidationError({ visitFeeAccepted: 'Najpierw wyślij aktualną wersję formularza.' })
     }
-    const currentGrossAmount = visitFeeMoney(order.visitFeeGrossAmount)
-    const active = isClientVisitFeeActive({
-      status: order.visitFeeStatus,
-      grossAmount: currentGrossAmount,
-      clauseText: order.visitFeeClauseText,
-      clauseVersion: order.visitFeeClauseVersion,
-      legalApprovedAt: order.visitFeeLegalApprovedAt,
-    })
-    if (!active || currentGrossAmount !== input.grossAmount || order.visitFeeClauseVersion !== input.clauseVersion) {
+    const currentSnapshot = feeSnapshot(order)
+    const active = isClientVisitFeeActive(currentSnapshot)
+    if (!active || createVisitFeeSnapshotDigest(currentSnapshot) !== input.snapshotDigest) {
       throw new InstallationVisitFeeAcceptanceConflictError()
     }
     if (order.visitFeeClientAcceptedAt) return { acceptedAt: order.visitFeeClientAcceptedAt }
@@ -417,7 +425,7 @@ export async function acceptClientVisitFee(
       },
       data: {
         visitFeeClientAcceptedAt: acceptedAt,
-        visitFeeClientIpHash: hashClientIp(input.clientIp),
+        visitFeeClientIpHash: hashTrustedClientIp(input.clientIp ?? null),
         visitFeeClientUserAgent: input.clientUserAgent?.trim().slice(0, 1_000) || 'unknown',
       },
     })
@@ -429,7 +437,7 @@ export async function acceptClientVisitFee(
           action: 'INSTALLATION_VISIT_FEE_CLIENT_ACCEPTED',
           // Deliberately do not place the token, IP hash or user agent in the
           // audit payload; those are private request metadata, not history.
-          afterJson: JSON.stringify({ grossAmount: input.grossAmount, clauseVersion: input.clauseVersion, acceptedAt: acceptedAt.toISOString() }),
+          afterJson: JSON.stringify({ grossAmount: currentSnapshot.grossAmount, clauseVersion: currentSnapshot.clauseVersion, snapshotDigest: input.snapshotDigest, acceptedAt: acceptedAt.toISOString() }),
         },
       })
       return { acceptedAt }
@@ -439,15 +447,9 @@ export async function acceptClientVisitFee(
     // succeeded. It is idempotent only when it still addresses this exact
     // approved snapshot; a changed fee remains a 409 so the checkbox is reset.
     const latest = await tx.installationOrder.findUniqueOrThrow({ where: { id: link.orderId } })
-    const latestGrossAmount = visitFeeMoney(latest.visitFeeGrossAmount)
-    const latestIsActive = isClientVisitFeeActive({
-      status: latest.visitFeeStatus,
-      grossAmount: latestGrossAmount,
-      clauseText: latest.visitFeeClauseText,
-      clauseVersion: latest.visitFeeClauseVersion,
-      legalApprovedAt: latest.visitFeeLegalApprovedAt,
-    })
-    if (!latestIsActive || latestGrossAmount !== input.grossAmount || latest.visitFeeClauseVersion !== input.clauseVersion) {
+    const latestSnapshot = feeSnapshot(latest)
+    const latestIsActive = isClientVisitFeeActive(latestSnapshot)
+    if (!latestIsActive || createVisitFeeSnapshotDigest(latestSnapshot) !== input.snapshotDigest) {
       throw new InstallationVisitFeeAcceptanceConflictError()
     }
     if (latest.visitFeeClientAcceptedAt) return { acceptedAt: latest.visitFeeClientAcceptedAt }
@@ -461,25 +463,47 @@ async function requireAndRecordVisitFeeAcceptance(
   input: SubmitMutation,
 ) {
   const order = await tx.installationOrder.findUniqueOrThrow({ where: { id: orderId } })
-  const active = isClientVisitFeeActive({
-    status: order.visitFeeStatus,
-    grossAmount: visitFeeMoney(order.visitFeeGrossAmount),
-    clauseText: order.visitFeeClauseText,
-    clauseVersion: order.visitFeeClauseVersion,
-    legalApprovedAt: order.visitFeeLegalApprovedAt,
-  })
+  const currentSnapshot = feeSnapshot(order)
+  const active = isClientVisitFeeActive(currentSnapshot)
   if (!active || order.visitFeeClientAcceptedAt) return
-  if (input.visitFeeAccepted !== true) {
+  if (input.visitFeeAccepted !== true || !input.visitFeeSnapshotDigest) {
     throw new InstallationFormValidationError({
       visitFeeAccepted: 'Potwierdź zapoznanie się z kwotą opłaty za bezskuteczny podjazd.',
     })
   }
-  await tx.installationOrder.update({
-    where: { id: orderId },
+  if (createVisitFeeSnapshotDigest(currentSnapshot) !== input.visitFeeSnapshotDigest) {
+    throw new InstallationVisitFeeAcceptanceConflictError()
+  }
+  const acceptedAt = new Date()
+  const accepted = await tx.installationOrder.updateMany({
+    where: {
+      id: orderId,
+      visitFeeClientAcceptedAt: null,
+      visitFeeStatus: order.visitFeeStatus,
+      visitFeePolicyId: order.visitFeePolicyId,
+      visitFeeGrossAmount: order.visitFeeGrossAmount,
+      visitFeeClauseText: order.visitFeeClauseText,
+      visitFeeClauseVersion: order.visitFeeClauseVersion,
+      visitFeeLegalApprovedAt: order.visitFeeLegalApprovedAt,
+    },
     data: {
-      visitFeeClientAcceptedAt: new Date(),
-      visitFeeClientIpHash: hashClientIp(input.clientIp),
+      visitFeeClientAcceptedAt: acceptedAt,
+      visitFeeClientIpHash: hashTrustedClientIp(input.clientIp ?? null),
       visitFeeClientUserAgent: input.clientUserAgent?.trim().slice(0, 1_000) || 'unknown',
+    },
+  })
+  if (accepted.count !== 1) {
+    const latest = await tx.installationOrder.findUniqueOrThrow({ where: { id: orderId } })
+    const latestSnapshot = feeSnapshot(latest)
+    if (latest.visitFeeClientAcceptedAt && createVisitFeeSnapshotDigest(latestSnapshot) === input.visitFeeSnapshotDigest) return
+    throw new InstallationVisitFeeAcceptanceConflictError()
+  }
+  await tx.installationAuditEvent.create({
+    data: {
+      orderId,
+      actorId: 'PUBLIC_CLIENT',
+      action: 'INSTALLATION_VISIT_FEE_CLIENT_ACCEPTED',
+      afterJson: JSON.stringify({ grossAmount: currentSnapshot.grossAmount, clauseVersion: currentSnapshot.clauseVersion, snapshotDigest: input.visitFeeSnapshotDigest, acceptedAt: acceptedAt.toISOString() }),
     },
   })
 }

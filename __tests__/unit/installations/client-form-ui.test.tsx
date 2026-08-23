@@ -56,6 +56,7 @@ describe('client installation form', () => {
         grossAmount: '249.90',
         clauseText: 'Jeżeli rzeczywisty stan odbiega od formularza, może obowiązywać opłata za bezskuteczny podjazd.',
         clauseVersion: 3,
+        snapshotDigest: `sha256:${'3'.repeat(64)}`,
         clientAcceptedAt: null,
       },
     }
@@ -78,6 +79,7 @@ describe('client installation form', () => {
         grossAmount: '279.90',
         clauseText: 'Informacja o opłacie została wybrana po wcześniejszym wysłaniu formularza.',
         clauseVersion: 7,
+        snapshotDigest: `sha256:${'7'.repeat(64)}`,
         clientAcceptedAt: null,
       },
     }
@@ -94,7 +96,7 @@ describe('client installation form', () => {
     await user.click(screen.getByRole('button', { name: 'Potwierdź informację o opłacie' }))
 
     expect(fetchMock).toHaveBeenCalledWith('/api/public/installations/' + 'a'.repeat(43) + '/accept-visit-fee', expect.objectContaining({
-      method: 'POST', body: JSON.stringify({ grossAmount: '279.90', clauseVersion: 7 }),
+      method: 'POST', body: JSON.stringify({ accepted: true, snapshotDigest: `sha256:${'7'.repeat(64)}` }),
     }))
     expect(await screen.findByText(/Informację o opłacie potwierdzono/i)).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Zgłoś korektę' })).not.toBeNull()
@@ -106,11 +108,11 @@ describe('client installation form', () => {
       ...projection,
       submission: { status: 'SUBMITTED' as const, revisionNumber: 1, draftVersion: 1, submittedAt: '2026-08-23T12:00:00.000Z', answers: [{ questionKey: 'glify', value: 'NO', isUnknown: false }] },
       canStartCorrection: true,
-      visitFee: { grossAmount: '279.90', clauseText: 'Pierwotna wersja klauzuli.', clauseVersion: 7, clientAcceptedAt: null },
+      visitFee: { grossAmount: '279.90', clauseText: 'Pierwotna wersja klauzuli.', clauseVersion: 7, snapshotDigest: `sha256:${'7'.repeat(64)}`, clientAcceptedAt: null },
     }
     const changedFeeProjection = {
       ...initialFeeProjection,
-      visitFee: { grossAmount: '319.00', clauseText: 'Nowsza wersja klauzuli.', clauseVersion: 8, clientAcceptedAt: null },
+      visitFee: { grossAmount: '319.00', clauseText: 'Nowsza wersja klauzuli.', clauseVersion: 8, snapshotDigest: `sha256:${'8'.repeat(64)}`, clientAcceptedAt: null },
     }
     const fetchMock = vi.fn()
       .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Informacja zmieniła się.' }), { status: 409 }))
@@ -125,6 +127,87 @@ describe('client installation form', () => {
     expect((await screen.findAllByText(/319,00 zł brutto/i)).length).toBeGreaterThan(0)
     expect((screen.getByRole('checkbox', { name: /akceptuję informację o opłacie/i }) as HTMLInputElement).checked).toBe(false)
     expect((screen.getByRole('button', { name: 'Potwierdź informację o opłacie' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('requires a fresh checkbox when only clause text and the opaque digest changed', async () => {
+    const user = userEvent.setup()
+    const initialFeeProjection = {
+      ...projection,
+      submission: { status: 'SUBMITTED' as const, revisionNumber: 1, draftVersion: 1, submittedAt: '2026-08-23T12:00:00.000Z', answers: [{ questionKey: 'glify', value: 'NO', isUnknown: false }] },
+      canStartCorrection: true,
+      visitFee: { grossAmount: '279.90', clauseText: 'Pierwotna wersja klauzuli.', clauseVersion: 7, snapshotDigest: `sha256:${'a'.repeat(64)}`, clientAcceptedAt: null },
+    }
+    const changedFeeProjection = {
+      ...initialFeeProjection,
+      visitFee: { ...initialFeeProjection.visitFee, clauseText: 'Nowa treść przy tej samej kwocie i wersji.', snapshotDigest: `sha256:${'b'.repeat(64)}` },
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Informacja zmieniła się.' }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(changedFeeProjection), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={initialFeeProjection} />)
+
+    await user.click(screen.getByRole('checkbox', { name: /akceptuję informację o opłacie/i }))
+    await user.click(screen.getByRole('button', { name: 'Potwierdź informację o opłacie' }))
+
+    expect(await screen.findByText('Nowa treść przy tej samej kwocie i wersji.')).not.toBeNull()
+    expect((screen.getByRole('checkbox', { name: /akceptuję informację o opłacie/i }) as HTMLInputElement).checked).toBe(false)
+    expect((screen.getByRole('button', { name: 'Potwierdź informację o opłacie' }) as HTMLButtonElement).disabled).toBe(true)
+  })
+
+  it('resets the initial-submit checkbox after a stale same-amount clause digest conflict', async () => {
+    const readyProjection = {
+      ...projection,
+      submission: { status: 'DRAFT' as const, revisionNumber: 1, draftVersion: 0, submittedAt: null, answers: [{ questionKey: 'glify', value: 'UNKNOWN', isUnknown: true }] },
+      visitFee: { grossAmount: '249.90', clauseText: 'Treść widziana przed wysłaniem.', clauseVersion: 3, snapshotDigest: `sha256:${'c'.repeat(64)}`, clientAcceptedAt: null },
+    }
+    const refreshedProjection = {
+      ...readyProjection,
+      visitFee: { ...readyProjection.visitFee, clauseText: 'Treść zmieniona bez zmiany kwoty i wersji.', snapshotDigest: `sha256:${'d'.repeat(64)}` },
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Informacja o opłacie zmieniła się.' }), { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(refreshedProjection), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={readyProjection} />)
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /akceptuję informację o opłacie/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Wyślij formularz' }))
+    await act(async () => {})
+
+    expect(await screen.findByText('Treść zmieniona bez zmiany kwoty i wersji.')).not.toBeNull()
+    expect((screen.getByRole('checkbox', { name: /akceptuję informację o opłacie/i }) as HTMLInputElement).checked).toBe(false)
+    expect((screen.getByRole('button', { name: 'Wyślij formularz' }) as HTMLButtonElement).disabled).toBe(true)
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      visitFeeAccepted: true,
+      visitFeeSnapshotDigest: `sha256:${'c'.repeat(64)}`,
+    })
+  })
+
+  it('retries the exact initial-submit fee digest after a transport failure', async () => {
+    const readyProjection = {
+      ...projection,
+      submission: { status: 'DRAFT' as const, revisionNumber: 1, draftVersion: 0, submittedAt: null, answers: [{ questionKey: 'glify', value: 'UNKNOWN', isUnknown: true }] },
+      visitFee: { grossAmount: '249.90', clauseText: 'Treść zaakceptowana przed próbą wysłania.', clauseVersion: 3, snapshotDigest: `sha256:${'e'.repeat(64)}`, clientAcceptedAt: null },
+    }
+    const submitted = { ...readyProjection.submission, status: 'SUBMITTED' as const, submittedAt: '2026-08-23T12:00:00.000Z' }
+    const fetchMock = vi.fn()
+      .mockRejectedValueOnce(new Error('offline'))
+      .mockResolvedValueOnce(new Response(JSON.stringify(readyProjection), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(submitted), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={readyProjection} />)
+
+    fireEvent.click(screen.getByRole('checkbox', { name: /akceptuję informację o opłacie/i }))
+    fireEvent.click(screen.getByRole('button', { name: 'Wyślij formularz' }))
+    await act(async () => {})
+    fireEvent.click(screen.getByRole('button', { name: 'Wyślij formularz' }))
+    await act(async () => {})
+
+    const firstBody = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
+    const retryBody = JSON.parse(String(fetchMock.mock.calls[2][1]?.body))
+    expect(retryBody).toEqual(firstBody)
+    expect(firstBody).toMatchObject({ visitFeeAccepted: true, visitFeeSnapshotDigest: `sha256:${'e'.repeat(64)}` })
   })
 
   it('serializes rapid answer changes so an older delayed save cannot overwrite UNKNOWN', async () => {

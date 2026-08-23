@@ -38,4 +38,17 @@ describe('company visit-fee setting route', () => {
     mocks.session = { user: { id: 'employee-user', role: 'EMPLOYEE' } }
     expect((await GET()).status).toBe(403)
   })
+
+  it('rejects a legal approval date in the future before creating a policy', async () => {
+    const response = await POST(new NextRequest('http://test/api/settings/installation-visit-fee', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        grossAmount: '249.90',
+        clauseText: 'Pełny tekst klauzuli, którego zatwierdzenie nie może pochodzić z przyszłości.',
+        legalApprovedAt: '2099-01-01T00:00:00.000Z',
+      }),
+    }))
+
+    expect(response.status).toBe(400)
+    expect(mocks.create).not.toHaveBeenCalled()
+  })
 })

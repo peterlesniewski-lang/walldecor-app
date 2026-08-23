@@ -28,6 +28,7 @@ export type ClientFormProjection = {
     grossAmount: string
     clauseText: string
     clauseVersion: number
+    snapshotDigest: string
     clientAcceptedAt: string | null
   }
 }
@@ -64,7 +65,7 @@ type AutosaveAttempt = {
   answers: Record<string, PendingAnswerValue>
 }
 
-type SubmitAttempt = Omit<AutosaveAttempt, 'answers'> & { visitFeeAccepted?: boolean }
+type SubmitAttempt = Omit<AutosaveAttempt, 'answers'> & { visitFeeAccepted?: true; visitFeeSnapshotDigest?: string }
 
 function isEmptyAnswer(value: PendingAnswerValue) {
   return value === null || (Array.isArray(value) && value.length === 0)
@@ -109,12 +110,13 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
 
   useEffect(() => { answersRef.current = answers }, [answers])
   useEffect(() => { submissionRef.current = projection.submission }, [projection.submission])
-  // A 409 may refresh this screen with a different amount or clause version.
+  // A 409 may refresh this screen with any different legal snapshot field.
   // In that case the customer must explicitly tick the confirmation again;
   // only a persisted acceptance can carry state between fee snapshots.
   useEffect(() => { setVisitFeeAccepted(Boolean(projection.visitFee?.clientAcceptedAt)) }, [
     projection.visitFee?.grossAmount,
     projection.visitFee?.clauseVersion,
+    projection.visitFee?.snapshotDigest,
     projection.visitFee?.clientAcceptedAt,
   ])
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
@@ -241,7 +243,10 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
       revisionNumber: submission.revisionNumber,
       draftVersion: submission.draftVersion,
       clientMutationId: mutationId(),
-      ...(projection.visitFee && !projection.visitFee.clientAcceptedAt ? { visitFeeAccepted } : {}),
+      ...(projection.visitFee && !projection.visitFee.clientAcceptedAt && visitFeeAccepted ? {
+        visitFeeAccepted: true as const,
+        visitFeeSnapshotDigest: projection.visitFee.snapshotDigest,
+      } : {}),
     }
     submitAttemptRef.current = attempt
     setSubmitting(true); setError('')
@@ -306,7 +311,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
     try {
       const response = await fetch('/api/public/installations/' + encodeURIComponent(token) + '/accept-visit-fee', {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ grossAmount: fee.grossAmount, clauseVersion: fee.clauseVersion }),
+        body: JSON.stringify({ accepted: true, snapshotDigest: fee.snapshotDigest }),
       })
       if (!response.ok) {
         const data = await response.json().catch(() => null) as { error?: string } | null
