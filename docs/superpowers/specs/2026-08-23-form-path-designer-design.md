@@ -83,6 +83,73 @@ i `Nie wiem`, wyzerować próbę i wrócić do edycji bez utraty szkicu.
 Tryb pokazuje ostrzeżenie, jeśli nie istnieje żadna droga do pytania albo gdy
 szkic jest niepoprawny. Publikacja jest zablokowana do czasu usunięcia błędu.
 
+## Status formularza na liście kart montażu
+
+Każda karta na `/installations` pokazuje obok statusu zlecenia osobny, czytelny
+status formularza klienta. Status jest wyliczany z rzeczywistych danych linku,
+szkicu i wysłanej wersji, a nie utrzymywany ręcznie jako drugi niezależny stan.
+
+Kolejne stany formularza to:
+
+- `Brak formularza` — do zlecenia nie przypięto opublikowanego snapshotu;
+- `Do wysłania` — istnieje aktywny link, ale pracownik nie potwierdził wysłania;
+- `Wysłany · czeka na klienta` — wysłanie potwierdzono, ale klient nie rozpoczął
+  formularza;
+- `Rozpoczęty` — klient otworzył link i istnieje aktywny szkic albo zapisane
+  odpowiedzi;
+- `Wypełniony` — istnieje wysłana wersja odpowiedzi;
+- dodatkowa informacja `Wymaga ustalenia` — wysłana wersja utworzyła co najmniej
+  jedną otwartą kwestię blokującą.
+
+Stan `Wymaga ustalenia` nie zastępuje informacji `Wypełniony`; jest drugim
+sygnałem operacyjnym. Dzięki temu pracownik odróżnia brak formularza od
+formularza otrzymanego, ale wymagającego dalszej rozmowy.
+
+Status używa ikony i tekstu. Kolor jest tylko wsparciem: neutralny dla braku i
+gotowości do wysłania, bursztynowy dla oczekiwania lub pracy w toku, zielony dla
+wypełnienia oraz ochrowy/czerwony wyłącznie dla realnej blokady. Karta pozostaje
+jednym linkiem do szczegółów; znacznik nie tworzy osobnego martwego działania.
+
+### Ręczne potwierdzenie wysłania
+
+W pilotażu e-mail jest wysyłany poza aplikacją. Po wygenerowaniu linku panel
+klienta pokazuje przycisk `Oznacz jako wysłany`. Działanie zapisuje czas,
+identyfikator pracownika oraz zdarzenie audytowe. Samo wygenerowanie lub
+skopiowanie linku nie oznacza wysłania, ponieważ nie jest dowodem dostarczenia
+wiadomości do klienta.
+
+Późniejsza integracja Gmail/CRM ma ustawiać te same pola dopiero po potwierdzonym
+wysłaniu wiadomości. Nie będzie potrzebny drugi status ani migracja historii.
+
+## Czytelne odpowiedzi i podgląd klienta
+
+Sekcja `Wersje odpowiedzi klienta` nie pokazuje pracownikowi technicznych par
+`drzwi_ukryte: NO`. Każda odpowiedź jest łączona z definicją pytania z
+historycznego snapshotu użytego dla tej wersji i prezentowana jako:
+
+```text
+Czy na tapetowanej ścianie znajdują się drzwi ukryte?
+Nie
+
+Czy na tapetowanej ścianie znajdują się okna?
+Tak
+```
+
+Wartości systemowe są formatowane po polsku: `YES` jako `Tak`, `NO` jako `Nie`,
+`UNKNOWN` jako `Nie wiem`. Listy zachowują kolejność odpowiedzi, a wartości
+tekstowe, liczbowe i wymiarowe są wyświetlane bez technicznego kodowania.
+Pracownik nie widzi klucza pytania w podstawowym podglądzie.
+
+Nagłówek każdej wersji pokazuje numer, datę wysłania i stan. Działanie
+`Podgląd jak klient` otwiera na karcie montażu pełny widok tylko do odczytu,
+korzystający z tego samego renderera pytań i stylu co publiczny formularz.
+Podgląd nie ma autosave, przycisku wysłania ani możliwości modyfikacji danych.
+Można go zamknąć i wrócić dokładnie do miejsca na karcie montażu.
+
+Do podglądu i opisów zawsze używany jest snapshot właściwej wersji odpowiedzi,
+nie najnowszy szkic formularza. Zmiana etykiet w kolejnej wersji szablonu nie
+przepisuje historii klienta.
+
 ## Logika wielopoziomowa
 
 Każde pytanie ma najwyżej jeden bezpośredni warunek:
@@ -112,8 +179,14 @@ głębszego pytania przez nieaktualną wartość.
 
 ## Architektura i model danych
 
-Zmiana nie wymaga migracji bazy. Obecny zapis pytania oraz pojedynczego warunku
-`questionKey + equals` pozostaje źródłem prawdy.
+Projektant ścieżek nie wymaga migracji bazy. Obecny zapis pytania oraz
+pojedynczego warunku `questionKey + equals` pozostaje źródłem prawdy.
+
+Ręczne potwierdzenie wysłania wymaga addytywnych pól linku klienta `sentAt` i
+`sentById`. Istniejące linki otrzymują wartości puste i są traktowane jako
+`Do wysłania`, chyba że formularz został już rozpoczęty lub wysłany. Każda
+zmiana statusu ma jednoznaczne pierwszeństwo: wysłana wersja, aktywny szkic,
+potwierdzone wysłanie, aktywny link, brak formularza.
 
 Powstaje jeden współdzielony, czysty moduł widoczności, możliwy do użycia w
 przeglądarce i na serwerze. Odpowiada za:
@@ -135,6 +208,15 @@ elementy:
 - lokalny podgląd testowy;
 - istniejąca obsługa tworzenia szkicu, publikacji i kolejnej wersji.
 
+Renderer pojedynczego pytania klienta zostaje wydzielony tak, aby publiczny
+formularz, tryb testowy kreatora i wewnętrzny podgląd odpowiedzi używały tej
+samej prezentacji. Wersja wewnętrzna działa w trybie tylko do odczytu.
+
+Lista kart pobiera jedynie małą projekcję statusu formularza: obecność snapshotu,
+najnowszy aktywny link, stan bieżącego szkicu lub najnowszej wysłanej wersji i
+liczbę otwartych blokad. Nie ładuje pełnych odpowiedzi ani plików dla wszystkich
+zleceń.
+
 API nadal otrzymuje całą uporządkowaną listę pytań w szkicu. Przesunięcie
 pytania zmienia kolejność tylko wśród rodzeństwa mającego ten sam warunek.
 
@@ -149,6 +231,10 @@ pytania zmienia kolejność tylko wśród rodzeństwa mającego ten sam warunek.
   polsku;
 - publikacja niepoprawnego albo pustego szkicu pozostaje niedostępna;
 - opublikowane wersje i historyczne snapshoty zleceń nie są przepisywane.
+- `Oznacz jako wysłany` działa wyłącznie dla aktywnego, niewygasłego linku i
+  zapisuje idempotentnie pierwsze potwierdzenie;
+- wyświetlenie odpowiedzi bez pasującej definicji historycznej używa bezpiecznej
+  etykiety `Pytanie archiwalne`, ale zachowuje wartość do audytu.
 
 ## Wygląd i dostępność
 
@@ -184,6 +270,18 @@ ekranu. Na telefonie drzewo nie wymaga przewijania poziomego.
 11. Kreator działa z klawiatury i na wąskim ekranie bez poziomego przewijania.
 12. Testy jednostkowe, komponentowe, scenariusz przeglądarkowy i pełny build są
     zielone.
+13. Lista kart rozróżnia `Brak formularza`, `Do wysłania`, `Wysłany · czeka na
+    klienta`, `Rozpoczęty` i `Wypełniony` bez ładowania pełnych odpowiedzi.
+14. W pilotażu status `Wysłany` pojawia się dopiero po użyciu działania
+    `Oznacz jako wysłany`; zapis obejmuje czas, pracownika i audyt.
+15. Otwarty link lub autosave przełącza kartę na `Rozpoczęty`, a wysłanie
+    formularza na `Wypełniony`.
+16. Otwarta blokada jest widoczna jako dodatkowe `Wymaga ustalenia` obok statusu
+    `Wypełniony`.
+17. Historia odpowiedzi pokazuje pełne etykiety ze snapshotu oraz polskie
+    wartości `Tak`, `Nie` i `Nie wiem`, bez technicznych kluczy.
+18. `Podgląd jak klient` renderuje wybraną wersję tylko do odczytu w tym samym
+    układzie co formularz publiczny i nie zapisuje żadnych zmian.
 
 ## Poza zakresem
 
@@ -194,4 +292,6 @@ ekranu. Na telefonie drzewo nie wymaga przewijania poziomego.
 - obliczenia, punktacja i przekierowania;
 - import lub eksport formularzy Tally;
 - zmiana wyglądu publicznego formularza klienta poza poprawną widocznością
-  wielopoziomowych pytań.
+  wielopoziomowych pytań i współdzieleniem jego renderera z podglądem;
+- automatyczne wysyłanie wiadomości e-mail w pilotażu;
+- integracja Gmail/CRM, poza przygotowaniem zgodnego statusu `sentAt`.
