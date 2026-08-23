@@ -113,6 +113,41 @@ describe('Task 2 corrective UI invariants', () => {
     expect(screen.getByRole('heading', { name: 'Starszy szkic' })).toBeTruthy()
   })
 
+  it('keeps the real publish action disabled for a detached draft map', () => {
+    const detachedDraft = {
+      id: 'draft-detached', familyId: 'family-detached', name: 'Uszkodzony szkic', version: 1, status: 'DRAFT',
+      questionDefinitions: [
+        { id: 'question-root', key: 'okna', type: 'YES_NO_UNKNOWN', label: 'Czy są okna?', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: null, sortOrder: 0 },
+        { id: 'question-detached', key: 'glify', type: 'TEXT', label: 'Czy są glify?', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: JSON.stringify({ questionKey: 'brak', equals: 'YES' }), sortOrder: 1 },
+      ],
+    }
+    render(createElement(TemplateBuilder, { initialTemplates: [detachedDraft] } as never))
+
+    expect(screen.getByRole('button', { name: 'Opublikuj v1' })).toHaveProperty('disabled', true)
+  })
+
+  it('persists the complete reordered question list through the template lifecycle API', async () => {
+    const user = userEvent.setup()
+    const draft = {
+      id: 'draft-order', familyId: 'family-order', name: 'Szkic kolejności', version: 1, status: 'DRAFT',
+      questionDefinitions: [
+        { id: 'question-root', key: 'okna', type: 'YES_NO_UNKNOWN', label: 'Czy są okna?', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: null, sortOrder: 0 },
+        { id: 'question-first', key: 'pierwsze', type: 'TEXT', label: 'Pierwsze pytanie', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: JSON.stringify({ questionKey: 'okna', equals: 'YES' }), sortOrder: 1 },
+        { id: 'question-second', key: 'drugie', type: 'TEXT', label: 'Drugie pytanie', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: JSON.stringify({ questionKey: 'okna', equals: 'YES' }), sortOrder: 2 },
+      ],
+    }
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => draft })
+    vi.stubGlobal('fetch', fetchMock)
+    render(createElement(TemplateBuilder, { initialTemplates: [draft] } as never))
+
+    await user.click(screen.getByRole('button', { name: 'Góra: Drugie pytanie' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    expect(fetchMock).toHaveBeenCalledWith('/api/installations/templates/draft-order', expect.objectContaining({ method: 'PATCH' }))
+    const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)
+    expect(body.questions.map((question: { key: string }) => question.key)).toEqual(['okna', 'drugie', 'pierwsze'])
+  })
+
   it('renders the immutable collection snapshot beside historic product details', () => {
     const roomsWithCollection = [{
       id: 'room-collection', name: 'Salon kolekcji', sortOrder: 0, measurements: [], scopes: [{
