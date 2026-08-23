@@ -92,7 +92,8 @@ szkicu i wysłanej wersji, a nie utrzymywany ręcznie jako drugi niezależny sta
 Kolejne stany formularza to:
 
 - `Brak formularza` — do zlecenia nie przypięto opublikowanego snapshotu;
-- `Do wysłania` — istnieje aktywny link, ale pracownik nie potwierdził wysłania;
+- `Do wysłania` — formularz jest przypięty, ale nie ma aktywnego linku albo
+  pracownik nie potwierdził wysłania istniejącego linku;
 - `Wysłany · czeka na klienta` — wysłanie potwierdzono, ale klient nie rozpoczął
   formularza;
 - `Rozpoczęty` — klient otworzył link i istnieje aktywny szkic albo zapisane
@@ -184,7 +185,9 @@ pojedynczego warunku `questionKey + equals` pozostaje źródłem prawdy.
 
 Ręczne potwierdzenie wysłania wymaga addytywnych pól linku klienta `sentAt` i
 `sentById`. Istniejące linki otrzymują wartości puste i są traktowane jako
-`Do wysłania`, chyba że formularz został już rozpoczęty lub wysłany. Każda
+`Do wysłania`, chyba że formularz został już rozpoczęty lub wysłany. Brak,
+wygaśnięcie albo cofnięcie linku przy istniejącym snapshocie również daje
+`Do wysłania`, ponieważ następnym działaniem jest wygenerowanie nowego linku. Każda
 zmiana statusu ma jednoznaczne pierwszeństwo: wysłana wersja, aktywny szkic,
 potwierdzone wysłanie, aktywny link, brak formularza.
 
