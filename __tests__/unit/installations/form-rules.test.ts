@@ -22,6 +22,19 @@ describe('client installation form rules', () => {
       .toEqual(['glify', 'kolor', 'wykonczenie', 'zdjecie'])
   })
 
+  it('keeps a grandchild hidden when its direct parent has a stale answer behind a hidden ancestor', () => {
+    const recursiveQuestions = [
+      { key: 'okna', type: 'YES_NO_UNKNOWN', label: 'Czy są okna?', required: true },
+      { key: 'glify', type: 'YES_NO_UNKNOWN', label: 'Czy są glify?', required: true, condition: { questionKey: 'okna', equals: 'YES' } },
+      { key: 'glebokosc', type: 'DIMENSION', label: 'Jaka jest głębokość?', required: true, condition: { questionKey: 'glify', equals: 'YES' } },
+      { key: 'zdjecie-glifu', type: 'FILE', label: 'Dodaj zdjęcie glifu', required: true, condition: { questionKey: 'glify', equals: 'YES' } },
+    ] as const
+    const staleAnswers = { okna: 'NO', glify: 'YES', glebokosc: '12' }
+
+    expect(evaluateVisibleFormQuestions(recursiveQuestions, staleAnswers).map((question) => question.key)).toEqual(['okna'])
+    expect(validateVisibleSubmission(recursiveQuestions, staleAnswers)).toEqual([])
+  })
+
   it('accepts UNKNOWN as a deliberate answer and stores a typed normalized value', () => {
     expect(normalizeClientAnswer(questions[0], 'UNKNOWN')).toEqual({
       valueJson: JSON.stringify({ type: 'YES_NO_UNKNOWN', value: 'UNKNOWN' }),

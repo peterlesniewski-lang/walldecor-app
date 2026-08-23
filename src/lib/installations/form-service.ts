@@ -4,22 +4,20 @@ import { validateInstallationQuestionDefinitions } from './question-schema'
 import { isClientVisitFeeActive } from './delegation-service'
 import { hashTrustedClientIp } from './client-ip'
 import { createVisitFeeSnapshotDigest } from './visit-fee-snapshot'
+import {
+  evaluateVisibleFormQuestions,
+  type FormAnswerValue,
+  type FormQuestion,
+} from './form-visibility'
 
 export { getInstallationReadiness } from './readiness'
+export { evaluateVisibleFormQuestions } from './form-visibility'
 
 type InstallationDb = PrismaClient | Prisma.TransactionClient
 
-export type ClientFormQuestion = {
-  key: string
-  type: 'YES_NO_UNKNOWN' | 'NUMBER' | 'DIMENSION' | 'TEXT' | 'SINGLE' | 'MULTI' | 'FILE'
-  label: string
-  required?: boolean
-  riskLevel?: 'LOW' | 'MEDIUM' | 'HIGH'
-  options?: readonly string[]
-  condition?: { questionKey: string; equals: string }
-}
+export type ClientFormQuestion = FormQuestion
 
-export type ClientAnswerValue = string | string[]
+export type ClientAnswerValue = FormAnswerValue
 
 export type NormalizedClientAnswer = {
   valueJson: string
@@ -46,18 +44,6 @@ function canonicalDecimal(value: string): string | null {
 
 function invalid(question: ClientFormQuestion, message = 'Podaj poprawną odpowiedź.'): never {
   throw new InstallationFormValidationError({ [question.key]: message })
-}
-
-/** Evaluates the immutable question snapshot against the current draft values. */
-export function evaluateVisibleFormQuestions(
-  questions: readonly ClientFormQuestion[],
-  answers: Record<string, ClientAnswerValue | undefined>,
-): ClientFormQuestion[] {
-  return questions.filter((question) => {
-    if (!question.condition) return true
-    const controllingValue = answers[question.condition.questionKey]
-    return typeof controllingValue === 'string' && controllingValue === question.condition.equals
-  })
 }
 
 /**

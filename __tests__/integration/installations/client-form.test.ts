@@ -189,6 +189,60 @@ describe('client form uses a real SQLite revision history', () => {
     expect(originalAnswer).toEqual([{ normalizedValue: 'UNKNOWN' }])
   })
 
+  it('removes recursively hidden answers and does not require a hidden file on submit', async () => {
+    const backup = await db.employee.findFirstOrThrow({ where: { email: 'form.backup@example.test' } })
+    const recursiveOrder = await createInstallationOrder(db, {
+      client: { name: 'Rekurencyjny klient', email: 'recursive@example.test', phone: '+48 501 444 556' },
+      address: { street: 'Testowa', buildingNumber: '10', postalCode: '00-002', city: 'Warszawa' },
+      primaryEmployeeId: ownerId,
+      backupEmployeeId: backup.id,
+    }, 'form-admin')
+    const draft = await createInstallationFormTemplate(db, {
+      name: 'Formularz rekurencyjnej widoczności', actorId: 'form-admin', questions: [
+        { key: 'okna', type: 'YES_NO_UNKNOWN', label: 'Czy są okna?', required: true },
+        { key: 'glify', type: 'YES_NO_UNKNOWN', label: 'Czy są glify?', required: true, condition: { questionKey: 'okna', equals: 'YES' } },
+        { key: 'glebokosc', type: 'DIMENSION', label: 'Jaka jest głębokość?', required: true, condition: { questionKey: 'glify', equals: 'YES' } },
+        { key: 'zdjecie-glifu', type: 'FILE', label: 'Dodaj zdjęcie glifu', required: true, condition: { questionKey: 'glify', equals: 'YES' } },
+      ],
+    })
+    const template = await publishInstallationFormTemplate(db, draft.id, 'form-admin')
+    await createInstallationOrderFormSnapshot(db, { orderId: recursiveOrder.id, templateId: template.id }, 'form-admin')
+    const recursiveToken = (await createClientLink(db, {
+      orderId: recursiveOrder.id, createdById: 'form-admin', expiresAt: futureDate(),
+    })).token
+    const initial = await loadPublicInstallationProjection(db, recursiveToken)
+
+    const filled = await autosaveClientForm(db, recursiveToken, {
+      revisionNumber: initial.submission.revisionNumber,
+      draftVersion: initial.submission.draftVersion,
+      clientMutationId: 'recursive-fill-0001',
+      answers: [
+        { questionKey: 'okna', value: 'YES' },
+        { questionKey: 'glify', value: 'YES' },
+        { questionKey: 'glebokosc', value: '12' },
+      ],
+    })
+    const hidden = await autosaveClientForm(db, recursiveToken, {
+      revisionNumber: filled.revisionNumber,
+      draftVersion: filled.draftVersion,
+      clientMutationId: 'recursive-hide-0001',
+      answers: [{ questionKey: 'okna', value: 'NO' }],
+    })
+
+    expect(hidden.answers.map((answer) => answer.questionKey)).toEqual(['okna'])
+    const submission = await db.installationFormSubmission.findUniqueOrThrow({
+      where: { orderId_revisionNumber: { orderId: recursiveOrder.id, revisionNumber: 1 } },
+    })
+    expect(await db.installationAnswer.findMany({
+      where: { submissionId: submission.id }, orderBy: { questionKey: 'asc' }, select: { questionKey: true },
+    })).toEqual([{ questionKey: 'okna' }])
+    await expect(submitClientForm(db, recursiveToken, {
+      revisionNumber: hidden.revisionNumber,
+      draftVersion: hidden.draftVersion,
+      clientMutationId: 'recursive-submit-0001',
+    })).resolves.toMatchObject({ status: 'SUBMITTED' })
+  })
+
   it('deletes deliberately cleared optional answers of every supported input kind before submit', async () => {
     const correction = await startClientFormCorrection(db, linkToken)
     const filled = await autosaveClientForm(db, linkToken, {

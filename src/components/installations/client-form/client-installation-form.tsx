@@ -1,19 +1,12 @@
 'use client'
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
+import { evaluateVisibleFormQuestions, type FormAnswerValue, type FormQuestion } from '@/lib/installations/form-visibility'
 import styles from './client-installation-form.module.css'
 
-type AnswerValue = string | string[]
+type AnswerValue = FormAnswerValue
 type PendingAnswerValue = AnswerValue | null
-type Question = {
-  key: string
-  type: 'YES_NO_UNKNOWN' | 'NUMBER' | 'DIMENSION' | 'TEXT' | 'SINGLE' | 'MULTI' | 'FILE'
-  label: string
-  help?: string
-  required?: boolean
-  options?: string[]
-  condition?: { questionKey: string; equals: string }
-}
+type Question = FormQuestion
 type Submission = {
   status: 'DRAFT' | 'SUBMITTED'; revisionNumber: number; draftVersion: number; submittedAt: string | null
   answers: Array<{ questionKey: string; value: AnswerValue; isUnknown: boolean }>
@@ -35,10 +28,6 @@ export type ClientFormProjection = {
 
 function mapAnswers(submission: Submission): Record<string, AnswerValue> {
   return Object.fromEntries(submission.answers.map((answer) => [answer.questionKey, answer.value]))
-}
-
-function visibleQuestions(questions: Question[], answers: Record<string, AnswerValue>) {
-  return questions.filter((question) => !question.condition || answers[question.condition.questionKey] === question.condition.equals)
 }
 
 function questionGroups(questions: Question[]) {
@@ -104,7 +93,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
   const autosaveAttemptRef = useRef<AutosaveAttempt | null>(null)
   const submitAttemptRef = useRef<SubmitAttempt | null>(null)
   const correctionMutationIdRef = useRef<string | null>(null)
-  const visible = useMemo(() => visibleQuestions(projection.form.questions, answers), [projection.form.questions, answers])
+  const visible = useMemo(() => evaluateVisibleFormQuestions(projection.form.questions, answers), [projection.form.questions, answers])
   const groups = useMemo(() => questionGroups(visible), [visible])
   const unknownSelected = Object.entries(answers).some(([key, value]) => projection.form.questions.find((question) => question.key === key)?.type === 'YES_NO_UNKNOWN' && value === 'UNKNOWN')
 

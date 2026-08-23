@@ -40,6 +40,30 @@ describe('client installation form', () => {
     expect(screen.getByText(/Ustalimy przed montażem/)).not.toBeNull()
   })
 
+  it('hides a grandchild when an ancestor becomes NO despite its stale parent answer', async () => {
+    const user = userEvent.setup()
+    const recursiveProjection = {
+      ...projection,
+      form: {
+        ...projection.form,
+        questions: [
+          { key: 'okna', type: 'YES_NO_UNKNOWN' as const, label: 'Czy są okna?', required: true },
+          { key: 'glify', type: 'YES_NO_UNKNOWN' as const, label: 'Czy są glify?', required: true, condition: { questionKey: 'okna', equals: 'YES' } },
+          { key: 'glebokosc', type: 'DIMENSION' as const, label: 'Jaka jest głębokość glifu?', required: true, condition: { questionKey: 'glify', equals: 'YES' } },
+        ],
+      },
+    }
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={recursiveProjection} />)
+
+    await user.click(screen.getByRole('button', { name: 'Tak' }))
+    await user.click(screen.getAllByRole('button', { name: 'Tak' })[1])
+    expect(screen.getByLabelText(/Jaka jest głębokość glifu/)).not.toBeNull()
+
+    await user.click(screen.getAllByRole('button', { name: 'Nie' })[0])
+    expect(screen.queryByText('Czy są glify?')).toBeNull()
+    expect(screen.queryByLabelText(/Jaka jest głębokość glifu/)).toBeNull()
+  })
+
   it('renders an ordinary file picker and an optional QR handoff without making photos visually dominant', () => {
     render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={projection} />)
 
