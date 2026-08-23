@@ -5,8 +5,14 @@ export type QuestionPlacement = {
   equals: string | null
 }
 
-export type QuestionTreeNode<T extends FormQuestion> = {
+export type QuestionTreeNode<T extends FormQuestion = FormQuestion> = {
   question: T
+  branches: QuestionTreeBranch<T>[]
+}
+
+export type QuestionTreeBranch<T extends FormQuestion = FormQuestion> = {
+  value: string
+  label: string
   children: QuestionTreeNode<T>[]
 }
 
@@ -27,18 +33,6 @@ const yesNoUnknownChoices: readonly QuestionBranchChoice[] = [
   { value: 'NO', label: 'Nie' },
   { value: 'UNKNOWN', label: 'Nie wiem' },
 ]
-
-function placementOf(question: FormQuestion): QuestionPlacement {
-  return question.condition
-    ? { parentKey: question.condition.questionKey, equals: question.condition.equals }
-    : { parentKey: null, equals: null }
-}
-
-function hasSamePlacement(left: FormQuestion, right: FormQuestion): boolean {
-  const leftPlacement = placementOf(left)
-  const rightPlacement = placementOf(right)
-  return leftPlacement.parentKey === rightPlacement.parentKey && leftPlacement.equals === rightPlacement.equals
-}
 
 /** Values that may be used to create a visible conditional branch. */
 export function branchChoices(question: FormQuestion): QuestionBranchChoice[] {
@@ -65,7 +59,10 @@ export function buildQuestionForest<T extends FormQuestion>(questions: readonly 
     if (keyCounts.get(question.key) === 1) uniqueKeyIndexes.set(question.key, index)
   })
 
-  const nodes = questions.map((question) => ({ question, children: [] }) as QuestionTreeNode<T>)
+  const nodes = questions.map((question) => ({
+    question,
+    branches: branchChoices(question).map(({ value, label }) => ({ value, label, children: [] })),
+  }) as QuestionTreeNode<T>)
   const forest: QuestionTreeNode<T>[] = []
 
   questions.forEach((question, index) => {
@@ -76,7 +73,10 @@ export function buildQuestionForest<T extends FormQuestion>(questions: readonly 
 
     const parentIndex = uniqueKeyIndexes.get(question.condition.questionKey)
     if (parentIndex === undefined || parentIndex === index) return
-    nodes[parentIndex].children.push(nodes[index])
+
+    const branch = nodes[parentIndex].branches.find(({ value }) => value === question.condition?.equals)
+    if (!branch) return
+    branch.children.push(nodes[index])
   })
 
   const nodeIndexes = new WeakMap<object, number>()
@@ -107,8 +107,11 @@ export function flattenQuestionForest<T extends FormQuestion>(forest: readonly Q
     const sourceIndex = metadata?.nodeIndexes.get(node)
     if (sourceIndex !== undefined) visitedIndexes.add(sourceIndex)
 
-    for (let index = node.children.length - 1; index >= 0; index -= 1) {
-      stack.push(node.children[index])
+    for (let branchIndex = node.branches.length - 1; branchIndex >= 0; branchIndex -= 1) {
+      const children = node.branches[branchIndex].children
+      for (let index = children.length - 1; index >= 0; index -= 1) {
+        stack.push(children[index])
+      }
     }
   }
 
@@ -148,8 +151,11 @@ function findNodeLocation<T extends FormQuestion>(
 
     if (node.question.key === key) return { ...entry, node }
 
-    for (let index = node.children.length - 1; index >= 0; index -= 1) {
-      stack.push({ collection: node.children, index })
+    for (let branchIndex = node.branches.length - 1; branchIndex >= 0; branchIndex -= 1) {
+      const children = node.branches[branchIndex].children
+      for (let index = children.length - 1; index >= 0; index -= 1) {
+        stack.push({ collection: children, index })
+      }
     }
   }
 
@@ -168,18 +174,14 @@ export function moveQuestionWithinBranch<T extends FormQuestion>(
   const location = findNodeLocation(forest, key)
   if (!location) return flattenQuestionForest(forest)
 
-  const siblingLocations = location.collection
-    .map((node, index) => ({ node, index }))
-    .filter(({ node }) => hasSamePlacement(node.question, location.node.question))
-  const siblingIndex = siblingLocations.findIndex(({ node }) => node === location.node)
-  const destinationIndex = direction === 'UP' ? siblingIndex - 1 : siblingIndex + 1
-  const destination = siblingLocations[destinationIndex]
+  const destinationIndex = direction === 'UP' ? location.index - 1 : location.index + 1
+  const destination = location.collection[destinationIndex]
 
   if (!destination) return flattenQuestionForest(forest)
 
   const current = location.collection[location.index]
-  location.collection[location.index] = destination.node
-  location.collection[destination.index] = current
+  location.collection[location.index] = destination
+  location.collection[destinationIndex] = current
 
   return flattenQuestionForest(forest)
 }

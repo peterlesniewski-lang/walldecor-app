@@ -31,6 +31,34 @@ describe('installation question tree', () => {
     ])
   })
 
+  it('places children in explicit YES/NO/UNKNOWN and SINGLE branches', () => {
+    const branchedQuestions = [
+      ...questions,
+      { key: 'rolety', type: 'TEXT', label: 'Rolety', condition: { questionKey: 'okna', equals: 'NO' } },
+      { key: 'material', type: 'SINGLE', label: 'Materiał', options: ['Tapeta', 'Farba'] },
+      { key: 'klej', type: 'TEXT', label: 'Klej', condition: { questionKey: 'material', equals: 'Tapeta' } },
+    ] satisfies FormQuestion[]
+    const forest = buildQuestionForest(branchedQuestions)
+    const okna = forest[0].branches.find((branch) => branch.value === 'YES')?.children[0]
+    const material = forest.find((node) => node.question.key === 'material')
+
+    expect(okna?.branches.find((branch) => branch.value === 'YES')).toMatchObject({
+      value: 'YES',
+      label: 'Tak',
+      children: [{ question: { key: 'glify' } }],
+    })
+    expect(okna?.branches.find((branch) => branch.value === 'NO')).toMatchObject({
+      value: 'NO',
+      label: 'Nie',
+      children: [{ question: { key: 'rolety' } }],
+    })
+    expect(material?.branches.find((branch) => branch.value === 'Tapeta')).toMatchObject({
+      value: 'Tapeta',
+      label: 'Tapeta',
+      children: [{ question: { key: 'klej' } }],
+    })
+  })
+
   it('moves a root and its whole subtree only among root siblings', () => {
     expect(keys(moveQuestionWithinBranch(questions, 'pokoj-b', 'UP'))).toEqual([
       'pokoj-b',
@@ -110,6 +138,24 @@ describe('installation question tree', () => {
       'pokoj-a',
       'pokoj-b',
       'osierocone',
+    ])
+  })
+
+  it('keeps children with a non-branch parent or unknown branch value unreachable', () => {
+    const malformedPlacement = [
+      { key: 'tekst', type: 'TEXT', label: 'Tekst' },
+      { key: 'invalid-parent', type: 'TEXT', label: 'Invalid parent', condition: { questionKey: 'tekst', equals: 'YES' } },
+      { key: 'wybor', type: 'YES_NO_UNKNOWN', label: 'Wybór' },
+      { key: 'invalid-value', type: 'TEXT', label: 'Invalid value', condition: { questionKey: 'wybor', equals: 'MAYBE' } },
+      { key: 'root', type: 'TEXT', label: 'Root' },
+    ] satisfies FormQuestion[]
+
+    expect(keys(flattenQuestionForest(buildQuestionForest(malformedPlacement)))).toEqual([
+      'tekst',
+      'wybor',
+      'root',
+      'invalid-parent',
+      'invalid-value',
     ])
   })
 
