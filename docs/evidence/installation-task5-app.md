@@ -59,3 +59,12 @@ E2E używa jawnego `INSTALLATION_MEDIA_TEST_ADAPTER=filesystem` wyłącznie poza
 - targeted Task 5: **8 plików / 51 testów**, green; pełny `npm test`: **90 plików / 523 testy**, green;
 - `npm run build`: green; pełny Playwright: **10/10 green** (49,5 s);
 - `npm run validate:installation-media`: green, `restart=verified`, SHA-256 `0698f85f451be29efe982f6c5b3404ef75e0c894f569758dd2ad152f559f3816`.
+
+## Korekta addytywnego łańcucha migracji — 2026-08-23
+
+- `20260823060000_installation_remote_delete_lifecycle/migration.sql` przywrócono byte-for-byte do wersji możliwej do wcześniejszego zastosowania; SHA-256 pliku i historycznego wpisu Prisma wynosi `4c6a561d580d306a10773121e9c5e610fe3428a8bb8699ee6132aa8738248f1e`;
+- trigger wiążący soft-delete z trwałym stanem zdalnego czyszczenia jest instalowany wyłącznie przez nową, addytywną migrację `20260823070000_installation_soft_delete_remote_guard`;
+- rzeczywisty test upgrade najpierw uruchamia `prisma migrate deploy` na osobnym katalogu migracji zatrzymanym dokładnie na historycznym checksumie `60000`, zapisuje plik `READY`, a następnie dwukrotnie uruchamia deploy bieżącego łańcucha. Wynik: 33 zakończone i nierollbackowane migracje, niezmieniony checksum `60000`, aktywny guard, odrzucony bezpośredni SQL bypass i `PRAGMA integrity_check=ok`;
+- świeży pełny łańcuch 33 migracji: green; targeted migracje/media/governance: **3 pliki / 26 testów**, green;
+- pełny `npm test`: **90 plików / 524 testy**, green; `npm run build`: green; pełny Playwright: **10/10 green** (49,2 s);
+- `npm run validate:installation-media`: green, `restart=verified`, SHA-256 `0698f85f451be29efe982f6c5b3404ef75e0c894f569758dd2ad152f559f3816`.

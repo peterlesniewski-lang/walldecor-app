@@ -1,4 +1,5 @@
-import { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { createHash } from 'node:crypto'
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'node:fs'
 import { spawnSync } from 'node:child_process'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
@@ -11,6 +12,11 @@ const databasePath = path.join(databaseDirectory, 'legacy-upgrade.db')
 const databaseUrl = `file:${databasePath}`
 const freshDatabasePath = path.join(databaseDirectory, 'fresh-full-chain.db')
 const freshDatabaseUrl = `file:${freshDatabasePath}`
+const remoteDeleteUpgradeDatabasePath = path.join(databaseDirectory, 'remote-delete-checksum-upgrade.db')
+const remoteDeleteUpgradeDatabaseUrl = `file:${remoteDeleteUpgradeDatabasePath}`
+const remoteDeleteMigration = '20260823060000_installation_remote_delete_lifecycle'
+const remoteDeleteGuardMigration = '20260823070000_installation_soft_delete_remote_guard'
+const remoteDeleteMigrationChecksum = '4c6a561d580d306a10773121e9c5e610fe3428a8bb8699ee6132aa8738248f1e'
 
 function runMigrate(databaseUrlValue: string, schemaPath?: string) {
   const args = [path.join(workspace, 'node_modules/prisma/build/index.js'), 'migrate', 'deploy']
@@ -29,6 +35,28 @@ function createTwentyMigrationPrismaDirectory() {
     const source = path.join(workspace, 'prisma', 'migrations', migration)
     if (existsSync(path.join(source, 'migration.sql'))) cpSync(source, path.join(migrations, migration), { recursive: true })
   }
+  return path.join(root, 'schema.prisma')
+}
+
+function createRemoteDeleteChecksumPrismaDirectory() {
+  const root = path.join(databaseDirectory, 'remote-delete-checksum-prisma')
+  const migrations = path.join(root, 'migrations')
+  mkdirSync(migrations, { recursive: true })
+  cpSync(path.join(workspace, 'prisma', 'schema.prisma'), path.join(root, 'schema.prisma'))
+  cpSync(path.join(workspace, 'prisma', 'migrations', 'migration_lock.toml'), path.join(migrations, 'migration_lock.toml'))
+  for (const migration of readdirSync(path.join(workspace, 'prisma', 'migrations')).sort().filter((name) => name <= remoteDeleteMigration)) {
+    const source = path.join(workspace, 'prisma', 'migrations', migration)
+    if (existsSync(path.join(source, 'migration.sql'))) cpSync(source, path.join(migrations, migration), { recursive: true })
+  }
+
+  const migrationPath = path.join(migrations, remoteDeleteMigration, 'migration.sql')
+  const historicalSql = readFileSync(migrationPath, 'utf8').replace(
+    /\n-- Initial visibility revocation[\s\S]*?END;\n\nDROP TRIGGER "InstallationFileAuditEvent_insert_guard";/,
+    '\nDROP TRIGGER "InstallationFileAuditEvent_insert_guard";',
+  )
+  const historicalChecksum = createHash('sha256').update(historicalSql).digest('hex')
+  if (historicalChecksum !== remoteDeleteMigrationChecksum) throw new Error(`Historical Task 5 migration fixture drifted: ${historicalChecksum}`)
+  writeFileSync(migrationPath, historicalSql)
   return path.join(root, 'schema.prisma')
 }
 
@@ -122,6 +150,53 @@ describe('installation catalog hierarchy migration upgrade', () => {
     await db.$disconnect()
   })
 
+  it('upgrades a database carrying the original 60000 checksum through an additive soft-delete guard migration', async () => {
+    runMigrate(remoteDeleteUpgradeDatabaseUrl, createRemoteDeleteChecksumPrismaDirectory())
+    let db = new PrismaClient({ datasources: { db: { url: remoteDeleteUpgradeDatabaseUrl } } })
+    const historicalMigration = await db.$queryRawUnsafe<Array<{ checksum: string }>>(
+      'SELECT checksum FROM _prisma_migrations WHERE migration_name = ?', remoteDeleteMigration,
+    )
+    expect(historicalMigration).toEqual([{ checksum: remoteDeleteMigrationChecksum }])
+
+    await db.costCenter.create({ data: { id: 'RDU', name: 'Remote delete upgrade' } })
+    const [primary, backup] = await Promise.all([
+      db.employee.create({ data: { id: 'remote-delete-upgrade-primary', firstName: 'Anna', lastName: 'Upgrade', email: 'remote-delete-upgrade-primary@example.test', position: 'Koordynatorka', costCenterId: 'RDU', startDate: new Date('2026-01-01'), active: true } }),
+      db.employee.create({ data: { id: 'remote-delete-upgrade-backup', firstName: 'Bartek', lastName: 'Upgrade', email: 'remote-delete-upgrade-backup@example.test', position: 'Koordynator', costCenterId: 'RDU', startDate: new Date('2026-01-01'), active: true } }),
+    ])
+    const client = await db.installationClient.create({ data: { id: 'remote-delete-upgrade-client', name: 'Klient upgrade', email: 'remote-delete-upgrade-client@example.test', phone: '+48 500 700 800' } })
+    const order = await db.installationOrder.create({ data: {
+      id: 'remote-delete-upgrade-order', number: 'RDU-001', clientId: client.id,
+      addressStreet: 'Migracyjna', addressBuildingNumber: '7', addressPostalCode: '00-007', addressCity: 'Warszawa',
+      primaryEmployeeId: primary.id, backupEmployeeId: backup.id,
+    } })
+    const file = await db.installationFile.create({ data: {
+      id: 'remote-delete-upgrade-file', orderId: order.id, purpose: 'INTERNAL_PROJECT', originalFilename: 'upgrade.pdf',
+      contentType: 'application/pdf', status: 'PENDING', source: 'INTERNAL', createdById: primary.id,
+    } })
+    await db.installationFile.update({ where: { id: file.id }, data: { status: 'READY', byteSize: 4, sha256: 'a'.repeat(64) } })
+    await db.$disconnect()
+
+    runMigrate(remoteDeleteUpgradeDatabaseUrl)
+    runMigrate(remoteDeleteUpgradeDatabaseUrl)
+    db = new PrismaClient({ datasources: { db: { url: remoteDeleteUpgradeDatabaseUrl } } })
+    const [migrations, checksum, integrity] = await Promise.all([
+      db.$queryRawUnsafe<Array<{ migration_name: string; finished_at: Date | null; rolled_back_at: Date | null }>>('SELECT migration_name, finished_at, rolled_back_at FROM _prisma_migrations ORDER BY migration_name'),
+      db.$queryRawUnsafe<Array<{ checksum: string }>>('SELECT checksum FROM _prisma_migrations WHERE migration_name = ?', remoteDeleteMigration),
+      db.$queryRawUnsafe<Array<{ integrity_check: string }>>('PRAGMA integrity_check'),
+    ])
+    expect(migrations).toHaveLength(33)
+    expect(migrations.every((migration) => migration.finished_at !== null && migration.rolled_back_at === null)).toBe(true)
+    expect(migrations.at(-1)).toMatchObject({ migration_name: remoteDeleteGuardMigration, finished_at: expect.anything(), rolled_back_at: null })
+    expect(checksum).toEqual([{ checksum: remoteDeleteMigrationChecksum }])
+    await expect(db.$executeRawUnsafe(
+      'UPDATE "InstallationFile" SET "softDeletedAt"=?, "softDeletedById"=? WHERE "id"=?',
+      new Date(), primary.id, file.id,
+    )).rejects.toBeTruthy()
+    await expect(db.installationFile.findUniqueOrThrow({ where: { id: file.id } })).resolves.toMatchObject({ softDeletedAt: null, remoteDeleteStatus: 'NOT_REQUESTED' })
+    expect(integrity).toEqual([{ integrity_check: 'ok' }])
+    await db.$disconnect()
+  })
+
   it('applies the complete fresh chain, including client-form and governance migrations, with healthy SQLite integrity', async () => {
     runMigrate(freshDatabaseUrl)
     const db = new PrismaClient({ datasources: { db: { url: freshDatabaseUrl } } })
@@ -135,7 +210,7 @@ describe('installation catalog hierarchy migration upgrade', () => {
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND (name LIKE 'InstallationFile_remote_delete_%' OR name = 'InstallationFile_soft_delete_remote_state_guard') ORDER BY name"),
       db.$queryRawUnsafe('PRAGMA foreign_key_check'), db.$queryRawUnsafe<Array<{ integrity_check: string }>>('PRAGMA integrity_check'),
     ])
-    expect(migrations).toHaveLength(32)
+    expect(migrations).toHaveLength(33)
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030000_installation_client_form')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030100_installation_submitted_answer_insert_guard')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030200_installation_submitted_revision_guard')
@@ -146,6 +221,7 @@ describe('installation catalog hierarchy migration upgrade', () => {
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260823040000_installation_private_media')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260823050000_mobile_handoff_retry_release')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260823060000_installation_remote_delete_lifecycle')
+    expect(migrations.map((migration) => migration.migration_name)).toContain('20260823070000_installation_soft_delete_remote_guard')
     expect(triggers).toHaveLength(6)
     expect(clientFormTriggers).toEqual([
       { name: 'InstallationAnswer_submitted_delete_guard' },

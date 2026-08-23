@@ -47,7 +47,8 @@ const acceptanceIntegrityMigration = '20260823030000_installation_fee_acceptance
 const privateMediaMigration = '20260823040000_installation_private_media'
 const mobileHandoffRetryMigration = '20260823050000_mobile_handoff_retry_release'
 const remoteDeleteLifecycleMigration = '20260823060000_installation_remote_delete_lifecycle'
-const hardeningMigrations = new Set([durabilityMigration, acceptanceIntegrityMigration, privateMediaMigration, mobileHandoffRetryMigration, remoteDeleteLifecycleMigration])
+const softDeleteRemoteGuardMigration = '20260823070000_installation_soft_delete_remote_guard'
+const hardeningMigrations = new Set([durabilityMigration, acceptanceIntegrityMigration, privateMediaMigration, mobileHandoffRetryMigration, remoteDeleteLifecycleMigration, softDeleteRemoteGuardMigration])
 const dayMs = 24 * 60 * 60 * 1000
 
 function futureDate(days = 30) {
