@@ -146,6 +146,7 @@ describe('Task 2 corrective UI invariants', () => {
     expect(fetchMock).toHaveBeenCalledWith('/api/installations/templates/draft-order', expect.objectContaining({ method: 'PATCH' }))
     const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)
     expect(body.questions.map((question: { key: string }) => question.key)).toEqual(['okna', 'drugie', 'pierwsze'])
+    expect(screen.getByRole('button', { name: 'Opublikuj v1' })).toHaveProperty('disabled', false)
   })
 
   it('keeps publish unavailable after a rejected local PATCH while the recoverable draft remains visible', async () => {
@@ -204,6 +205,39 @@ describe('Task 2 corrective UI invariants', () => {
     await user.selectOptions(picker, draftB.id)
     expect(screen.queryByText('Tak zobaczy to klient')).toBeNull()
     expect(screen.getByText('Pytanie B')).toBeTruthy()
+  })
+
+  it('keeps publish disabled while a pending PATCH survives an A-B-A draft switch', async () => {
+    const user = userEvent.setup()
+    const draftA = {
+      id: 'draft-race-a', familyId: 'family-race-a', name: 'Szkic wyścigu A', version: 1, status: 'DRAFT',
+      questionDefinitions: [{ id: 'question-a', key: 'a', type: 'YES_NO_UNKNOWN', label: 'Pytanie A', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: null, sortOrder: 0 }],
+    }
+    const draftB = {
+      id: 'draft-race-b', familyId: 'family-race-b', name: 'Szkic wyścigu B', version: 1, status: 'DRAFT',
+      questionDefinitions: [{ id: 'question-b', key: 'b', type: 'YES_NO_UNKNOWN', label: 'Pytanie B', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: null, sortOrder: 0 }],
+    }
+    const pendingPatch = new Promise<{ ok: boolean; json: () => Promise<typeof draftA> }>(() => {})
+    const fetchMock = vi.fn((path: string) => {
+      if (path === '/api/installations/templates/draft-race-a') return pendingPatch
+      return Promise.resolve({ ok: true, json: async () => draftA })
+    })
+    vi.stubGlobal('fetch', fetchMock)
+    render(createElement(TemplateBuilder, { initialTemplates: [draftA, draftB] } as never))
+    const picker = screen.getByLabelText('Wybierz szkic do edycji')
+
+    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak' }))
+    await user.type(screen.getByLabelText('Treść pytania'), 'Zmiana w toku')
+    await user.click(screen.getByRole('button', { name: 'Zapisz pytanie' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    await user.selectOptions(picker, draftB.id)
+    await user.selectOptions(picker, draftA.id)
+
+    const publish = screen.getByRole('button', { name: 'Opublikuj v1' })
+    expect(publish).toHaveProperty('disabled', true)
+    await user.click(publish)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
   })
 
   it('renders the immutable collection snapshot beside historic product details', () => {
