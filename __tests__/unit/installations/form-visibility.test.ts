@@ -34,4 +34,17 @@ describe('form visibility', () => {
       glebokosc: '12',
     })).toEqual({ okna: 'NO' })
   })
+
+  it('fails closed when a condition refers to a missing parent', () => {
+    expect(evaluateVisibleFormQuestions([
+      { key: 'glebokosc', type: 'DIMENSION', label: 'Jaka jest głębokość?', condition: { questionKey: 'brak', equals: 'YES' } },
+    ], { brak: 'YES' })).toEqual([])
+  })
+
+  it('fails closed when conditions form a cycle', () => {
+    expect(evaluateVisibleFormQuestions([
+      { key: 'okna', type: 'YES_NO_UNKNOWN', label: 'Czy są okna?', condition: { questionKey: 'glify', equals: 'YES' } },
+      { key: 'glify', type: 'YES_NO_UNKNOWN', label: 'Czy są glify?', condition: { questionKey: 'okna', equals: 'YES' } },
+    ], { okna: 'YES', glify: 'YES' })).toEqual([])
+  })
 })

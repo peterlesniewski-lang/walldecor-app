@@ -154,6 +154,14 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
     const loop = (async () => {
       while (Object.keys(pendingRef.current).length > 0 || autosaveAttemptRef.current) {
         if (!autosaveAttemptRef.current) {
+          const visibleKeys = new Set(evaluateVisibleFormQuestions(
+            projection.form.questions,
+            answersRef.current,
+          ).map((question) => question.key))
+          for (const questionKey of Object.keys(pendingRef.current)) {
+            if (!visibleKeys.has(questionKey)) delete pendingRef.current[questionKey]
+          }
+          if (Object.keys(pendingRef.current).length === 0) continue
           const submission = submissionRef.current
           if (submission.status !== 'DRAFT') return false
           autosaveAttemptRef.current = {

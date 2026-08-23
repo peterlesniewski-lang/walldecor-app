@@ -64,6 +64,48 @@ describe('client installation form', () => {
     expect(screen.queryByLabelText(/Jaka jest głębokość glifu/)).toBeNull()
   })
 
+  it('autosaves only the ancestor when a pending grandchild becomes hidden before debounce', async () => {
+    vi.useFakeTimers()
+    const recursiveProjection = {
+      ...projection,
+      form: {
+        ...projection.form,
+        questions: [
+          { key: 'okna', type: 'YES_NO_UNKNOWN' as const, label: 'Czy są okna?', required: true },
+          { key: 'glify', type: 'YES_NO_UNKNOWN' as const, label: 'Czy są glify?', required: true, condition: { questionKey: 'okna', equals: 'YES' } },
+          { key: 'glebokosc', type: 'DIMENSION' as const, label: 'Jaka jest głębokość glifu?', required: true, condition: { questionKey: 'glify', equals: 'YES' } },
+        ],
+      },
+      submission: {
+        status: 'DRAFT' as const, revisionNumber: 1, draftVersion: 0, submittedAt: null,
+        answers: [
+          { questionKey: 'okna', value: 'YES', isUnknown: false },
+          { questionKey: 'glify', value: 'YES', isUnknown: false },
+          { questionKey: 'glebokosc', value: '10', isUnknown: false },
+        ],
+      },
+    }
+    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({
+      status: 'DRAFT', revisionNumber: 1, draftVersion: 1, submittedAt: null,
+      answers: [{ questionKey: 'okna', value: 'NO', isUnknown: false }],
+    }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={recursiveProjection} />)
+
+    fireEvent.change(screen.getByLabelText(/Jaka jest głębokość glifu/), { target: { value: '12' } })
+    fireEvent.click(screen.getAllByRole('button', { name: 'Nie' })[0])
+    act(() => { vi.advanceTimersByTime(550) })
+    await act(async () => {})
+
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({
+      answers: [{ questionKey: 'okna', value: 'NO' }],
+    })
+    expect(screen.queryByText('Czy są glify?')).toBeNull()
+    expect(screen.queryByLabelText(/Jaka jest głębokość glifu/)).toBeNull()
+    expect(screen.getByRole('status').textContent).toContain('Wszystko zapisane')
+  })
+
   it('renders an ordinary file picker and an optional QR handoff without making photos visually dominant', () => {
     render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={projection} />)
 
