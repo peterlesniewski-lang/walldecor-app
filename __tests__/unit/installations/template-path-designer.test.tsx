@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -78,6 +79,25 @@ describe('TemplatePathDesigner', () => {
     expect(moved.find((question) => question.key === 'glify')?.condition).toEqual({ questionKey: 'okna', equals: 'YES' })
   })
 
+  it('keeps keyboard focus on a uniquely keyed card control through sequential sibling moves', async () => {
+    const user = userEvent.setup()
+    const first: FormQuestion = { key: 'pierwsze', type: 'TEXT', label: 'Pierwsze pytanie' }
+    const second: FormQuestion = { key: 'drugie', type: 'TEXT', label: 'Drugie pytanie' }
+    const third: FormQuestion = { key: 'trzecie', type: 'TEXT', label: 'Trzecie pytanie' }
+    const onPersist = vi.fn().mockResolvedValue(undefined)
+    renderDesigner([first, second, third], onPersist)
+
+    const moveDown = screen.getByRole('button', { name: 'Dół: Pierwsze pytanie' })
+    moveDown.focus()
+    await user.keyboard('{Enter}')
+    await vi.waitFor(() => expect(onPersist).toHaveBeenCalledTimes(1))
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Dół: Pierwsze pytanie' }))
+    await user.keyboard('{Enter}')
+    await vi.waitFor(() => expect(onPersist).toHaveBeenCalledTimes(2))
+    expect(onPersist.mock.calls[1]?.[0].map((question: FormQuestion) => question.key)).toEqual(['drugie', 'trzecie', 'pierwsze'])
+    expect(screen.getByRole('button', { name: 'Dół: Pierwsze pytanie' })).toHaveProperty('disabled', true)
+  })
+
   it('edits a label without renaming its internal key', async () => {
     const user = userEvent.setup()
     const onPersist = vi.fn().mockResolvedValue(undefined)
@@ -114,7 +134,43 @@ describe('TemplatePathDesigner', () => {
     await user.click(screen.getByRole('button', { name: 'Potwierdź usunięcie pytania Czy są okna?' }))
     await vi.waitFor(() => expect(onPersist).toHaveBeenCalledTimes(1))
     expect(onPersist.mock.calls[0]?.[0]).toEqual([])
-    expect(document.activeElement).toBe(screen.getByRole('button', { name: '+ Dodaj pierwsze pytanie' }))
+    await vi.waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: '+ Dodaj pierwsze pytanie' })))
+  })
+
+  it('waits for deferred persistence to become idle before focusing the post-delete map action', async () => {
+    const user = userEvent.setup()
+    let resolvePersist: (() => void) | undefined
+    let setBusyFromTest: ((busy: boolean) => void) | null = null
+    const pendingPersist = new Promise<void>((resolve) => { resolvePersist = resolve })
+    const onPersist = vi.fn(() => {
+      setBusyFromTest?.(true)
+      return pendingPersist
+    })
+    const questions = [root]
+    function BusyDeleteHarness() {
+      const [busy, setBusy] = useState(false)
+      useEffect(() => {
+        setBusyFromTest = setBusy
+      }, [setBusy])
+      return <TemplatePathDesigner questions={questions} busy={busy} onPersist={onPersist} />
+    }
+    render(<BusyDeleteHarness />)
+
+    await user.click(screen.getByRole('button', { name: 'Usuń pytanie Czy są okna?' }))
+    await user.click(screen.getByRole('button', { name: 'Potwierdź usunięcie pytania Czy są okna?' }))
+    await vi.waitFor(() => expect(screen.getByRole('button', { name: '+ Dodaj pierwsze pytanie' })).toHaveProperty('disabled', true))
+
+    await act(async () => {
+      resolvePersist?.()
+      await Promise.resolve()
+    })
+    expect(screen.getByRole('button', { name: '+ Dodaj pierwsze pytanie' })).toHaveProperty('disabled', true)
+
+    await act(async () => {
+      setBusyFromTest?.(false)
+      await Promise.resolve()
+    })
+    await vi.waitFor(() => expect(document.activeElement).toBe(screen.getByRole('button', { name: '+ Dodaj pierwsze pytanie' })))
   })
 
   it('counts detached descendants the same way it removes them', async () => {

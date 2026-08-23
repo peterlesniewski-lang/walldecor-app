@@ -74,6 +74,7 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
   const designerRef = useRef<HTMLElement | null>(null)
   const retryActionRef = useRef<HTMLButtonElement | null>(null)
   const shouldFocusRetryAfterFailedDelete = useRef(false)
+  const shouldFocusRootAfterSuccessfulDelete = useRef(false)
 
   // The designer keeps a recoverable local draft while a failed PATCH is retried.
   // This synchronizes only incoming catalog updates, including a draft switch.
@@ -96,6 +97,13 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
       shouldFocusRetryAfterFailedDelete.current = false
     }
   }, [deleteKey, error, isSynced])
+  useEffect(() => {
+    if (shouldFocusRootAfterSuccessfulDelete.current && !busy && isSynced) {
+      const focusTarget = rootActionRef.current ?? designerRef.current
+      focusTarget?.focus()
+      shouldFocusRootAfterSuccessfulDelete.current = false
+    }
+  }, [busy, isSynced])
 
   const forest = useMemo(() => buildQuestionForest(localQuestions), [localQuestions])
   const canUseDraft = useMemo(() => validateDraft(localQuestions), [localQuestions])
@@ -156,8 +164,7 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
     setDeleteKey(null)
     try {
       await persist(deletionPayload)
-      const focusTarget = rootActionRef.current ?? designerRef.current
-      focusTarget?.focus()
+      shouldFocusRootAfterSuccessfulDelete.current = true
     } catch {
       shouldFocusRetryAfterFailedDelete.current = true
     }
@@ -211,7 +218,7 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
 
   function renderNode(node: QuestionTreeNode<FormQuestion>, depth: number, siblings: readonly QuestionTreeNode<FormQuestion>[], index: number, placement: QuestionPlacement) {
     const question = node.question
-    return <div className="wd-template-node" key={`${placement.parentKey ?? 'root'}:${placement.equals ?? 'root'}:${index}:${question.key}`}>
+    return <div className="wd-template-node" key={hasDuplicateKeys ? `${placement.parentKey ?? 'root'}:${placement.equals ?? 'root'}:${index}:${question.key}` : question.key}>
       <article className="wd-template-card" aria-label={`Pytanie: ${question.label}`}>
         <div className="wd-template-card__body">
           <div className="wd-template-card__copy"><span className="wd-template-card__number">{depth + 1}</span><h4>{question.label}</h4>{question.help && <p>{question.help}</p>}</div>
