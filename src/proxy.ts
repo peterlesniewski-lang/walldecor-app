@@ -73,6 +73,6 @@ export default withAuth(
 
 export const config = {
   matcher: [
-    '/((?!login|forgot-password|change-password|m(?:/|$)|api/auth|api/account/request-password-reset|api/public/installations(?:/|$)|api/health|_next/static|_next/image|favicon.ico|.*\\..*).*)',
+    '/((?!login|forgot-password|change-password|m(?:/|$)|api/auth|api/account/request-password-reset|api/public/installations(?:/|$)|api/public/mobile-upload(?:/|$)|api/health|_next/static|_next/image|favicon.ico|.*\\..*).*)',
   ],
 }

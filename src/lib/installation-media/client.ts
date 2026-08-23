@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
+import path from 'node:path'
 
 export class InstallationMediaClientError extends Error {
   constructor(message: string, public readonly status?: number) {
@@ -121,6 +123,13 @@ export function privateMediaClientFromEnvironment() {
     if (process.env.NODE_ENV === 'production') throw new InstallationMediaClientError('Testowy adapter plików nie może działać produkcyjnie.')
     return inMemoryPrivateMediaClient()
   }
+  if (process.env.INSTALLATION_MEDIA_TEST_ADAPTER === 'filesystem') {
+    if (process.env.NODE_ENV === 'production') throw new InstallationMediaClientError('Testowy adapter plików nie może działać produkcyjnie.')
+    const root = process.env.INSTALLATION_MEDIA_TEST_ROOT
+    const resolvedRoot = root ? path.resolve(root) : ''
+    if (!root || !path.isAbsolute(root) || !resolvedRoot.startsWith('/tmp/walldecor-installations-e2e-media-')) throw new InstallationMediaClientError('Testowy katalog mediów musi być izolowany w /tmp.')
+    return filesystemPrivateMediaClient(resolvedRoot)
+  }
   return createPrivateMediaClient({
     baseUrl: process.env.INSTALLATION_MEDIA_API_URL ?? '',
     token: process.env.INSTALLATION_MEDIA_API_TOKEN ?? '',
@@ -148,6 +157,41 @@ function inMemoryPrivateMediaClient(): PrivateMediaClient {
     },
     async remove(fileId) {
       testFiles.delete(fileId)
+    },
+  }
+}
+
+/** A test-only durable implementation of the private-media contract. Browser
+ * E2E calls still travel through the app routes; this merely persists the
+ * server-side fake between dev-server restarts and adapter instances. */
+function filesystemPrivateMediaClient(root: string): PrivateMediaClient {
+  const safePath = (fileId: string, extension: 'bin' | 'json') => {
+    if (!/^[0-9a-f-]{36}$/i.test(fileId)) throw new InstallationMediaClientError('Testowy identyfikator pliku jest niepoprawny.')
+    return path.join(root, `${fileId}.${extension}`)
+  }
+  return {
+    async upload({ fileId, jobId, contentType, bytes }) {
+      await mkdir(root, { recursive: true, mode: 0o700 })
+      const sha256 = createHash('sha256').update(bytes).digest('hex')
+      const filePath = safePath(fileId, 'bin')
+      const temporaryPath = `${filePath}.${process.pid}.${Date.now()}.uploading`
+      await writeFile(temporaryPath, bytes)
+      await rename(temporaryPath, filePath)
+      await writeFile(safePath(fileId, 'json'), JSON.stringify({ jobId, contentType, sha256 }), { mode: 0o600 })
+      return { fileId, jobId, contentType, byteSize: bytes.byteLength, sha256 }
+    },
+    async download(fileId) {
+      try {
+        const [bytes, rawMeta] = await Promise.all([readFile(safePath(fileId, 'bin')), readFile(safePath(fileId, 'json'), 'utf8')])
+        const meta = JSON.parse(rawMeta) as { contentType?: unknown }
+        if (typeof meta.contentType !== 'string') throw new Error('invalid')
+        return new Response(bytes as unknown as BodyInit, { headers: { 'Content-Type': meta.contentType, 'Cache-Control': 'private, no-store', 'X-Content-Type-Options': 'nosniff' } })
+      } catch {
+        throw new InstallationMediaClientError('Testowy prywatny plik nie istnieje.', 404)
+      }
+    },
+    async remove(fileId) {
+      await Promise.all([rm(safePath(fileId, 'bin'), { force: true }), rm(safePath(fileId, 'json'), { force: true })])
     },
   }
 }

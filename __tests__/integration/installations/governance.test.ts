@@ -45,7 +45,8 @@ let futureProtectedBillingId: string
 const durabilityMigration = '20260823020000_installation_governance_durability'
 const acceptanceIntegrityMigration = '20260823030000_installation_fee_acceptance_integrity'
 const privateMediaMigration = '20260823040000_installation_private_media'
-const hardeningMigrations = new Set([durabilityMigration, acceptanceIntegrityMigration, privateMediaMigration])
+const mobileHandoffRetryMigration = '20260823050000_mobile_handoff_retry_release'
+const hardeningMigrations = new Set([durabilityMigration, acceptanceIntegrityMigration, privateMediaMigration, mobileHandoffRetryMigration])
 const dayMs = 24 * 60 * 60 * 1000
 
 function futureDate(days = 30) {

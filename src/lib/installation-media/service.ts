@@ -272,8 +272,6 @@ export async function uploadMobileHandoffFile(db: PrismaClient, cookieValue: str
   const handoff = await db.mobileUploadHandoff.findUnique({ where: { id: handoffId }, include: { clientLink: true } })
   if (!handoff || handoff.sessionSecretHash !== hashSecret(sessionSecret) || !handoff.redeemedAt || handoff.revokedAt || handoff.expiresAt <= now || handoff.clientLink.revokedAt || handoff.clientLink.expiresAt <= now) throw new InstallationMediaAccessError()
   const valid = validateUpload(input, handoff.maxByteSize, allowedTypesFromHandoff(handoff.allowedMimeJson))
-  const claimed = await db.mobileUploadHandoff.updateMany({ where: { id: handoff.id, revokedAt: null, expiresAt: { gt: now }, usedFiles: { lt: handoff.maxFiles } }, data: { usedFiles: { increment: 1 } } })
-  if (claimed.count !== 1) throw new InstallationMediaValidationError({ file: 'Osiągnięto limit plików dla tego przekazania.' })
   try {
     return await storeFile(db, {
       orderId: handoff.orderId,
@@ -286,7 +284,9 @@ export async function uploadMobileHandoffFile(db: PrismaClient, cookieValue: str
       actorId: 'PUBLIC_MOBILE',
     }, valid, media)
   } catch (error) {
-    await db.mobileUploadHandoff.updateMany({ where: { id: handoff.id, usedFiles: { gt: 0 } }, data: { usedFiles: { decrement: 1 } } })
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === 'P2003') {
+      throw new InstallationMediaValidationError({ file: 'Osiągnięto limit plików dla tego przekazania.' })
+    }
     throw error
   }
 }
@@ -333,14 +333,26 @@ export async function createMismatchEvidenceFile(db: PrismaClient, orderId: stri
   const mismatch = await db.installationMismatch.findFirst({ where: { id: mismatchId, orderId, evidenceStatus: 'PENDING_PRIVATE_FILE' } })
   if (!mismatch) throw new InstallationMediaAccessError('Nie można dołączyć dowodu do tej niezgodności.')
   const file = await storeFile(db, { orderId, purpose: 'MISMATCH_EVIDENCE', source: 'INTERNAL', actorId }, input, media)
-  return db.$transaction(async (tx) => {
-    await tx.installationMismatchEvidence.create({ data: { orderId, mismatchId, fileId: file.id, attachedById: actorId } })
-    const verifiedAt = new Date()
-    const updated = await tx.installationMismatch.updateMany({ where: { id: mismatchId, orderId, evidenceStatus: 'PENDING_PRIVATE_FILE' }, data: { evidenceStatus: 'VERIFIED_PRIVATE_FILE', evidenceFileId: file.id, evidenceVerifiedAt: verifiedAt, evidenceReference: `private-file:${file.id}` } })
-    if (updated.count !== 1) throw new InstallationMediaAccessError('Dowód niezgodności został zmieniony przed zatwierdzeniem.')
-    await auditFile(tx, { fileId: file.id, orderId, actorId, action: 'INSTALLATION_MISMATCH_PRIVATE_EVIDENCE_ATTACHED', metadata: { mismatchId } })
-    return tx.installationFile.findUniqueOrThrow({ where: { id: file.id } })
-  })
+  try {
+    return await db.$transaction(async (tx) => {
+      await tx.installationMismatchEvidence.create({ data: { orderId, mismatchId, fileId: file.id, attachedById: actorId } })
+      const verifiedAt = new Date()
+      const updated = await tx.installationMismatch.updateMany({ where: { id: mismatchId, orderId, evidenceStatus: 'PENDING_PRIVATE_FILE' }, data: { evidenceStatus: 'VERIFIED_PRIVATE_FILE', evidenceFileId: file.id, evidenceVerifiedAt: verifiedAt, evidenceReference: `private-file:${file.id}` } })
+      if (updated.count !== 1) throw new InstallationMediaAccessError('Dowód niezgodności został zmieniony przed zatwierdzeniem.')
+      await auditFile(tx, { fileId: file.id, orderId, actorId, action: 'INSTALLATION_MISMATCH_PRIVATE_EVIDENCE_ATTACHED', metadata: { mismatchId } })
+      return tx.installationFile.findUniqueOrThrow({ where: { id: file.id } })
+    })
+  } catch (error) {
+    // The private media write is intentionally first, so compensate a READY
+    // object when the immutable evidence bridge lost a concurrent race.
+    try {
+      await softDeleteInstallationFile(db, orderId, file.id, actorId, media)
+    } catch {
+      // Preserve the original attachment error; a failed compensation is
+      // still visible as a READY file for an internal operator to resolve.
+    }
+    throw error
+  }
 }
 
 /** Private project material belongs to the order and may additionally be fixed

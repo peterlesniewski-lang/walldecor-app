@@ -11,7 +11,8 @@
     "test:watch": "node --preserve-symlinks node_modules/vitest/dist/cli.js",
     "test:coverage": "node --preserve-symlinks node_modules/vitest/dist/cli.js run --coverage",
     "test:e2e": "playwright test",
-    "test:e2e:ui": "playwright test --ui"
+    "test:e2e:ui": "playwright test --ui",
+    "validate:installation-media": "node scripts/validate-installation-media.mjs"
   },
   "prisma": {
     "seed": "tsx prisma/seed.ts"

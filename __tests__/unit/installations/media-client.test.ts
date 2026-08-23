@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto'
+import { spawnSync } from 'node:child_process'
+import { mkdtempSync, rmSync } from 'node:fs'
 import { describe, expect, it, vi } from 'vitest'
 import { createPrivateMediaClient, InstallationMediaClientError, privateMediaClientFromEnvironment } from '@/lib/installation-media/client'
 
@@ -65,6 +67,38 @@ describe('private media client', () => {
     expect(new Uint8Array(await (await client.download('e2e-file')).arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]))
     await client.remove('e2e-file')
     await expect(client.download('e2e-file')).rejects.toBeInstanceOf(InstallationMediaClientError)
+    vi.unstubAllEnvs()
+  })
+
+  it('rejects a filesystem test root that escapes its isolated /tmp prefix', () => {
+    vi.stubEnv('INSTALLATION_MEDIA_TEST_ADAPTER', 'filesystem')
+    vi.stubEnv('INSTALLATION_MEDIA_TEST_ROOT', '/tmp/walldecor-installations-e2e-media-escape/../../outside')
+    vi.stubEnv('NODE_ENV', 'test')
+    expect(() => privateMediaClientFromEnvironment()).toThrow(InstallationMediaClientError)
+    vi.unstubAllEnvs()
+  })
+
+  it('persists the explicitly injected E2E adapter across a fresh Node process', async () => {
+    const root = mkdtempSync('/tmp/walldecor-installations-e2e-media-client-')
+    vi.stubEnv('INSTALLATION_MEDIA_TEST_ADAPTER', 'filesystem')
+    vi.stubEnv('INSTALLATION_MEDIA_TEST_ROOT', root)
+    vi.stubEnv('NODE_ENV', 'test')
+    const bytes = new Uint8Array([9, 8, 7, 6])
+    const first = privateMediaClientFromEnvironment()
+    await first.upload({ fileId: '3a5cc5c4-83df-4744-87a8-7536703a4c25', jobId: 'order-e2e', contentType: 'image/png', bytes })
+    const restartedProcess = spawnSync(process.execPath, [
+      '--import', 'tsx', '-e',
+      "import mediaModule from './src/lib/installation-media/client.ts'; const response = await mediaModule.privateMediaClientFromEnvironment().download(process.argv[1]); process.stdout.write(Buffer.from(await response.arrayBuffer()).toString('base64'))",
+      '3a5cc5c4-83df-4744-87a8-7536703a4c25',
+    ], {
+      cwd: process.cwd(),
+      env: { ...process.env, NODE_ENV: 'test', INSTALLATION_MEDIA_TEST_ADAPTER: 'filesystem', INSTALLATION_MEDIA_TEST_ROOT: root },
+      encoding: 'utf8',
+    })
+    expect(restartedProcess.status, restartedProcess.stderr).toBe(0)
+    expect(Buffer.from(restartedProcess.stdout, 'base64')).toEqual(Buffer.from(bytes))
+    await first.remove('3a5cc5c4-83df-4744-87a8-7536703a4c25')
+    rmSync(root, { recursive: true, force: true })
     vi.unstubAllEnvs()
   })
 })

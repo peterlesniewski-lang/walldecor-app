@@ -3,6 +3,8 @@ import { defineConfig } from '@playwright/test'
 const stableRunId = (process.env.E2E_RUN_ID ?? 'local').replace(/[^a-zA-Z0-9_-]/g, '_')
 const e2eDatabaseUrl = process.env.E2E_DATABASE_URL
   ?? `file:/tmp/walldecor-installations-e2e-${stableRunId}.db`
+const e2eMediaRoot = process.env.E2E_MEDIA_ROOT
+  ?? `/tmp/walldecor-installations-e2e-media-${stableRunId}`
 if (!e2eDatabaseUrl.startsWith('file:/tmp/walldecor-installations-e2e-')) {
   throw new Error('E2E_DATABASE_URL musi wskazywać izolowaną SQLite w /tmp.')
 }
@@ -29,7 +31,8 @@ export default defineConfig({
       NEXTAUTH_SECRET: 'e2e-installation-order-local-secret',
       // Explicit E2E-only fake adapter; production requires the authenticated
       // private media service and rejects this switch.
-      INSTALLATION_MEDIA_TEST_ADAPTER: 'memory',
+      INSTALLATION_MEDIA_TEST_ADAPTER: 'filesystem',
+      INSTALLATION_MEDIA_TEST_ROOT: e2eMediaRoot,
     },
     reuseExistingServer: false,
     timeout: 120000,

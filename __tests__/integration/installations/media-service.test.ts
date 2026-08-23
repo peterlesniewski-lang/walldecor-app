@@ -11,6 +11,7 @@ import { submitClientForm, InstallationFormValidationError } from '@/lib/install
 import { createInstallationOrder } from '@/lib/installations/order-service'
 import {
   createClientQuestionFile,
+  createMismatchEvidenceFile,
   createMobileUploadHandoff,
   InstallationMediaAccessError,
   listClientQuestionFiles,
@@ -28,6 +29,7 @@ let db: PrismaClient
 let token: string
 let otherToken: string
 let orderId: string
+let otherOrderId: string
 
 const imageBytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 1, 2, 3])
 const media: InstallationMediaAdapter = {
@@ -77,6 +79,7 @@ beforeAll(async () => {
   const primary = await seedOrder('media.client@example.test', 'M-1')
   const other = await seedOrder('media.other@example.test', 'M-2')
   orderId = primary.order.id
+  otherOrderId = other.order.id
   token = primary.token
   otherToken = other.token
 })
@@ -126,5 +129,70 @@ describe('private client files', () => {
   it('rejects a handoff code which is not bound to the active client link', async () => {
     const randomCode = randomBytes(32).toString('base64url')
     await expect(redeemMobileUploadHandoff(db, randomCode)).rejects.toBeInstanceOf(InstallationMediaAccessError)
+  })
+
+  it('releases a QR upload slot after a media failure so the same mobile session can retry safely', async () => {
+    const handoff = await createMobileUploadHandoff(db, token, { questionKey: 'zdjecie-sciany', maxFiles: 1 })
+    const redeemed = await redeemMobileUploadHandoff(db, handoff.code)
+    const failingMedia: InstallationMediaAdapter = { ...media, upload: async () => { throw new Error('media temporarily unavailable') } }
+
+    await expect(uploadMobileHandoffFile(db, redeemed.cookieValue, {
+      filename: 'pierwsza-proba.png', contentType: 'image/png', bytes: imageBytes,
+    }, failingMedia)).rejects.toThrow('media temporarily unavailable')
+    await expect(db.mobileUploadHandoff.findUniqueOrThrow({ where: { id: handoff.handoffId } })).resolves.toMatchObject({ usedFiles: 0 })
+
+    await expect(uploadMobileHandoffFile(db, redeemed.cookieValue, {
+      filename: 'druga-proba.png', contentType: 'image/png', bytes: imageBytes,
+    }, media)).resolves.toMatchObject({ status: 'READY', source: 'MOBILE_QR' })
+    await expect(db.mobileUploadHandoff.findUniqueOrThrow({ where: { id: handoff.handoffId } })).resolves.toMatchObject({ usedFiles: 1 })
+    await expect(db.mobileUploadHandoff.update({ where: { id: handoff.handoffId }, data: { usedFiles: 0 } })).rejects.toBeTruthy()
+  })
+
+  it('keeps maxFiles=1 correct under concurrent mobile upload attempts', async () => {
+    const handoff = await createMobileUploadHandoff(db, token, { questionKey: 'zdjecie-sciany', maxFiles: 1 })
+    const redeemed = await redeemMobileUploadHandoff(db, handoff.code)
+    const attempts = await Promise.allSettled(['rownowaga-a.png', 'rownowaga-b.png'].map((filename) => uploadMobileHandoffFile(db, redeemed.cookieValue, {
+      filename, contentType: 'image/png', bytes: imageBytes,
+    }, media)))
+    expect(attempts.filter((attempt) => attempt.status === 'fulfilled')).toHaveLength(1)
+    expect(attempts.filter((attempt) => attempt.status === 'rejected')).toHaveLength(1)
+    await expect(db.installationFile.count({ where: { mobileHandoffId: handoff.handoffId, status: 'READY' } })).resolves.toBe(1)
+    await expect(db.mobileUploadHandoff.findUniqueOrThrow({ where: { id: handoff.handoffId } })).resolves.toMatchObject({ usedFiles: 1 })
+  })
+
+  it('soft-deletes a ready mismatch file when its final database attachment fails', async () => {
+    const mismatch = await db.installationMismatch.create({ data: {
+      orderId,
+      description: 'Zmiana zlecenia dokładnie po przyjęciu prywatnego pliku.',
+      reason: 'EXECUTION_RISK',
+      evidenceReference: 'installation-report:race',
+      reportedById: 'owner',
+    } })
+    let beginUpload!: () => void
+    const uploadBegan = new Promise<void>((resolve) => { beginUpload = resolve })
+    let releaseUpload!: () => void
+    const uploadRelease = new Promise<void>((resolve) => { releaseUpload = resolve })
+    let removedFileId: string | null = null
+    const delayedMedia: InstallationMediaAdapter = {
+      ...media,
+      upload: async (input) => {
+        beginUpload()
+        await uploadRelease
+        return media.upload(input)
+      },
+      remove: async (fileId) => { removedFileId = fileId },
+    }
+
+    const attachment = createMismatchEvidenceFile(db, orderId, mismatch.id, 'owner-user', {
+      filename: 'dowod-race.png', contentType: 'image/png', bytes: imageBytes,
+    }, delayedMedia)
+    await uploadBegan
+    const pending = await db.installationFile.findFirstOrThrow({ where: { orderId, purpose: 'MISMATCH_EVIDENCE', status: 'PENDING' } })
+    await db.installationMismatch.update({ where: { id: mismatch.id }, data: { orderId: otherOrderId } })
+    releaseUpload()
+
+    await expect(attachment).rejects.toBeTruthy()
+    await expect(db.installationFile.findUniqueOrThrow({ where: { id: pending.id } })).resolves.toMatchObject({ status: 'READY', softDeletedAt: expect.any(Date) })
+    expect(removedFileId).toBe(pending.id)
   })
 })
