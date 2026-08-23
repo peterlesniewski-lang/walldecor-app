@@ -8,9 +8,11 @@ import { TemplateQuestionEditor, templateQuestionRiskLabels, templateQuestionTyp
 import { TemplateTestPreview } from './template-test-preview'
 
 export type TemplatePathDesignerProps = {
+  draftId?: string
   questions: readonly FormQuestion[]
   busy: boolean
   onPersist: (questions: FormQuestion[]) => Promise<void>
+  onPublishAvailabilityChange?: (draftId: string, publishable: boolean) => void
 }
 
 type EditingState = {
@@ -63,8 +65,9 @@ function validationMessage(questions: readonly FormQuestion[], detachedCount: nu
   return 'Nie można przetestować ani opublikować szkicu, dopóki pytania nie przejdą walidacji.'
 }
 
-export function TemplatePathDesigner({ questions, busy, onPersist }: TemplatePathDesignerProps) {
+export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy, onPersist, onPublishAvailabilityChange }: TemplatePathDesignerProps) {
   const [localQuestions, setLocalQuestions] = useState<FormQuestion[]>(() => [...questions])
+  const [isSynced, setIsSynced] = useState(true)
   const [editing, setEditing] = useState<EditingState | null>(null)
   const [deleteKey, setDeleteKey] = useState<string | null>(null)
   const [view, setView] = useState<'design' | 'test'>('design')
@@ -73,8 +76,11 @@ export function TemplatePathDesigner({ questions, busy, onPersist }: TemplatePat
 
   // The designer keeps a recoverable local draft while a failed PATCH is retried.
   // This synchronizes only incoming catalog updates, including a draft switch.
-  // eslint-disable-next-line react-hooks/set-state-in-effect
-  useEffect(() => { setLocalQuestions([...questions]) }, [questions])
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setLocalQuestions([...questions])
+    setIsSynced(true)
+  }, [questions])
   useEffect(() => {
     if (deleteKey) confirmationRef.current?.focus()
   }, [deleteKey])
@@ -83,11 +89,19 @@ export function TemplatePathDesigner({ questions, busy, onPersist }: TemplatePat
   const canUseDraft = useMemo(() => validateDraft(localQuestions), [localQuestions])
   const invalidMessage = validationMessage(localQuestions, forest.detached.length)
 
+  useEffect(() => {
+    onPublishAvailabilityChange?.(draftId, canUseDraft && isSynced)
+  }, [canUseDraft, draftId, isSynced, onPublishAvailabilityChange])
+
   async function persist(next: FormQuestion[]) {
     setLocalQuestions(next)
+    setIsSynced(false)
     setError('')
+    onPublishAvailabilityChange?.(draftId, false)
     try {
       await onPersist(next)
+      setIsSynced(true)
+      onPublishAvailabilityChange?.(draftId, validateDraft(next))
     } catch (persistError) {
       setError(persistError instanceof Error ? persistError.message : 'Nie udało się zapisać zmian. Spróbuj ponownie.')
       throw persistError
@@ -120,7 +134,8 @@ export function TemplatePathDesigner({ questions, busy, onPersist }: TemplatePat
   }
 
   function renderBranch(branch: QuestionTreeBranch<FormQuestion>, parent: FormQuestion, depth: number) {
-    return <div className="wd-template-branch" key={`${parent.key}-${branch.value}`} style={{ marginLeft: depth <= 3 ? '16px' : '0px' }}>
+    const indented = depth <= 3
+    return <div className="wd-template-branch" key={`${parent.key}-${branch.value}`} data-path-depth={depth} data-path-indent={indented ? 'step' : 'none'} style={{ marginLeft: indented ? '16px' : '0px', paddingInlineStart: '0px' }}>
       <div className="wd-template-branch__line" aria-hidden />
       <div className="wd-template-branch__heading">
         <span className="wd-template-branch__label">Odpowiedź: {branch.label}</span>

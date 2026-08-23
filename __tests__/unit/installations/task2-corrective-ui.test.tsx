@@ -148,6 +148,64 @@ describe('Task 2 corrective UI invariants', () => {
     expect(body.questions.map((question: { key: string }) => question.key)).toEqual(['okna', 'drugie', 'pierwsze'])
   })
 
+  it('keeps publish unavailable after a rejected local PATCH while the recoverable draft remains visible', async () => {
+    const user = userEvent.setup()
+    const draft = {
+      id: 'draft-rejected', familyId: 'family-rejected', name: 'Szkic do ponowienia', version: 1, status: 'DRAFT',
+      questionDefinitions: [
+        { id: 'question-root', key: 'okna', type: 'YES_NO_UNKNOWN', label: 'Czy są okna?', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: null, sortOrder: 0 },
+      ],
+    }
+    const fetchMock = vi.fn().mockResolvedValue({ ok: false, json: async () => ({ error: 'Nie udało się zapisać pytań. Spróbuj ponownie.' }) })
+    vi.stubGlobal('fetch', fetchMock)
+    render(createElement(TemplateBuilder, { initialTemplates: [draft] } as never))
+
+    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak' }))
+    await user.type(screen.getByLabelText('Treść pytania'), 'Czy można wejść?')
+    await user.click(screen.getByRole('button', { name: 'Zapisz pytanie' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    await user.click(screen.getByRole('button', { name: 'Anuluj' }))
+
+    expect(screen.getByText('Czy można wejść?')).toBeTruthy()
+    const publish = screen.getByRole('button', { name: 'Opublikuj v1' })
+    expect(publish).toHaveProperty('disabled', true)
+    await user.click(publish)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+  })
+
+  it('resets designer edit, deletion and test state when the active draft changes', async () => {
+    const user = userEvent.setup()
+    const draftA = {
+      id: 'draft-a', familyId: 'family-a', name: 'Szkic A', version: 1, status: 'DRAFT',
+      questionDefinitions: [{ id: 'question-a', key: 'a', type: 'YES_NO_UNKNOWN', label: 'Pytanie A', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: null, sortOrder: 0 }],
+    }
+    const draftB = {
+      id: 'draft-b', familyId: 'family-b', name: 'Szkic B', version: 1, status: 'DRAFT',
+      questionDefinitions: [{ id: 'question-b', key: 'b', type: 'YES_NO_UNKNOWN', label: 'Pytanie B', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: null, sortOrder: 0 }],
+    }
+    render(createElement(TemplateBuilder, { initialTemplates: [draftA, draftB] } as never))
+    const picker = screen.getByLabelText('Wybierz szkic do edycji')
+
+    await user.click(screen.getByRole('button', { name: 'Edytuj pytanie Pytanie A' }))
+    await user.selectOptions(picker, draftB.id)
+    expect(screen.getByText('Pytanie B')).toBeTruthy()
+    expect(screen.queryByLabelText('Treść pytania')).toBeNull()
+
+    await user.selectOptions(picker, draftA.id)
+    await user.click(screen.getByRole('button', { name: 'Usuń pytanie Pytanie A' }))
+    expect(screen.getByRole('alertdialog')).toBeTruthy()
+    await user.selectOptions(picker, draftB.id)
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(screen.getByText('Pytanie B')).toBeTruthy()
+
+    await user.selectOptions(picker, draftA.id)
+    await user.click(screen.getByRole('button', { name: 'Testuj formularz' }))
+    expect(screen.getByText('Tak zobaczy to klient')).toBeTruthy()
+    await user.selectOptions(picker, draftB.id)
+    expect(screen.queryByText('Tak zobaczy to klient')).toBeNull()
+    expect(screen.getByText('Pytanie B')).toBeTruthy()
+  })
+
   it('renders the immutable collection snapshot beside historic product details', () => {
     const roomsWithCollection = [{
       id: 'room-collection', name: 'Salon kolekcji', sortOrder: 0, measurements: [], scopes: [{

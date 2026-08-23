@@ -165,8 +165,8 @@ body {
 .wd-template-pill--medium { background: #f5e8c9; color: #785812; }
 .wd-template-pill--high { background: #f6ded7; color: #7d3026; }
 .wd-template-branches { display: grid; gap: 5px; }
-.wd-template-branch { min-width: 0; padding: 2px 0 2px 16px; position: relative; }
-.wd-template-branch__line { background: rgba(39,37,34,.2); height: calc(100% - 18px); left: 2px; position: absolute; top: 0; width: 1px; }
+.wd-template-branch { min-width: 0; padding-block: 2px; position: relative; }
+.wd-template-branch__line { background: rgba(39,37,34,.2); height: calc(100% - 18px); inset-inline-start: -8px; position: absolute; top: 0; width: 1px; }
 .wd-template-branch__heading { align-items: center; display: flex; flex-wrap: wrap; gap: 8px; min-height: 36px; }
 .wd-template-branch__label { color: #5d554b; font-size: .76rem; font-weight: 800; letter-spacing: .02em; }
 .wd-template-branch__children { min-width: 0; }
