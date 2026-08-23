@@ -9,6 +9,11 @@ if (!databaseUrl?.startsWith('file:/tmp/walldecor-installations-e2e-')) throw ne
 let db: PrismaClient
 let templateId: string
 
+function localDateTimeInput(value: Date) {
+  const part = (number: number) => String(number).padStart(2, '0')
+  return `${value.getFullYear()}-${part(value.getMonth() + 1)}-${part(value.getDate())}T${part(value.getHours())}:${part(value.getMinutes())}`
+}
+
 test.beforeAll(async () => {
   db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
   await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
@@ -65,12 +70,13 @@ test('admin sends an anonymous client link through autosave, clarification and i
   }, { orderId, templateId })
   expect(setup).toEqual({ room: 201, snapshot: 201 })
   await page.reload()
-  await page.getByLabel(/Ważny do/).fill('2027-01-01T12:00')
+  const requestedExpiry = new Date(Date.now() + 30 * 24 * 60 * 60_000)
+  await page.getByLabel(/Ważny do/).fill(localDateTimeInput(requestedExpiry))
   await page.getByRole('button', { name: 'Wygeneruj link' }).click()
   const clientUrl = await page.locator('output').textContent()
   expect(clientUrl).toMatch(/\/m\/[A-Za-z0-9_-]{43}$/)
   await page.getByRole('button', { name: 'Przedłuż o 14 dni' }).click()
-  await expect.poll(async () => (await db.installationClientLink.findFirstOrThrow({ where: { orderId, revokedAt: null } })).expiresAt.getTime()).toBeGreaterThan(new Date('2027-01-14T12:00:00.000Z').getTime())
+  await expect.poll(async () => (await db.installationClientLink.findFirstOrThrow({ where: { orderId, revokedAt: null } })).expiresAt.getTime()).toBeGreaterThan(requestedExpiry.getTime() + 13 * 24 * 60 * 60_000)
   await expect(page.locator('output')).toHaveCount(0)
 
   const clientContext = await browser.newContext({ baseURL: 'http://localhost:3000', viewport: { width: 375, height: 812 } })

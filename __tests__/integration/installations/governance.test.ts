@@ -38,8 +38,18 @@ let previousIpHashSecret: string | undefined
 let protectedOrderId: string
 let protectedMismatchForCompletenessId: string
 let protectedMismatchForBillingId: string
+let futureProtectedOrderId: string
+let futureProtectedMismatchForInsertId: string
+let futureProtectedBillingId: string
 
 const durabilityMigration = '20260823020000_installation_governance_durability'
+const acceptanceIntegrityMigration = '20260823030000_installation_fee_acceptance_integrity'
+const hardeningMigrations = new Set([durabilityMigration, acceptanceIntegrityMigration])
+const dayMs = 24 * 60 * 60 * 1000
+
+function futureDate(days = 30) {
+  return new Date(Date.now() + days * dayMs)
+}
 
 function createDb() {
   return new PrismaClient({ datasources: { db: { url: databaseUrl } } })
@@ -66,7 +76,7 @@ async function createClientFormLink(order: string) {
   })
   const template = await publishInstallationFormTemplate(db, draft.id, 'admin-user')
   await createInstallationOrderFormSnapshot(db, { orderId: order, templateId: template.id }, 'admin-user')
-  return (await createClientLink(db, { orderId: order, createdById: 'admin-user', expiresAt: new Date('2027-01-01') })).token
+  return (await createClientLink(db, { orderId: order, createdById: 'admin-user', expiresAt: futureDate() })).token
 }
 
 beforeAll(async () => {
@@ -76,7 +86,7 @@ beforeAll(async () => {
   // migration. Task 5 will eventually own the real transition to VERIFIED;
   // these fixtures let us prove existing billing guards and new immutability
   // without giving current generic code a verification back door.
-  applyMigrations((directory) => directory !== durabilityMigration)
+  applyMigrations((directory) => !hardeningMigrations.has(directory))
   db = createDb()
   await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
   await db.costCenter.create({ data: { id: 'GOV', name: 'Governance' } })
@@ -125,6 +135,8 @@ beforeAll(async () => {
     visitFeeApprovedById: 'legacy-admin',
     visitFeeApprovedAt: new Date('2026-08-23T08:59:00.000Z'),
     visitFeeClientAcceptedAt: new Date('2026-08-23T09:00:00.000Z'),
+    visitFeeClientIpHash: 'hmac-sha256:v1:legacy-test-value',
+    visitFeeClientUserAgent: 'Legacy governance integrity test',
   } })
   const legacyMismatchData = {
     orderId: protectedOrder.id,
@@ -144,8 +156,60 @@ beforeAll(async () => {
     evidenceReference: 'private-file:legacy-task5-verification-billing',
     evidenceFileId: 'private-file-verified-before-hardening-billing',
   } })).id
+  const futureOrder = await createInstallationOrder(db, {
+    client: { name: 'Kontrola przyszłej daty', email: 'future.snapshot@example.test', phone: '+48 505 444 555' },
+    address: { street: 'Testowa', buildingNumber: '10', postalCode: '00-005', city: 'Warszawa' },
+    primaryEmployeeId: replacement.id,
+    backupEmployeeId: backup.id,
+  }, 'admin-user')
+  futureProtectedOrderId = futureOrder.id
+  const futurePolicy = await db.installationVisitFeePolicy.create({ data: {
+    version: 901,
+    grossAmount: '289.90',
+    clauseText: 'Historyczna klauzula z błędną przyszłą datą używana do testu ochrony billingowej.',
+    legalApprovedAt: new Date('2099-01-01T00:00:00.000Z'),
+    legalApprovedById: 'legacy-admin',
+    isDefault: false,
+    createdById: 'legacy-admin',
+  } })
+  await db.installationOrder.update({ where: { id: futureOrder.id }, data: {
+    visitFeePolicyId: futurePolicy.id,
+    visitFeeStatus: 'APPROVED',
+    visitFeeGrossAmount: futurePolicy.grossAmount,
+    visitFeeClauseText: futurePolicy.clauseText,
+    visitFeeClauseVersion: futurePolicy.version,
+    visitFeeLegalApprovedAt: futurePolicy.legalApprovedAt,
+    visitFeeClientAcceptedAt: new Date('2026-08-23T09:10:00.000Z'),
+  } })
+  const futureMismatchData = {
+    orderId: futureOrder.id,
+    description: 'Historyczny dowód dla ochrony billingowej przed przyszłą datą prawną.',
+    reason: 'CANNOT_PERFORM',
+    evidenceReference: 'private-file:legacy-future-legal',
+    evidenceStatus: 'VERIFIED_PRIVATE_FILE',
+    evidenceFileId: 'private-file-future-legal',
+    evidenceVerifiedAt: new Date('2026-08-23T09:11:00.000Z'),
+    reportedById: 'installer-user',
+    coordinatorApprovedAt: new Date('2026-08-23T09:12:00.000Z'),
+    coordinatorApprovedById: 'owner-user',
+  }
+  const futureMismatchForLegacyBilling = await db.installationMismatch.create({ data: futureMismatchData })
+  futureProtectedMismatchForInsertId = (await db.installationMismatch.create({ data: {
+    ...futureMismatchData,
+    evidenceReference: 'private-file:legacy-future-legal-insert',
+    evidenceFileId: 'private-file-future-legal-insert',
+  } })).id
+  futureProtectedBillingId = (await db.installationBillingTask.create({ data: {
+    orderId: futureOrder.id,
+    mismatchId: futureMismatchForLegacyBilling.id,
+    kind: 'MISMATCH_VISIT_FEE',
+    status: 'PENDING',
+    grossAmount: futurePolicy.grossAmount,
+    description: 'Historyczny billing z przyszłą datą przed migracją ochronną.',
+    createdById: 'legacy-admin',
+  } })).id
   await db.$disconnect()
-  applyMigrations((directory) => directory === durabilityMigration)
+  applyMigrations((directory) => hardeningMigrations.has(directory))
   db = createDb()
   await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
   clientToken = await createClientFormLink(order.id)
@@ -447,8 +511,62 @@ describe('visit fee clause and documented mismatch', () => {
     } })).rejects.toBeTruthy()
   })
 
+  it('invalidates every acceptance-evidence field atomically before an accepted legal snapshot can change', async () => {
+    const accepted = await db.installationOrder.findUniqueOrThrow({ where: { id: protectedOrderId } })
+    const changedClause = `${accepted.visitFeeClauseText} Zmieniona dopiero po unieważnieniu akceptacji.`
+
+    await expect(db.installationOrder.update({ where: { id: protectedOrderId }, data: {
+      visitFeeClauseText: changedClause,
+    } })).rejects.toBeTruthy()
+    await expect(db.installationOrder.update({ where: { id: protectedOrderId }, data: {
+      visitFeeClauseText: changedClause,
+      visitFeeClientAcceptedAt: null,
+    } })).rejects.toBeTruthy()
+
+    const cleared = await db.installationOrder.update({ where: { id: protectedOrderId }, data: {
+      visitFeeClauseText: changedClause,
+      visitFeeClientAcceptedAt: null,
+      visitFeeClientIpHash: null,
+      visitFeeClientUserAgent: null,
+    } })
+    expect(cleared).toMatchObject({
+      visitFeeClauseText: changedClause,
+      visitFeeClientAcceptedAt: null,
+      visitFeeClientIpHash: null,
+      visitFeeClientUserAgent: null,
+    })
+
+    await db.installationOrder.update({ where: { id: protectedOrderId }, data: {
+      visitFeeClauseText: accepted.visitFeeClauseText,
+      visitFeeClientAcceptedAt: accepted.visitFeeClientAcceptedAt,
+      visitFeeClientIpHash: accepted.visitFeeClientIpHash,
+      visitFeeClientUserAgent: accepted.visitFeeClientUserAgent,
+    } })
+  })
+
+  it('rejects direct insert and update billing when the order legal approval is still in the future', async () => {
+    const futureOrder = await db.installationOrder.findUniqueOrThrow({ where: { id: futureProtectedOrderId } })
+    await expect(db.installationBillingTask.create({ data: {
+      orderId: futureProtectedOrderId,
+      mismatchId: futureProtectedMismatchForInsertId,
+      kind: 'MISMATCH_VISIT_FEE',
+      status: 'PENDING',
+      grossAmount: futureOrder.visitFeeGrossAmount!,
+      description: 'Próba insertu billing z przyszłą datą zatwierdzenia prawnego.',
+      createdById: 'attacker-user',
+    } })).rejects.toBeTruthy()
+    await expect(db.installationBillingTask.update({ where: { id: futureProtectedBillingId }, data: {
+      description: 'Próba aktualizacji historycznego billing z przyszłą datą prawną.',
+    } })).rejects.toBeTruthy()
+  })
+
   it('keeps direct billing behind verified private evidence and every approved fee snapshot field', async () => {
     const complete = await db.installationOrder.findUniqueOrThrow({ where: { id: protectedOrderId } })
+    const acceptanceEvidence = {
+      visitFeeClientAcceptedAt: complete.visitFeeClientAcceptedAt,
+      visitFeeClientIpHash: complete.visitFeeClientIpHash,
+      visitFeeClientUserAgent: complete.visitFeeClientUserAgent,
+    }
     const billingData = {
       orderId: protectedOrderId,
       mismatchId: protectedMismatchForCompletenessId,
@@ -459,30 +577,43 @@ describe('visit fee clause and documented mismatch', () => {
       createdById: 'owner-user',
     }
     const rejectDirectBilling = () => expect(db.installationBillingTask.create({ data: billingData })).rejects.toBeTruthy()
+    const changeAcceptedSnapshot = async (data: Parameters<typeof db.installationOrder.update>[0]['data']) => {
+      await db.installationOrder.update({ where: { id: protectedOrderId }, data: {
+        ...data,
+        visitFeeClientAcceptedAt: null,
+        visitFeeClientIpHash: null,
+        visitFeeClientUserAgent: null,
+      } })
+      await db.installationOrder.update({ where: { id: protectedOrderId }, data: acceptanceEvidence })
+    }
 
-    await db.installationOrder.update({ where: { id: protectedOrderId }, data: { visitFeePolicyId: null } })
+    await changeAcceptedSnapshot({ visitFeePolicyId: null })
     await rejectDirectBilling()
-    await db.installationOrder.update({ where: { id: protectedOrderId }, data: { visitFeePolicyId: complete.visitFeePolicyId! } })
+    await changeAcceptedSnapshot({ visitFeePolicyId: complete.visitFeePolicyId! })
 
-    await db.installationOrder.update({ where: { id: protectedOrderId }, data: { visitFeeGrossAmount: null } })
+    await changeAcceptedSnapshot({ visitFeeGrossAmount: null })
     await rejectDirectBilling()
-    await db.installationOrder.update({ where: { id: protectedOrderId }, data: { visitFeeGrossAmount: complete.visitFeeGrossAmount! } })
+    await changeAcceptedSnapshot({ visitFeeGrossAmount: complete.visitFeeGrossAmount! })
 
-    await db.installationOrder.update({ where: { id: protectedOrderId }, data: { visitFeeClauseText: '   ' } })
+    await changeAcceptedSnapshot({ visitFeeClauseText: '   ' })
     await rejectDirectBilling()
-    await db.installationOrder.update({ where: { id: protectedOrderId }, data: { visitFeeClauseText: complete.visitFeeClauseText! } })
+    await changeAcceptedSnapshot({ visitFeeClauseText: complete.visitFeeClauseText! })
 
-    await db.installationOrder.update({ where: { id: protectedOrderId }, data: { visitFeeClauseVersion: null } })
+    await changeAcceptedSnapshot({ visitFeeClauseVersion: null })
     await rejectDirectBilling()
-    await db.installationOrder.update({ where: { id: protectedOrderId }, data: { visitFeeClauseVersion: complete.visitFeeClauseVersion! } })
+    await changeAcceptedSnapshot({ visitFeeClauseVersion: complete.visitFeeClauseVersion! })
 
-    await db.installationOrder.update({ where: { id: protectedOrderId }, data: { visitFeeLegalApprovedAt: null } })
+    await changeAcceptedSnapshot({ visitFeeLegalApprovedAt: null })
     await rejectDirectBilling()
-    await db.installationOrder.update({ where: { id: protectedOrderId }, data: { visitFeeLegalApprovedAt: complete.visitFeeLegalApprovedAt! } })
+    await changeAcceptedSnapshot({ visitFeeLegalApprovedAt: complete.visitFeeLegalApprovedAt! })
 
-    await db.installationOrder.update({ where: { id: protectedOrderId }, data: { visitFeeClientAcceptedAt: null } })
+    await db.installationOrder.update({ where: { id: protectedOrderId }, data: {
+      visitFeeClientAcceptedAt: null,
+      visitFeeClientIpHash: null,
+      visitFeeClientUserAgent: null,
+    } })
     await rejectDirectBilling()
-    await db.installationOrder.update({ where: { id: protectedOrderId }, data: { visitFeeClientAcceptedAt: complete.visitFeeClientAcceptedAt! } })
+    await db.installationOrder.update({ where: { id: protectedOrderId }, data: acceptanceEvidence })
 
     await expect(db.installationBillingTask.create({ data: { ...billingData, grossAmount: '1.00' } })).rejects.toBeTruthy()
 
@@ -505,6 +636,17 @@ describe('visit fee clause and documented mismatch', () => {
     } })).rejects.toBeTruthy()
     await expect(db.installationOrder.update({ where: { id: protectedOrderId }, data: {
       visitFeeClauseText: 'Niedozwolona zmiana klauzuli po utworzeniu zadania rozliczeniowego.',
+    } })).rejects.toBeTruthy()
+    await expect(db.installationOrder.update({ where: { id: protectedOrderId }, data: {
+      visitFeeClientAcceptedAt: null,
+      visitFeeClientIpHash: null,
+      visitFeeClientUserAgent: null,
+    } })).rejects.toBeTruthy()
+    await expect(db.installationOrder.update({ where: { id: protectedOrderId }, data: {
+      visitFeeClauseText: 'Niedozwolona zmiana i unieważnienie po utworzeniu zadania rozliczeniowego.',
+      visitFeeClientAcceptedAt: null,
+      visitFeeClientIpHash: null,
+      visitFeeClientUserAgent: null,
     } })).rejects.toBeTruthy()
   })
 })

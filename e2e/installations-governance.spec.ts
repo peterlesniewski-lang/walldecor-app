@@ -28,7 +28,7 @@ async function makeOrder(number: string, ownerId: string, backupId: string, temp
     schemaJson: JSON.stringify({ templateId, questions: [{ key: 'glify', type: 'YES_NO_UNKNOWN', label: 'Czy są glify?', required: true }] }),
   } })
   const token = randomBytes(32).toString('base64url')
-  await db.installationClientLink.create({ data: { orderId: order.id, tokenHash: createHash('sha256').update(token).digest('hex'), expiresAt: new Date('2027-01-01'), createdById: 'e2e-admin' } })
+  await db.installationClientLink.create({ data: { orderId: order.id, tokenHash: createHash('sha256').update(token).digest('hex'), expiresAt: new Date(Date.now() + 30 * 24 * 60 * 60_000), createdById: 'e2e-admin' } })
   return { order, token }
 }
 

@@ -130,16 +130,17 @@ describe('installation catalog hierarchy migration upgrade', () => {
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationCatalog%' ORDER BY name"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationAnswer_submitted_%' ORDER BY name"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationFormSubmission_submitted_%' ORDER BY name"),
-      db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND (name LIKE 'InstallationOrder_visitFeePolicy_%' OR name LIKE 'InstallationOrder_billed_fee_%' OR name LIKE 'InstallationMismatch_task5_%' OR name LIKE 'InstallationMismatch_billed_%' OR name LIKE 'InstallationVisitFeePolicy_referenced_%' OR name LIKE 'InstallationVisitFeePolicy_historic_%' OR name LIKE 'InstallationBillingTask_mismatch_%') ORDER BY name"),
+      db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND (name LIKE 'InstallationOrder_visitFeePolicy_%' OR name LIKE 'InstallationOrder_accepted_fee_%' OR name LIKE 'InstallationOrder_billed_fee_%' OR name LIKE 'InstallationMismatch_task5_%' OR name LIKE 'InstallationMismatch_billed_%' OR name LIKE 'InstallationVisitFeePolicy_referenced_%' OR name LIKE 'InstallationVisitFeePolicy_historic_%' OR name LIKE 'InstallationBillingTask_mismatch_%') ORDER BY name"),
       db.$queryRawUnsafe('PRAGMA foreign_key_check'), db.$queryRawUnsafe<Array<{ integrity_check: string }>>('PRAGMA integrity_check'),
     ])
-    expect(migrations).toHaveLength(28)
+    expect(migrations).toHaveLength(29)
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030000_installation_client_form')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030100_installation_submitted_answer_insert_guard')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030200_installation_submitted_revision_guard')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822040000_installation_governance')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260823010000_installation_mismatch_verified_evidence')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260823020000_installation_governance_durability')
+    expect(migrations.map((migration) => migration.migration_name)).toContain('20260823030000_installation_fee_acceptance_integrity')
     expect(triggers).toHaveLength(6)
     expect(clientFormTriggers).toEqual([
       { name: 'InstallationAnswer_submitted_delete_guard' },
@@ -153,9 +154,12 @@ describe('installation catalog hierarchy migration upgrade', () => {
     expect(governanceTriggers).toEqual([
       { name: 'InstallationBillingTask_mismatch_approval_guard' },
       { name: 'InstallationBillingTask_mismatch_approval_update_guard' },
+      { name: 'InstallationBillingTask_mismatch_future_legal_insert_guard' },
+      { name: 'InstallationBillingTask_mismatch_future_legal_update_guard' },
       { name: 'InstallationMismatch_billed_evidence_immutability_guard' },
       { name: 'InstallationMismatch_task5_verification_insert_guard' },
       { name: 'InstallationMismatch_task5_verification_update_guard' },
+      { name: 'InstallationOrder_accepted_fee_snapshot_update_guard' },
       { name: 'InstallationOrder_billed_fee_snapshot_immutability_guard' },
       { name: 'InstallationOrder_visitFeePolicy_insert_guard' },
       { name: 'InstallationOrder_visitFeePolicy_update_guard' },

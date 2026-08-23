@@ -29,6 +29,11 @@ let db: PrismaClient
 let orderId: string
 let ownerId: string
 let linkToken: string
+const dayMs = 24 * 60 * 60 * 1000
+
+function futureDate(days = 30) {
+  return new Date(Date.now() + days * dayMs)
+}
 
 function createDb() {
   return new PrismaClient({ datasources: { db: { url: databaseUrl } } })
@@ -82,7 +87,7 @@ beforeAll(async () => {
   })
   const template = await publishInstallationFormTemplate(db, draft.id, 'form-admin')
   await createInstallationOrderFormSnapshot(db, { orderId, templateId: template.id }, 'form-admin')
-  linkToken = (await createClientLink(db, { orderId, createdById: 'form-admin', expiresAt: new Date('2027-01-01') })).token
+  linkToken = (await createClientLink(db, { orderId, createdById: 'form-admin', expiresAt: futureDate() })).token
 })
 
 afterAll(async () => {
@@ -240,8 +245,8 @@ describe('client form uses a real SQLite revision history', () => {
   })
 
   it('makes revoked, expired and random tokens equally unavailable', async () => {
-    const revoked = await createClientLink(db, { orderId, createdById: 'form-admin', expiresAt: new Date('2027-01-01') })
-    const expired = await createClientLink(db, { orderId, createdById: 'form-admin', expiresAt: new Date('2027-01-01') })
+    const revoked = await createClientLink(db, { orderId, createdById: 'form-admin', expiresAt: futureDate() })
+    const expired = await createClientLink(db, { orderId, createdById: 'form-admin', expiresAt: futureDate() })
     await db.installationClientLink.update({ where: { id: expired.link.id }, data: { expiresAt: new Date('2020-01-01') } })
     await revokeClientLink(db, revoked.link.id, 'form-admin')
     for (const token of [revoked.token, expired.token, 'a'.repeat(43)]) {
