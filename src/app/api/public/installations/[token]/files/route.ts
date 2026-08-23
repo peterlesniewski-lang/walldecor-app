@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { publicClientLinkNotFound } from '@/lib/installations/client-link'
 import { privateMediaClientFromEnvironment } from '@/lib/installation-media/client'
+import { InstallationMultipartError, parseInstallationMultipart } from '@/lib/installation-media/multipart'
+import { publicInstallationFileDto } from '@/lib/installation-media/public-dto'
 import {
   createClientQuestionFile,
   InstallationMediaAccessError,
@@ -21,6 +23,7 @@ function questionKeyFromRequest(req: NextRequest) {
 function publicError(error: unknown) {
   if (error instanceof InstallationMediaAccessError) return publicClientLinkNotFound()
   if (error instanceof InstallationMediaValidationError) return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: 400, headers: noStore })
+  if (error instanceof InstallationMultipartError) return NextResponse.json({ error: error.message }, { status: error.status, headers: noStore })
   throw error
 }
 
@@ -36,19 +39,18 @@ export async function GET(req: NextRequest, { params }: Params) {
 export async function POST(req: NextRequest, { params }: Params) {
   const { token } = await params
   try {
-    const form = await req.formData()
-    const questionKey = form.get('questionKey')
-    const file = form.get('file')
-    if (typeof questionKey !== 'string' || !questionKey.trim() || !file || typeof file !== 'object' || !('arrayBuffer' in file) || !('name' in file) || !('type' in file)) {
+    const { fields, file } = await parseInstallationMultipart(req, { allowedFields: ['questionKey'] })
+    const questionKey = fields.questionKey
+    if (!questionKey?.trim()) {
       return NextResponse.json({ error: 'Wybierz plik oraz pytanie, którego dotyczy.' }, { status: 400, headers: noStore })
     }
     const upload = await createClientQuestionFile(prisma, token, {
       questionKey: questionKey.trim(),
-      filename: String(file.name),
-      contentType: String(file.type),
-      bytes: new Uint8Array(await file.arrayBuffer()),
+      filename: file.filename,
+      contentType: file.contentType,
+      bytes: file.bytes,
     }, privateMediaClientFromEnvironment())
-    return NextResponse.json({ file: upload }, { status: 201, headers: noStore })
+    return NextResponse.json({ file: publicInstallationFileDto(upload) }, { status: 201, headers: noStore })
   } catch (error) {
     return publicError(error)
   }

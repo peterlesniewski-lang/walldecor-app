@@ -9,11 +9,16 @@ import { createInstallationFormTemplate, createInstallationOrderFormSnapshot, pu
 import { createClientLink } from '@/lib/installations/client-link'
 import { autosaveClientForm, startClientFormCorrection, submitClientForm, InstallationFormValidationError } from '@/lib/installations/form-service'
 import { createInstallationOrder } from '@/lib/installations/order-service'
+import { createPrivateMediaClient } from '@/lib/installation-media/client'
 import {
   createClientQuestionFile,
+  createInternalProjectFile,
   createMismatchEvidenceFile,
   createMobileUploadHandoff,
+  getInstallationFileForDownload,
   InstallationMediaAccessError,
+  listInstallationFiles,
+  listInstallationMismatchesForEvidence,
   listClientQuestionFiles,
   redeemMobileUploadHandoff,
   revokeMobileUploadHandoff,
@@ -187,6 +192,27 @@ describe('private client files', () => {
     await expect(db.mobileUploadHandoff.update({ where: { id: handoff.handoffId }, data: { usedFiles: 0 } })).rejects.toBeTruthy()
   })
 
+  it('turns a timed-out private upload into a durable FAILED row without leaking the bearer token', async () => {
+    const secretToken = 'never-persist-this-media-token'
+    const hangingFetch = (_input: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(new Error('aborted')), { once: true })
+    })
+    const timedMedia = createPrivateMediaClient({
+      baseUrl: 'http://private-media.example.test',
+      token: secretToken,
+      fetchImpl: hangingFetch,
+      timeoutMs: 15,
+    })
+
+    await expect(createInternalProjectFile(db, orderId, 'owner-user', {
+      filename: 'timeout-projekt.pdf', contentType: 'application/pdf', bytes: new Uint8Array([37, 80, 68, 70]),
+    }, timedMedia)).rejects.toThrow('przekroczył limit czasu')
+    const failed = await db.installationFile.findFirstOrThrow({ where: { orderId, originalFilename: 'timeout-projekt.pdf' } })
+    expect(failed).toMatchObject({ status: 'FAILED', byteSize: null, sha256: null })
+    expect(failed.failureReason).toContain('przekroczył limit czasu')
+    expect(failed.failureReason).not.toContain(secretToken)
+  })
+
   it('keeps maxFiles=1 correct under concurrent mobile upload attempts', async () => {
     const handoff = await createMobileUploadHandoff(db, token, { questionKey: 'zdjecie-sciany', maxFiles: 1 })
     const redeemed = await redeemMobileUploadHandoff(db, handoff.code)
@@ -233,5 +259,88 @@ describe('private client files', () => {
     await expect(attachment).rejects.toBeTruthy()
     await expect(db.installationFile.findUniqueOrThrow({ where: { id: pending.id } })).resolves.toMatchObject({ status: 'READY', softDeletedAt: expect.any(Date) })
     expect(removedFileId).toBe(pending.id)
+  })
+
+  it('lists only open same-order mismatches for the coordinator evidence selector', async () => {
+    const open = await db.installationMismatch.create({ data: {
+      orderId,
+      description: 'Brak dojścia do wnęki.',
+      reason: 'CANNOT_PERFORM',
+      evidenceReference: 'installation-report:open-selector',
+      reportedById: 'owner',
+    } })
+    const closed = await db.installationMismatch.create({ data: {
+      orderId,
+      description: 'Ryzyko przy suficie.',
+      reason: 'EXECUTION_RISK',
+      evidenceReference: 'installation-report:closed-selector',
+      reportedById: 'owner',
+    } })
+    const other = await db.installationMismatch.create({ data: {
+      orderId: otherOrderId,
+      description: 'Niezgodność innego zlecenia.',
+      reason: 'CANNOT_PERFORM',
+      evidenceReference: 'installation-report:other-selector',
+      reportedById: 'owner',
+    } })
+    await createMismatchEvidenceFile(db, orderId, closed.id, 'owner-user', {
+      filename: 'zamkniety-dowod.png', contentType: 'image/png', bytes: imageBytes,
+    }, media)
+
+    await expect(listInstallationMismatchesForEvidence(db, orderId)).resolves.toEqual([
+      { id: open.id, reason: 'CANNOT_PERFORM', description: 'Brak dojścia do wnęki.' },
+    ])
+    const listed = await listInstallationMismatchesForEvidence(db, orderId)
+    expect(listed.map((mismatch) => mismatch.id)).not.toContain(closed.id)
+    expect(listed.map((mismatch) => mismatch.id)).not.toContain(other.id)
+  })
+
+  it('denies download immediately during a media outage and persistently retries remote cleanup', async () => {
+    const project = await createInternalProjectFile(db, orderId, 'owner-user', {
+      filename: 'projekt-do-usuniecia.pdf', contentType: 'application/pdf', bytes: new Uint8Array([37, 80, 68, 70]),
+    }, media)
+    let removeAttempts = 0
+    const flakyRemove: InstallationMediaAdapter = {
+      ...media,
+      remove: async () => {
+        removeAttempts += 1
+        if (removeAttempts === 1) throw new Error('media delete unavailable')
+      },
+    }
+
+    await expect(softDeleteInstallationFile(db, orderId, project.id, 'owner-user', flakyRemove))
+      .resolves.toMatchObject({ id: project.id, softDeletedAt: expect.any(Date), remoteDeleteStatus: 'RETRY', remoteDeleteAttemptCount: 1 })
+    await expect(getInstallationFileForDownload(db, orderId, project.id)).rejects.toBeInstanceOf(InstallationMediaAccessError)
+    await expect(listInstallationFiles(db, orderId)).resolves.toEqual(expect.arrayContaining([
+      expect.objectContaining({ id: project.id, remoteDeleteStatus: 'RETRY', remoteDeleteLastError: 'media delete unavailable' }),
+    ]))
+
+    await expect(softDeleteInstallationFile(db, orderId, project.id, 'owner-user', flakyRemove))
+      .resolves.toMatchObject({ id: project.id, remoteDeleteStatus: 'SUCCEEDED', remoteDeleteAttemptCount: 2, remoteDeletedAt: expect.any(Date) })
+    expect(removeAttempts).toBe(2)
+    await expect(listInstallationFiles(db, orderId)).resolves.not.toEqual(expect.arrayContaining([expect.objectContaining({ id: project.id })]))
+    const audit = await db.installationFileAuditEvent.findMany({ where: { fileId: project.id }, orderBy: { createdAt: 'asc' } })
+    expect(audit.map((event) => event.action)).toEqual(expect.arrayContaining([
+      'INSTALLATION_PRIVATE_FILE_REMOTE_DELETE_PENDING',
+      'INSTALLATION_PRIVATE_FILE_REMOTE_DELETE_RETRY',
+      'INSTALLATION_PRIVATE_FILE_REMOTE_DELETE_SUCCEEDED',
+    ]))
+  })
+
+  it('rejects manufactured remote-delete state and audit rows at the database boundary', async () => {
+    const project = await createInternalProjectFile(db, orderId, 'owner-user', {
+      filename: 'chroniony-projekt.pdf', contentType: 'application/pdf', bytes: new Uint8Array([37, 80, 68, 70]),
+    }, media)
+
+    await expect(db.$executeRawUnsafe(
+      'UPDATE "InstallationFile" SET "remoteDeleteStatus"=?, "remoteDeleteAttemptCount"=?, "remoteDeletedAt"=?, "softDeletedAt"=?, "softDeletedById"=? WHERE "id"=?',
+      'SUCCEEDED', 1, new Date(), new Date(), 'direct-writer', project.id,
+    )).rejects.toBeTruthy()
+    await expect(db.installationFileAuditEvent.create({ data: {
+      fileId: project.id,
+      orderId,
+      actorId: 'direct-writer',
+      action: 'INSTALLATION_PRIVATE_FILE_REMOTE_DELETE_SUCCEEDED',
+    } })).rejects.toBeTruthy()
   })
 })

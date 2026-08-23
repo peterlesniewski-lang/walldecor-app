@@ -28,7 +28,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   if (!('session' in access)) return access.response
   try {
     const file = await getInstallationFileForDownload(prisma, id, fileId)
-    const remote = await privateMediaClientFromEnvironment().download(file.id)
+    const remote = await privateMediaClientFromEnvironment().download(file.id, { byteSize: file.byteSize, sha256: file.sha256 })
     return new NextResponse(remote.body, { headers: {
       'Content-Type': file.contentType,
       'Content-Disposition': safeDisposition(file.originalFilename),
@@ -46,8 +46,9 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
   const access = await editableSession(id)
   if (!('session' in access)) return access.response
   try {
-    await softDeleteInstallationFile(prisma, id, fileId, access.session.user.id, privateMediaClientFromEnvironment())
-    return NextResponse.json({ ok: true }, { headers: noStore })
+    const file = await softDeleteInstallationFile(prisma, id, fileId, access.session.user.id, privateMediaClientFromEnvironment())
+    const pending = file.remoteDeleteStatus !== 'SUCCEEDED'
+    return NextResponse.json({ ok: true, remoteDeleteStatus: file.remoteDeleteStatus }, { status: pending ? 202 : 200, headers: noStore })
   } catch (error) {
     if (error instanceof InstallationMediaAccessError) return NextResponse.json({ error: 'Nie znaleziono pliku.' }, { status: 404, headers: noStore })
     throw error

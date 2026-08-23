@@ -125,15 +125,17 @@ describe('installation catalog hierarchy migration upgrade', () => {
   it('applies the complete fresh chain, including client-form and governance migrations, with healthy SQLite integrity', async () => {
     runMigrate(freshDatabaseUrl)
     const db = new PrismaClient({ datasources: { db: { url: freshDatabaseUrl } } })
-    const [migrations, triggers, clientFormTriggers, submittedRevisionTriggers, governanceTriggers, foreignKeys, integrity] = await Promise.all([
+    const [migrations, triggers, clientFormTriggers, submittedRevisionTriggers, governanceTriggers, cleanupColumns, cleanupTriggers, foreignKeys, integrity] = await Promise.all([
       db.$queryRawUnsafe<Array<{ migration_name: string }>>('SELECT migration_name FROM _prisma_migrations ORDER BY migration_name'),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationCatalog%' ORDER BY name"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationAnswer_submitted_%' ORDER BY name"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationFormSubmission_submitted_%' ORDER BY name"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND (name LIKE 'InstallationOrder_visitFeePolicy_%' OR name LIKE 'InstallationOrder_accepted_fee_%' OR name LIKE 'InstallationOrder_billed_fee_%' OR name LIKE 'InstallationMismatch_task5_%' OR name LIKE 'InstallationMismatch_private_%' OR name LIKE 'InstallationMismatch_billed_%' OR name LIKE 'InstallationVisitFeePolicy_referenced_%' OR name LIKE 'InstallationVisitFeePolicy_historic_%' OR name LIKE 'InstallationBillingTask_mismatch_%') ORDER BY name"),
+      db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM pragma_table_info('InstallationFile') WHERE name LIKE 'remoteDelete%' ORDER BY cid"),
+      db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationFile_remote_delete_%' ORDER BY name"),
       db.$queryRawUnsafe('PRAGMA foreign_key_check'), db.$queryRawUnsafe<Array<{ integrity_check: string }>>('PRAGMA integrity_check'),
     ])
-    expect(migrations).toHaveLength(31)
+    expect(migrations).toHaveLength(32)
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030000_installation_client_form')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030100_installation_submitted_answer_insert_guard')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030200_installation_submitted_revision_guard')
@@ -143,6 +145,7 @@ describe('installation catalog hierarchy migration upgrade', () => {
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260823030000_installation_fee_acceptance_integrity')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260823040000_installation_private_media')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260823050000_mobile_handoff_retry_release')
+    expect(migrations.map((migration) => migration.migration_name)).toContain('20260823060000_installation_remote_delete_lifecycle')
     expect(triggers).toHaveLength(6)
     expect(clientFormTriggers).toEqual([
       { name: 'InstallationAnswer_submitted_delete_guard' },
@@ -168,6 +171,13 @@ describe('installation catalog hierarchy migration upgrade', () => {
       { name: 'InstallationVisitFeePolicy_historic_snapshot_update_guard' },
       { name: 'InstallationVisitFeePolicy_referenced_delete_guard' },
       { name: 'InstallationVisitFeePolicy_referenced_id_update_guard' },
+    ])
+    expect(cleanupColumns.map((column) => column.name)).toEqual([
+      'remoteDeleteStatus', 'remoteDeleteAttemptCount', 'remoteDeleteLastError', 'remoteDeleteNextAttemptAt', 'remoteDeletedAt',
+    ])
+    expect(cleanupTriggers).toEqual([
+      { name: 'InstallationFile_remote_delete_insert_guard' },
+      { name: 'InstallationFile_remote_delete_update_guard' },
     ])
     expect(foreignKeys).toEqual([])
     expect(integrity[0]?.integrity_check).toBe('ok')

@@ -4,6 +4,9 @@ import { resolveActiveClientLink } from '@/lib/installations/client-link'
 import { evaluateVisibleFormQuestions, type ClientAnswerValue, type ClientFormQuestion } from '@/lib/installations/form-service'
 import { validateInstallationQuestionDefinitions } from '@/lib/installations/question-schema'
 import type { PrivateMediaClient, PrivateMediaFile } from './client'
+import { INSTALLATION_MAX_FILE_BYTES } from './limits'
+
+export { INSTALLATION_MAX_FILE_BYTES } from './limits'
 
 type InstallationDb = PrismaClient | Prisma.TransactionClient
 
@@ -24,7 +27,6 @@ export class InstallationMediaValidationError extends Error {
 }
 
 export const INSTALLATION_ALLOWED_FILE_TYPES = ['image/jpeg', 'image/png', 'image/webp', 'application/pdf'] as const
-export const INSTALLATION_MAX_FILE_BYTES = 10 * 1024 * 1024
 export const INSTALLATION_HANDOFF_MAX_FILES = 5
 export const INSTALLATION_HANDOFF_TTL_MS = 20 * 60 * 1000
 
@@ -308,9 +310,34 @@ export async function revokeMobileUploadHandoff(db: PrismaClient, handoffId: str
 
 export async function listInstallationFiles(db: InstallationDb, orderId: string) {
   return db.installationFile.findMany({
-    where: { orderId, softDeletedAt: null },
-    select: { id: true, purpose: true, questionKey: true, roomId: true, scopeId: true, originalFilename: true, contentType: true, byteSize: true, sha256: true, status: true, source: true, createdAt: true },
+    where: {
+      orderId,
+      OR: [
+        { softDeletedAt: null },
+        { softDeletedAt: { not: null }, remoteDeleteStatus: { in: ['PENDING', 'RETRY'] } },
+      ],
+    },
+    select: {
+      id: true, purpose: true, questionKey: true, roomId: true, scopeId: true,
+      originalFilename: true, contentType: true, byteSize: true, sha256: true,
+      status: true, source: true, softDeletedAt: true, remoteDeleteStatus: true,
+      remoteDeleteAttemptCount: true, remoteDeleteLastError: true,
+      remoteDeleteNextAttemptAt: true, remoteDeletedAt: true, createdAt: true,
+    },
     orderBy: { createdAt: 'asc' },
+  })
+}
+
+export async function listInstallationMismatchesForEvidence(db: InstallationDb, orderId: string) {
+  return db.installationMismatch.findMany({
+    where: {
+      orderId,
+      evidenceStatus: 'PENDING_PRIVATE_FILE',
+      evidenceAttachment: null,
+      billingTask: null,
+    },
+    select: { id: true, reason: true, description: true },
+    orderBy: { reportedAt: 'asc' },
   })
 }
 
@@ -323,18 +350,73 @@ export async function getInstallationFileForDownload(db: InstallationDb, orderId
 export async function softDeleteInstallationFile(db: PrismaClient, orderId: string, fileId: string, actorId: string, media: InstallationMediaAdapter) {
   const now = new Date()
   const file = await db.$transaction(async (tx) => {
-    const existing = await tx.installationFile.findFirst({ where: { id: fileId, orderId, softDeletedAt: null } })
+    const existing = await tx.installationFile.findFirst({ where: { id: fileId, orderId } })
     if (!existing) throw new InstallationMediaAccessError()
-    const updated = await tx.installationFile.update({ where: { id: existing.id }, data: { softDeletedAt: now, softDeletedById: actorId } })
-    await auditFile(tx, { fileId, orderId, actorId, action: 'INSTALLATION_PRIVATE_FILE_SOFT_DELETED' })
-    return updated
+    if (existing.remoteDeleteStatus === 'SUCCEEDED') throw new InstallationMediaAccessError()
+    if (existing.softDeletedAt === null) {
+      const updated = await tx.installationFile.update({
+        where: { id: existing.id },
+        data: {
+          softDeletedAt: now,
+          softDeletedById: actorId,
+          remoteDeleteStatus: 'PENDING',
+          remoteDeleteLastError: null,
+          remoteDeleteNextAttemptAt: null,
+        },
+      })
+      await auditFile(tx, { fileId, orderId, actorId, action: 'INSTALLATION_PRIVATE_FILE_SOFT_DELETED' })
+      await auditFile(tx, { fileId, orderId, actorId, action: 'INSTALLATION_PRIVATE_FILE_REMOTE_DELETE_PENDING', metadata: { attempt: updated.remoteDeleteAttemptCount + 1 } })
+      return updated
+    }
+    if (existing.remoteDeleteStatus === 'RETRY') {
+      const updated = await tx.installationFile.update({
+        where: { id: existing.id },
+        data: { remoteDeleteStatus: 'PENDING', remoteDeleteLastError: null, remoteDeleteNextAttemptAt: null },
+      })
+      await auditFile(tx, { fileId, orderId, actorId, action: 'INSTALLATION_PRIVATE_FILE_REMOTE_DELETE_PENDING', metadata: { attempt: updated.remoteDeleteAttemptCount + 1, retry: true } })
+      return updated
+    }
+    if (existing.remoteDeleteStatus === 'PENDING') return existing
+    throw new InstallationMediaAccessError()
   })
   try {
     await media.remove(file.id)
   } catch (error) {
-    await db.$transaction((tx) => auditFile(tx, { fileId, orderId, actorId, action: 'INSTALLATION_PRIVATE_FILE_DELETE_REMOTE_FAILED', metadata: { reason: safeMediaError(error) } }))
+    const reason = safeMediaError(error)
+    const nextAttemptAt = new Date(Date.now() + Math.min(24 * 60 * 60 * 1000, 60_000 * (2 ** Math.min(file.remoteDeleteAttemptCount, 10))))
+    return db.$transaction(async (tx) => {
+      const updated = await tx.installationFile.updateMany({
+        where: { id: fileId, orderId, remoteDeleteStatus: 'PENDING' },
+        data: {
+          remoteDeleteStatus: 'RETRY',
+          remoteDeleteAttemptCount: { increment: 1 },
+          remoteDeleteLastError: reason,
+          remoteDeleteNextAttemptAt: nextAttemptAt,
+        },
+      })
+      if (updated.count === 1) {
+        await auditFile(tx, { fileId, orderId, actorId, action: 'INSTALLATION_PRIVATE_FILE_REMOTE_DELETE_RETRY', metadata: { reason, nextAttemptAt: nextAttemptAt.toISOString() } })
+      }
+      return tx.installationFile.findUniqueOrThrow({ where: { id: fileId } })
+    })
   }
-  return file
+  const remoteDeletedAt = new Date()
+  return db.$transaction(async (tx) => {
+    const updated = await tx.installationFile.updateMany({
+      where: { id: fileId, orderId, remoteDeleteStatus: 'PENDING' },
+      data: {
+        remoteDeleteStatus: 'SUCCEEDED',
+        remoteDeleteAttemptCount: { increment: 1 },
+        remoteDeleteLastError: null,
+        remoteDeleteNextAttemptAt: null,
+        remoteDeletedAt,
+      },
+    })
+    if (updated.count === 1) {
+      await auditFile(tx, { fileId, orderId, actorId, action: 'INSTALLATION_PRIVATE_FILE_REMOTE_DELETE_SUCCEEDED', metadata: { remoteDeletedAt: remoteDeletedAt.toISOString() } })
+    }
+    return tx.installationFile.findUniqueOrThrow({ where: { id: fileId } })
+  })
 }
 
 export async function createMismatchEvidenceFile(db: PrismaClient, orderId: string, mismatchId: string, actorId: string, input: UploadInput, media: InstallationMediaAdapter) {

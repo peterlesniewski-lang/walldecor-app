@@ -33,3 +33,19 @@ E2E używa jawnego `INSTALLATION_MEDIA_TEST_ADAPTER=filesystem` wyłącznie poza
 - po poprawce `npm test`: **88 plików / 504 testy**, `npm run build`: green, świeży/upgrade łańcuch migracji: green w `catalog-hierarchy-upgrade`;
 - dedykowany Playwright `e2e/installations-media.spec.ts`: **1/1 green** z realnymi bajtami PNG, trzema odmowami endpointów po submit i odtworzeniem odpowiedzi/pliku po jawnej korekcie;
 - `npm run validate:installation-media`: green, `restart=verified`, SHA-256 `0698f85f451be29efe982f6c5b3404ef75e0c894f569758dd2ad152f559f3816`.
+
+## Korekta bezpieczeństwa uploadu i usuwania — 2026-08-23
+
+- wszystkie trzy endpointy uploadu używają wspólnego parsera strumieniowego multipart (`busboy` 1.6.0, licencja MIT), bez `Request.formData()` i bez `File.arrayBuffer()` przed walidacją; `Content-Length` jest odrzucany od razu, a transfer chunked jest przerywany po limicie 10 MB z ograniczeniami liczby plików, pól i części;
+- regresje dla publicznego desktopu, telefonu i panelu wewnętrznego potwierdzają, że przekroczenie limitu nie tworzy rekordu bazy ani wywołania media service, a źródłowy stream zostaje anulowany po najwyżej 10 MB + 32 KiB;
+- publiczny desktop i telefon zwracają wyłącznie jawny DTO pliku: `id`, `originalFilename`, `contentType`, `byteSize`, `sha256`, `createdAt`;
+- timeout media client obejmuje upload, podpisanie, cały odczyt body pobrania i usunięcie. Pobranie jest dodatkowo ograniczone do 10 MB oraz porównywane z zapisanym rozmiarem i SHA-256; test z body, które nigdy nie kończy odczytu, potwierdza abort i bezpieczny komunikat bez tokena;
+- soft-delete natychmiast blokuje pobieranie w aplikacji. Stan zdalnego czyszczenia jest trwały (`PENDING`, `RETRY`, `SUCCEEDED`) z liczbą prób, błędem, terminem kolejnej próby i `remoteDeletedAt`; panel pokazuje awarię i ma działający przycisk ręcznego ponowienia. Zadanie nie deklaruje automatycznego workera;
+- baza blokuje sfabrykowane przejścia stanu i audyt sukcesu bez rzeczywistego `SUCCEEDED`. Migracja naprawia też granicę milisekund dla dowodu dołączanego w bieżącej sekundzie;
+- dowód niezgodności wybiera się z czytelnej listy otwartych niezgodności bieżącego zlecenia; techniczne ID nie jest wpisywane ręcznie, a po udanym dołączeniu pozycja znika z listy;
+- pełny `npm test`: **90 plików / 520 testów**, green;
+- `npm run build`: green;
+- świeży pełny łańcuch migracji i upgrade legacy: green, w tym `PRAGMA integrity_check`;
+- dedykowany Playwright Task 5: **1/1 green**; pełny `npm run test:e2e -- --workers=1`: **10/10 green**;
+- `npm run validate:installation-media`: green, `restart=verified`, SHA-256 `0698f85f451be29efe982f6c5b3404ef75e0c894f569758dd2ad152f559f3816`;
+- changed-file ESLint: **0 błędów**; `npm audit --omit=dev` nadal pokazuje istniejący baseline **9 produkcyjnych findings** (3 moderate, 5 high, 1 critical). `busboy` nie jest źródłem żadnego z nich; aktualizacje Next/Auth/Anthropic pozostają bramką bezpieczeństwa Task 12, bez `audit fix` w tym zadaniu.

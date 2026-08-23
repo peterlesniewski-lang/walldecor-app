@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { editableInstallationOrder } from '@/lib/installations/room-route-access'
 import { privateMediaClientFromEnvironment } from '@/lib/installation-media/client'
+import { InstallationMultipartError, parseInstallationMultipart } from '@/lib/installation-media/multipart'
 import {
   createMismatchEvidenceFile,
   createInternalProjectFile,
@@ -35,16 +36,9 @@ export async function POST(req: NextRequest, { params }: Params) {
   const access = await editableSession(id)
   if (!('session' in access)) return access.response
   try {
-    const form = await req.formData()
-    const purpose = form.get('purpose')
-    const mismatchId = form.get('mismatchId')
-    const roomId = form.get('roomId')
-    const scopeId = form.get('scopeId')
-    const file = form.get('file')
-    if (!file || typeof file !== 'object' || !('arrayBuffer' in file) || !('name' in file) || !('type' in file)) {
-      return NextResponse.json({ error: 'Wybierz plik.' }, { status: 400 })
-    }
-    const upload = { filename: String(file.name), contentType: String(file.type), bytes: new Uint8Array(await file.arrayBuffer()) }
+    const { fields, file } = await parseInstallationMultipart(req, { allowedFields: ['purpose', 'mismatchId', 'roomId', 'scopeId'] })
+    const { purpose, mismatchId, roomId, scopeId } = fields
+    const upload = { filename: file.filename, contentType: file.contentType, bytes: file.bytes }
     const uploaded = purpose === 'INTERNAL_PROJECT'
       ? await createInternalProjectFile(prisma, id, access.session.user.id, {
         ...upload,
@@ -59,6 +53,7 @@ export async function POST(req: NextRequest, { params }: Params) {
   } catch (error) {
     if (error instanceof InstallationMediaAccessError) return NextResponse.json({ error: 'Nie znaleziono pliku lub niezgodności.' }, { status: 404 })
     if (error instanceof InstallationMediaValidationError) return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: 400 })
+    if (error instanceof InstallationMultipartError) return NextResponse.json({ error: error.message }, { status: error.status, headers: noStore })
     throw error
   }
 }

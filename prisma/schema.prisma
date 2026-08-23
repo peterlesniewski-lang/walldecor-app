@@ -943,6 +943,11 @@ model InstallationFile {
   createdById       String?
   softDeletedAt     DateTime?
   softDeletedById   String?
+  remoteDeleteStatus       String   @default("NOT_REQUESTED")
+  remoteDeleteAttemptCount Int      @default(0)
+  remoteDeleteLastError    String?
+  remoteDeleteNextAttemptAt DateTime?
+  remoteDeletedAt          DateTime?
   mismatchEvidence  InstallationMismatchEvidence?
   auditEvents       InstallationFileAuditEvent[]
   createdAt         DateTime @default(now())
@@ -954,6 +959,7 @@ model InstallationFile {
   @@index([formSubmissionId, questionKey])
   @@index([clientLinkId, questionKey])
   @@index([mobileHandoffId])
+  @@index([remoteDeleteStatus, remoteDeleteNextAttemptAt])
 }
 
 /// A single, immutable link between a reported mismatch and the private file

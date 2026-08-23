@@ -8,6 +8,56 @@ const privateUrl = 'http://private-media.example.test'
 const privateToken = 'test-private-media-token'
 
 describe('private media client', () => {
+  it('aborts every private-media request at the configured timeout without exposing the bearer token', async () => {
+    const hanging = vi.fn((_input: string | URL | Request, init?: RequestInit) => new Promise<Response>((_resolve, reject) => {
+      init?.signal?.addEventListener('abort', () => reject(init.signal?.reason ?? new Error('aborted')), { once: true })
+    }))
+    const timedClient = createPrivateMediaClient({ baseUrl: privateUrl, token: privateToken, fetchImpl: hanging, timeoutMs: 15 })
+    const uploadError = await timedClient.upload({ fileId: 'file-1', jobId: 'order-1', contentType: 'image/png', bytes: new Uint8Array([1]) }).catch((error) => error)
+    const signedError = await timedClient.download('file-signed-timeout').catch((error) => error)
+    const deleteError = await timedClient.remove('file-delete-timeout').catch((error) => error)
+
+    const signedThenHangingDownload = vi.fn((input: string | URL | Request, init?: RequestInit) => {
+      if (String(input).endsWith('/signed-download')) return Promise.resolve(Response.json({ expires_at: 1_799_999_999, signature: 'safe-signature' }))
+      return new Promise<Response>((_resolve, reject) => init?.signal?.addEventListener('abort', () => reject(init.signal?.reason ?? new Error('aborted')), { once: true }))
+    })
+    const downloadError = await createPrivateMediaClient({ baseUrl: privateUrl, token: privateToken, fetchImpl: signedThenHangingDownload, timeoutMs: 15 })
+      .download('file-download-timeout').catch((error) => error)
+
+    for (const error of [uploadError, signedError, downloadError, deleteError]) {
+      expect(error).toBeInstanceOf(InstallationMediaClientError)
+      expect(String(error.message)).toContain('przekroczył limit czasu')
+      expect(String(error.message)).not.toContain(privateToken)
+    }
+    expect(hanging).toHaveBeenCalledTimes(3)
+    expect(signedThenHangingDownload).toHaveBeenCalledTimes(2)
+  })
+
+  it('keeps the timeout active until the private download body finishes', async () => {
+    let bodyCancelled = false
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).endsWith('/signed-download')) {
+        return Response.json({ expires_at: 1_799_999_999, signature: 'safe-signature' })
+      }
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new Uint8Array([1, 2, 3]))
+        },
+        cancel() {
+          bodyCancelled = true
+        },
+      }))
+    })
+
+    const error = await createPrivateMediaClient({ baseUrl: privateUrl, token: privateToken, fetchImpl, timeoutMs: 15 })
+      .download('slow-body').catch((caught) => caught)
+
+    expect(error).toBeInstanceOf(InstallationMediaClientError)
+    expect(error.message).toContain('przekroczył limit czasu')
+    expect(error.message).not.toContain(privateToken)
+    expect(bodyCancelled).toBe(true)
+  })
+
   it('uploads the exact bytes only through the private authenticated endpoint', async () => {
     const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
     const sha256 = createHash('sha256').update(bytes).digest('hex')
@@ -44,9 +94,22 @@ describe('private media client', () => {
       return new Response(bytes, { headers: { 'Content-Type': 'application/pdf', 'Cache-Control': 'private, no-store' } })
     })
 
-    const response = await createPrivateMediaClient({ baseUrl: privateUrl, token: privateToken, fetchImpl }).download('file-1')
+    const response = await createPrivateMediaClient({ baseUrl: privateUrl, token: privateToken, fetchImpl }).download('file-1', {
+      byteSize: bytes.byteLength,
+      sha256: createHash('sha256').update(bytes).digest('hex'),
+    })
     expect(new Uint8Array(await response.arrayBuffer())).toEqual(bytes)
     expect(fetchImpl).toHaveBeenCalledTimes(2)
+  })
+
+  it('rejects a private download that does not match the database integrity snapshot', async () => {
+    const fetchImpl = vi.fn(async (input: string | URL | Request) => {
+      if (String(input).endsWith('/signed-download')) return Response.json({ expires_at: 1_799_999_999, signature: 'safe-signature' })
+      return new Response(new Uint8Array([1, 2, 3]))
+    })
+    const client = createPrivateMediaClient({ baseUrl: privateUrl, token: privateToken, fetchImpl })
+    await expect(client.download('file-1', { byteSize: 3, sha256: 'a'.repeat(64) }))
+      .rejects.toThrow('niespójnej sumie kontrolnej')
   })
 
   it('does not accept a malformed response from the private media service', async () => {

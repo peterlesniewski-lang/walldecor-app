@@ -16,7 +16,7 @@ export async function GET(req: NextRequest, { params }: Params) {
   const { token, fileId } = await params
   try {
     const file = await getClientQuestionFile(prisma, token, publicQuestionKey(req), fileId)
-    const remote = await privateMediaClientFromEnvironment().download(file.id)
+    const remote = await privateMediaClientFromEnvironment().download(file.id, { byteSize: file.byteSize, sha256: file.sha256 })
     return new NextResponse(remote.body, { headers: { 'Content-Type': file.contentType, 'Cache-Control': 'no-store, private', 'X-Content-Type-Options': 'nosniff' } })
   } catch (error) {
     if (error instanceof InstallationMediaAccessError) return publicClientLinkNotFound()

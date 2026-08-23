@@ -1,5 +1,8 @@
 import { NextRequest } from 'next/server'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { installationMultipartBody } from '@/../__tests__/helpers/installation-multipart'
+
+const INSTALLATION_MAX_FILE_BYTES = 10 * 1024 * 1024
 
 const mocks = vi.hoisted(() => ({
   session: null as { user: { id: string; role: string; employeeId?: string | null } } | null,
@@ -40,8 +43,8 @@ describe('internal private-media routes', () => {
     mocks.session = { user: { id: 'owner-user', role: 'EMPLOYEE', employeeId: 'owner-employee' } }
     mocks.editable.mockReset().mockResolvedValue({ order: { id: 'order-1' } })
     mocks.list.mockReset().mockResolvedValue([{ id: 'file-1', originalFilename: 'proof.png' }])
-    mocks.download.mockReset().mockResolvedValue({ id: 'file-1', originalFilename: 'proof.png', contentType: 'image/png' })
-    mocks.softDelete.mockReset().mockResolvedValue({ id: 'file-1' })
+    mocks.download.mockReset().mockResolvedValue({ id: 'file-1', originalFilename: 'proof.png', contentType: 'image/png', byteSize: 3, sha256: 'a'.repeat(64) })
+    mocks.softDelete.mockReset().mockResolvedValue({ id: 'file-1', remoteDeleteStatus: 'SUCCEEDED' })
     mocks.mismatchUpload.mockReset().mockResolvedValue({ id: 'file-evidence', status: 'READY' })
     mocks.projectUpload.mockReset().mockResolvedValue({ id: 'file-project', status: 'READY' })
     mocks.adapter.download.mockReset().mockResolvedValue(new Response(new Uint8Array([1, 2, 3]), { headers: { 'Content-Type': 'image/png' } }))
@@ -64,19 +67,51 @@ describe('internal private-media routes', () => {
     expect(streamed.status).toBe(200)
     expect(streamed.headers.get('content-disposition')).toContain('proof.png')
     expect(new Uint8Array(await streamed.arrayBuffer())).toEqual(new Uint8Array([1, 2, 3]))
-    expect(mocks.adapter.download).toHaveBeenCalledWith('file-1')
+    expect(mocks.adapter.download).toHaveBeenCalledWith('file-1', { byteSize: 3, sha256: 'a'.repeat(64) })
     const deleted = await remove(new NextRequest('http://test/api/installations/order-1/files/file-1', { method: 'DELETE' }), fileParams)
     expect(deleted.status).toBe(200)
     expect(mocks.softDelete).toHaveBeenCalledWith({}, 'order-1', 'file-1', 'owner-user', mocks.adapter)
   })
 
+  it('returns durable cleanup state and accepts a later retry for the same locally deleted file', async () => {
+    mocks.softDelete
+      .mockResolvedValueOnce({ id: 'file-1', remoteDeleteStatus: 'RETRY' })
+      .mockResolvedValueOnce({ id: 'file-1', remoteDeleteStatus: 'SUCCEEDED' })
+
+    const first = await remove(new NextRequest('http://test/api/installations/order-1/files/file-1', { method: 'DELETE' }), fileParams)
+    expect(first.status).toBe(202)
+    expect(await first.json()).toEqual({ ok: true, remoteDeleteStatus: 'RETRY' })
+    const retry = await remove(new NextRequest('http://test/api/installations/order-1/files/file-1', { method: 'DELETE' }), fileParams)
+    expect(retry.status).toBe(200)
+    expect(await retry.json()).toEqual({ ok: true, remoteDeleteStatus: 'SUCCEEDED' })
+    expect(mocks.softDelete).toHaveBeenCalledTimes(2)
+  })
+
   it('accepts a private project file targeted to the order, room, or scope without exposing a media URL', async () => {
-    vi.spyOn(NextRequest.prototype, 'formData').mockResolvedValue({
-      get: (key: string) => key === 'purpose' ? 'INTERNAL_PROJECT' : key === 'roomId' ? 'room-1' : key === 'scopeId' ? 'scope-1' : key === 'file' ? { name: 'rzut.pdf', type: 'application/pdf', arrayBuffer: async () => new Uint8Array([1, 2, 3]).buffer } : null,
-    } as never)
-    const response = await mismatchUpload(new NextRequest('http://test/api/installations/order-1/files', { method: 'POST' }), params)
+    const multipart = installationMultipartBody({ purpose: 'INTERNAL_PROJECT', roomId: 'room-1', scopeId: 'scope-1' }, {
+      filename: 'rzut.pdf', contentType: 'application/pdf', bytes: new Uint8Array([1, 2, 3]),
+    })
+    const response = await mismatchUpload(new NextRequest('http://test/api/installations/order-1/files', {
+      method: 'POST', headers: { 'Content-Type': multipart.contentType }, body: multipart.body, duplex: 'half',
+    } as RequestInit & { duplex: 'half' }), params)
     expect(response.status).toBe(201)
     expect(mocks.projectUpload).toHaveBeenCalledWith(expect.anything(), 'order-1', 'owner-user', expect.objectContaining({ roomId: 'room-1', scopeId: 'scope-1', filename: 'rzut.pdf', contentType: 'application/pdf' }), mocks.adapter)
     expect(JSON.stringify(await response.json())).not.toContain('private/v1')
+  })
+
+  it('stops a chunked internal upload at the hard limit before creating a database or media record', async () => {
+    const multipart = installationMultipartBody({ purpose: 'INTERNAL_PROJECT' }, {
+      filename: 'za-duzy.pdf', contentType: 'application/pdf', bytes: new Uint8Array(INSTALLATION_MAX_FILE_BYTES + 1024 * 1024),
+    })
+    const response = await mismatchUpload(new NextRequest('http://test/api/installations/order-1/files', {
+      method: 'POST', headers: { 'Content-Type': multipart.contentType }, body: multipart.body, duplex: 'half',
+    } as RequestInit & { duplex: 'half' }), params)
+
+    expect(response.status).toBe(413)
+    expect(multipart.consumed()).toBeLessThanOrEqual(INSTALLATION_MAX_FILE_BYTES + 32 * 1024)
+    expect(multipart.cancelled()).toBe(true)
+    expect(mocks.projectUpload).not.toHaveBeenCalled()
+    expect(mocks.mismatchUpload).not.toHaveBeenCalled()
+    expect(mocks.adapter.upload).not.toHaveBeenCalled()
   })
 })

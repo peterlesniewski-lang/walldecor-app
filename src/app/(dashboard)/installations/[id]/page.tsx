@@ -14,7 +14,7 @@ import { listClientLinkStatuses } from '@/lib/installations/client-link'
 import { listInstallationClarifications, listInstallationFormRevisions } from '@/lib/installations/form-service'
 import { getInstallationReadiness } from '@/lib/installations/readiness'
 import { getInstallationOwnershipView, getInstallationVisitFeeView } from '@/lib/installations/delegation-service'
-import { listInstallationFiles } from '@/lib/installation-media/service'
+import { listInstallationFiles, listInstallationMismatchesForEvidence } from '@/lib/installation-media/service'
 import { InstallationOrderDetail } from '@/components/installations/order-detail'
 
 type Params = { params: Promise<{ id: string }> }
@@ -46,7 +46,7 @@ export default async function InstallationOrderPage({ params }: Params) {
   // An installer gets the limited work-order view. Client answers, their
   // clarification/evidence trail and client-link management are coordinator-only.
   const coordinatorData = canCoordinateClientForm ? await (async () => {
-    const [employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files] = await Promise.all([
+    const [employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches] = await Promise.all([
       prisma.employee.findMany({
         where: { active: true },
         select: { id: true, firstName: true, lastName: true },
@@ -62,8 +62,9 @@ export default async function InstallationOrderPage({ params }: Params) {
       getInstallationOwnershipView(prisma, id),
       getInstallationVisitFeeView(prisma, id),
       listInstallationFiles(prisma, id),
+      listInstallationMismatchesForEvidence(prisma, id),
     ])
-    return { employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files }
+    return { employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches }
   })() : null
 
   // Decimal is a Prisma value object and cannot cross the Server/Client
@@ -90,6 +91,7 @@ export default async function InstallationOrderPage({ params }: Params) {
     ownership={coordinatorData?.ownership ?? null}
     visitFee={coordinatorData?.visitFee ?? null}
     files={coordinatorData?.files ?? []}
+    mismatches={coordinatorData?.mismatches ?? []}
     canManageGovernance={canManageGovernance}
   />
 }
