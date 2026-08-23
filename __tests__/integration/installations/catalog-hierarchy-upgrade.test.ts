@@ -132,7 +132,7 @@ describe('installation catalog hierarchy migration upgrade', () => {
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationFormSubmission_submitted_%' ORDER BY name"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND (name LIKE 'InstallationOrder_visitFeePolicy_%' OR name LIKE 'InstallationOrder_accepted_fee_%' OR name LIKE 'InstallationOrder_billed_fee_%' OR name LIKE 'InstallationMismatch_task5_%' OR name LIKE 'InstallationMismatch_private_%' OR name LIKE 'InstallationMismatch_billed_%' OR name LIKE 'InstallationVisitFeePolicy_referenced_%' OR name LIKE 'InstallationVisitFeePolicy_historic_%' OR name LIKE 'InstallationBillingTask_mismatch_%') ORDER BY name"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM pragma_table_info('InstallationFile') WHERE name LIKE 'remoteDelete%' ORDER BY cid"),
-      db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationFile_remote_delete_%' ORDER BY name"),
+      db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND (name LIKE 'InstallationFile_remote_delete_%' OR name = 'InstallationFile_soft_delete_remote_state_guard') ORDER BY name"),
       db.$queryRawUnsafe('PRAGMA foreign_key_check'), db.$queryRawUnsafe<Array<{ integrity_check: string }>>('PRAGMA integrity_check'),
     ])
     expect(migrations).toHaveLength(32)
@@ -178,6 +178,7 @@ describe('installation catalog hierarchy migration upgrade', () => {
     expect(cleanupTriggers).toEqual([
       { name: 'InstallationFile_remote_delete_insert_guard' },
       { name: 'InstallationFile_remote_delete_update_guard' },
+      { name: 'InstallationFile_soft_delete_remote_state_guard' },
     ])
     expect(foreignKeys).toEqual([])
     expect(integrity[0]?.integrity_check).toBe('ok')

@@ -58,6 +58,26 @@ describe('private media client', () => {
     expect(bodyCancelled).toBe(true)
   })
 
+  it('does not confirm a remote delete until its response body has finished', async () => {
+    let bodyCancelled = false
+    const fetchImpl = vi.fn(async () => new Response(new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new Uint8Array([1]))
+      },
+      cancel() {
+        bodyCancelled = true
+      },
+    }), { status: 200 }))
+
+    const error = await createPrivateMediaClient({ baseUrl: privateUrl, token: privateToken, fetchImpl, timeoutMs: 15 })
+      .remove('slow-delete-body').catch((caught) => caught)
+
+    expect(error).toBeInstanceOf(InstallationMediaClientError)
+    expect(error.message).toContain('przekroczył limit czasu')
+    expect(error.message).not.toContain(privateToken)
+    expect(bodyCancelled).toBe(true)
+  })
+
   it('uploads the exact bytes only through the private authenticated endpoint', async () => {
     const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
     const sha256 = createHash('sha256').update(bytes).digest('hex')

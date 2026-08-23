@@ -39,6 +39,7 @@ type ExpectedPrivateMediaFile = {
 
 const DEFAULT_PRIVATE_MEDIA_TIMEOUT_MS = 15_000
 const MAX_PRIVATE_MEDIA_TIMEOUT_MS = 120_000
+const MAX_PRIVATE_MEDIA_DELETE_RESPONSE_BYTES = 64 * 1024
 
 function privateHeaders(token: string) {
   return { Authorization: `Bearer ${token}` }
@@ -66,6 +67,10 @@ function responseError(response: Response, fallback: string) {
   return new InstallationMediaClientError(fallback, response.status)
 }
 
+function ensureResponseReadNotAborted(signal: AbortSignal) {
+  if (signal.aborted) throw new InstallationMediaClientError('Odczyt odpowiedzi prywatnego serwera plików został przerwany.')
+}
+
 async function boundedResponse(response: Response, signal: AbortSignal, expected?: ExpectedPrivateMediaFile) {
   const contentLength = response.headers.get('content-length')
   if (contentLength && (/^\d+$/.test(contentLength) === false || Number(contentLength) > INSTALLATION_MAX_FILE_BYTES)) {
@@ -81,7 +86,9 @@ async function boundedResponse(response: Response, signal: AbortSignal, expected
   signal.addEventListener('abort', cancel, { once: true })
   try {
     while (true) {
+      ensureResponseReadNotAborted(signal)
       const chunk = await reader.read()
+      ensureResponseReadNotAborted(signal)
       if (chunk.done) break
       byteSize += chunk.value.byteLength
       if (byteSize > INSTALLATION_MAX_FILE_BYTES) {
@@ -108,6 +115,36 @@ async function boundedResponse(response: Response, signal: AbortSignal, expected
     throw new InstallationMediaClientError('Prywatny serwer plików zwrócił plik o niespójnej sumie kontrolnej.')
   }
   return new Response(bytes, { status: response.status, statusText: response.statusText, headers: response.headers })
+}
+
+async function consumeDeleteResponse(response: Response, signal: AbortSignal) {
+  const contentLength = response.headers.get('content-length')
+  if (contentLength && (/^\d+$/.test(contentLength) === false || Number(contentLength) > MAX_PRIVATE_MEDIA_DELETE_RESPONSE_BYTES)) {
+    await response.body?.cancel().catch(() => undefined)
+    throw new InstallationMediaClientError('Prywatny serwer plików zwrócił zbyt dużą odpowiedź usunięcia.')
+  }
+  if (!response.body) return
+
+  const reader = response.body.getReader()
+  let byteSize = 0
+  const cancel = () => { void reader.cancel().catch(() => undefined) }
+  signal.addEventListener('abort', cancel, { once: true })
+  try {
+    while (true) {
+      ensureResponseReadNotAborted(signal)
+      const chunk = await reader.read()
+      ensureResponseReadNotAborted(signal)
+      if (chunk.done) break
+      byteSize += chunk.value.byteLength
+      if (byteSize > MAX_PRIVATE_MEDIA_DELETE_RESPONSE_BYTES) {
+        await reader.cancel().catch(() => undefined)
+        throw new InstallationMediaClientError('Prywatny serwer plików zwrócił zbyt dużą odpowiedź usunięcia.')
+      }
+    }
+  } finally {
+    signal.removeEventListener('abort', cancel)
+    reader.releaseLock()
+  }
 }
 
 /**
@@ -196,6 +233,7 @@ export function createPrivateMediaClient(config: PrivateMediaConfig) {
           method: 'DELETE', headers: privateHeaders(config.token), signal,
         })
         if (!response.ok && response.status !== 404) throw responseError(response, 'Nie można usunąć prywatnego pliku.')
+        await consumeDeleteResponse(response, signal)
       })
     },
   }

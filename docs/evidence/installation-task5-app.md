@@ -49,3 +49,13 @@ E2E używa jawnego `INSTALLATION_MEDIA_TEST_ADAPTER=filesystem` wyłącznie poza
 - dedykowany Playwright Task 5: **1/1 green**; pełny `npm run test:e2e -- --workers=1`: **10/10 green**;
 - `npm run validate:installation-media`: green, `restart=verified`, SHA-256 `0698f85f451be29efe982f6c5b3404ef75e0c894f569758dd2ad152f559f3816`;
 - changed-file ESLint: **0 błędów**; `npm audit --omit=dev` nadal pokazuje istniejący baseline **9 produkcyjnych findings** (3 moderate, 5 high, 1 critical). `busboy` nie jest źródłem żadnego z nich; aktualizacje Next/Auth/Anthropic pozostają bramką bezpieczeństwa Task 12, bez `audit fix` w tym zadaniu.
+
+## Korekta wyścigu upload–delete — 2026-08-23
+
+- zwykłe usunięcie pliku w stanie `PENDING` jest odrzucane przed wywołaniem media service; deterministyczny test zatrzymuje upload pomiędzy rezerwacją rekordu a odpowiedzią adaptera, równolegle próbuje DELETE i potwierdza końcowy `READY` bez przedwczesnego zdalnego usunięcia;
+- jeżeli prywatny serwer zapisał już bajty, lecz transakcja `PENDING → READY` nie może się zakończyć, aplikacja atomowo ustawia `FAILED`, odcina dostęp oraz rezerwuje `remoteDeleteStatus=PENDING` przed próbą kompensacyjnego DELETE. Awaria tej próby przechodzi do trwałego `RETRY`; test tworzy świeży PrismaClient i nową instancję adaptera, ponawia usunięcie i potwierdza `SUCCEEDED` oraz brak zdalnego obiektu;
+- trigger `InstallationFile_soft_delete_remote_state_guard` blokuje bezpośrednie ukrycie rekordu przez zmianę samych `softDeletedAt/softDeletedById`. Pierwsze odcięcie widoczności musi w tej samej instrukcji mieć aktora, terminalny stan pliku i `remoteDeleteStatus=PENDING`; sprawdza to bezpośredni test SQL oraz pełny fresh/legacy-upgrade z `PRAGMA integrity_check`;
+- timeout operacji DELETE obejmuje również pełne body odpowiedzi. Test odpowiedzi `200` z zakończonymi nagłówkami i niekończącym się body potwierdza anulowanie readera oraz błąd timeout; status `SUCCEEDED` nie jest zapisywany na podstawie samych nagłówków;
+- targeted Task 5: **8 plików / 51 testów**, green; pełny `npm test`: **90 plików / 523 testy**, green;
+- `npm run build`: green; pełny Playwright: **10/10 green** (49,5 s);
+- `npm run validate:installation-media`: green, `restart=verified`, SHA-256 `0698f85f451be29efe982f6c5b3404ef75e0c894f569758dd2ad152f559f3816`.

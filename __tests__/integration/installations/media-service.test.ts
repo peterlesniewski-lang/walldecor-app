@@ -225,6 +225,94 @@ describe('private client files', () => {
     await expect(db.mobileUploadHandoff.findUniqueOrThrow({ where: { id: handoff.handoffId } })).resolves.toMatchObject({ usedFiles: 1 })
   })
 
+  it('rejects deletion while an upload is PENDING and lets that exact upload finish READY', async () => {
+    let uploadBegan!: () => void
+    const began = new Promise<void>((resolve) => { uploadBegan = resolve })
+    let releaseUpload!: () => void
+    const release = new Promise<void>((resolve) => { releaseUpload = resolve })
+    let removeAttempts = 0
+    const delayedMedia: InstallationMediaAdapter = {
+      ...media,
+      upload: async (input) => {
+        uploadBegan()
+        await release
+        return media.upload(input)
+      },
+      remove: async () => { removeAttempts += 1 },
+    }
+
+    const upload = createInternalProjectFile(db, orderId, 'owner-user', {
+      filename: 'pending-delete-race.pdf', contentType: 'application/pdf', bytes: new Uint8Array([37, 80, 68, 70]),
+    }, delayedMedia)
+    await began
+    const pending = await db.installationFile.findFirstOrThrow({ where: { orderId, originalFilename: 'pending-delete-race.pdf' } })
+    const deletion = await softDeleteInstallationFile(db, orderId, pending.id, 'owner-user', delayedMedia)
+      .then((value) => ({ status: 'fulfilled' as const, value }), (reason) => ({ status: 'rejected' as const, reason }))
+    releaseUpload()
+    const uploaded = await upload
+
+    expect(deletion.status).toBe('rejected')
+    if (deletion.status === 'rejected') expect(deletion.reason).toBeInstanceOf(InstallationMediaAccessError)
+    expect(removeAttempts).toBe(0)
+    expect(uploaded).toMatchObject({ id: pending.id, status: 'READY', softDeletedAt: null, remoteDeleteStatus: 'NOT_REQUESTED' })
+  })
+
+  it('durably compensates a remote upload when READY finalization loses a race and retries after a fresh client', async () => {
+    const remoteFiles = new Set<string>()
+    let uploadStored!: () => void
+    const stored = new Promise<void>((resolve) => { uploadStored = resolve })
+    let releaseUpload!: () => void
+    const release = new Promise<void>((resolve) => { releaseUpload = resolve })
+    let rejectFirstRemoval = true
+    const adapter = (): InstallationMediaAdapter => ({
+      ...media,
+      upload: async (input) => {
+        remoteFiles.add(input.fileId)
+        uploadStored()
+        await release
+        return media.upload(input)
+      },
+      remove: async (fileId) => {
+        if (rejectFirstRemoval) {
+          rejectFirstRemoval = false
+          throw new Error('compensation delete unavailable')
+        }
+        remoteFiles.delete(fileId)
+      },
+    })
+
+    const upload = createInternalProjectFile(db, orderId, 'owner-user', {
+      filename: 'ready-finalize-race.pdf', contentType: 'application/pdf', bytes: new Uint8Array([37, 80, 68, 70]),
+    }, adapter())
+    await stored
+    const pending = await db.installationFile.findFirstOrThrow({ where: { orderId, originalFilename: 'ready-finalize-race.pdf' } })
+    await db.installationFile.update({
+      where: { id: pending.id },
+      data: { status: 'FAILED', failureReason: 'Concurrent finalization failure.' },
+    })
+    releaseUpload()
+
+    await expect(upload).rejects.toBeInstanceOf(InstallationMediaAccessError)
+    expect(remoteFiles.has(pending.id)).toBe(true)
+    await expect(db.installationFile.findUniqueOrThrow({ where: { id: pending.id } })).resolves.toMatchObject({
+      status: 'FAILED',
+      softDeletedAt: expect.any(Date),
+      remoteDeleteStatus: 'RETRY',
+      remoteDeleteAttemptCount: 1,
+      remoteDeleteLastError: 'compensation delete unavailable',
+    })
+
+    await db.$disconnect()
+    db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
+    await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+    await expect(softDeleteInstallationFile(db, orderId, pending.id, 'owner-user', adapter())).resolves.toMatchObject({
+      remoteDeleteStatus: 'SUCCEEDED',
+      remoteDeleteAttemptCount: 2,
+      remoteDeletedAt: expect.any(Date),
+    })
+    expect(remoteFiles.has(pending.id)).toBe(false)
+  })
+
   it('soft-deletes a ready mismatch file when its final database attachment fails', async () => {
     const mismatch = await db.installationMismatch.create({ data: {
       orderId,
@@ -336,6 +424,15 @@ describe('private client files', () => {
       'UPDATE "InstallationFile" SET "remoteDeleteStatus"=?, "remoteDeleteAttemptCount"=?, "remoteDeletedAt"=?, "softDeletedAt"=?, "softDeletedById"=? WHERE "id"=?',
       'SUCCEEDED', 1, new Date(), new Date(), 'direct-writer', project.id,
     )).rejects.toBeTruthy()
+    await expect(db.$executeRawUnsafe(
+      'UPDATE "InstallationFile" SET "softDeletedAt"=?, "softDeletedById"=? WHERE "id"=?',
+      new Date(), 'direct-writer', project.id,
+    )).rejects.toBeTruthy()
+    await expect(db.installationFile.findUniqueOrThrow({ where: { id: project.id } })).resolves.toMatchObject({
+      softDeletedAt: null,
+      softDeletedById: null,
+      remoteDeleteStatus: 'NOT_REQUESTED',
+    })
     await expect(db.installationFileAuditEvent.create({ data: {
       fileId: project.id,
       orderId,
