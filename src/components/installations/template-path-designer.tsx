@@ -138,7 +138,7 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
   }
 
   async function confirmDelete() {
-    if (!deleteKey) return
+    if (!deleteKey || busy) return
     try {
       await persist(removeQuestionSubtree(localQuestions, deleteKey))
       shouldFocusRootAfterDelete.current = true
@@ -163,6 +163,7 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
   }
 
   function cancelDelete() {
+    if (busy) return
     setDeleteKey(null)
     deleteOpenerRef.current?.focus()
   }
@@ -231,7 +232,7 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
       return <div ref={confirmationRef} className="wd-template-confirm" role="alertdialog" tabIndex={-1} onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); cancelDelete() } }} aria-labelledby="template-delete-title" aria-describedby="template-delete-description">
         <h4 id="template-delete-title">Potwierdź usunięcie</h4>
         <p id="template-delete-description">{count > 0 ? `Usunąć pytanie i ${count} ${descendantsLabel(count)}?` : 'Usunąć pytanie?'}</p>
-        <div className="wd-template-card__actions"><button type="button" className="wd-template-button wd-template-button--quiet" onClick={cancelDelete} aria-label="Anuluj usuwanie">Anuluj</button><button type="button" className="wd-template-button wd-template-button--danger" onClick={() => void confirmDelete()} aria-label={`Potwierdź usunięcie pytania ${label}`}>Usuń pytanie</button></div>
+        <div className="wd-template-card__actions"><button type="button" className="wd-template-button wd-template-button--quiet" onClick={cancelDelete} disabled={busy} aria-label="Anuluj usuwanie">Anuluj</button><button type="button" className="wd-template-button wd-template-button--danger" onClick={() => void confirmDelete()} disabled={busy} aria-label={`Potwierdź usunięcie pytania ${label}`}>Usuń pytanie</button></div>
       </div>
     })()}
   </section>

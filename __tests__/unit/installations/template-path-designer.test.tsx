@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { TemplatePathDesigner } from '@/components/installations/template-path-designer'
@@ -128,6 +128,35 @@ describe('TemplatePathDesigner', () => {
     expect(screen.getByText('Usunąć pytanie i 1 pytanie podrzędne?')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Potwierdź usunięcie pytania Opis stanu' }))
     await vi.waitFor(() => expect(onPersist).toHaveBeenCalledWith([]))
+  })
+
+  it('locks a pending delete confirmation so a second click cannot falsely synchronize the local map', async () => {
+    const user = userEvent.setup()
+    let resolveFirstPersist: (() => void) | undefined
+    const firstPersist = new Promise<void>((resolve) => { resolveFirstPersist = resolve })
+    const onPersist = vi.fn()
+      .mockImplementationOnce(() => firstPersist)
+      .mockResolvedValueOnce(undefined)
+    const questions = [root, child]
+    const { rerender } = render(<TemplatePathDesigner questions={questions} busy={false} onPersist={onPersist} />)
+
+    await user.click(screen.getByRole('button', { name: 'Usuń pytanie Czy są okna?' }))
+    await user.click(screen.getByRole('button', { name: 'Potwierdź usunięcie pytania Czy są okna?' }))
+    await vi.waitFor(() => expect(onPersist).toHaveBeenCalledTimes(1))
+    rerender(<TemplatePathDesigner questions={questions} busy onPersist={onPersist} />)
+
+    const confirm = screen.getByRole('button', { name: 'Potwierdź usunięcie pytania to pytanie' })
+    expect(confirm).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Anuluj usuwanie' })).toHaveProperty('disabled', true)
+    await user.click(confirm)
+    expect(onPersist).toHaveBeenCalledTimes(1)
+    expect(screen.getByRole('alertdialog')).toBeTruthy()
+    expect(screen.getByText('Ponów zapis')).toBeTruthy()
+
+    await act(async () => {
+      resolveFirstPersist?.()
+      await Promise.resolve()
+    })
   })
 
   it('tests the local form path with the shared engine, reset and a FILE placeholder without fetch', async () => {
