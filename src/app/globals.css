@@ -198,8 +198,8 @@ body {
 .wd-template-editor__error { color: #7d3026; font-size: .82rem; margin: 13px 0 0; }
 .wd-template-editor__actions { border-top: 1px solid rgba(39,37,34,.12); margin-top: 17px; padding-top: 13px; }
 .wd-template-preview__client { display: grid; gap: 12px; margin-top: 18px; }
-.wd-template-preview__client .question { box-shadow: none; }
 .wd-template-file-placeholder { background: #f1e8db; border-left: 4px solid #8f7c60; border-radius: 10px; color: #5d554b; font-size: .83rem; line-height: 1.45; margin: 0; padding: 11px 12px; }
+.wd-template-retry-actions { display: flex; flex-wrap: wrap; gap: 8px; margin: 12px 0; }
 @media (max-width: 640px) {
   .wd-template-designer__toolbar, .wd-template-preview__heading, .wd-template-editor__heading { display: grid; }
   .wd-template-designer__toolbar-actions, .wd-template-preview__actions { justify-content: flex-start; }

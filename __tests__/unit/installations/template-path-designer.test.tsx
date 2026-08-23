@@ -91,21 +91,43 @@ describe('TemplatePathDesigner', () => {
     expect(onPersist.mock.calls[0]?.[0]).toEqual([expect.objectContaining({ key: 'okna', label: 'Czy w pomieszczeniu są okna?' })])
   })
 
-  it('requires confirmation, reports subtree count, and leaves data unchanged on cancel', async () => {
+  it('confirms deletion inline, restores opener focus on Escape or cancel, then moves focus to the map', async () => {
     const user = userEvent.setup()
     const onPersist = vi.fn().mockResolvedValue(undefined)
     renderDesigner([root, child, singleChild], onPersist)
-    await user.click(screen.getByRole('button', { name: 'Usuń pytanie Czy są okna?' }))
+    const remove = screen.getByRole('button', { name: 'Usuń pytanie Czy są okna?' })
+    await user.click(remove)
     expect(screen.getByText('Usunąć pytanie i 2 pytania podrzędne?')).toBeTruthy()
     const confirmation = screen.getByRole('alertdialog')
     expect(document.activeElement).toBe(confirmation)
-    expect(confirmation.getAttribute('aria-modal')).toBe('true')
+    expect(confirmation.getAttribute('aria-modal')).toBeNull()
+    await user.keyboard('{Escape}')
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(document.activeElement).toBe(remove)
+
+    await user.click(remove)
     await user.click(screen.getByRole('button', { name: 'Anuluj usuwanie' }))
     expect(onPersist).not.toHaveBeenCalled()
-    await user.click(screen.getByRole('button', { name: 'Usuń pytanie Czy są okna?' }))
+    expect(document.activeElement).toBe(remove)
+
+    await user.click(remove)
     await user.click(screen.getByRole('button', { name: 'Potwierdź usunięcie pytania Czy są okna?' }))
     await vi.waitFor(() => expect(onPersist).toHaveBeenCalledTimes(1))
     expect(onPersist.mock.calls[0]?.[0]).toEqual([])
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: '+ Dodaj pierwsze pytanie' }))
+  })
+
+  it('counts detached descendants the same way it removes them', async () => {
+    const user = userEvent.setup()
+    const onPersist = vi.fn().mockResolvedValue(undefined)
+    const textRoot: FormQuestion = { key: 'opis', type: 'TEXT', label: 'Opis stanu' }
+    const malformedChild: FormQuestion = { key: 'ukryte', type: 'TEXT', label: 'Ukryte pytanie', condition: { questionKey: 'opis', equals: 'YES' } }
+    renderDesigner([textRoot, malformedChild], onPersist)
+
+    await user.click(screen.getByRole('button', { name: 'Usuń pytanie Opis stanu' }))
+    expect(screen.getByText('Usunąć pytanie i 1 pytanie podrzędne?')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Potwierdź usunięcie pytania Opis stanu' }))
+    await vi.waitFor(() => expect(onPersist).toHaveBeenCalledWith([]))
   })
 
   it('tests the local form path with the shared engine, reset and a FILE placeholder without fetch', async () => {
@@ -125,6 +147,25 @@ describe('TemplatePathDesigner', () => {
     expect(screen.getByText('Pliki będą dostępne w formularzu klienta')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Resetuj próbę' }))
     expect(screen.queryByText('Czy można wejść?')).toBeNull()
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('renders each FILE question through the readonly client renderer without network activity', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const files: FormQuestion[] = [
+      { key: 'front', type: 'FILE', label: 'Zdjęcie wejścia', help: 'Pokaż próg', required: true },
+      { key: 'wall', type: 'FILE', label: 'Zdjęcie ściany', help: 'Pokaż całą ścianę' },
+    ]
+    renderDesigner(files)
+
+    await user.click(screen.getByRole('button', { name: 'Testuj formularz' }))
+    expect(screen.getByText('Zdjęcie wejścia')).toBeTruthy()
+    expect(screen.getByText('Pokaż próg')).toBeTruthy()
+    expect(screen.getByText('Zdjęcie ściany')).toBeTruthy()
+    expect(screen.getByText('Pokaż całą ścianę')).toBeTruthy()
+    expect(screen.getAllByText('Pliki będą dostępne w formularzu klienta')).toHaveLength(2)
     expect(fetchMock).not.toHaveBeenCalled()
   })
 
@@ -164,8 +205,7 @@ describe('TemplatePathDesigner', () => {
 
     await user.click(screen.getByRole('button', { name: 'Anuluj' }))
     expect(screen.getByText('Czy można wejść?')).toBeTruthy()
-    await user.click(screen.getByRole('button', { name: 'Edytuj pytanie Czy można wejść?' }))
-    await user.click(screen.getByRole('button', { name: 'Zapisz pytanie' }))
+    await user.click(screen.getByRole('button', { name: 'Ponów zapis' }))
 
     await vi.waitFor(() => expect(onPersist).toHaveBeenCalledTimes(2))
   })
@@ -215,5 +255,35 @@ describe('TemplatePathDesigner', () => {
     expect(deepestBranch?.dataset.pathIndent).toBe('none')
     expect(deepestBranch?.style.marginLeft).toBe('0px')
     expect(deepestBranch?.style.paddingInlineStart).toBe('0px')
+  })
+
+  it('collapses and expands a question branch without changing the draft model', async () => {
+    const user = userEvent.setup()
+    const onPersist = vi.fn().mockResolvedValue(undefined)
+    renderDesigner([root, child], onPersist)
+
+    expect(screen.getByText('Czy są glify?')).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Zwiń gałęzie pytania Czy są okna?' }))
+    expect(screen.queryByText('Czy są glify?')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Rozwiń gałęzie pytania Czy są okna?' }))
+    expect(screen.getByText('Czy są glify?')).toBeTruthy()
+    expect(onPersist).not.toHaveBeenCalled()
+  })
+
+  it('does not revive a grandchild after its parent answer was cleared by a changed root answer', async () => {
+    const user = userEvent.setup()
+    const grandchild: FormQuestion = { key: 'pomiar', type: 'TEXT', label: 'Podaj pomiar', condition: { questionKey: 'glify', equals: 'YES' } }
+    renderDesigner([root, child, grandchild])
+
+    await user.click(screen.getByRole('button', { name: 'Testuj formularz' }))
+    await user.click(screen.getAllByRole('button', { name: 'Tak' })[0]!)
+    await user.click(screen.getAllByRole('button', { name: 'Tak' })[1]!)
+    expect(screen.getByText('Podaj pomiar')).toBeTruthy()
+    await user.click(screen.getAllByRole('button', { name: 'Nie' })[0]!)
+    expect(screen.queryByText('Czy są glify?')).toBeNull()
+    expect(screen.queryByText('Podaj pomiar')).toBeNull()
+    await user.click(screen.getAllByRole('button', { name: 'Tak' })[0]!)
+    expect(screen.getByText('Czy są glify?')).toBeTruthy()
+    expect(screen.queryByText('Podaj pomiar')).toBeNull()
   })
 })

@@ -194,11 +194,9 @@ export function moveQuestionWithinBranch(
   return flattenQuestionForest(forest)
 }
 
-/** Removes the selected question and every question whose ancestor chain reaches it. */
-export function removeQuestionSubtree(questions: readonly FormQuestion[], key: string): FormQuestion[] {
-  if (!questions.some((question) => question.key === key)) {
-    return flattenQuestionForest(buildQuestionForest(questions))
-  }
+/** Lists a question and every record whose conditional ancestor chain reaches it. */
+export function questionSubtreeKeys(questions: readonly FormQuestion[], key: string): Set<string> {
+  if (!questions.some((question) => question.key === key)) return new Set()
 
   const removedKeys = new Set<string>([key])
   let changed = true
@@ -213,6 +211,14 @@ export function removeQuestionSubtree(questions: readonly FormQuestion[], key: s
       }
     }
   }
+
+  return removedKeys
+}
+
+/** Removes the selected question and every question whose ancestor chain reaches it. */
+export function removeQuestionSubtree(questions: readonly FormQuestion[], key: string): FormQuestion[] {
+  const removedKeys = questionSubtreeKeys(questions, key)
+  if (removedKeys.size === 0) return flattenQuestionForest(buildQuestionForest(questions))
 
   return flattenQuestionForest(buildQuestionForest(questions.filter((question) => !removedKeys.has(question.key))))
 }

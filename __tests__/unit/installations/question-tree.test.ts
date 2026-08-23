@@ -7,6 +7,7 @@ import {
   flattenQuestionForest,
   moveQuestionWithinBranch,
   nextQuestionKey,
+  questionSubtreeKeys,
   removeQuestionSubtree,
 } from '@/lib/installations/question-tree'
 
@@ -112,6 +113,16 @@ describe('installation question tree', () => {
 
   it('removes a question together with every descendant', () => {
     expect(keys(removeQuestionSubtree(questions, 'okna'))).toEqual(['pokoj-a', 'pokoj-b'])
+  })
+
+  it('counts and removes malformed descendants with the same subtree helper', () => {
+    const malformed = [
+      { key: 'opis', type: 'TEXT', label: 'Opis' },
+      { key: 'ukryte', type: 'TEXT', label: 'Ukryte', condition: { questionKey: 'opis', equals: 'YES' } },
+    ] satisfies FormQuestion[]
+
+    expect([...questionSubtreeKeys(malformed, 'opis')]).toEqual(['opis', 'ukryte'])
+    expect(keys(removeQuestionSubtree(malformed, 'opis'))).toEqual([])
   })
 
   it('appends root and child questions with a condition defined exclusively by the placement', () => {

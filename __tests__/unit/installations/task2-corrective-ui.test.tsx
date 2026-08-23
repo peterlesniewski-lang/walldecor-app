@@ -174,6 +174,75 @@ describe('Task 2 corrective UI invariants', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1)
   })
 
+  it('keeps a rejected local map dirty until retry succeeds, then permits switching and publishing', async () => {
+    const user = userEvent.setup()
+    const draftA = {
+      id: 'draft-dirty-a', familyId: 'family-dirty-a', name: 'Szkic do ponowienia', version: 1, status: 'DRAFT',
+      questionDefinitions: [{ id: 'question-root', key: 'okna', type: 'YES_NO_UNKNOWN', label: 'Czy są okna?', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: null, sortOrder: 0 }],
+    }
+    const savedDraftA = {
+      ...draftA,
+      questionDefinitions: [...draftA.questionDefinitions, { id: 'question-child', key: 'question-1', type: 'TEXT', label: 'Czy można wejść?', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: JSON.stringify({ questionKey: 'okna', equals: 'YES' }), sortOrder: 1 }],
+    }
+    const draftB = {
+      id: 'draft-dirty-b', familyId: 'family-dirty-b', name: 'Drugi szkic', version: 1, status: 'DRAFT',
+      questionDefinitions: [{ id: 'question-b', key: 'b', type: 'TEXT', label: 'Pytanie B', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: null, sortOrder: 0 }],
+    }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: false, json: async () => ({ error: 'Zapis odrzucony.' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => savedDraftA })
+    vi.stubGlobal('fetch', fetchMock)
+    render(createElement(TemplateBuilder, { initialTemplates: [draftA, draftB] } as never))
+
+    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak' }))
+    await user.type(screen.getByLabelText('Treść pytania'), 'Czy można wejść?')
+    await user.click(screen.getByRole('button', { name: 'Zapisz pytanie' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    await user.click(screen.getByRole('button', { name: 'Anuluj' }))
+
+    const picker = screen.getByLabelText('Wybierz szkic do edycji')
+    expect(screen.getByText('Czy można wejść?')).toBeTruthy()
+    expect(picker).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Utwórz szkic' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Opublikuj v1' })).toHaveProperty('disabled', true)
+
+    await user.click(screen.getByRole('button', { name: 'Ponów zapis' }))
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    await waitFor(() => expect(picker).toHaveProperty('disabled', false))
+    expect(screen.getByRole('button', { name: 'Opublikuj v1' })).toHaveProperty('disabled', false)
+    await user.selectOptions(picker, draftB.id)
+    expect(screen.getByText('Pytanie B')).toBeTruthy()
+  })
+
+  it('discards a rejected local map back to the server snapshot before changing drafts', async () => {
+    const user = userEvent.setup()
+    const draftA = {
+      id: 'draft-discard-a', familyId: 'family-discard-a', name: 'Szkic do odrzucenia', version: 1, status: 'DRAFT',
+      questionDefinitions: [{ id: 'question-root', key: 'okna', type: 'YES_NO_UNKNOWN', label: 'Czy są okna?', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: null, sortOrder: 0 }],
+    }
+    const draftB = {
+      id: 'draft-discard-b', familyId: 'family-discard-b', name: 'Drugi szkic', version: 1, status: 'DRAFT',
+      questionDefinitions: [{ id: 'question-b', key: 'b', type: 'TEXT', label: 'Pytanie B', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: null, sortOrder: 0 }],
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({ error: 'Zapis odrzucony.' }) }))
+    render(createElement(TemplateBuilder, { initialTemplates: [draftA, draftB] } as never))
+
+    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak' }))
+    await user.type(screen.getByLabelText('Treść pytania'), 'Niezapisane pytanie')
+    await user.click(screen.getByRole('button', { name: 'Zapisz pytanie' }))
+    await screen.findAllByRole('alert')
+    await user.click(screen.getByRole('button', { name: 'Anuluj' }))
+    const picker = screen.getByLabelText('Wybierz szkic do edycji')
+    expect(picker).toHaveProperty('disabled', true)
+
+    await user.click(screen.getByRole('button', { name: 'Odrzuć niezapisane zmiany' }))
+    expect(screen.queryByText('Niezapisane pytanie')).toBeNull()
+    expect(picker).toHaveProperty('disabled', false)
+    expect(screen.getByRole('button', { name: 'Opublikuj v1' })).toHaveProperty('disabled', false)
+    await user.selectOptions(picker, draftB.id)
+    expect(screen.getByText('Pytanie B')).toBeTruthy()
+  })
+
   it('resets designer edit, deletion and test state when the active draft changes', async () => {
     const user = userEvent.setup()
     const draftA = {
@@ -207,7 +276,7 @@ describe('Task 2 corrective UI invariants', () => {
     expect(screen.getByText('Pytanie B')).toBeTruthy()
   })
 
-  it('keeps publish disabled while a pending PATCH survives an A-B-A draft switch', async () => {
+  it('blocks create, next-draft and picker actions while a PATCH is pending', async () => {
     const user = userEvent.setup()
     const draftA = {
       id: 'draft-race-a', familyId: 'family-race-a', name: 'Szkic wyścigu A', version: 1, status: 'DRAFT',
@@ -217,27 +286,33 @@ describe('Task 2 corrective UI invariants', () => {
       id: 'draft-race-b', familyId: 'family-race-b', name: 'Szkic wyścigu B', version: 1, status: 'DRAFT',
       questionDefinitions: [{ id: 'question-b', key: 'b', type: 'YES_NO_UNKNOWN', label: 'Pytanie B', help: null, riskLevel: 'LOW', optionsJson: null, conditionJson: null, sortOrder: 0 }],
     }
+    const published = {
+      id: 'published-race', familyId: 'family-published-race', name: 'Opublikowany', version: 1, status: 'PUBLISHED',
+      questionDefinitions: [],
+    }
     const pendingPatch = new Promise<{ ok: boolean; json: () => Promise<typeof draftA> }>(() => {})
     const fetchMock = vi.fn((path: string) => {
       if (path === '/api/installations/templates/draft-race-a') return pendingPatch
       return Promise.resolve({ ok: true, json: async () => draftA })
     })
     vi.stubGlobal('fetch', fetchMock)
-    render(createElement(TemplateBuilder, { initialTemplates: [draftA, draftB] } as never))
+    render(createElement(TemplateBuilder, { initialTemplates: [draftA, draftB, published] } as never))
     const picker = screen.getByLabelText('Wybierz szkic do edycji')
 
     await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak' }))
     await user.type(screen.getByLabelText('Treść pytania'), 'Zmiana w toku')
     await user.click(screen.getByRole('button', { name: 'Zapisz pytanie' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
-    await user.selectOptions(picker, draftB.id)
-    await user.selectOptions(picker, draftA.id)
 
     const publish = screen.getByRole('button', { name: 'Opublikuj v1' })
+    expect(picker).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Utwórz szkic' })).toHaveProperty('disabled', true)
+    expect(screen.getByRole('button', { name: 'Nowy szkic' })).toHaveProperty('disabled', true)
     expect(publish).toHaveProperty('disabled', true)
+    await user.click(screen.getByRole('button', { name: 'Utwórz szkic' }))
+    await user.click(screen.getByRole('button', { name: 'Nowy szkic' }))
     await user.click(publish)
     expect(fetchMock).toHaveBeenCalledTimes(1)
-
   })
 
   it('renders the immutable collection snapshot beside historic product details', () => {
