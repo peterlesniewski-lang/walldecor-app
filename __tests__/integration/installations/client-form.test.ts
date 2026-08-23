@@ -88,6 +88,15 @@ beforeAll(async () => {
   const template = await publishInstallationFormTemplate(db, draft.id, 'form-admin')
   await createInstallationOrderFormSnapshot(db, { orderId, templateId: template.id }, 'form-admin')
   linkToken = (await createClientLink(db, { orderId, createdById: 'form-admin', expiresAt: futureDate() })).token
+  const initial = await loadPublicInstallationProjection(db, linkToken)
+  const link = await db.installationClientLink.findUniqueOrThrow({ where: { tokenHash: hashClientLinkSecret(linkToken) } })
+  const submission = await db.installationFormSubmission.findUniqueOrThrow({ where: { draftKey: orderId } })
+  await db.installationFile.create({ data: {
+    id: 'client-form-existing-required-file', orderId, formSubmissionId: submission.id, clientLinkId: link.id,
+    purpose: 'CLIENT_QUESTION', questionKey: 'referencja', originalFilename: 'fixture.png', contentType: 'image/png', source: 'WEB', createdById: 'PUBLIC_CLIENT', updatedAt: new Date(),
+  } })
+  await db.installationFile.update({ where: { id: 'client-form-existing-required-file' }, data: { status: 'READY', byteSize: 1, sha256: 'a'.repeat(64), updatedAt: new Date() } })
+  expect(initial.submission.status).toBe('DRAFT')
 })
 
 afterAll(async () => {

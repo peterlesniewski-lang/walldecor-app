@@ -40,12 +40,12 @@ describe('client installation form', () => {
     expect(screen.getByText(/Ustalimy przed montażem/)).not.toBeNull()
   })
 
-  it('does not render a fake FILE upload before Task 5', () => {
+  it('renders an ordinary file picker and an optional QR handoff without making photos visually dominant', () => {
     render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={projection} />)
 
-    expect(screen.getByText(/Dokumenty i zdjęcia dodamy w kroku plików/i)).not.toBeNull()
-    expect(document.querySelector('input[type="file"]')).toBeNull()
-    expect(screen.getByTestId('task5-file-step').getAttribute('data-task5-replace')).toBe('private-upload-handoff')
+    expect(screen.getByLabelText('Dodaj plik: Zdjęcie referencyjne')).not.toBeNull()
+    expect(screen.getByRole('button', { name: 'Dodaj z telefonu' })).not.toBeNull()
+    expect(screen.queryByText(/Dokumenty i zdjęcia dodamy w kroku plików/i)).toBeNull()
   })
 
   it('shows an approved visit-fee clause and keeps submit unavailable until the customer explicitly accepts it', async () => {

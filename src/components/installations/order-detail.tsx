@@ -12,6 +12,7 @@ import { ClientLinkPanel, type InstallationClientLinkStatus } from './client-lin
 import { InstallationClarificationPanel, type InstallationClarificationView } from './installation-clarification-panel'
 import { OwnershipPanel } from './ownership-panel'
 import { VisitFeePanel } from './visit-fee-panel'
+import { InstallationFilesPanel } from './installation-files-panel'
 
 type InstallationOrderDetailValue = InstallationOrderFormValue & {
   number: string
@@ -37,6 +38,7 @@ export function InstallationOrderDetail({
   ownership = null,
   visitFee = null,
   canManageGovernance = false,
+  files = [],
 }: {
   order: InstallationOrderDetailValue
   employees: InstallationEmployeeOption[]
@@ -53,6 +55,7 @@ export function InstallationOrderDetail({
   ownership?: Awaited<ReturnType<typeof import('@/lib/installations/delegation-service').getInstallationOwnershipView>> | null
   visitFee?: Awaited<ReturnType<typeof import('@/lib/installations/delegation-service').getInstallationVisitFeeView>> | null
   canManageGovernance?: boolean
+  files?: Parameters<typeof InstallationFilesPanel>[0]['initialFiles']
 }) {
   const router = useRouter()
   const [archiving, setArchiving] = useState(false)
@@ -131,6 +134,7 @@ export function InstallationOrderDetail({
       />}
       <InstallationFormSnapshotPanel orderId={order.id} publishedTemplates={publishedTemplates} initialSnapshot={formSnapshot} canEdit={canEditActiveOrder} isArchived={isArchived} />
       <RoomScopeEditor orderId={order.id} initialRooms={rooms} catalog={catalog} canEdit={canEditActiveOrder} />
+      <InstallationFilesPanel orderId={order.id} initialFiles={files} rooms={rooms.map((room) => ({ id: room.id, name: room.name, scopes: room.scopes.map((scope) => ({ id: scope.id, name: scope.name })) }))} canEdit={canEditActiveOrder} />
       {canEditActiveOrder && <ClientLinkPanel orderId={order.id} initialLinks={clientLinks} canEdit canGenerate={formSnapshot !== null} />}
       {canEditActiveOrder && <InstallationClarificationPanel orderId={order.id} clarifications={clarifications} readiness={readiness} canEdit formRevisions={formRevisions} />}
       {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}

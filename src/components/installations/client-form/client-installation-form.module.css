@@ -62,6 +62,13 @@
 .check input { accent-color: var(--masking-tape); height: 20px; width: 20px; }
 .fileNotice, .unknown, .error, .confirmation { border-radius: 12px; font-size: 14px; line-height: 1.45; margin-top: 14px; padding: 12px; }
 .fileNotice { background: #f1e8db; border-left: 4px solid #8f7c60; }
+.filePicker { align-items: center; background: #f0e7d8; border: 1px solid rgba(39,37,34,.22); border-radius: 10px; cursor: pointer; display: inline-flex; font-size: 14px; font-weight: 700; margin: 12px 8px 0 0; min-height: 44px; padding: 0 12px; position: relative; }
+.filePicker input { cursor: pointer; inset: 0; opacity: 0; position: absolute; width: 100%; }
+.handoff { align-items: center; background: #f7f2e8; border: 1px solid rgba(39,37,34,.14); border-radius: 12px; display: flex; gap: 12px; margin-top: 14px; padding: 12px; }
+.handoff p { color: #655e55; font-size: 13px; line-height: 1.4; margin: 5px 0 9px; }
+.qr { background: #fff; border: 1px solid rgba(39,37,34,.12); border-radius: 8px; height: 96px; padding: 5px; width: 96px; }
+.fileList { color: #4d4943; font-size: 14px; margin: 12px 0 0; padding-left: 20px; }
+.fileMessage { color: #655e55; font-size: 14px; margin: 10px 0 0; }
 .unknown { background: #f5e8c9; border-left: 4px solid var(--attention); }
 .statusRow { align-items: center; display: flex; flex-wrap: wrap; gap: 10px; font-size: 14px; min-height: 28px; }
 .statusSaved { color: var(--site-green); font-weight: 700; }
@@ -73,4 +80,4 @@
 .confirmation { background: #e1eee3; border-left: 4px solid var(--site-green); margin-top: 22px; }
 @keyframes reveal { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .section { animation: none; } .choice, .submit, .secondary { transition: none; } }
-@media (max-width: 430px) { .shell { padding: 16px 12px 40px; } .choiceGrid { grid-template-columns: 1fr; } .map, .question { border-radius: 14px; } }
+@media (max-width: 430px) { .shell { padding: 16px 12px 40px; } .choiceGrid { grid-template-columns: 1fr; } .map, .question { border-radius: 14px; } .handoff { align-items: flex-start; flex-direction: column; } }

@@ -27,6 +27,9 @@ export default defineConfig({
       E2E_DATABASE_URL: e2eDatabaseUrl,
       NEXTAUTH_URL: 'http://localhost:3000',
       NEXTAUTH_SECRET: 'e2e-installation-order-local-secret',
+      // Explicit E2E-only fake adapter; production requires the authenticated
+      // private media service and rejects this switch.
+      INSTALLATION_MEDIA_TEST_ADAPTER: 'memory',
     },
     reuseExistingServer: false,
     timeout: 120000,

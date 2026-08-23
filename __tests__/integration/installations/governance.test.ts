@@ -44,7 +44,8 @@ let futureProtectedBillingId: string
 
 const durabilityMigration = '20260823020000_installation_governance_durability'
 const acceptanceIntegrityMigration = '20260823030000_installation_fee_acceptance_integrity'
-const hardeningMigrations = new Set([durabilityMigration, acceptanceIntegrityMigration])
+const privateMediaMigration = '20260823040000_installation_private_media'
+const hardeningMigrations = new Set([durabilityMigration, acceptanceIntegrityMigration, privateMediaMigration])
 const dayMs = 24 * 60 * 60 * 1000
 
 function futureDate(days = 30) {
@@ -617,7 +618,7 @@ describe('visit fee clause and documented mismatch', () => {
 
     await expect(db.installationBillingTask.create({ data: { ...billingData, grossAmount: '1.00' } })).rejects.toBeTruthy()
 
-    await db.installationMismatch.update({ where: { id: protectedMismatchForCompletenessId }, data: { evidenceStatus: 'PENDING_PRIVATE_FILE' } })
+    await db.installationMismatch.update({ where: { id: protectedMismatchForCompletenessId }, data: { evidenceStatus: 'PENDING_PRIVATE_FILE', evidenceFileId: null, evidenceVerifiedAt: null } })
     await rejectDirectBilling()
 
     await expect(db.installationVisitFeePolicy.update({
@@ -625,28 +626,10 @@ describe('visit fee clause and documented mismatch', () => {
       data: { clauseText: 'Zmiana historycznej klauzuli po zapisaniu jej na karcie montażu.' },
     })).rejects.toBeTruthy()
 
-    const billed = await db.installationBillingTask.create({ data: {
+    await expect(db.installationBillingTask.create({ data: {
       ...billingData,
       mismatchId: protectedMismatchForBillingId,
-      description: 'Poprawne historyczne zadanie używane do testu niezmienności.',
-    } })
-    expect(billed.id).toBeTruthy()
-    await expect(db.installationMismatch.update({ where: { id: protectedMismatchForBillingId }, data: {
-      evidenceStatus: 'PENDING_PRIVATE_FILE', evidenceFileId: null, evidenceVerifiedAt: null,
-    } })).rejects.toBeTruthy()
-    await expect(db.installationOrder.update({ where: { id: protectedOrderId }, data: {
-      visitFeeClauseText: 'Niedozwolona zmiana klauzuli po utworzeniu zadania rozliczeniowego.',
-    } })).rejects.toBeTruthy()
-    await expect(db.installationOrder.update({ where: { id: protectedOrderId }, data: {
-      visitFeeClientAcceptedAt: null,
-      visitFeeClientIpHash: null,
-      visitFeeClientUserAgent: null,
-    } })).rejects.toBeTruthy()
-    await expect(db.installationOrder.update({ where: { id: protectedOrderId }, data: {
-      visitFeeClauseText: 'Niedozwolona zmiana i unieważnienie po utworzeniu zadania rozliczeniowego.',
-      visitFeeClientAcceptedAt: null,
-      visitFeeClientIpHash: null,
-      visitFeeClientUserAgent: null,
+      description: 'Historyczny rekord bez rzeczywistego mostka Task 5 nie może utworzyć nowego rozliczenia.',
     } })).rejects.toBeTruthy()
   })
 })

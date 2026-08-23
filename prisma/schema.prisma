@@ -591,6 +591,10 @@ model InstallationOrder {
   visitFeeClientUserAgent String?
   mismatches            InstallationMismatch[]
   billingTasks          InstallationBillingTask[]
+  files                 InstallationFile[]
+  mismatchEvidenceFiles InstallationMismatchEvidence[]
+  mobileUploadHandoffs  MobileUploadHandoff[]
+  fileAuditEvents       InstallationFileAuditEvent[]
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
 
@@ -636,6 +640,7 @@ model InstallationMismatch {
   coordinatorApprovedAt   DateTime?
   approvalNote            String?
   billingTask             InstallationBillingTask?
+  evidenceAttachment      InstallationMismatchEvidence?
   createdAt               DateTime @default(now())
   updatedAt               DateTime @updatedAt
 
@@ -822,6 +827,8 @@ model InstallationClientLink {
   createdById  String
   createdAt    DateTime          @default(now())
   lastOpenedAt DateTime?
+  files        InstallationFile[] @relation("InstallationFileClientLink")
+  mobileUploadHandoffs MobileUploadHandoff[]
 
   @@index([orderId, expiresAt])
   @@index([orderId, revokedAt])
@@ -844,6 +851,8 @@ model InstallationFormSubmission {
   answers        InstallationAnswer[]
   mutations      InstallationFormSubmissionMutation[]
   clarifications InstallationClarification[]
+  files          InstallationFile[] @relation("InstallationFileSubmission")
+  mobileUploadHandoffs MobileUploadHandoff[]
   createdAt      DateTime                        @default(now())
   updatedAt      DateTime                        @updatedAt
 
@@ -906,6 +915,106 @@ model InstallationClarification {
   @@index([sourceSubmissionId])
 }
 
+/// Private-media metadata only. File bytes live exclusively in the separate
+/// media service; this record is the app's authorization and audit boundary.
+model InstallationFile {
+  id                String   @id
+  orderId           String
+  order             InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  roomId            String?
+  room              InstallationRoom? @relation("InstallationFileRoom", fields: [roomId], references: [id], onDelete: Restrict)
+  scopeId           String?
+  scope             InstallationScope? @relation("InstallationFileScope", fields: [scopeId], references: [id], onDelete: Restrict)
+  formSubmissionId  String?
+  formSubmission    InstallationFormSubmission? @relation("InstallationFileSubmission", fields: [formSubmissionId], references: [id], onDelete: Restrict)
+  clientLinkId      String?
+  clientLink        InstallationClientLink? @relation("InstallationFileClientLink", fields: [clientLinkId], references: [id], onDelete: Restrict)
+  mobileHandoffId   String?
+  mobileHandoff     MobileUploadHandoff? @relation(fields: [mobileHandoffId], references: [id], onDelete: Restrict)
+  purpose           String
+  questionKey       String?
+  originalFilename  String
+  contentType       String
+  byteSize          Int?
+  sha256            String?
+  status            String   @default("PENDING")
+  failureReason     String?
+  source            String   @default("WEB")
+  createdById       String?
+  softDeletedAt     DateTime?
+  softDeletedById   String?
+  mismatchEvidence  InstallationMismatchEvidence?
+  auditEvents       InstallationFileAuditEvent[]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([orderId, purpose, questionKey, status, softDeletedAt])
+  @@index([roomId, createdAt])
+  @@index([scopeId, createdAt])
+  @@index([formSubmissionId, questionKey])
+  @@index([clientLinkId, questionKey])
+  @@index([mobileHandoffId])
+}
+
+/// A single, immutable link between a reported mismatch and the private file
+/// that proves it. Database guards verify order, target and READY state.
+model InstallationMismatchEvidence {
+  id           String   @id @default(cuid())
+  orderId      String
+  order        InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  mismatchId   String   @unique
+  mismatch     InstallationMismatch @relation(fields: [mismatchId], references: [id], onDelete: Restrict)
+  fileId       String   @unique
+  file         InstallationFile @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  attachedById String
+  attachedAt   DateTime @default(now())
+
+  @@index([orderId, fileId])
+}
+
+/// One-time QR handoff. Both QR and mobile-session secrets are stored only as
+/// SHA-256 hashes; the phone can add files but never enumerate or download.
+model MobileUploadHandoff {
+  id                String   @id @default(cuid())
+  orderId           String
+  order             InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  clientLinkId      String
+  clientLink        InstallationClientLink @relation(fields: [clientLinkId], references: [id], onDelete: Restrict)
+  formSubmissionId  String
+  formSubmission    InstallationFormSubmission @relation(fields: [formSubmissionId], references: [id], onDelete: Restrict)
+  questionKey       String
+  codeHash          String   @unique
+  sessionSecretHash String?  @unique
+  allowedMimeJson   String
+  maxFiles          Int      @default(5)
+  usedFiles         Int      @default(0)
+  maxByteSize       Int      @default(10485760)
+  expiresAt         DateTime
+  redeemedAt        DateTime?
+  revokedAt         DateTime?
+  files             InstallationFile[]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([clientLinkId, expiresAt, revokedAt])
+  @@index([orderId, questionKey])
+}
+
+model InstallationFileAuditEvent {
+  id           String   @id @default(cuid())
+  fileId       String
+  file         InstallationFile @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  orderId      String
+  order        InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actorId      String
+  action       String
+  metadataJson String?
+  createdAt    DateTime @default(now())
+
+  @@index([fileId, createdAt])
+  @@index([orderId, createdAt])
+}
+
 model InstallationRoom {
   id           String                   @id @default(cuid())
   orderId      String
@@ -914,6 +1023,7 @@ model InstallationRoom {
   sortOrder    Int                      @default(0)
   scopes       InstallationScope[]
   measurements InstallationMeasurement[]
+  files        InstallationFile[]        @relation("InstallationFileRoom")
   createdAt    DateTime                 @default(now())
   updatedAt    DateTime                 @updatedAt
 
@@ -928,6 +1038,7 @@ model InstallationScope {
   sortOrder    Int                        @default(0)
   scopeProducts InstallationScopeProduct[]
   measurements InstallationMeasurement[]
+  files        InstallationFile[]          @relation("InstallationFileScope")
   createdAt    DateTime                   @default(now())
   updatedAt    DateTime                   @updatedAt
 

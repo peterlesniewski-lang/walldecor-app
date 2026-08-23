@@ -131,6 +131,37 @@ export function validateVisibleSubmission(
   return missing
 }
 
+/** FILE answers are not serialized as form values. A required visible FILE is
+ * satisfied only by a READY, non-deleted private file for this order and
+ * question key. A correction keeps the already supplied file unless the
+ * customer deliberately deletes it. */
+async function validateRequiredVisibleFiles(
+  db: InstallationDb,
+  submission: { id: string; orderId: string },
+  questions: readonly ClientFormQuestion[],
+  values: Record<string, ClientAnswerValue | undefined>,
+) {
+  const requiredKeys = evaluateVisibleFormQuestions(questions, values)
+    .filter((question) => question.type === 'FILE' && question.required)
+    .map((question) => question.key)
+  if (requiredKeys.length === 0) return
+  const files = await db.installationFile.findMany({
+    where: {
+      orderId: submission.orderId,
+      purpose: 'CLIENT_QUESTION',
+      questionKey: { in: requiredKeys },
+      status: 'READY',
+      softDeletedAt: null,
+    },
+    select: { questionKey: true },
+  })
+  const present = new Set(files.map((file) => file.questionKey))
+  const missing = requiredKeys.filter((key) => !present.has(key))
+  if (missing.length > 0) {
+    throw new InstallationFormValidationError(Object.fromEntries(missing.map((key) => [key, 'Dodaj wymagany plik przed wysłaniem formularza.'])))
+  }
+}
+
 export class InstallationFormConflictError extends Error {
   constructor() {
     super('Formularz został zapisany w nowszej wersji. Odśwież dane i spróbuj ponownie.')
@@ -540,6 +571,7 @@ export async function submitClientForm(db: PrismaClient, token: string, input: S
     if (submission.draftVersion !== input.draftVersion) throw new InstallationFormConflictError()
     const values = mergedDraftAnswers(submission.answers, [])
     validateVisibleSubmission(questions, values)
+    await validateRequiredVisibleFiles(tx, submission, questions, values)
     await requireAndRecordVisitFeeAcceptance(tx, link.orderId, input)
     const clarificationCandidates = createClarificationCandidates(questions, submission.answers)
     const submittedAt = new Date()

@@ -360,7 +360,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
           <h2 id="questions-heading" className={styles.sectionHeading}>Krótka rozmowa o miejscu montażu</h2>
           <p className={styles.sectionHelp}>Odpowiadaj po kolei. Formularz zapisuje zmiany automatycznie.</p>
           <div className={styles.questions}>{groups.map((group, index) => <div className={styles.questionGroup} key={group.map((question) => question.key).join(':')} aria-label={`Część ${index + 1} formularza`}>
-            {group.map((question) => <QuestionControl key={question.key} question={question} value={answers[question.key]} onChange={(value) => queueAnswer(question.key, value)} />)}
+            {group.map((question) => <QuestionControl key={question.key} token={token} question={question} value={answers[question.key]} onChange={(value) => queueAnswer(question.key, value)} />)}
           </div>)}</div>
         </section>
         {unknownSelected && <p className={styles.unknown}><strong>Ustalimy przed montażem.</strong> Nie musisz teraz wpisywać przybliżonego wymiaru.</p>}
@@ -398,10 +398,88 @@ function OptionalClear({ question, value, onChange }: { question: Question; valu
   return <button type="button" className={styles.secondary} aria-label={'Wyczyść odpowiedź: ' + question.label} onClick={() => onChange(null)}>Wyczyść odpowiedź</button>
 }
 
-function QuestionControl({ question, value, onChange }: { question: Question; value: AnswerValue | undefined; onChange: (value: PendingAnswerValue) => void }) {
-  if (question.type === 'FILE') return <article className={styles.question} data-testid="task5-file-step" data-task5-replace="private-upload-handoff">
-    <strong>{question.label}</strong><p className={styles.fileNotice}>Dokumenty i zdjęcia dodamy w kroku plików. Ten etap nie blokuje teraz wysłania formularza.</p>{/* TASK5_FILE_UPLOAD_REPLACEMENT */}
+function ClientFileControl({ token, question }: { token: string; question: Question }) {
+  const [files, setFiles] = useState<Array<{ id: string; originalFilename: string }>>([])
+  const [uploading, setUploading] = useState(false)
+  const [message, setMessage] = useState('')
+  const [handoff, setHandoff] = useState<null | { id: string; qrSvg: string; expiresAt: string }>(null)
+
+  async function refreshFiles() {
+    const response = await fetch(`/api/public/installations/${encodeURIComponent(token)}/files?questionKey=${encodeURIComponent(question.key)}`, { cache: 'no-store' })
+    if (!response.ok) return false
+    const data = await response.json() as { files?: Array<{ id: string; originalFilename: string }> }
+    setFiles(data.files ?? [])
+    return true
+  }
+
+  useEffect(() => {
+    if (!handoff) return
+    let stopped = false
+    const poll = () => { void refreshFiles().then((ok) => { if (!ok && !stopped) setMessage('Nie udało się odświeżyć listy plików.') }) }
+    poll()
+    const interval = window.setInterval(poll, 2_500)
+    return () => { stopped = true; window.clearInterval(interval) }
+  }, [handoff?.id]) // Polling exists only during a live desktop-to-phone handoff.
+
+  async function upload(file: File | undefined) {
+    if (!file || uploading) return
+    setUploading(true); setMessage('Dodajemy plik…')
+    const data = new FormData()
+    data.set('questionKey', question.key)
+    data.set('file', file)
+    try {
+      const response = await fetch(`/api/public/installations/${encodeURIComponent(token)}/files`, { method: 'POST', body: data })
+      if (!response.ok) {
+        const result = await response.json().catch(() => null) as { error?: string } | null
+        throw new Error(result?.error ?? 'Nie udało się dodać pliku.')
+      }
+      await refreshFiles()
+      setMessage('Plik został dodany.')
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Nie udało się dodać pliku.')
+    } finally { setUploading(false) }
+  }
+
+  async function createHandoff() {
+    setMessage('Przygotowujemy kod dla telefonu…')
+    try {
+      const response = await fetch(`/api/public/installations/${encodeURIComponent(token)}/handoffs`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ questionKey: question.key }),
+      })
+      if (!response.ok) throw new Error('Nie udało się przygotować kodu dla telefonu.')
+      const result = await response.json() as { handoffId: string; qrSvg: string; expiresAt: string }
+      setHandoff({ id: result.handoffId, qrSvg: result.qrSvg, expiresAt: result.expiresAt })
+      setMessage('')
+    } catch (error) { setMessage(error instanceof Error ? error.message : 'Nie udało się przygotować kodu dla telefonu.') }
+  }
+
+  async function stopHandoff() {
+    const current = handoff
+    if (!current) return
+    setHandoff(null)
+    await fetch(`/api/public/installations/${encodeURIComponent(token)}/handoffs/${encodeURIComponent(current.id)}`, { method: 'DELETE' }).catch(() => undefined)
+  }
+
+  return <article className={styles.question}>
+    <strong>{question.label}{question.required && <span className={styles.required}>*</span>}</strong>
+    {question.help && <p className={styles.help}>{question.help}</p>}
+    <p className={styles.fileNotice}>Dodaj plik, jeśli go masz. Zdjęcie można też przekazać z telefonu — nie musisz robić go teraz.</p>
+    <label className={styles.filePicker}>
+      <span>{uploading ? 'Dodawanie pliku…' : 'Wybierz plik'}</span>
+      <input aria-label={`Dodaj plik: ${question.label}`} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" disabled={uploading} onChange={(event) => void upload(event.currentTarget.files?.[0])} />
+    </label>
+    <button type="button" className={styles.secondary} disabled={uploading || Boolean(handoff)} onClick={() => void createHandoff()}>Dodaj z telefonu</button>
+    {handoff && <section className={styles.handoff} aria-label={`Kod telefonu: ${question.label}`}>
+      <img className={styles.qr} alt="Kod QR do dodania pliku z telefonu" src={`data:image/svg+xml;charset=utf-8,${encodeURIComponent(handoff.qrSvg)}`} />
+      <div><strong>Otwórz aparat telefonu i zeskanuj kod.</strong><p>Po dodaniu pliku lista odświeży się automatycznie. Kod jest ważny do {new Date(handoff.expiresAt).toLocaleTimeString('pl-PL', { hour: '2-digit', minute: '2-digit' })}.</p><button type="button" className={styles.secondary} onClick={() => void stopHandoff()}>Zakończ przekazanie</button></div>
+    </section>}
+    {files.length > 0 && <ul className={styles.fileList} aria-label={`Dodane pliki: ${question.label}`}>{files.map((file) => <li key={file.id}>{file.originalFilename}</li>)}</ul>}
+    {message && <p className={styles.fileMessage} role="status">{message}</p>}
   </article>
+}
+
+function QuestionControl({ token, question, value, onChange }: { token: string; question: Question; value: AnswerValue | undefined; onChange: (value: PendingAnswerValue) => void }) {
+  if (question.type === 'FILE') return <ClientFileControl token={token} question={question} />
   if (question.type === 'YES_NO_UNKNOWN') return <fieldset className={styles.question}>
     <legend>{question.label}{question.required && <span className={styles.required}>*</span>}</legend>{question.help && <p className={styles.help}>{question.help}</p>}
     <div className={styles.choiceGrid}>{([['YES', 'Tak'], ['NO', 'Nie'], ['UNKNOWN', 'Nie wiem']] as const).map(([choice, label]) => <button type="button" key={choice} className={styles.choice} aria-pressed={value === choice} onClick={() => onChange(choice)}>{label}</button>)}</div>
