@@ -437,37 +437,42 @@ describe('installation order API boundaries', () => {
   })
 
   it('lets an active delegate edit operating data but blocks both owner changes and archive', async () => {
-    const delegatedOrder = {
-      ...apiOrder,
-      primaryEmployeeId: 'other-primary',
-      backupEmployeeId: 'other-backup',
-      delegations: [{
-        delegateEmployeeId: 'delegate-active',
-        startsAt: new Date('2026-08-20T08:00:00.000Z'),
-        endsAt: new Date('2026-08-23T18:00:00.000Z'),
-        endedAt: null,
-      }],
+    vi.setSystemTime(new Date('2026-08-23T17:00:00.000Z'))
+    try {
+      const delegatedOrder = {
+        ...apiOrder,
+        primaryEmployeeId: 'other-primary',
+        backupEmployeeId: 'other-backup',
+        delegations: [{
+          delegateEmployeeId: 'delegate-active',
+          startsAt: new Date('2026-08-20T08:00:00.000Z'),
+          endsAt: new Date('2026-08-23T18:00:00.000Z'),
+          endedAt: null,
+        }],
+      }
+      mockGetServerSession.mockResolvedValue(session('EMPLOYEE', 'delegate-active') as never)
+      vi.mocked(prisma.employee.findUnique).mockResolvedValue({ id: 'delegate-active', active: true } as never)
+      mockGetInstallationOrder.mockResolvedValue(delegatedOrder as never)
+      mockUpdateInstallationOrder.mockResolvedValue(delegatedOrder as never)
+
+      const editResponse = await updateOrder(jsonRequest({ address: { city: 'Piaseczno' } }, 'PATCH'), {
+        params: Promise.resolve({ id: 'order-1' }),
+      })
+      const ownerResponse = await updateOrder(jsonRequest({ primaryEmployeeId: 'other-owner' }, 'PATCH'), {
+        params: Promise.resolve({ id: 'order-1' }),
+      })
+      const archiveResponse = await archiveOrder(new NextRequest('http://localhost/api/installations/order-1', { method: 'DELETE' }), {
+        params: Promise.resolve({ id: 'order-1' }),
+      })
+
+      expect(editResponse.status).toBe(200)
+      expect(ownerResponse.status).toBe(403)
+      expect(archiveResponse.status).toBe(403)
+      expect(mockUpdateInstallationOrder).toHaveBeenCalledTimes(1)
+      expect(mockArchiveInstallationOrder).not.toHaveBeenCalled()
+    } finally {
+      vi.useRealTimers()
     }
-    mockGetServerSession.mockResolvedValue(session('EMPLOYEE', 'delegate-active') as never)
-    vi.mocked(prisma.employee.findUnique).mockResolvedValue({ id: 'delegate-active', active: true } as never)
-    mockGetInstallationOrder.mockResolvedValue(delegatedOrder as never)
-    mockUpdateInstallationOrder.mockResolvedValue(delegatedOrder as never)
-
-    const editResponse = await updateOrder(jsonRequest({ address: { city: 'Piaseczno' } }, 'PATCH'), {
-      params: Promise.resolve({ id: 'order-1' }),
-    })
-    const ownerResponse = await updateOrder(jsonRequest({ primaryEmployeeId: 'other-owner' }, 'PATCH'), {
-      params: Promise.resolve({ id: 'order-1' }),
-    })
-    const archiveResponse = await archiveOrder(new NextRequest('http://localhost/api/installations/order-1', { method: 'DELETE' }), {
-      params: Promise.resolve({ id: 'order-1' }),
-    })
-
-    expect(editResponse.status).toBe(200)
-    expect(ownerResponse.status).toBe(403)
-    expect(archiveResponse.status).toBe(403)
-    expect(mockUpdateInstallationOrder).toHaveBeenCalledTimes(1)
-    expect(mockArchiveInstallationOrder).not.toHaveBeenCalled()
   })
 })
 
