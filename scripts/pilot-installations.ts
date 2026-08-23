@@ -373,6 +373,7 @@ export function validatePilotConfig(input: NodeJS.ProcessEnv, localIpv4Addresses
       NEXTAUTH_SECRET: authSecret,
       INSTALLATION_MEDIA_TEST_ADAPTER: 'filesystem',
       INSTALLATION_MEDIA_TEST_ROOT: mediaRoot,
+      WATCHPACK_POLLING: 'true',
     },
   }
 }
@@ -513,8 +514,12 @@ async function seedPilotDatabase(config: PilotConfig) {
   }
 }
 
+export function pilotServerArguments(config: PilotConfig) {
+  return ['node_modules/next/dist/bin/next', 'dev', '--webpack', '-H', config.bindIp, '-p', String(config.port)]
+}
+
 function startPilotServer(config: PilotConfig): PilotChild {
-  return spawn(process.execPath, ['node_modules/next/dist/bin/next', 'dev', '-H', config.bindIp, '-p', String(config.port)], {
+  return spawn(process.execPath, pilotServerArguments(config), {
     cwd: process.cwd(),
     env: config.runtimeEnv,
     stdio: 'ignore',

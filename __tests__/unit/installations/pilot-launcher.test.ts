@@ -135,6 +135,17 @@ describe('installations pilot launcher', () => {
     expect(config.runtimeEnv.NEXTAUTH_SECRET).toBe(safeEnv.PILOT_AUTH_SECRET)
   })
 
+  it('launches development Next with webpack polling while preserving the non-production media adapter', () => {
+    const config = validatePilotConfig(safeEnv, localIpv4Addresses())
+    const pilotServerArguments = (pilotLauncher as Record<string, unknown>).pilotServerArguments as ((value: typeof config) => string[]) | undefined
+
+    expect(config.runtimeEnv.NODE_ENV).toBe('development')
+    expect(config.runtimeEnv.INSTALLATION_MEDIA_TEST_ADAPTER).toBe('filesystem')
+    expect(config.runtimeEnv.WATCHPACK_POLLING).toBe('true')
+    expect(pilotServerArguments).toBeTypeOf('function')
+    expect(pilotServerArguments?.(config)).toEqual(['node_modules/next/dist/bin/next', 'dev', '--webpack', '-H', '192.168.1.42', '-p', '3100'])
+  })
+
   it('rejects an occupied port on the exact requested interface', async () => {
     const listener = createServer()
     try {
