@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { FormQuestion } from '@/lib/installations/form-visibility'
 import { buildQuestionForest, flattenQuestionForest, nextQuestionKey, questionSubtreeKeys, removeQuestionSubtree, moveQuestionWithinBranch, appendQuestionAtPlacement, type QuestionPlacement, type QuestionTreeBranch, type QuestionTreeNode } from '@/lib/installations/question-tree'
 import { validateInstallationQuestionDefinitions } from '@/lib/installations/question-schema'
@@ -72,7 +72,8 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
   const deleteOpenerRef = useRef<HTMLButtonElement | null>(null)
   const rootActionRef = useRef<HTMLButtonElement | null>(null)
   const designerRef = useRef<HTMLElement | null>(null)
-  const shouldFocusRootAfterDelete = useRef(false)
+  const retryActionRef = useRef<HTMLButtonElement | null>(null)
+  const shouldFocusRetryAfterFailedDelete = useRef(false)
 
   // The designer keeps a recoverable local draft while a failed PATCH is retried.
   // This synchronizes only incoming catalog updates, including a draft switch.
@@ -89,17 +90,24 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
   useEffect(() => {
     if (deleteKey) confirmationRef.current?.focus()
   }, [deleteKey])
-  useLayoutEffect(() => {
-    if (shouldFocusRootAfterDelete.current && deleteKey === null) {
-      const focusTarget = rootActionRef.current ?? designerRef.current
-      focusTarget?.focus()
-      shouldFocusRootAfterDelete.current = false
+  useEffect(() => {
+    if (shouldFocusRetryAfterFailedDelete.current && !isSynced && deleteKey === null && error) {
+      retryActionRef.current?.focus()
+      shouldFocusRetryAfterFailedDelete.current = false
     }
-  }, [deleteKey, localQuestions])
+  }, [deleteKey, error, isSynced])
 
   const forest = useMemo(() => buildQuestionForest(localQuestions), [localQuestions])
   const canUseDraft = useMemo(() => validateDraft(localQuestions), [localQuestions])
   const invalidMessage = validationMessage(localQuestions, forest.detached.length)
+  const hasDuplicateKeys = useMemo(() => {
+    const seenKeys = new Set<string>()
+    return localQuestions.some((question) => {
+      if (seenKeys.has(question.key)) return true
+      seenKeys.add(question.key)
+      return false
+    })
+  }, [localQuestions])
 
   useEffect(() => {
     onDraftStatusChange?.(draftId, { publishable: canUseDraft && isSynced, dirty: !isSynced })
@@ -139,11 +147,20 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
 
   async function confirmDelete() {
     if (!deleteKey || busy) return
-    try {
-      await persist(removeQuestionSubtree(localQuestions, deleteKey))
-      shouldFocusRootAfterDelete.current = true
+    if (hasDuplicateKeys) {
       setDeleteKey(null)
-    } catch { /* message remains visible and the confirmation can be retried */ }
+      setError('Nie można bezpiecznie usunąć pytania: mapa ma zduplikowane klucze. Napraw klucze przed usuwaniem.')
+      return
+    }
+    const deletionPayload = removeQuestionSubtree(localQuestions, deleteKey)
+    setDeleteKey(null)
+    try {
+      await persist(deletionPayload)
+      const focusTarget = rootActionRef.current ?? designerRef.current
+      focusTarget?.focus()
+    } catch {
+      shouldFocusRetryAfterFailedDelete.current = true
+    }
   }
 
   async function retryPersist() {
@@ -168,6 +185,15 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
     deleteOpenerRef.current?.focus()
   }
 
+  function startDelete(question: FormQuestion, opener: HTMLButtonElement) {
+    if (hasDuplicateKeys) {
+      setError('Nie można bezpiecznie usunąć pytania: mapa ma zduplikowane klucze. Napraw klucze przed usuwaniem.')
+      return
+    }
+    deleteOpenerRef.current = opener
+    setDeleteKey(question.key)
+  }
+
   function renderBranch(branch: QuestionTreeBranch<FormQuestion>, parent: FormQuestion, depth: number) {
     const indented = depth <= 3
     return <div className="wd-template-branch" key={`${parent.key}-${branch.value}`} data-path-depth={depth} data-path-indent={indented ? 'step' : 'none'} style={{ marginLeft: indented ? '16px' : '0px', paddingInlineStart: '0px' }}>
@@ -185,7 +211,7 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
 
   function renderNode(node: QuestionTreeNode<FormQuestion>, depth: number, siblings: readonly QuestionTreeNode<FormQuestion>[], index: number, placement: QuestionPlacement) {
     const question = node.question
-    return <div className="wd-template-node" key={question.key}>
+    return <div className="wd-template-node" key={`${placement.parentKey ?? 'root'}:${placement.equals ?? 'root'}:${index}:${question.key}`}>
       <article className="wd-template-card" aria-label={`Pytanie: ${question.label}`}>
         <div className="wd-template-card__body">
           <div className="wd-template-card__copy"><span className="wd-template-card__number">{depth + 1}</span><h4>{question.label}</h4>{question.help && <p>{question.help}</p>}</div>
@@ -201,7 +227,7 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
           <button type="button" className="wd-template-button wd-template-button--small" onClick={() => setEditing({ initial: question, placement })} disabled={busy} aria-label={`Edytuj pytanie ${question.label}`}>Edytuj</button>
           <button type="button" className="wd-template-button wd-template-button--small" onClick={() => moveQuestion(question.key, 'UP')} disabled={busy || index === 0} aria-label={`Góra: ${question.label}`}>Góra</button>
           <button type="button" className="wd-template-button wd-template-button--small" onClick={() => moveQuestion(question.key, 'DOWN')} disabled={busy || index === siblings.length - 1} aria-label={`Dół: ${question.label}`}>Dół</button>
-          <button type="button" className="wd-template-button wd-template-button--small wd-template-button--danger" onClick={(event) => { deleteOpenerRef.current = event.currentTarget; setDeleteKey(question.key) }} disabled={busy} aria-label={`Usuń pytanie ${question.label}`}>Usuń</button>
+          <button type="button" className="wd-template-button wd-template-button--small wd-template-button--danger" onClick={(event) => startDelete(question, event.currentTarget)} disabled={busy} aria-label={`Usuń pytanie ${question.label}`}>Usuń</button>
         </div>
       </article>
       {!collapsedKeys.has(question.key) && <div id={`template-branches-${question.key}`} className="wd-template-branches" aria-label={`Gałęzie pytania ${question.label}`}>
@@ -220,15 +246,17 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
     </div>
 
     {(error || !canUseDraft) && <p className={error ? 'wd-template-error' : 'wd-template-warning'} role={error ? 'alert' : 'status'}>{error || invalidMessage}</p>}
-    {!isSynced && <div className="wd-template-retry-actions"><button type="button" className="wd-template-button wd-template-button--quiet" onClick={() => void retryPersist()} disabled={busy}>Ponów zapis</button><button type="button" className="wd-template-button wd-template-button--danger" onClick={discardLocalChanges} disabled={busy}>Odrzuć niezapisane zmiany</button></div>}
+    {!isSynced && <div className="wd-template-retry-actions"><button ref={retryActionRef} type="button" className="wd-template-button wd-template-button--quiet" onClick={() => void retryPersist()} disabled={busy}>Ponów zapis</button><button type="button" className="wd-template-button wd-template-button--danger" onClick={discardLocalChanges} disabled={busy}>Odrzuć niezapisane zmiany</button></div>}
     {localQuestions.length === 0 ? <div className="wd-template-empty"><p>Utwórz mapę od pierwszego pytania.</p><button ref={rootActionRef} type="button" className="wd-template-button wd-template-button--primary" onClick={() => addQuestion({ parentKey: null, equals: null })} disabled={busy}>+ Dodaj pierwsze pytanie</button></div> : <div className="wd-template-map">
       {forest.roots.map((node, index) => renderNode(node, 0, forest.roots, index, { parentKey: null, equals: null }))}
       <button ref={rootActionRef} type="button" className="wd-template-root-action" aria-label="Następne pytanie główne" onClick={() => addQuestion({ parentKey: null, equals: null })} disabled={busy}>+ Następne pytanie główne</button>
     </div>}
 
     {deleteKey && (() => {
+      const question = localQuestions.find((item) => item.key === deleteKey)
+      if (!question) return null
       const count = Math.max(0, questionSubtreeKeys(localQuestions, deleteKey).size - 1)
-      const label = localQuestions.find((question) => question.key === deleteKey)?.label ?? 'to pytanie'
+      const label = question.label
       return <div ref={confirmationRef} className="wd-template-confirm" role="alertdialog" tabIndex={-1} onKeyDown={(event) => { if (event.key === 'Escape') { event.preventDefault(); cancelDelete() } }} aria-labelledby="template-delete-title" aria-describedby="template-delete-description">
         <h4 id="template-delete-title">Potwierdź usunięcie</h4>
         <p id="template-delete-description">{count > 0 ? `Usunąć pytanie i ${count} ${descendantsLabel(count)}?` : 'Usunąć pytanie?'}</p>

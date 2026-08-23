@@ -130,7 +130,7 @@ describe('TemplatePathDesigner', () => {
     await vi.waitFor(() => expect(onPersist).toHaveBeenCalledWith([]))
   })
 
-  it('locks a pending delete confirmation so a second click cannot falsely synchronize the local map', async () => {
+  it('closes a pending delete confirmation so a second click cannot falsely synchronize the local map', async () => {
     const user = userEvent.setup()
     let resolveFirstPersist: (() => void) | undefined
     const firstPersist = new Promise<void>((resolve) => { resolveFirstPersist = resolve })
@@ -145,18 +145,58 @@ describe('TemplatePathDesigner', () => {
     await vi.waitFor(() => expect(onPersist).toHaveBeenCalledTimes(1))
     rerender(<TemplatePathDesigner questions={questions} busy onPersist={onPersist} />)
 
-    const confirm = screen.getByRole('button', { name: 'Potwierdź usunięcie pytania to pytanie' })
-    expect(confirm).toHaveProperty('disabled', true)
-    expect(screen.getByRole('button', { name: 'Anuluj usuwanie' })).toHaveProperty('disabled', true)
-    await user.click(confirm)
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Potwierdź usunięcie pytania/ })).toBeNull()
     expect(onPersist).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('alertdialog')).toBeTruthy()
-    expect(screen.getByText('Ponów zapis')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Ponów zapis' })).toHaveProperty('disabled', true)
 
     await act(async () => {
       resolveFirstPersist?.()
       await Promise.resolve()
     })
+  })
+
+  it('closes a rejected delete, retains its full local payload and focuses retry', async () => {
+    const user = userEvent.setup()
+    let rejectFirstPersist: ((error: Error) => void) | undefined
+    const firstPersist = new Promise<void>((_resolve, reject) => { rejectFirstPersist = reject })
+    const onPersist = vi.fn()
+      .mockImplementationOnce(() => firstPersist)
+      .mockResolvedValueOnce(undefined)
+    renderDesigner([root, child], onPersist)
+
+    await user.click(screen.getByRole('button', { name: 'Usuń pytanie Czy są okna?' }))
+    await user.click(screen.getByRole('button', { name: 'Potwierdź usunięcie pytania Czy są okna?' }))
+    await vi.waitFor(() => expect(onPersist).toHaveBeenCalledTimes(1))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+
+    await act(async () => {
+      rejectFirstPersist?.(new Error('Zapis odrzucony.'))
+      await Promise.resolve()
+    })
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Zapis odrzucony.')
+    expect(screen.queryByText('Czy są okna?')).toBeNull()
+    const retry = screen.getByRole('button', { name: 'Ponów zapis' })
+    expect(document.activeElement).toBe(retry)
+    await user.click(retry)
+    await vi.waitFor(() => expect(onPersist).toHaveBeenCalledTimes(2))
+    expect(onPersist.mock.calls[1]?.[0]).toEqual(onPersist.mock.calls[0]?.[0])
+  })
+
+  it('blocks destructive deletion when the map contains duplicate keys and asks for repair', async () => {
+    const user = userEvent.setup()
+    const onPersist = vi.fn().mockResolvedValue(undefined)
+    const duplicates: FormQuestion[] = [
+      { key: 'powtorzone', type: 'TEXT', label: 'Pierwsze pytanie' },
+      { key: 'powtorzone', type: 'TEXT', label: 'Drugie pytanie' },
+    ]
+    renderDesigner(duplicates, onPersist)
+
+    await user.click(screen.getByRole('button', { name: 'Usuń pytanie Pierwsze pytanie' }))
+    expect(screen.queryByRole('alertdialog')).toBeNull()
+    expect((await screen.findByRole('alert')).textContent).toContain('zduplikowane klucze')
+    expect(onPersist).not.toHaveBeenCalled()
   })
 
   it('tests the local form path with the shared engine, reset and a FILE placeholder without fetch', async () => {
