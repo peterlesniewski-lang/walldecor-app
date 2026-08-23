@@ -2,6 +2,7 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { evaluateVisibleFormQuestions, type FormAnswerValue, type FormQuestion } from '@/lib/installations/form-visibility'
+import { ClientQuestionRenderer } from './question-renderer'
 import styles from './client-installation-form.module.css'
 
 type AnswerValue = FormAnswerValue
@@ -357,7 +358,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
           <h2 id="questions-heading" className={styles.sectionHeading}>Krótka rozmowa o miejscu montażu</h2>
           <p className={styles.sectionHelp}>Odpowiadaj po kolei. Formularz zapisuje zmiany automatycznie.</p>
           <div className={styles.questions}>{groups.map((group, index) => <div className={styles.questionGroup} key={group.map((question) => question.key).join(':')} aria-label={`Część ${index + 1} formularza`}>
-            {group.map((question) => <QuestionControl key={question.key} token={token} question={question} value={answers[question.key]} loadExistingFiles={projection.submission.revisionNumber > 1} onChange={(value) => queueAnswer(question.key, value)} />)}
+            {group.map((question) => <ClientQuestionRenderer key={question.key} question={question} value={answers[question.key]} mode="interactive" onChange={(value) => queueAnswer(question.key, value)} fileContent={question.type === 'FILE' ? <ClientFileControl token={token} question={question} loadExistingFiles={projection.submission.revisionNumber > 1} /> : undefined} />)}
           </div>)}</div>
         </section>
         {unknownSelected && <p className={styles.unknown}><strong>Ustalimy przed montażem.</strong> Nie musisz teraz wpisywać przybliżonego wymiaru.</p>}
@@ -388,11 +389,6 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
       </form>}
     </div>
   </main>
-}
-
-function OptionalClear({ question, value, onChange }: { question: Question; value: AnswerValue | undefined; onChange: (value: PendingAnswerValue) => void }) {
-  if (question.required || value === undefined) return null
-  return <button type="button" className={styles.secondary} aria-label={'Wyczyść odpowiedź: ' + question.label} onClick={() => onChange(null)}>Wyczyść odpowiedź</button>
 }
 
 function ClientFileControl({ token, question, loadExistingFiles }: { token: string; question: Question; loadExistingFiles: boolean }) {
@@ -478,20 +474,4 @@ function ClientFileControl({ token, question, loadExistingFiles }: { token: stri
     {files.length > 0 && <ul className={styles.fileList} aria-label={`Dodane pliki: ${question.label}`}>{files.map((file) => <li key={file.id}>{file.originalFilename}</li>)}</ul>}
     {message && <p className={styles.fileMessage} role="status">{message}</p>}
   </article>
-}
-
-function QuestionControl({ token, question, value, loadExistingFiles, onChange }: { token: string; question: Question; value: AnswerValue | undefined; loadExistingFiles: boolean; onChange: (value: PendingAnswerValue) => void }) {
-  if (question.type === 'FILE') return <ClientFileControl token={token} question={question} loadExistingFiles={loadExistingFiles} />
-  if (question.type === 'YES_NO_UNKNOWN') return <fieldset className={styles.question}>
-    <legend>{question.label}{question.required && <span className={styles.required}>*</span>}</legend>{question.help && <p className={styles.help}>{question.help}</p>}
-    <div className={styles.choiceGrid}>{([['YES', 'Tak'], ['NO', 'Nie'], ['UNKNOWN', 'Nie wiem']] as const).map(([choice, label]) => <button type="button" key={choice} className={styles.choice} aria-pressed={value === choice} onClick={() => onChange(choice)}>{label}</button>)}</div>
-    <OptionalClear question={question} value={value} onChange={onChange} />
-  </fieldset>
-  if (question.type === 'MULTI') {
-    const selected = Array.isArray(value) ? value : []
-    return <fieldset className={styles.question}><legend>{question.label}{question.required && <span className={styles.required}>*</span>}</legend><div className={styles.checkList}>{(question.options ?? []).map((option) => <label className={styles.check} key={option}><input type="checkbox" checked={selected.includes(option)} onChange={() => onChange(selected.includes(option) ? selected.filter((item) => item !== option) : [...selected, option])} />{option}</label>)}</div><OptionalClear question={question} value={value} onChange={onChange} /></fieldset>
-  }
-  if (question.type === 'SINGLE') return <div className={styles.question}><label htmlFor={question.key}>{question.label}{question.required && <span className={styles.required}>*</span>}</label><select id={question.key} className={styles.field} value={typeof value === 'string' ? value : ''} onChange={(event) => onChange(event.target.value || null)}><option value="">Wybierz odpowiedź</option>{(question.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}</select><OptionalClear question={question} value={value} onChange={onChange} /></div>
-  const multiline = question.type === 'TEXT'
-  return <div className={styles.question}><label htmlFor={question.key}>{question.label}{question.required && <span className={styles.required}>*</span>}</label>{multiline ? <textarea id={question.key} className={styles.field} value={typeof value === 'string' ? value : ''} onChange={(event) => onChange(event.target.value || null)} /> : <input id={question.key} className={styles.field} inputMode="decimal" value={typeof value === 'string' ? value : ''} onChange={(event) => onChange(event.target.value || null)} />}<OptionalClear question={question} value={value} onChange={onChange} /></div>
 }

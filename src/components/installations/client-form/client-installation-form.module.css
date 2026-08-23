@@ -48,6 +48,8 @@
 .questionGroup { display: grid; gap: 12px; padding: 2px 0 4px; }
 .question { background: var(--paper); border: 1px solid rgba(39,37,34,.14); border-radius: 16px; padding: 16px; box-shadow: 0 2px 5px rgba(39,37,34,.035); }
 .question label, .question legend { display: block; font-size: 16px; font-weight: 650; line-height: 1.35; }
+.readonlyLabel { display: block; font-size: 16px; font-weight: 650; line-height: 1.35; }
+.answerOutput { color: var(--graphite); display: block; font-size: 16px; line-height: 1.45; margin-top: 12px; min-height: 24px; }
 .required { color: var(--site-red); margin-left: 3px; }
 .help { color: #655e55; font-size: 14px; line-height: 1.45; margin: 6px 0 0; }
 .choiceGrid { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 14px; }
