@@ -1,22 +1,17 @@
+import { randomUUID } from 'node:crypto'
 import { EventEmitter } from 'node:events'
-import { linkSync, mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from 'node:fs'
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs'
 import { createServer } from 'node:net'
 import path from 'node:path'
-import { randomUUID } from 'node:crypto'
 import { describe, expect, it, vi } from 'vitest'
-import {
-  assertPilotPortAvailable,
-  attachPilotShutdownHandlers,
-  parsePilotCommand,
-  runPilot,
-  validatePilotConfig,
-} from '../../../scripts/pilot-installations'
+import * as pilotLauncher from '../../../scripts/pilot-installations'
 
+const { assertPilotPortAvailable, attachPilotShutdownHandlers, parsePilotCommand, runPilot, validatePilotConfig } = pilotLauncher
 const localIpv4Addresses = () => ['192.168.1.42']
 
 const safeEnv = {
   NODE_ENV: 'development',
-  DATABASE_URL: 'file:/tmp/walldecor-installations-pilot-demo.db',
+  DATABASE_URL: 'file:/tmp/walldecor-installations-pilot-demo/pilot.db',
   PILOT_MEDIA_ROOT: '/tmp/walldecor-installations-e2e-media-pilot-demo',
   PILOT_BASE_URL: 'http://192.168.1.42:3100',
   PILOT_ADMIN_PASSWORD: 'PilotOnly-Password9!',
@@ -25,35 +20,41 @@ const safeEnv = {
 
 function isolatedPilotPaths() {
   const suffix = randomUUID()
-  const outsideDirectory = mkdtempSync('/tmp/walldecor-installations-pilot-outside-')
+  const databaseRoot = path.join('/tmp', `walldecor-installations-pilot-fs-${suffix}`)
   return {
-    outsideDirectory,
-    databasePath: path.join('/tmp', `walldecor-installations-pilot-fs-${suffix}.db`),
+    outsideDirectory: mkdtempSync('/tmp/walldecor-installations-pilot-outside-'),
+    databaseRoot,
+    databasePath: path.join(databaseRoot, 'pilot.db'),
+    markerPath: path.join(databaseRoot, '.pilot01.marker'),
     mediaRoot: path.join('/tmp', `walldecor-installations-e2e-media-pilot-fs-${suffix}`),
   }
 }
 
 function pilotEnv(paths: ReturnType<typeof isolatedPilotPaths>) {
-  return {
-    ...safeEnv,
-    DATABASE_URL: `file:${paths.databasePath}`,
-    PILOT_MEDIA_ROOT: paths.mediaRoot,
-  }
+  return { ...safeEnv, DATABASE_URL: `file:${paths.databasePath}`, PILOT_MEDIA_ROOT: paths.mediaRoot }
 }
 
-function markerContent(paths: ReturnType<typeof isolatedPilotPaths>) {
-  return `${JSON.stringify({ version: 1, databasePath: paths.databasePath, mediaRoot: paths.mediaRoot, bindIp: '192.168.1.42', port: 3100 })}\n`
+function markerContent(paths: ReturnType<typeof isolatedPilotPaths>, overrides: Record<string, unknown> = {}) {
+  return `${JSON.stringify({
+    version: 2,
+    databaseRoot: paths.databaseRoot,
+    databasePath: paths.databasePath,
+    mediaRoot: paths.mediaRoot,
+    bindIp: '192.168.1.42',
+    port: 3100,
+    ...overrides,
+  })}\n`
+}
+
+function createResettablePilot(paths: ReturnType<typeof isolatedPilotPaths>, marker = markerContent(paths)) {
+  mkdirSync(paths.databaseRoot, { mode: 0o700 })
+  mkdirSync(paths.mediaRoot, { mode: 0o700 })
+  writeFileSync(paths.markerPath, marker, { mode: 0o600 })
 }
 
 function cleanupPilotPaths(paths: ReturnType<typeof isolatedPilotPaths>) {
-  for (const target of [
-    paths.databasePath,
-    `${paths.databasePath}-journal`,
-    `${paths.databasePath}-shm`,
-    `${paths.databasePath}-wal`,
-    `${paths.databasePath}.pilot01.marker`,
-    paths.mediaRoot,
-  ]) rmSync(target, { recursive: target === paths.mediaRoot, force: true })
+  rmSync(paths.databaseRoot, { recursive: true, force: true })
+  rmSync(paths.mediaRoot, { recursive: true, force: true })
   rmSync(paths.outsideDirectory, { recursive: true, force: true })
 }
 
@@ -70,13 +71,39 @@ function unsafeStartDependencies() {
   }
 }
 
+function readyDependencies(onMigrate: (config: unknown) => Promise<void> | void = () => undefined) {
+  const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => true), exitCode: null as number | null })
+  return {
+    child,
+    dependencies: {
+      migrate: vi.fn(onMigrate),
+      seed: vi.fn(async () => undefined),
+      start: vi.fn(() => child),
+      waitForReady: vi.fn(async () => { setTimeout(() => child.emit('exit', 0, null), 0) }),
+      preflightPort: vi.fn(async () => undefined),
+      localIpv4Addresses,
+      print: vi.fn(),
+      remove: vi.fn(),
+    },
+  }
+}
+
 describe('installations pilot launcher', () => {
-  it('refuses production before it can create a pilot configuration', () => {
-    expect(() => validatePilotConfig({ ...safeEnv, NODE_ENV: 'production' }, localIpv4Addresses())).toThrow('NODE_ENV=production')
+  it('accepts only pilot.db inside a dedicated pilot database root', () => {
+    const config = validatePilotConfig(safeEnv, localIpv4Addresses())
+    expect(config).toMatchObject({
+      databaseRoot: '/tmp/walldecor-installations-pilot-demo',
+      databasePath: '/tmp/walldecor-installations-pilot-demo/pilot.db',
+      markerPath: '/tmp/walldecor-installations-pilot-demo/.pilot01.marker',
+      mediaRoot: safeEnv.PILOT_MEDIA_ROOT,
+      bindIp: '192.168.1.42',
+    })
   })
 
   it.each([
-    ['a database outside the pilot prefix', { DATABASE_URL: 'file:/tmp/walldecor.db' }],
+    ['a database outside the pilot root', { DATABASE_URL: 'file:/tmp/walldecor.db' }],
+    ['a database file other than pilot.db', { DATABASE_URL: 'file:/tmp/walldecor-installations-pilot-demo/other.db' }],
+    ['a nested database root', { DATABASE_URL: 'file:/tmp/walldecor-installations-pilot-demo/nested/pilot.db' }],
     ['a media root outside the pilot prefix', { PILOT_MEDIA_ROOT: '/tmp/walldecor-installations-e2e-media-shared' }],
     ['localhost as the phone-facing URL', { PILOT_BASE_URL: 'http://localhost:3100' }],
     ['a public host as the phone-facing URL', { PILOT_BASE_URL: 'http://203.0.113.9:3100' }],
@@ -88,17 +115,16 @@ describe('installations pilot launcher', () => {
     expect(() => validatePilotConfig({ ...safeEnv, ...override }, localIpv4Addresses())).toThrow()
   })
 
+  it('refuses production before it can create a pilot configuration', () => {
+    expect(() => validatePilotConfig({ ...safeEnv, NODE_ENV: 'production' }, localIpv4Addresses())).toThrow('NODE_ENV=production')
+  })
+
+  it('refuses a private URL address that is not assigned to this host', () => {
+    expect(() => validatePilotConfig(safeEnv, [])).toThrow('przypisany do tego hosta')
+  })
+
   it('maps only validated pilot values into the runtime environment', () => {
     const config = validatePilotConfig(safeEnv, localIpv4Addresses())
-
-    expect(config).toMatchObject({
-      baseUrl: 'http://192.168.1.42:3100',
-      port: 3100,
-      databasePath: '/tmp/walldecor-installations-pilot-demo.db',
-      mediaRoot: '/tmp/walldecor-installations-e2e-media-pilot-demo',
-      bindIp: '192.168.1.42',
-      adminUsername: 'pilotadmin',
-    })
     expect(config.runtimeEnv).toMatchObject({
       NODE_ENV: 'development',
       DATABASE_URL: safeEnv.DATABASE_URL,
@@ -107,10 +133,6 @@ describe('installations pilot launcher', () => {
       INSTALLATION_MEDIA_TEST_ROOT: safeEnv.PILOT_MEDIA_ROOT,
     })
     expect(config.runtimeEnv.NEXTAUTH_SECRET).toBe(safeEnv.PILOT_AUTH_SECRET)
-  })
-
-  it('refuses a private URL address that is not assigned to this host', () => {
-    expect(() => validatePilotConfig(safeEnv, [])).toThrow('przypisany do tego hosta')
   })
 
   it('rejects an occupied port on the exact requested interface', async () => {
@@ -145,17 +167,12 @@ describe('installations pilot launcher', () => {
   })
 
   it('checks configuration without migrating, seeding, or starting Next', async () => {
-    const migrate = vi.fn()
-    const seed = vi.fn()
-    const start = vi.fn()
-    const print = vi.fn()
-
-    await runPilot('check', safeEnv, { migrate, seed, start, waitForReady: vi.fn(), preflightPort: vi.fn(), localIpv4Addresses, print, remove: vi.fn() })
-
-    expect(migrate).not.toHaveBeenCalled()
-    expect(seed).not.toHaveBeenCalled()
-    expect(start).not.toHaveBeenCalled()
-    const output = print.mock.calls.flat().join('\n')
+    const dependencies = unsafeStartDependencies()
+    await runPilot('check', safeEnv, dependencies)
+    expect(dependencies.migrate).not.toHaveBeenCalled()
+    expect(dependencies.seed).not.toHaveBeenCalled()
+    expect(dependencies.start).not.toHaveBeenCalled()
+    const output = dependencies.print.mock.calls.flat().join('\n')
     expect(output).toContain(safeEnv.PILOT_BASE_URL)
     expect(output).toContain('pilotadmin')
     expect(output).not.toContain(safeEnv.PILOT_ADMIN_PASSWORD)
@@ -163,121 +180,73 @@ describe('installations pilot launcher', () => {
   })
 
   it.each([
-    ['a database symlink', (paths: ReturnType<typeof isolatedPilotPaths>) => {
-      const outside = path.join(paths.outsideDirectory, 'outside.db')
+    ['a database-root symlink', (paths: ReturnType<typeof isolatedPilotPaths>) => symlinkSync(paths.outsideDirectory, paths.databaseRoot)],
+    ['a media-root symlink', (paths: ReturnType<typeof isolatedPilotPaths>) => symlinkSync(paths.outsideDirectory, paths.mediaRoot)],
+    ['a database-root hardlinked file', (paths: ReturnType<typeof isolatedPilotPaths>) => {
+      const outside = path.join(paths.outsideDirectory, 'outside-file')
       writeFileSync(outside, 'outside')
-      symlinkSync(outside, paths.databasePath)
+      linkSync(outside, paths.databaseRoot)
     }],
-    ['a media-root symlink', (paths: ReturnType<typeof isolatedPilotPaths>) => {
-      const outside = path.join(paths.outsideDirectory, 'media')
-      rmSync(outside, { force: true })
-      symlinkSync(paths.outsideDirectory, paths.mediaRoot)
-    }],
-    ['a database hardlink', (paths: ReturnType<typeof isolatedPilotPaths>) => {
-      const outside = path.join(paths.outsideDirectory, 'outside.db')
-      writeFileSync(outside, 'outside')
-      linkSync(outside, paths.databasePath)
-    }],
-  ])('refuses %s before any pilot mutation', async (_label, createUnsafePath) => {
+  ])('refuses an existing %s before port preflight or mutations', async (_label, createUnsafePath) => {
     const paths = isolatedPilotPaths()
     const dependencies = unsafeStartDependencies()
     try {
       createUnsafePath(paths)
-      const env = pilotEnv(paths)
-
-      await expect(runPilot('start', env, dependencies)).rejects.toThrow('Odmowa')
-
-      expect(dependencies.migrate).not.toHaveBeenCalled()
-      expect(dependencies.seed).not.toHaveBeenCalled()
-      expect(dependencies.start).not.toHaveBeenCalled()
-      expect(dependencies.remove).not.toHaveBeenCalled()
-    } finally {
-      cleanupPilotPaths(paths)
-    }
-  })
-
-  it('refuses unsafe pilot paths before reset can remove anything', async () => {
-    const paths = isolatedPilotPaths()
-    const dependencies = unsafeStartDependencies()
-    try {
-      const outside = path.join(paths.outsideDirectory, 'outside.db')
-      writeFileSync(outside, 'outside')
-      symlinkSync(outside, paths.databasePath)
-      const env = { ...pilotEnv(paths), PILOT_CONFIRM_RESET: 'DELETE_PILOT_DATA' }
-
-      await expect(runPilot('reset', env, dependencies)).rejects.toThrow('Odmowa')
-
-      expect(dependencies.remove).not.toHaveBeenCalled()
-      expect(dependencies.migrate).not.toHaveBeenCalled()
-      expect(dependencies.seed).not.toHaveBeenCalled()
-      expect(dependencies.start).not.toHaveBeenCalled()
-    } finally {
-      cleanupPilotPaths(paths)
-    }
-  })
-
-  it('refuses a reset that mixes a valid marker from another pilot media root', async () => {
-    const first = isolatedPilotPaths()
-    const second = isolatedPilotPaths()
-    const dependencies = unsafeStartDependencies()
-    try {
-      writeFileSync(`${first.databasePath}.pilot01.marker`, markerContent(first))
-      mkdirSync(second.mediaRoot)
-      const mixedEnv = { ...pilotEnv(first), PILOT_MEDIA_ROOT: second.mediaRoot, PILOT_CONFIRM_RESET: 'DELETE_PILOT_DATA' }
-
-      await expect(runPilot('reset', mixedEnv, dependencies)).rejects.toThrow('nie należy do wskazanego pilota')
-
-      expect(dependencies.remove).not.toHaveBeenCalled()
-    } finally {
-      cleanupPilotPaths(first)
-      cleanupPilotPaths(second)
-    }
-  })
-
-  it.each([
-    ['database', (paths: ReturnType<typeof isolatedPilotPaths>) => writeFileSync(paths.databasePath, 'already used')],
-    ['SQLite sidecar', (paths: ReturnType<typeof isolatedPilotPaths>) => writeFileSync(`${paths.databasePath}-wal`, 'already used')],
-    ['media root', (paths: ReturnType<typeof isolatedPilotPaths>) => writeFileSync(paths.mediaRoot, 'already used')],
-    ['marker', (paths: ReturnType<typeof isolatedPilotPaths>) => writeFileSync(`${paths.databasePath}.pilot01.marker`, 'already used')],
-  ])('requires an unused %s before port preflight', async (_label, createExistingPath) => {
-    const paths = isolatedPilotPaths()
-    const dependencies = unsafeStartDependencies()
-    try {
-      createExistingPath(paths)
-
       await expect(runPilot('start', pilotEnv(paths), dependencies)).rejects.toThrow('już istnieje')
-
       expect(dependencies.preflightPort).not.toHaveBeenCalled()
       expect(dependencies.migrate).not.toHaveBeenCalled()
       expect(dependencies.seed).not.toHaveBeenCalled()
       expect(dependencies.start).not.toHaveBeenCalled()
+      expect(dependencies.remove).not.toHaveBeenCalled()
     } finally {
       cleanupPilotPaths(paths)
     }
   })
 
-  it('waits for the local health endpoint before printing the usable pilot URL', async () => {
+  it('creates private 0700 roots before migration and keeps the outside sibling untouched', async () => {
     const paths = isolatedPilotPaths()
-    const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => true), exitCode: null })
-    const sequence: string[] = []
-    const dependencies = {
-      migrate: vi.fn(async () => { writeFileSync(paths.databasePath, ''); sequence.push('migrate') }),
-      seed: vi.fn(async () => { sequence.push('seed') }),
-      start: vi.fn(() => child),
-      waitForReady: vi.fn(async () => {
-        sequence.push('ready')
-        setTimeout(() => child.emit('exit', 0, null), 0)
-      }),
-      preflightPort: vi.fn(async () => undefined),
-      localIpv4Addresses,
-      print: vi.fn(() => { sequence.push('print') }),
-      remove: vi.fn(),
-    }
-
+    const outsideSentinel = path.join(paths.outsideDirectory, 'sentinel')
+    writeFileSync(outsideSentinel, 'outside remains untouched')
+    const { dependencies } = readyDependencies(async (unknownConfig) => {
+      const config = unknownConfig as { databaseRoot: string, databasePath: string, mediaRoot: string, markerPath: string }
+      expect(config.databaseRoot).toBe(paths.databaseRoot)
+      expect(config.databasePath).toBe(path.join(paths.databaseRoot, 'pilot.db'))
+      expect(statSync(config.databaseRoot).mode & 0o777).toBe(0o700)
+      expect(statSync(config.mediaRoot).mode & 0o777).toBe(0o700)
+      expect(lstatSync(config.markerPath).isFile()).toBe(true)
+      writeFileSync(config.databasePath, 'migration output')
+      expect(readFileSync(outsideSentinel, 'utf8')).toBe('outside remains untouched')
+    })
     try {
       await runPilot('start', pilotEnv(paths), dependencies)
-      expect(sequence).toEqual(['migrate', 'seed', 'ready', 'print', 'print', 'print'])
-      expect(dependencies.waitForReady).toHaveBeenCalledWith(expect.objectContaining({ port: 3100 }), child)
+      expect(readFileSync(outsideSentinel, 'utf8')).toBe('outside remains untouched')
+    } finally {
+      cleanupPilotPaths(paths)
+    }
+  })
+
+  it('does not create either private root when port preflight fails', async () => {
+    const paths = isolatedPilotPaths()
+    const dependencies = unsafeStartDependencies()
+    dependencies.preflightPort.mockRejectedValueOnce(new Error('port unavailable'))
+    try {
+      await expect(runPilot('start', pilotEnv(paths), dependencies)).rejects.toThrow('port unavailable')
+      expect(existsSync(paths.databaseRoot)).toBe(false)
+      expect(existsSync(paths.mediaRoot)).toBe(false)
+      expect(dependencies.migrate).not.toHaveBeenCalled()
+    } finally {
+      cleanupPilotPaths(paths)
+    }
+  })
+
+  it('preserves private roots and a complete marker after migration begins and fails', async () => {
+    const paths = isolatedPilotPaths()
+    const { dependencies } = readyDependencies(async () => { throw new Error('migration failed') })
+    try {
+      await expect(runPilot('start', pilotEnv(paths), dependencies)).rejects.toThrow('jawnego --reset')
+      expect(existsSync(paths.databaseRoot)).toBe(true)
+      expect(existsSync(paths.mediaRoot)).toBe(true)
+      expect(JSON.parse(readFileSync(paths.markerPath, 'utf8'))).toMatchObject({ version: 2, databaseRoot: paths.databaseRoot, databasePath: paths.databasePath, mediaRoot: paths.mediaRoot })
     } finally {
       cleanupPilotPaths(paths)
     }
@@ -286,15 +255,14 @@ describe('installations pilot launcher', () => {
   it('fails promptly when the child exits synchronously during readiness', async () => {
     const paths = isolatedPilotPaths()
     const child = Object.assign(new EventEmitter(), { kill: vi.fn(() => true), exitCode: null as number | null })
-    const neverReady = new Promise<void>(() => {})
     const dependencies = {
-      migrate: vi.fn(async () => { writeFileSync(paths.databasePath, '') }),
+      migrate: vi.fn(async () => writeFileSync(paths.databasePath, 'migration output')),
       seed: vi.fn(async () => undefined),
       start: vi.fn(() => child),
       waitForReady: vi.fn(() => {
         child.exitCode = 1
         child.emit('exit', 1, null)
-        return neverReady
+        return new Promise<void>(() => {})
       }),
       preflightPort: vi.fn(async () => undefined),
       localIpv4Addresses,
@@ -302,7 +270,6 @@ describe('installations pilot launcher', () => {
       remove: vi.fn(),
     }
     const timeout = new Promise<never>((_resolve, reject) => setTimeout(() => reject(new Error('test timeout')), 250))
-
     try {
       await expect(Promise.race([runPilot('start', pilotEnv(paths), dependencies), timeout])).rejects.toThrow('Serwer pilota zakończył się')
       expect(dependencies.print).not.toHaveBeenCalled()
@@ -311,39 +278,79 @@ describe('installations pilot launcher', () => {
     }
   })
 
-  it('labels the filesystem adapter as a UX-only upload test, not production media protection', async () => {
-    const print = vi.fn()
-
-    await runPilot('help', {}, { migrate: vi.fn(), seed: vi.fn(), start: vi.fn(), waitForReady: vi.fn(), preflightPort: vi.fn(), localIpv4Addresses, print, remove: vi.fn() })
-
-    expect(print.mock.calls.flat().join('\n')).toContain('nie weryfikuje ClamAV')
-  })
-
-  it('requires an explicit confirmation before deleting validated pilot paths', async () => {
-    const remove = vi.fn()
-
-    await expect(runPilot('reset', safeEnv, { migrate: vi.fn(), seed: vi.fn(), start: vi.fn(), waitForReady: vi.fn(), preflightPort: vi.fn(), localIpv4Addresses, print: vi.fn(), remove })).rejects.toThrow('PILOT_CONFIRM_RESET')
-    expect(remove).not.toHaveBeenCalled()
-
+  it('requires a complete bound marker and explicit confirmation before reset', async () => {
     const paths = isolatedPilotPaths()
-    const env = { ...pilotEnv(paths), PILOT_CONFIRM_RESET: 'DELETE_PILOT_DATA' }
+    const remove = vi.fn()
     try {
-      writeFileSync(`${paths.databasePath}.pilot01.marker`, markerContent(paths))
-      await runPilot('reset', env, { migrate: vi.fn(), seed: vi.fn(), start: vi.fn(), waitForReady: vi.fn(), preflightPort: vi.fn(), localIpv4Addresses, print: vi.fn(), remove })
-      expect(remove).toHaveBeenCalledWith(expect.objectContaining({ markerPath: `${paths.databasePath}.pilot01.marker` }))
+      await expect(runPilot('reset', pilotEnv(paths), { ...unsafeStartDependencies(), remove })).rejects.toThrow('PILOT_CONFIRM_RESET')
+      createResettablePilot(paths)
+      await runPilot('reset', { ...pilotEnv(paths), PILOT_CONFIRM_RESET: 'DELETE_PILOT_DATA' }, { ...unsafeStartDependencies(), remove })
+      expect(remove).toHaveBeenCalledWith(expect.objectContaining({ databaseRoot: paths.databaseRoot, markerPath: paths.markerPath }))
     } finally {
       cleanupPilotPaths(paths)
     }
+  })
+
+  it('refuses reset when a private root is not mode 0700', async () => {
+    const paths = isolatedPilotPaths()
+    const dependencies = unsafeStartDependencies()
+    try {
+      createResettablePilot(paths)
+      chmodSync(paths.mediaRoot, 0o755)
+      await expect(runPilot('reset', { ...pilotEnv(paths), PILOT_CONFIRM_RESET: 'DELETE_PILOT_DATA' }, dependencies)).rejects.toThrow('0700')
+      expect(dependencies.remove).not.toHaveBeenCalled()
+    } finally {
+      cleanupPilotPaths(paths)
+    }
+  })
+
+  it('refuses a reset that mixes a valid marker from another pilot root', async () => {
+    const first = isolatedPilotPaths()
+    const second = isolatedPilotPaths()
+    const dependencies = unsafeStartDependencies()
+    try {
+      createResettablePilot(first)
+      mkdirSync(second.mediaRoot, { mode: 0o700 })
+      const mixedEnv = { ...pilotEnv(first), PILOT_MEDIA_ROOT: second.mediaRoot, PILOT_CONFIRM_RESET: 'DELETE_PILOT_DATA' }
+      await expect(runPilot('reset', mixedEnv, dependencies)).rejects.toThrow('nie należy do wskazanego pilota')
+      expect(dependencies.remove).not.toHaveBeenCalled()
+    } finally {
+      cleanupPilotPaths(first)
+      cleanupPilotPaths(second)
+    }
+  })
+
+  it('removes only the two bound private roots and never follows an internal symlink', () => {
+    const paths = isolatedPilotPaths()
+    const outsideSentinel = path.join(paths.outsideDirectory, 'sentinel')
+    writeFileSync(outsideSentinel, 'outside remains untouched')
+    createResettablePilot(paths)
+    symlinkSync(paths.outsideDirectory, path.join(paths.mediaRoot, 'escape'))
+    const config = validatePilotConfig(pilotEnv(paths), localIpv4Addresses())
+    const removePilotRoots = (pilotLauncher as Record<string, unknown>).removePilotRoots as ((value: typeof config) => void) | undefined
+    try {
+      expect(removePilotRoots).toBeTypeOf('function')
+      removePilotRoots?.(config)
+      expect(existsSync(paths.databaseRoot)).toBe(false)
+      expect(existsSync(paths.mediaRoot)).toBe(false)
+      expect(readFileSync(outsideSentinel, 'utf8')).toBe('outside remains untouched')
+    } finally {
+      cleanupPilotPaths(paths)
+    }
+  })
+
+  it('labels the filesystem adapter as a UX-only upload test, not production media protection', async () => {
+    const print = vi.fn()
+    await runPilot('help', {}, { ...unsafeStartDependencies(), print })
+    expect(print.mock.calls.flat().join('\n')).toContain('nie weryfikuje ClamAV')
   })
 
   it('escalates a repeated shutdown signal to the Next child without deleting pilot data', () => {
     const signals = new EventEmitter()
     const child = { kill: vi.fn() }
     const detach = attachPilotShutdownHandlers(child, signals)
-
     signals.emit('SIGINT')
     signals.emit('SIGTERM')
-
     expect(child.kill).toHaveBeenCalledTimes(2)
     expect(child.kill).toHaveBeenCalledWith('SIGINT')
     expect(child.kill).toHaveBeenCalledWith('SIGTERM')

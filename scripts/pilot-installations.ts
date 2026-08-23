@@ -8,12 +8,12 @@ import bcrypt from 'bcryptjs'
 import { PrismaClient } from '../src/generated/prisma'
 import { isStrongPassword } from '../src/lib/accounts/policy'
 
-const PILOT_DATABASE_PATTERN = /^\/tmp\/walldecor-installations-pilot-[A-Za-z0-9][A-Za-z0-9._-]*\.db$/
+const PILOT_DATABASE_ROOT_PATTERN = /^\/tmp\/walldecor-installations-pilot-[A-Za-z0-9][A-Za-z0-9._-]*$/
 const PILOT_MEDIA_PATTERN = /^\/tmp\/walldecor-installations-e2e-media-pilot-[A-Za-z0-9][A-Za-z0-9._-]*$/
+const PILOT_DATABASE_FILENAME = 'pilot.db'
+const PILOT_MARKER_FILENAME = '.pilot01.marker'
 const ADMIN_USERNAME = 'pilotadmin'
 const ADMIN_EMAIL = 'pilot-admin@example.test'
-const PILOT_MARKER_SUFFIX = '.pilot01.marker'
-const PILOT_SIDECAR_SUFFIXES = ['-journal', '-shm', '-wal'] as const
 
 export type PilotCommand = 'start' | 'check' | 'reset' | 'help'
 
@@ -21,6 +21,7 @@ export interface PilotConfig {
   baseUrl: string
   port: number
   databaseUrl: string
+  databaseRoot: string
   databasePath: string
   mediaRoot: string
   markerPath: string
@@ -54,6 +55,15 @@ interface SignalSource {
   removeListener(event: NodeJS.Signals, listener: () => void): unknown
 }
 
+interface PilotMarker {
+  version: 2
+  databaseRoot: string
+  databasePath: string
+  mediaRoot: string
+  bindIp: string
+  port: number
+}
+
 function fail(message: string): never {
   throw new Error(message)
 }
@@ -69,25 +79,29 @@ function validatePilotDatabase(databaseUrl: string) {
   try {
     parsed = new URL(databaseUrl)
   } catch {
-    fail('DATABASE_URL pilota musi być adresem SQLite file:/tmp/...db.')
+    fail('DATABASE_URL pilota musi być adresem SQLite file:/tmp/.../pilot.db.')
   }
-
   if (parsed.protocol !== 'file:' || parsed.search || parsed.hash) {
-    fail('DATABASE_URL pilota musi być czystym adresem SQLite file:/tmp/...db.')
+    fail('DATABASE_URL pilota musi być czystym adresem SQLite file:/tmp/.../pilot.db.')
   }
 
   const databasePath = fileURLToPath(parsed)
-  if (!PILOT_DATABASE_PATTERN.test(databasePath)) {
-    fail('DATABASE_URL może wskazywać wyłącznie izolowaną bazę /tmp/walldecor-installations-pilot-*.db.')
+  const databaseRoot = path.dirname(databasePath)
+  if (
+    path.basename(databasePath) !== PILOT_DATABASE_FILENAME
+    || path.dirname(databaseRoot) !== '/tmp'
+    || !PILOT_DATABASE_ROOT_PATTERN.test(databaseRoot)
+    || databasePath !== path.join(databaseRoot, PILOT_DATABASE_FILENAME)
+  ) {
+    fail('DATABASE_URL może wskazywać wyłącznie file:/tmp/walldecor-installations-pilot-<id>/pilot.db.')
   }
-
-  return databasePath
+  return { databaseRoot, databasePath }
 }
 
 function validatePilotMediaRoot(value: string) {
   const mediaRoot = path.resolve(value)
-  if (!PILOT_MEDIA_PATTERN.test(mediaRoot)) {
-    fail('PILOT_MEDIA_ROOT może wskazywać wyłącznie /tmp/walldecor-installations-e2e-media-pilot-*.')
+  if (!PILOT_MEDIA_PATTERN.test(mediaRoot) || path.dirname(mediaRoot) !== '/tmp') {
+    fail('PILOT_MEDIA_ROOT może wskazywać wyłącznie /tmp/walldecor-installations-e2e-media-pilot-<id>.')
   }
   return mediaRoot
 }
@@ -107,7 +121,6 @@ function validatePilotBaseUrl(value: string) {
   } catch {
     fail('PILOT_BASE_URL musi mieć postać http://LAN-IP:port.')
   }
-
   const port = Number(parsed.port)
   if (
     parsed.protocol !== 'http:'
@@ -123,7 +136,6 @@ function validatePilotBaseUrl(value: string) {
   ) {
     fail('PILOT_BASE_URL musi być adresem http://LAN-IP:port z prywatnym IPv4, dostępnym dla telefonu w sieci lokalnej.')
   }
-
   return { baseUrl: parsed.origin, port }
 }
 
@@ -151,15 +163,6 @@ function optionalLstat(target: string) {
   }
 }
 
-function assertParentWithinRealTmp(target: string) {
-  const realTmp = path.resolve(requireRealPath('/tmp'))
-  const realParent = path.resolve(requireRealPath(path.dirname(target)))
-  const relative = path.relative(realTmp, realParent)
-  if (relative === '..' || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative)) {
-    fail('Odmowa: ścieżka pilota po rozwiązaniu linków opuszcza systemowy katalog tymczasowy.')
-  }
-}
-
 function requireRealPath(target: string) {
   try {
     return realpathSync(target)
@@ -168,78 +171,59 @@ function requireRealPath(target: string) {
   }
 }
 
-function assertOwnedSingleRegularFile(target: string, label: string, required: boolean) {
-  const stats = optionalLstat(target)
+function assertParentWithinRealTmp(root: string) {
+  const realTmp = path.resolve(requireRealPath('/tmp'))
+  const realParent = path.resolve(requireRealPath(path.dirname(root)))
+  if (realParent !== realTmp) fail('Odmowa: katalog pilota musi być bezpośrednio w systemowym /tmp.')
+}
+
+function assertRootAbsent(root: string, label: string) {
+  const stats = optionalLstat(root)
+  if (!stats) return
+  if (stats.isSymbolicLink()) fail(`Odmowa: ${label} pilota już istnieje jako link.`)
+  if (!stats.isDirectory()) fail(`Odmowa: ${label} pilota już istnieje i nie jest katalogiem 0700.`)
+  fail(`Odmowa: ${label} pilota już istnieje; użyj jawnego --reset zamiast wznawiać pilot 01.`)
+}
+
+function assertPrivatePilotRoot(root: string, label: string, required: boolean) {
+  const stats = optionalLstat(root)
   if (!stats) {
     if (required) fail(`Odmowa: brakuje wymaganego ${label} pilota.`)
     return
   }
-  if (stats.isSymbolicLink() || !stats.isFile()) fail(`Odmowa: ${label} pilota musi być zwykłym plikiem, nie linkiem.`)
+  if (stats.isSymbolicLink() || !stats.isDirectory()) fail(`Odmowa: ${label} pilota musi być prawdziwym katalogiem 0700, nie linkiem.`)
   const uid = currentUid()
   if (uid !== undefined && stats.uid !== uid) fail(`Odmowa: ${label} pilota nie należy do bieżącego użytkownika.`)
-  if (stats.nlink !== 1) fail(`Odmowa: ${label} pilota nie może być hardlinkiem.`)
+  if ((stats.mode & 0o777) !== 0o700) fail(`Odmowa: ${label} pilota musi mieć dokładnie tryb 0700.`)
 }
 
-function assertOwnedRealDirectory(target: string, required: boolean) {
-  const stats = optionalLstat(target)
-  if (!stats) {
-    if (required) fail('Odmowa: brakuje wymaganego katalogu mediów pilota.')
-    return
-  }
-  if (stats.isSymbolicLink() || !stats.isDirectory()) fail('Odmowa: katalog mediów pilota musi być prawdziwym katalogiem, nie linkiem.')
+function assertOwnedMarker(config: PilotConfig) {
+  const stats = optionalLstat(config.markerPath)
+  if (!stats) fail('Odmowa: brakuje markera pilota.')
+  if (stats.isSymbolicLink() || !stats.isFile()) fail('Odmowa: marker pilota musi być zwykłym plikiem, nie linkiem.')
   const uid = currentUid()
-  if (uid !== undefined && stats.uid !== uid) fail('Odmowa: katalog mediów pilota nie należy do bieżącego użytkownika.')
+  if (uid !== undefined && stats.uid !== uid) fail('Odmowa: marker pilota nie należy do bieżącego użytkownika.')
+  if (stats.nlink !== 1 || (stats.mode & 0o077) !== 0) fail('Odmowa: marker pilota ma niebezpieczne uprawnienia lub linki.')
 }
 
-function sidecarPaths(config: PilotConfig) {
-  return PILOT_SIDECAR_SUFFIXES.map((suffix) => `${config.databasePath}${suffix}`)
-}
-
-export function pilotMarkerPath(databasePath: string) {
-  return `${databasePath}${PILOT_MARKER_SUFFIX}`
-}
-
-function assertPilotParents(config: PilotConfig) {
-  assertParentWithinRealTmp(config.databasePath)
+function assertPilotRootsAbsent(config: PilotConfig) {
+  assertParentWithinRealTmp(config.databaseRoot)
   assertParentWithinRealTmp(config.mediaRoot)
-  assertParentWithinRealTmp(config.markerPath)
+  assertRootAbsent(config.databaseRoot, 'katalog bazy danych')
+  assertRootAbsent(config.mediaRoot, 'katalog mediów')
 }
 
-function assertPilotStateIsFresh(config: PilotConfig) {
-  assertPilotParents(config)
-  for (const [target, label] of [
-    [config.databasePath, 'bazy danych'],
-    ...sidecarPaths(config).map((target) => [target, 'pliku pomocniczego SQLite'] as const),
-    [config.mediaRoot, 'katalogu mediów'],
-    [config.markerPath, 'markera'],
-  ] as const) {
-    if (optionalLstat(target)) fail(`Odmowa: ${label} pilota już istnieje; użyj jawnego --reset zamiast wznawiać pilot 01.`)
-  }
+function assertPilotRootsPrivate(config: PilotConfig, required: boolean) {
+  assertParentWithinRealTmp(config.databaseRoot)
+  assertParentWithinRealTmp(config.mediaRoot)
+  assertPrivatePilotRoot(config.databaseRoot, 'katalog bazy danych', required)
+  assertPrivatePilotRoot(config.mediaRoot, 'katalog mediów', required)
 }
 
-function assertValidPilotMarker(config: PilotConfig) {
-  assertOwnedSingleRegularFile(config.markerPath, 'marker', true)
-  const marker = parsePilotMarker(readFileSync(config.markerPath, 'utf8'))
-  if (
-    marker.databasePath !== config.databasePath
-    || marker.mediaRoot !== config.mediaRoot
-    || marker.bindIp !== config.bindIp
-    || marker.port !== config.port
-  ) fail('Odmowa: marker nie należy do wskazanego pilota.')
-  assertOwnedSingleRegularFile(config.markerPath, 'marker', true)
-}
-
-interface PilotMarker {
-  version: 1
-  databasePath: string
-  mediaRoot: string
-  bindIp: string
-  port: number
-}
-
-function pilotMarkerContent(config: PilotConfig) {
+function markerContent(config: PilotConfig) {
   const marker: PilotMarker = {
-    version: 1,
+    version: 2,
+    databaseRoot: config.databaseRoot,
     databasePath: config.databasePath,
     mediaRoot: config.mediaRoot,
     bindIp: config.bindIp,
@@ -253,17 +237,18 @@ function parsePilotMarker(raw: string): PilotMarker {
   try {
     marker = JSON.parse(raw)
   } catch {
-    fail('Odmowa: marker pilota nie jest poprawnym JSON-em v1.')
+    fail('Odmowa: marker pilota nie jest poprawnym JSON-em v2.')
   }
   if (!marker || typeof marker !== 'object' || Array.isArray(marker)) fail('Odmowa: marker pilota ma nieprawidłowy schemat.')
   const record = marker as Record<string, unknown>
   const keys = Object.keys(record).sort()
-  const expectedKeys = ['bindIp', 'databasePath', 'mediaRoot', 'port', 'version']
+  const expectedKeys = ['bindIp', 'databasePath', 'databaseRoot', 'mediaRoot', 'port', 'version']
   if (keys.length !== expectedKeys.length || keys.some((key, index) => key !== expectedKeys[index])) {
     fail('Odmowa: marker pilota ma nieprawidłowy schemat.')
   }
   if (
-    record.version !== 1
+    record.version !== 2
+    || typeof record.databaseRoot !== 'string'
     || typeof record.databasePath !== 'string'
     || typeof record.mediaRoot !== 'string'
     || typeof record.bindIp !== 'string'
@@ -271,7 +256,8 @@ function parsePilotMarker(raw: string): PilotMarker {
     || !Number.isInteger(record.port)
   ) fail('Odmowa: marker pilota ma nieprawidłowy schemat.')
   return {
-    version: 1,
+    version: 2,
+    databaseRoot: record.databaseRoot,
     databasePath: record.databasePath,
     mediaRoot: record.mediaRoot,
     bindIp: record.bindIp,
@@ -279,71 +265,102 @@ function parsePilotMarker(raw: string): PilotMarker {
   }
 }
 
-function assertPilotStateAfterMarker(config: PilotConfig, requireDatabase: boolean, requireMediaRoot: boolean) {
-  assertPilotParents(config)
-  assertValidPilotMarker(config)
-  assertOwnedSingleRegularFile(config.databasePath, 'baza danych', requireDatabase)
-  for (const sidecar of sidecarPaths(config)) assertOwnedSingleRegularFile(sidecar, 'plik pomocniczy SQLite', false)
-  assertOwnedRealDirectory(config.mediaRoot, requireMediaRoot)
+function assertValidPilotMarker(config: PilotConfig) {
+  assertOwnedMarker(config)
+  const marker = parsePilotMarker(readFileSync(config.markerPath, 'utf8'))
+  if (
+    marker.databaseRoot !== config.databaseRoot
+    || marker.databasePath !== config.databasePath
+    || marker.mediaRoot !== config.mediaRoot
+    || marker.bindIp !== config.bindIp
+    || marker.port !== config.port
+  ) fail('Odmowa: marker nie należy do wskazanego pilota.')
+  assertOwnedMarker(config)
 }
 
-function createPilotMarker(config: PilotConfig, onCreated: () => void) {
-  assertPilotStateIsFresh(config)
+function createPrivateRoot(root: string, label: string) {
+  try {
+    mkdirSync(root, { mode: 0o700 })
+  } catch {
+    fail(`Odmowa: nie udało się atomowo utworzyć ${label} pilota.`)
+  }
+  assertPrivatePilotRoot(root, label, true)
+}
+
+function writeCompleteMarker(config: PilotConfig) {
+  const content = Buffer.from(markerContent(config))
   let descriptor: number | undefined
+  let complete = false
   try {
     descriptor = openSync(config.markerPath, constants.O_WRONLY | constants.O_CREAT | constants.O_EXCL | constants.O_NOFOLLOW, 0o600)
-    onCreated()
-    writeSync(descriptor, pilotMarkerContent(config))
+    let offset = 0
+    while (offset < content.length) offset += writeSync(descriptor, content, offset, content.length - offset)
     fsyncSync(descriptor)
+    closeSync(descriptor)
+    descriptor = undefined
+    complete = true
   } catch {
-    fail('Odmowa: nie udało się atomowo utworzyć markera pilota.')
+    fail('Odmowa: nie udało się atomowo zapisać kompletnego markera pilota.')
   } finally {
     if (descriptor !== undefined) closeSync(descriptor)
   }
-  assertPilotStateAfterMarker(config, false, false)
+  if (!complete) fail('Odmowa: marker pilota nie został zapisany kompletnie.')
+  assertValidPilotMarker(config)
 }
 
-function assertPilotStateResettable(config: PilotConfig) {
-  assertPilotParents(config)
-  assertOwnedSingleRegularFile(config.databasePath, 'baza danych', false)
-  for (const sidecar of sidecarPaths(config)) assertOwnedSingleRegularFile(sidecar, 'plik pomocniczy SQLite', false)
-  assertOwnedRealDirectory(config.mediaRoot, false)
+function cleanupFreshRoot(root: string, label: string) {
+  try {
+    assertPrivatePilotRoot(root, label, true)
+    rmSync(root, { recursive: true, force: false })
+  } catch {
+    // Jeśli środowisko uniemożliwiło sprzątanie świeżego katalogu, nie ryzykuj usunięcia innej ścieżki.
+  }
+}
+
+function createPrivatePilotRoots(config: PilotConfig) {
+  let databaseRootCreated = false
+  let mediaRootCreated = false
+  try {
+    createPrivateRoot(config.databaseRoot, 'katalogu bazy danych')
+    databaseRootCreated = true
+    createPrivateRoot(config.mediaRoot, 'katalogu mediów')
+    mediaRootCreated = true
+    writeCompleteMarker(config)
+    assertPilotRootsPrivate(config, true)
+  } catch (error) {
+    if (mediaRootCreated) cleanupFreshRoot(config.mediaRoot, 'katalog mediów')
+    if (databaseRootCreated) cleanupFreshRoot(config.databaseRoot, 'katalog bazy danych')
+    throw error
+  }
+}
+
+function assertPilotResettable(config: PilotConfig) {
+  assertPilotRootsPrivate(config, true)
   assertValidPilotMarker(config)
 }
 
 export function validatePilotConfig(input: NodeJS.ProcessEnv, localIpv4Addresses = hostLocalIpv4Addresses()): PilotConfig {
-  if (input.NODE_ENV === 'production') {
-    fail('Odmowa uruchomienia: NODE_ENV=production nie jest dozwolone dla pilota.')
-  }
-
+  if (input.NODE_ENV === 'production') fail('Odmowa uruchomienia: NODE_ENV=production nie jest dozwolone dla pilota.')
   const databaseUrl = required(input, 'DATABASE_URL')
-  const databasePath = validatePilotDatabase(databaseUrl)
+  const { databaseRoot, databasePath } = validatePilotDatabase(databaseUrl)
   const mediaRoot = validatePilotMediaRoot(required(input, 'PILOT_MEDIA_ROOT'))
   const { baseUrl, port } = validatePilotBaseUrl(required(input, 'PILOT_BASE_URL'))
   const bindIp = new URL(baseUrl).hostname
-  if (!localIpv4Addresses.includes(bindIp)) {
-    fail('PILOT_BASE_URL musi wskazywać prywatny IPv4 przypisany do tego hosta.')
-  }
+  if (!localIpv4Addresses.includes(bindIp)) fail('PILOT_BASE_URL musi wskazywać prywatny IPv4 przypisany do tego hosta.')
   const adminPassword = required(input, 'PILOT_ADMIN_PASSWORD')
   const authSecret = required(input, 'PILOT_AUTH_SECRET')
-
-  if (!isStrongPassword(adminPassword)) {
-    fail('PILOT_ADMIN_PASSWORD musi mieć co najmniej 10 znaków oraz małą i wielką literę, cyfrę i znak specjalny.')
-  }
-  if (!isStrongAuthSecret(authSecret)) {
-    fail('PILOT_AUTH_SECRET musi być osobnym, losowym sekretem bez spacji o długości co najmniej 32 znaków.')
-  }
-  if (adminPassword === authSecret) {
-    fail('PILOT_AUTH_SECRET musi być inny niż PILOT_ADMIN_PASSWORD.')
-  }
+  if (!isStrongPassword(adminPassword)) fail('PILOT_ADMIN_PASSWORD musi mieć co najmniej 10 znaków oraz małą i wielką literę, cyfrę i znak specjalny.')
+  if (!isStrongAuthSecret(authSecret)) fail('PILOT_AUTH_SECRET musi być osobnym, losowym sekretem bez spacji o długości co najmniej 32 znaków.')
+  if (adminPassword === authSecret) fail('PILOT_AUTH_SECRET musi być inny niż PILOT_ADMIN_PASSWORD.')
 
   return {
     baseUrl,
     port,
     databaseUrl,
+    databaseRoot,
     databasePath,
     mediaRoot,
-    markerPath: pilotMarkerPath(databasePath),
+    markerPath: path.join(databaseRoot, PILOT_MARKER_FILENAME),
     bindIp,
     adminUsername: ADMIN_USERNAME,
     adminPassword,
@@ -367,17 +384,6 @@ export function parsePilotCommand(args: string[]): PilotCommand {
   if (args[0] === '--reset') return 'reset'
   if (args[0] === '--help' || args[0] === '-h') return 'help'
   fail('Użycie: npm run pilot:installations -- [--check | --reset | --help]')
-}
-
-export function pilotResetTargets(config: PilotConfig) {
-  return [
-    config.databasePath,
-    `${config.databasePath}-journal`,
-    `${config.databasePath}-shm`,
-    `${config.databasePath}-wal`,
-    config.mediaRoot,
-    config.markerPath,
-  ]
 }
 
 function printSafePilotSummary(config: PilotConfig, print: (line: string) => void) {
@@ -427,31 +433,26 @@ export async function runPilot(command: PilotCommand, env: NodeJS.ProcessEnv, de
     printSafePilotSummary(config, dependencies.print)
     return config
   }
-
   if (command === 'reset') {
-    if (env.PILOT_CONFIRM_RESET !== 'DELETE_PILOT_DATA') {
-      fail('Reset wymaga jawnego PILOT_CONFIRM_RESET=DELETE_PILOT_DATA.')
-    }
-    assertPilotStateResettable(config)
+    if (env.PILOT_CONFIRM_RESET !== 'DELETE_PILOT_DATA') fail('Reset wymaga jawnego PILOT_CONFIRM_RESET=DELETE_PILOT_DATA.')
+    assertPilotResettable(config)
     dependencies.remove(config)
     dependencies.print('Usunięto wyłącznie wskazane dane pilota.')
     return config
   }
 
-  assertPilotStateIsFresh(config)
+  assertPilotRootsAbsent(config)
   await dependencies.preflightPort(config)
+  let migrationStarted = false
   let child: PilotChild | undefined
   let detach: (() => void) | undefined
-  let markerCreated = false
   try {
-    createPilotMarker(config, () => { markerCreated = true })
-    assertPilotStateAfterMarker(config, false, false)
-    mkdirSync(config.mediaRoot, { recursive: false })
-    assertPilotStateAfterMarker(config, false, true)
+    createPrivatePilotRoots(config)
+    migrationStarted = true
     await dependencies.migrate(config)
-    assertPilotStateAfterMarker(config, true, true)
+    assertPilotRootsPrivate(config, true)
     await dependencies.seed(config)
-    assertPilotStateAfterMarker(config, true, true)
+    assertPilotRootsPrivate(config, true)
     child = dependencies.start(config)
     detach = attachPilotShutdownHandlers(child)
     const completion = observePilotChild(child, detach)
@@ -470,7 +471,7 @@ export async function runPilot(command: PilotCommand, env: NodeJS.ProcessEnv, de
   } catch (error) {
     detach?.()
     if (child?.exitCode === null) child.kill('SIGTERM')
-    if (markerCreated) {
+    if (migrationStarted) {
       const detail = error instanceof Error ? error.message : 'Nieznany błąd launchera.'
       throw new Error(`${detail} Dane pilota nie zostały automatycznie usunięte; po sprawdzeniu użyj jawnego --reset.`)
     }
@@ -523,11 +524,8 @@ function startPilotServer(config: PilotConfig): PilotChild {
 async function waitForPilotReadiness(config: PilotConfig, child: PilotChild) {
   const deadline = Date.now() + 30_000
   const healthUrl = `http://${config.bindIp}:${config.port}/api/health`
-
   while (Date.now() < deadline) {
-    if (child.exitCode !== null) {
-      fail('Serwer pilota zakończył się przed osiągnięciem gotowości.')
-    }
+    if (child.exitCode !== null) fail('Serwer pilota zakończył się przed osiągnięciem gotowości.')
     try {
       const response = await fetch(healthUrl, { signal: AbortSignal.timeout(1_000) })
       if (response.ok) return
@@ -536,16 +534,13 @@ async function waitForPilotReadiness(config: PilotConfig, child: PilotChild) {
     }
     await new Promise((resolve) => setTimeout(resolve, 200))
   }
-
   fail('Serwer pilota nie osiągnął gotowości HTTP w ciągu 30 sekund.')
 }
 
 export async function assertPilotPortAvailable(bindIp: string, port: number) {
   await new Promise<void>((resolve, reject) => {
     const probe = createServer()
-    const failPort = () => {
-      reject(new Error('Odmowa: port PILOT_BASE_URL jest już zajęty na tym prywatnym adresie IP.'))
-    }
+    const failPort = () => reject(new Error('Odmowa: port PILOT_BASE_URL jest już zajęty na tym prywatnym adresie IP.'))
     probe.once('error', failPort)
     probe.listen(port, bindIp, () => {
       probe.removeListener('error', failPort)
@@ -562,37 +557,21 @@ function runChild(command: string, args: string[], env: NodeJS.ProcessEnv, failu
   })
 }
 
-function removePilotTargets(config: PilotConfig) {
-  for (const target of pilotResetTargets(config)) {
-    assertPilotStateResettable(config)
-    if (PILOT_DATABASE_PATTERN.test(target)) {
-      rmSync(target, { force: true })
-      continue
-    }
-    if (/^\/tmp\/walldecor-installations-pilot-[A-Za-z0-9][A-Za-z0-9._-]*\.db-(journal|shm|wal)$/.test(target)) {
-      rmSync(target, { force: true })
-      continue
-    }
-    if (PILOT_MEDIA_PATTERN.test(target)) {
-      rmSync(target, { recursive: true, force: true })
-      continue
-    }
-    if (target === config.markerPath) {
-      rmSync(target, { force: true })
-      continue
-    }
-    fail('Odmowa resetu: wykryto ścieżkę spoza pilota.')
-  }
+export function removePilotRoots(config: PilotConfig) {
+  assertPilotResettable(config)
+  rmSync(config.mediaRoot, { recursive: true, force: false })
+  rmSync(config.databaseRoot, { recursive: true, force: false })
 }
 
 function helpText() {
   return [
     'Użycie:',
-    '  PILOT_BASE_URL=http://192.168.1.42:3100 DATABASE_URL=file:/tmp/walldecor-installations-pilot-demo.db PILOT_MEDIA_ROOT=/tmp/walldecor-installations-e2e-media-pilot-demo PILOT_ADMIN_PASSWORD=... PILOT_AUTH_SECRET=... npm run pilot:installations',
+    '  PILOT_BASE_URL=http://192.168.1.42:3100 DATABASE_URL=file:/tmp/walldecor-installations-pilot-demo/pilot.db PILOT_MEDIA_ROOT=/tmp/walldecor-installations-e2e-media-pilot-demo PILOT_ADMIN_PASSWORD=... PILOT_AUTH_SECRET=... npm run pilot:installations',
     '',
-    'Wymagania: prywatny LAN IPv4 i port 1024-65535; hasło admina spełnia politykę aplikacji; osobny sekret ma min. 32 znaki bez spacji.',
-    'Polecenia: --check sprawdza konfigurację bez migracji i serwera; --reset wymaga PILOT_CONFIRM_RESET=DELETE_PILOT_DATA i usuwa wyłącznie zwalidowane ścieżki pilota.',
-    'Start wymaga świeżych, nieistniejących ścieżek bazy, sidecarów i mediów; po błędzie zachowany marker wymaga jawnego --reset, nie ma automatycznego wznowienia.',
+    'Wymagania: prywatny LAN IPv4 przypisany do hosta i port 1024-65535; hasło admina spełnia politykę aplikacji; osobny sekret ma min. 32 znaki bez spacji.',
+    'Start wymaga dwóch świeżych katalogów /tmp: rootu bazy z plikiem pilot.db oraz rootu mediów. Launcher tworzy je atomowo z trybem 0700.',
+    'Polecenia: --check sprawdza konfigurację bez migracji i serwera; --reset wymaga PILOT_CONFIRM_RESET=DELETE_PILOT_DATA, poprawnego markera v2 i usuwa wyłącznie oba prywatne rooty.',
+    'Po rozpoczęciu migracji dane nie są usuwane automatycznie; nie ma resume, po sprawdzeniu użyj jawnego --reset.',
     'Launcher zawsze wymusza lokalną bazę SQLite, fikcyjny seed oraz filesystemowy adapter mediów w /tmp; upload testuje wyłącznie UX i nie weryfikuje ClamAV ani produkcyjnego przechowywania mediów.',
   ].join('\n')
 }
@@ -607,7 +586,7 @@ async function main() {
     preflightPort: (config) => assertPilotPortAvailable(config.bindIp, config.port),
     localIpv4Addresses: hostLocalIpv4Addresses,
     print: (line) => console.log(line),
-    remove: removePilotTargets,
+    remove: removePilotRoots,
   })
 }
 
