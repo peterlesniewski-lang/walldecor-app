@@ -1,6 +1,6 @@
 import { render, screen } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ClientQuestionRenderer } from '@/components/installations/client-form/question-renderer'
 import { displayFormAnswer } from '@/lib/installations/form-answer-display'
 import type { FormQuestion } from '@/lib/installations/form-visibility'
@@ -13,10 +13,10 @@ const yesNoQuestion: FormQuestion = {
 }
 
 describe('ClientQuestionRenderer', () => {
-  it('renders readonly label, help and Polish answer without mutating controls', () => {
-    const onChange = vi.fn()
+  afterEach(() => { vi.unstubAllGlobals() })
 
-    render(<ClientQuestionRenderer question={yesNoQuestion} value="YES" mode="readonly" onChange={onChange} />)
+  it('renders readonly label, help and Polish answer without mutating controls', () => {
+    render(<ClientQuestionRenderer question={yesNoQuestion} value="YES" mode="readonly" />)
 
     expect(screen.getByText('Czy są glify?')).not.toBeNull()
     expect(screen.getByText('Jeśli nie masz pewności, wybierz „Nie wiem”.')).not.toBeNull()
@@ -24,7 +24,6 @@ describe('ClientQuestionRenderer', () => {
     expect(screen.queryByRole('button', { name: 'Tak' })).toBeNull()
     expect(screen.queryByRole('textbox')).toBeNull()
     expect(screen.queryByRole('combobox')).toBeNull()
-    expect(onChange).not.toHaveBeenCalled()
   })
 
   it('keeps interactive answer controls and reports a selected choice', async () => {
@@ -50,11 +49,38 @@ describe('ClientQuestionRenderer', () => {
     expect(screen.getByText('Ściana, Sufit')).not.toBeNull()
     rerender(<ClientQuestionRenderer question={multiQuestion} value={undefined} mode="readonly" />)
     expect(screen.getByText('Brak odpowiedzi')).not.toBeNull()
-    expect(displayFormAnswer('YES')).toBe('Tak')
-    expect(displayFormAnswer('NO')).toBe('Nie')
-    expect(displayFormAnswer('UNKNOWN')).toBe('Nie wiem')
-    expect(displayFormAnswer([])).toBe('Brak odpowiedzi')
-    expect(displayFormAnswer('')).toBe('Brak odpowiedzi')
+    expect(displayFormAnswer('YES', 'YES_NO_UNKNOWN')).toBe('Tak')
+    expect(displayFormAnswer('NO', 'YES_NO_UNKNOWN')).toBe('Nie')
+    expect(displayFormAnswer('UNKNOWN', 'YES_NO_UNKNOWN')).toBe('Nie wiem')
+    expect(displayFormAnswer([], 'MULTI')).toBe('Brak odpowiedzi')
+    expect(displayFormAnswer('', 'TEXT')).toBe('Brak odpowiedzi')
+  })
+
+  it('does not translate reserved answer tokens for TEXT or SINGLE questions', () => {
+    const textQuestion: FormQuestion = { key: 'opis', type: 'TEXT', label: 'Opis' }
+    const singleQuestion: FormQuestion = { key: 'wariant', type: 'SINGLE', label: 'Wariant', options: ['UNKNOWN'] }
+    const { rerender } = render(<ClientQuestionRenderer question={textQuestion} value="NO" mode="readonly" />)
+
+    expect(screen.getByText('NO')).not.toBeNull()
+    expect(screen.queryByText('Nie')).toBeNull()
+    rerender(<ClientQuestionRenderer question={singleQuestion} value="UNKNOWN" mode="readonly" />)
+    expect(screen.getByText('UNKNOWN')).not.toBeNull()
+    expect(screen.queryByText('Nie wiem')).toBeNull()
+  })
+
+  it('keeps generated control ids unique and accepts an explicit id prefix', () => {
+    const textQuestion: FormQuestion = { key: 'opis', type: 'TEXT', label: 'Opis' }
+    const onChange = vi.fn()
+    const { unmount } = render(<div>
+      <ClientQuestionRenderer question={textQuestion} value={undefined} mode="interactive" onChange={onChange} />
+      <ClientQuestionRenderer question={textQuestion} value={undefined} mode="interactive" onChange={onChange} />
+    </div>)
+    const controls = screen.getAllByLabelText('Opis') as HTMLTextAreaElement[]
+
+    expect(controls[0].id).not.toBe(controls[1].id)
+    unmount()
+    render(<ClientQuestionRenderer question={textQuestion} value={undefined} mode="interactive" onChange={onChange} idPrefix="answers" />)
+    expect((screen.getByLabelText('Opis') as HTMLTextAreaElement).id).toBe('answers-opis')
   })
 
   it('renders FILE content without owning upload or network behavior', () => {

@@ -1,18 +1,24 @@
 'use client'
 
-import type { ReactNode } from 'react'
+import { useId, type ReactNode } from 'react'
 import { displayFormAnswer } from '@/lib/installations/form-answer-display'
 import type { FormAnswerValue, FormQuestion } from '@/lib/installations/form-visibility'
 import styles from './client-installation-form.module.css'
 
-export type ClientQuestionRendererProps = {
+type ClientQuestionRendererBaseProps = {
   question: FormQuestion
   value: FormAnswerValue | undefined
-  mode: 'interactive' | 'readonly'
-  onChange?: (value: FormAnswerValue | null) => void
   fileContent?: ReactNode
   idPrefix?: string
 }
+
+export type ClientQuestionRendererProps = ClientQuestionRendererBaseProps & ({
+  mode: 'interactive'
+  onChange: (value: FormAnswerValue | null) => void
+} | {
+  mode: 'readonly'
+  onChange?: never
+})
 
 function RequiredMark({ question }: { question: FormQuestion }) {
   return question.required ? <span className={styles.required}>*</span> : null
@@ -23,21 +29,24 @@ function OptionalClear({ question, value, onChange }: { question: FormQuestion; 
   return <button type="button" className={styles.secondary} aria-label={'Wyczyść odpowiedź: ' + question.label} onClick={() => onChange(null)}>Wyczyść odpowiedź</button>
 }
 
-function ReadonlyQuestion({ question, value, fileContent }: Pick<ClientQuestionRendererProps, 'question' | 'value' | 'fileContent'>) {
+function ReadonlyQuestion({ question, value, fileContent }: Pick<ClientQuestionRendererBaseProps, 'question' | 'value' | 'fileContent'>) {
   return <article className={styles.question}>
     <strong className={styles.readonlyLabel}>{question.label}<RequiredMark question={question} /></strong>
     {question.help && <p className={styles.help}>{question.help}</p>}
     {question.type === 'FILE' && fileContent !== undefined
       ? fileContent
-      : <output className={styles.answerOutput}>{displayFormAnswer(value)}</output>}
+      : <output className={styles.answerOutput}>{displayFormAnswer(value, question.type)}</output>}
   </article>
 }
 
-export function ClientQuestionRenderer({ question, value, mode, onChange, fileContent, idPrefix }: ClientQuestionRendererProps) {
-  if (mode === 'readonly') return <ReadonlyQuestion question={question} value={value} fileContent={fileContent} />
+export function ClientQuestionRenderer(props: ClientQuestionRendererProps) {
+  const generatedId = useId()
+  const { question, value, fileContent, idPrefix } = props
+  if (props.mode === 'readonly') return <ReadonlyQuestion question={question} value={value} fileContent={fileContent} />
 
-  const change = (next: FormAnswerValue | null) => onChange?.(next)
-  const inputId = idPrefix ? `${idPrefix}-${question.key}` : question.key
+  const { onChange } = props
+  const change = (next: FormAnswerValue | null) => onChange(next)
+  const inputId = `${idPrefix ?? generatedId}-${question.key}`
 
   if (question.type === 'FILE') return <>{fileContent}</>
 

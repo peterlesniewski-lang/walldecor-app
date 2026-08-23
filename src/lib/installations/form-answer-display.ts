@@ -1,4 +1,4 @@
-import type { FormAnswerValue } from './form-visibility'
+import type { FormAnswerValue, FormQuestion } from './form-visibility'
 
 const answerLabels: Record<string, string> = {
   YES: 'Tak',
@@ -6,12 +6,12 @@ const answerLabels: Record<string, string> = {
   UNKNOWN: 'Nie wiem',
 }
 
-export function displayFormAnswer(value: FormAnswerValue | null | undefined): string {
+export function displayFormAnswer(value: FormAnswerValue | null | undefined, questionType: FormQuestion['type']): string {
   if (value === null || value === undefined) return 'Brak odpowiedzi'
   if (Array.isArray(value)) {
     const joined = value.join(', ')
     return joined || 'Brak odpowiedzi'
   }
   if (value.trim() === '') return 'Brak odpowiedzi'
-  return answerLabels[value] ?? value
+  return questionType === 'YES_NO_UNKNOWN' ? answerLabels[value] ?? value : value
 }
