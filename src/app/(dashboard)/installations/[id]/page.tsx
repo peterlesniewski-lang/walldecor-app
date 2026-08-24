@@ -15,9 +15,32 @@ import { listInstallationClarifications, listInstallationFormRevisions } from '@
 import { getInstallationReadiness } from '@/lib/installations/readiness'
 import { getInstallationOwnershipView, getInstallationVisitFeeView } from '@/lib/installations/delegation-service'
 import { listInstallationFiles, listInstallationMismatchesForEvidence } from '@/lib/installation-media/service'
+import { listInstallationVisits } from '@/lib/installations/visit-service'
+import { listScopeInstallerAssignments } from '@/lib/installations/scope-assignment-service'
 import { InstallationOrderDetail } from '@/components/installations/order-detail'
+import type { InstallationVisitValue } from '@/components/installations/installation-visits-panel'
 
 type Params = { params: Promise<{ id: string }> }
+
+function installerVisitProjection(visit: Awaited<ReturnType<typeof listInstallationVisits>>[number]): InstallationVisitValue {
+  return {
+    id: visit.id,
+    orderId: visit.orderId,
+    status: visit.status,
+    startsAt: visit.startsAt,
+    endsAt: visit.endsAt,
+    timezone: visit.timezone,
+    revision: visit.revision,
+    scopeIds: visit.scopeIds,
+    participants: visit.participants.map((participant) => ({
+      employeeId: participant.employeeId,
+      name: participant.name,
+      scopeIds: participant.scopeIds,
+      inviteStatus: participant.inviteStatus,
+    })),
+    syncState: { status: visit.syncState.status },
+  }
+}
 
 export default async function InstallationOrderPage({ params }: Params) {
   const session = await getServerSession(authOptions)
@@ -32,14 +55,18 @@ export default async function InstallationOrderPage({ params }: Params) {
 
   const canCoordinateClientForm = canEditInstallationOrder(viewer, order)
   const canManageGovernance = viewer.role === 'ADMIN' || viewer.role === 'MANAGER'
-  const rooms = await getInstallationOrderRooms(prisma, id)
+  const [rooms, visits, scopeAssignments] = await Promise.all([
+    getInstallationOrderRooms(prisma, id),
+    listInstallationVisits(prisma, id),
+    listScopeInstallerAssignments(prisma, id),
+  ])
   // An installer gets the limited work-order view. Client answers, their
   // clarification/evidence trail and client-link management are coordinator-only.
   const coordinatorData = canCoordinateClientForm ? await (async () => {
     const [employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches] = await Promise.all([
       prisma.employee.findMany({
         where: { active: true },
-        select: { id: true, firstName: true, lastName: true },
+        select: { id: true, firstName: true, lastName: true, email: true },
         orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
       }),
       listInstallationCatalog(prisma),
@@ -83,5 +110,7 @@ export default async function InstallationOrderPage({ params }: Params) {
     files={coordinatorData?.files ?? []}
     mismatches={coordinatorData?.mismatches ?? []}
     canManageGovernance={canManageGovernance}
+    visits={viewer.role === 'INSTALLER' ? visits.map(installerVisitProjection) : visits}
+    scopeAssignments={scopeAssignments}
   />
 }

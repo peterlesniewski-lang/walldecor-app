@@ -20,6 +20,8 @@ const mocks = vi.hoisted(() => ({
   getVisitFee: vi.fn(),
   listFiles: vi.fn(),
   listMismatches: vi.fn(),
+  listVisits: vi.fn(),
+  listScopeAssignments: vi.fn(),
 }))
 
 vi.mock('next-auth', () => ({ getServerSession: vi.fn(async () => mocks.session) }))
@@ -51,6 +53,8 @@ vi.mock('@/lib/installation-media/service', () => ({
   listInstallationFiles: mocks.listFiles,
   listInstallationMismatchesForEvidence: mocks.listMismatches,
 }))
+vi.mock('@/lib/installations/visit-service', () => ({ listInstallationVisits: mocks.listVisits }))
+vi.mock('@/lib/installations/scope-assignment-service', () => ({ listScopeInstallerAssignments: mocks.listScopeAssignments }))
 vi.mock('@/components/installations/order-list', () => ({ InstallationOrderList: () => null }))
 vi.mock('@/components/installations/order-detail', () => ({ InstallationOrderDetail: () => null }))
 
@@ -81,6 +85,8 @@ describe('installer SSR installation access', () => {
     ))
     mocks.getOrder.mockResolvedValue(scopeAssignedOrder)
     mocks.getRooms.mockResolvedValue([])
+    mocks.listVisits.mockResolvedValue([])
+    mocks.listScopeAssignments.mockResolvedValue([])
     mocks.notFound.mockImplementation(() => {
       throw new Error('not-found')
     })

@@ -13,6 +13,8 @@ const mocks = vi.hoisted(() => ({
   getReadiness: vi.fn(),
   listFiles: vi.fn(),
   listMismatches: vi.fn(),
+  listVisits: vi.fn(),
+  listScopeAssignments: vi.fn(),
   canView: vi.fn(),
   canEdit: vi.fn(),
   canArchive: vi.fn(),
@@ -48,6 +50,8 @@ vi.mock('@/lib/installation-media/service', () => ({
   listInstallationFiles: mocks.listFiles,
   listInstallationMismatchesForEvidence: mocks.listMismatches,
 }))
+vi.mock('@/lib/installations/visit-service', () => ({ listInstallationVisits: mocks.listVisits }))
+vi.mock('@/lib/installations/scope-assignment-service', () => ({ listScopeInstallerAssignments: mocks.listScopeAssignments }))
 vi.mock('@/components/installations/order-detail', () => ({ InstallationOrderDetail: () => null }))
 
 import InstallationOrderPage from '@/app/(dashboard)/installations/[id]/page'
@@ -71,10 +75,19 @@ describe('installer installation detail privacy', () => {
       employeeId: 'installer-employee',
       employeeActive: true,
     })
+    mocks.listVisits.mockResolvedValue([{
+      id: 'installer-visit', orderId: 'order-1', status: 'CONFIRMED', startsAt: '2026-09-14T06:00:00.000Z', endsAt: '2026-09-14T14:00:00.000Z', timezone: 'Europe/Warsaw', revision: 2,
+      scopeIds: ['scope-1'], note: 'Prywatna notatka koordynatora', createdById: 'coordinator-1',
+      participants: [{ employeeId: 'installer-employee', name: 'Instalator', email: 'installer@example.test', scopeIds: ['scope-1'], inviteStatus: 'READY' }],
+      syncState: { status: 'PENDING', externalId: 'calendar-id', externalUrl: 'https://calendar.example.test/event', externalEtag: 'etag', lastErrorCode: 'INTERNAL', lastErrorMessage: 'Prywatny błąd', lastAttemptAt: null, lastSyncedAt: null },
+    }])
+    mocks.listScopeAssignments.mockResolvedValue([{ scopeId: 'scope-1', employeeIds: ['installer-employee'] }])
 
     const result = await InstallationOrderPage({ params: Promise.resolve({ id: 'order-1' }) })
 
     expect(mocks.getRooms).toHaveBeenCalledWith(expect.anything(), 'order-1')
+    expect(mocks.listVisits).toHaveBeenCalledWith(expect.anything(), 'order-1')
+    expect(mocks.listScopeAssignments).toHaveBeenCalledWith(expect.anything(), 'order-1')
     expect(mocks.listLinks).not.toHaveBeenCalled()
     expect(mocks.listClarifications).not.toHaveBeenCalled()
     expect(mocks.listRevisions).not.toHaveBeenCalled()
@@ -88,5 +101,11 @@ describe('installer installation detail privacy', () => {
     expect(result.props.clarifications).toEqual([])
     expect(result.props.formRevisions).toEqual([])
     expect(result.props.files).toEqual([])
+    expect(result.props.visits[0]).toMatchObject({ id: 'installer-visit', scopeIds: ['scope-1'], syncState: { status: 'PENDING' } })
+    expect(result.props.visits[0]).not.toHaveProperty('note')
+    expect(result.props.visits[0]).not.toHaveProperty('createdById')
+    expect(result.props.visits[0].participants[0]).not.toHaveProperty('email')
+    expect(result.props.visits[0].syncState).not.toHaveProperty('externalUrl')
+    expect(result.props.scopeAssignments).toEqual([{ scopeId: 'scope-1', employeeIds: ['installer-employee'] }])
   })
 })
