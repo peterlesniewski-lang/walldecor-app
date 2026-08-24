@@ -26,6 +26,11 @@ type CalendarProjection = {
   event: CalendarEventProjectionInput
 }
 
+type WorkerClock = {
+  now(): Date
+  advanceForHeartbeat(): Date
+}
+
 type FinalState = {
   status: 'COMPLETED' | 'RETRY' | 'DEAD'
   availableAt: Date
@@ -74,6 +79,33 @@ function orderUrl(orderId: string): string {
 function normalizedEmail(value: string): string | null {
   const email = value.trim()
   return email.length > 0 ? email : null
+}
+
+/**
+ * `now` is a deterministic base for callers and tests. Heartbeats advance
+ * that base by non-decreasing elapsed wall time, while production calls with
+ * no supplied base continue to use current wall time for every fence.
+ */
+function createWorkerClock(now?: Date): WorkerClock {
+  if (!now) {
+    return {
+      now: () => new Date(),
+      advanceForHeartbeat: () => new Date(),
+    }
+  }
+
+  const baseMs = now.getTime()
+  const startedAt = Date.now()
+  let elapsedMs = 0
+  const advance = () => {
+    elapsedMs = Math.max(elapsedMs, Math.max(0, Date.now() - startedAt))
+    return new Date(baseMs + elapsedMs)
+  }
+
+  return {
+    now: () => new Date(baseMs + elapsedMs),
+    advanceForHeartbeat: advance,
+  }
 }
 
 async function loadCalendarProjection(db: PrismaClient, job: ClaimedIntegrationJob): Promise<CalendarProjection | null> {
@@ -224,7 +256,7 @@ type LeaseHeartbeat = {
  * indeterminate heartbeat intentionally leaves the job PROCESSING for a
  * later worker to reclaim rather than writing an unsafe final state.
  */
-function startLeaseHeartbeat(db: PrismaClient, initialJob: ClaimedIntegrationJob): LeaseHeartbeat {
+function startLeaseHeartbeat(db: PrismaClient, initialJob: ClaimedIntegrationJob, clock: WorkerClock): LeaseHeartbeat {
   let currentJob = initialJob
   let lostFence = false
   let inFlight: Promise<void> | null = null
@@ -233,7 +265,7 @@ function startLeaseHeartbeat(db: PrismaClient, initialJob: ClaimedIntegrationJob
     if (lostFence || inFlight) return
     const renewal = (async () => {
       try {
-        const renewed = await renewCurrentLease(db, currentJob, new Date())
+        const renewed = await renewCurrentLease(db, currentJob, clock.advanceForHeartbeat())
         if (renewed) currentJob = renewed
         else lostFence = true
       } catch {
@@ -354,10 +386,10 @@ export async function processInstallationCalendarJob(
 ): Promise<ProcessJobResult> {
   const startedAt = Date.now()
   const durationMs = () => Math.max(0, Date.now() - startedAt)
-  const clock = () => now ?? new Date()
+  const clock = createWorkerClock(now)
   const current = await db.installationVisit.findUnique({ where: { id: job.visitId }, select: { revision: true } })
   if (!current || current.revision !== job.revision) {
-    const finishedAt = clock()
+    const finishedAt = clock.now()
     const persisted = await persistFinalState(
       db, job, finishedAt, durationMs(), staleFinalState(finishedAt),
     )
@@ -372,7 +404,7 @@ export async function processInstallationCalendarJob(
   if (job.operation === 'CALENDAR_UPSERT') {
     projection = await loadCalendarProjection(db, job)
     if (!projection) {
-      const finishedAt = clock()
+      const finishedAt = clock.now()
       const persisted = await persistFinalState(
         db, job, finishedAt, durationMs(),
         attentionState('DOMAIN_DATA_INVALID', SAFE_MESSAGES.invalidData, finishedAt),
@@ -383,9 +415,9 @@ export async function processInstallationCalendarJob(
 
   // Data reads precede this point, but the lease is refreshed immediately
   // before adapter I/O. A reclaimed or expired worker makes no external call.
-  const activeJob = await renewCurrentLease(db, job, clock())
+  const activeJob = await renewCurrentLease(db, job, clock.now())
   if (!activeJob) return { outboxId: job.id, outcome: 'FENCED' }
-  const heartbeat = startLeaseHeartbeat(db, activeJob)
+  const heartbeat = startLeaseHeartbeat(db, activeJob, clock)
   try {
     let write: CalendarWriteResult | null = null
     if (activeJob.operation === 'CALENDAR_UPSERT') {
@@ -401,7 +433,7 @@ export async function processInstallationCalendarJob(
     }
     const latestJob = await heartbeat.stop()
     if (!latestJob) return { outboxId: activeJob.id, outcome: 'FENCED' }
-    const finishedAt = clock()
+    const finishedAt = clock.now()
     const persisted = await persistFinalState(db, latestJob, finishedAt, durationMs(), successState(finishedAt, write))
     return resultFromPersisted(latestJob.id, persisted, 'COMPLETED')
   } catch (error) {
@@ -409,21 +441,21 @@ export async function processInstallationCalendarJob(
     if (!latestJob) return { outboxId: activeJob.id, outcome: 'FENCED' }
     const kind = calendarErrorKind(error)
     if (kind === 'RETRY') {
-      const finishedAt = clock()
+      const finishedAt = clock.now()
       const persisted = await persistFinalState(db, latestJob, finishedAt, durationMs(), retryState(latestJob, finishedAt, safeRetryErrorCode(error)))
       return resultFromPersisted(latestJob.id, persisted, 'RETRIED')
     }
     if (kind === 'CONFLICT') {
-      const finishedAt = clock()
+      const finishedAt = clock.now()
       const persisted = await persistFinalState(db, latestJob, finishedAt, durationMs(), attentionState('ETAG_CONFLICT', SAFE_MESSAGES.conflict, finishedAt))
       return resultFromPersisted(latestJob.id, persisted, 'ATTENTION')
     }
     if (kind === 'CONFIGURATION') {
-      const finishedAt = clock()
+      const finishedAt = clock.now()
       const persisted = await persistFinalState(db, latestJob, finishedAt, durationMs(), attentionState('CONFIGURATION_ERROR', SAFE_MESSAGES.configuration, finishedAt))
       return resultFromPersisted(latestJob.id, persisted, 'ATTENTION')
     }
-    const finishedAt = clock()
+    const finishedAt = clock.now()
     const persisted = await persistFinalState(db, latestJob, finishedAt, durationMs(), attentionState('INTERNAL_ERROR', SAFE_MESSAGES.internal, finishedAt))
     return resultFromPersisted(latestJob.id, persisted, 'ATTENTION')
   }

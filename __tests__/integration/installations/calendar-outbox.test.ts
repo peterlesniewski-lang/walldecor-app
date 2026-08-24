@@ -464,6 +464,57 @@ describe('installation calendar outbox', () => {
     }
   })
 
+  it('keeps heartbeat fencing on the supplied worker clock instead of moving a future lease backward', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    const wallClockNow = new Date('2026-09-14T10:01:00.000Z')
+    const suppliedNow = new Date('2032-09-14T10:01:00.000Z')
+    vi.setSystemTime(wallClockNow)
+    let visitId: string | null = null
+    let processing: Promise<unknown> | null = null
+    let releaseAdapter: (() => void) | null = null
+    try {
+      const fixture = await createOutboxFixture({ availableAt: suppliedNow })
+      visitId = fixture.visit.id
+      await dbA.integrationOutbox.updateMany({
+        where: { id: { not: fixture.job.id }, status: { in: ['PENDING', 'RETRY'] } },
+        data: { availableAt: new Date('2100-01-01T00:00:00.000Z') },
+      })
+      const job = await claimNextIntegrationJob(dbA, suppliedNow, 'worker-supplied-clock')
+      let adapterEntered!: () => void
+      const enteredAdapter = new Promise<void>((resolve) => { adapterEntered = resolve })
+      const waitForRelease = new Promise<void>((resolve) => { releaseAdapter = resolve })
+      const adapter: InstallationCalendarAdapter = {
+        upsert: async () => {
+          adapterEntered()
+          await waitForRelease
+          return { eventId: `clock-${fixture.visit.id}`, htmlLink: `https://calendar.example.test/${fixture.visit.id}`, etag: 'clock-etag' }
+        },
+        cancel: async () => undefined,
+      }
+
+      processing = processInstallationCalendarJob(dbA, adapter, job!, suppliedNow)
+      await enteredAdapter
+      await vi.advanceTimersByTimeAsync(Math.floor(INTEGRATION_OUTBOX_LEASE_MS / 3) + 1)
+
+      const renewed = await dbA.integrationOutbox.findUniqueOrThrow({ where: { id: fixture.job.id } })
+      expect(renewed.lockedUntil!.getTime()).toBeGreaterThan(suppliedNow.getTime() + INTEGRATION_OUTBOX_LEASE_MS)
+      releaseAdapter()
+      await expect(processing).resolves.toMatchObject({ outcome: 'COMPLETED' })
+      expect(await dbA.integrationAttempt.findMany({ where: { outboxId: fixture.job.id } }))
+        .toMatchObject([{ number: 1, outcome: 'SUCCESS' }])
+    } finally {
+      releaseAdapter?.()
+      if (processing) await processing
+      if (visitId) {
+        await dbA.integrationOutbox.updateMany({
+          where: { visitId },
+          data: { status: 'COMPLETED', lockedUntil: null, completedAt: new Date() },
+        })
+      }
+      vi.useRealTimers()
+    }
+  })
+
   it('leaves a heartbeat fence-loss job processing for reclaim without recording its stale adapter result', async () => {
     vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
     const now = new Date('2026-09-14T11:01:00.000Z')
