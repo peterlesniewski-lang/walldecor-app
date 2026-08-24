@@ -8,6 +8,7 @@ import {
   changeInstallationVisit,
   createInstallationVisit,
   InstallationVisitRevisionConflictError,
+  InstallationVisitSyncInProgressError,
   listInstallationVisits,
   requeueInstallationCalendar,
 } from '@/lib/installations/visit-service'
@@ -394,6 +395,25 @@ describe('installation visit lifecycle', () => {
       .toMatchObject({ status: 'PENDING', forceOverwrite: true, attemptCount: 2, lastErrorCode: null, lastErrorMessage: null })
     expect(await db.integrationSyncState.findUniqueOrThrow({ where: { visitId_kind: { visitId: draft.id, kind: 'GOOGLE_CALENDAR' } } }))
       .toMatchObject({ status: 'PENDING', lastErrorCode: null, lastErrorMessage: null })
+  })
+
+  it('atomically rejects a visit mutation while its calendar outbox lease is active but permits it after expiry', async () => {
+    const { order, wallpaperScope } = await createFixture()
+    await assign(wallpaperScope.id, employees.ready, order.id)
+    const draft = await createInstallationVisit(db, order.id, { scopeIds: [wallpaperScope.id] }, 'owner-user')
+    const confirmed = await changeInstallationVisit(db, order.id, draft.id, confirmedInput(1, [wallpaperScope.id]), 'owner-user')
+    const outbox = await db.integrationOutbox.findFirstOrThrow({ where: { visitId: draft.id } })
+    const activeLease = new Date(Date.now() + 60_000)
+    await db.integrationOutbox.update({ where: { id: outbox.id }, data: { status: 'PROCESSING', lockedUntil: activeLease } })
+
+    await expect(changeInstallationVisit(db, order.id, draft.id, { action: 'CANCEL', expectedRevision: confirmed.revision }, 'owner-user'))
+      .rejects.toBeInstanceOf(InstallationVisitSyncInProgressError)
+    expect(await db.installationVisit.findUniqueOrThrow({ where: { id: draft.id } })).toMatchObject({ status: 'CONFIRMED', revision: confirmed.revision })
+    expect(await db.integrationOutbox.count({ where: { visitId: draft.id } })).toBe(1)
+
+    await db.integrationOutbox.update({ where: { id: outbox.id }, data: { lockedUntil: new Date(Date.now() - 1) } })
+    await expect(changeInstallationVisit(db, order.id, draft.id, { action: 'CANCEL', expectedRevision: confirmed.revision }, 'owner-user'))
+      .resolves.toMatchObject({ status: 'CANCELLED', revision: confirmed.revision + 1 })
   })
 
   it('returns the same stored visit and outbox data through a newly opened Prisma client', async () => {

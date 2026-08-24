@@ -4,7 +4,10 @@ import { z } from 'zod'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { editableInstallationOrder } from '@/lib/installations/room-route-access'
-import { InstallationVisitRevisionConflictError } from '@/lib/installations/visit-service'
+import {
+  InstallationVisitRevisionConflictError,
+  InstallationVisitSyncInProgressError,
+} from '@/lib/installations/visit-service'
 import {
   InstallationScopeAssignmentArchivedOrderError,
   InstallationScopeAssignmentValidationError,
@@ -27,7 +30,9 @@ function assignmentErrorResponse(error: unknown) {
   if (error instanceof InstallationScopeAssignmentValidationError) {
     return NextResponse.json({ error: error.message, fieldErrors: { form: error.message } }, { status: 400 })
   }
-  if (error instanceof InstallationScopeAssignmentArchivedOrderError || error instanceof InstallationVisitRevisionConflictError) {
+  if (error instanceof InstallationScopeAssignmentArchivedOrderError
+    || error instanceof InstallationVisitRevisionConflictError
+    || error instanceof InstallationVisitSyncInProgressError) {
     return NextResponse.json({ error: 'Conflict' }, { status: 409 })
   }
   if (error instanceof z.ZodError) {

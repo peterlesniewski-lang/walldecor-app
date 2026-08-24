@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
     }
   },
   VisitRevisionConflict: class InstallationVisitRevisionConflictError extends Error {},
+  VisitSyncInProgress: class InstallationVisitSyncInProgressError extends Error {},
   VisitArchivedOrder: class InstallationVisitArchivedOrderError extends Error {},
   VisitNotFound: class InstallationVisitNotFoundError extends Error {},
   ScopeValidation: class InstallationScopeAssignmentValidationError extends Error {},
@@ -38,6 +39,7 @@ vi.mock('@/lib/installations/visit-service', () => ({
   requeueInstallationCalendar: mocks.requeueCalendar,
   InstallationVisitValidationError: mocks.VisitValidation,
   InstallationVisitRevisionConflictError: mocks.VisitRevisionConflict,
+  InstallationVisitSyncInProgressError: mocks.VisitSyncInProgress,
   InstallationVisitArchivedOrderError: mocks.VisitArchivedOrder,
   InstallationVisitNotFoundError: mocks.VisitNotFound,
 }))
@@ -198,6 +200,10 @@ describe('installation visit routes', () => {
     const conflict = await patchVisit(request('http://test/api/installations/order-1/visits/visit-1', 'PATCH', { action: 'CANCEL', expectedRevision: 1 }), visitParams)
     expect(conflict.status).toBe(409)
 
+    mocks.changeVisit.mockRejectedValueOnce(new mocks.VisitSyncInProgress())
+    const syncing = await patchVisit(request('http://test/api/installations/order-1/visits/visit-1', 'PATCH', { action: 'CANCEL', expectedRevision: 1 }), visitParams)
+    expect(syncing.status).toBe(409)
+
     mocks.changeVisit.mockRejectedValueOnce(new mocks.VisitArchivedOrder())
     const archived = await patchVisit(request('http://test/api/installations/order-1/visits/visit-1', 'PATCH', { action: 'CANCEL', expectedRevision: 1 }), visitParams)
     expect(archived.status).toBe(409)
@@ -263,6 +269,10 @@ describe('installation visit routes', () => {
     mocks.setAssignments.mockRejectedValueOnce(new mocks.VisitRevisionConflict())
     const concurrentRefresh = await putScopeAssignments(request('http://test/api/installations/order-1/scope-assignments/scope-1', 'PUT', { employeeIds: ['installer-1'] }), scopeParams)
     expect(concurrentRefresh.status).toBe(409)
+
+    mocks.setAssignments.mockRejectedValueOnce(new mocks.VisitSyncInProgress())
+    const syncing = await putScopeAssignments(request('http://test/api/installations/order-1/scope-assignments/scope-1', 'PUT', { employeeIds: ['installer-1'] }), scopeParams)
+    expect(syncing.status).toBe(409)
   })
 
   it('rethrows unexpected service failures instead of turning them into silent 500 responses', async () => {

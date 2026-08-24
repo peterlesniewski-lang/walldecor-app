@@ -18,6 +18,7 @@ import {
 import {
   changeInstallationVisit,
   createInstallationVisit,
+  InstallationVisitSyncInProgressError,
   listInstallationVisits,
 } from '@/lib/installations/visit-service'
 
@@ -273,6 +274,37 @@ describe('scope installer assignments', () => {
     expect(await db.integrationOutbox.count({ where: { visitId: confirmed.id } })).toBe(outboxCountBeforeNoOp)
     expect(await db.installationAuditEvent.count({ where: { orderId: order.id } })).toBe(auditCountBeforeNoOp)
     expect(beforeOutbox).toHaveLength(1)
+  })
+
+  it('rolls back a scope-team replacement while the confirmed visit calendar lease is active, then allows it after expiry', async () => {
+    const { order, wallpaperScope } = await createCalendarVisitFixture()
+    await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerAId], 'actor-1')
+    const confirmed = await createConfirmedVisit(order.id, [wallpaperScope.id])
+    const job = await db.integrationOutbox.findFirstOrThrow({
+      where: { visitId: confirmed.id, revision: confirmed.revision },
+    })
+    await db.integrationOutbox.update({
+      where: { id: job.id },
+      data: { status: 'PROCESSING', lockedUntil: new Date(Date.now() + 60_000) },
+    })
+
+    await expect(setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerBId], 'actor-2'))
+      .rejects.toBeInstanceOf(InstallationVisitSyncInProgressError)
+    expect(await listScopeInstallerAssignments(db, order.id))
+      .toEqual([{ scopeId: wallpaperScope.id, employeeIds: [installerAId] }])
+    expect(await db.installationVisit.findUniqueOrThrow({ where: { id: confirmed.id } }))
+      .toMatchObject({ revision: confirmed.revision, status: 'CONFIRMED' })
+    expect(await db.integrationOutbox.findUniqueOrThrow({ where: { id: job.id } }))
+      .toMatchObject({ status: 'PROCESSING', lockedUntil: expect.any(Date) })
+
+    await db.integrationOutbox.update({
+      where: { id: job.id },
+      data: { lockedUntil: new Date(Date.now() - 1) },
+    })
+    await expect(setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerBId], 'actor-3'))
+      .resolves.toEqual({ scopeId: wallpaperScope.id, employeeIds: [installerBId] })
+    expect(await db.installationVisit.findUniqueOrThrow({ where: { id: confirmed.id } }))
+      .toMatchObject({ revision: confirmed.revision + 1, status: 'CONFIRMED' })
   })
 
   it('rolls back a replacement that leaves a confirmed visit without a ready participant', async () => {

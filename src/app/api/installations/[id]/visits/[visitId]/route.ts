@@ -8,6 +8,7 @@ import {
   InstallationVisitArchivedOrderError,
   InstallationVisitNotFoundError,
   InstallationVisitRevisionConflictError,
+  InstallationVisitSyncInProgressError,
 } from '@/lib/installations/visit-service'
 import { InstallationVisitValidationError } from '@/lib/installations/visit-schemas'
 
@@ -18,7 +19,9 @@ function visitErrorResponse(error: unknown) {
     return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: 400 })
   }
   if (error instanceof InstallationVisitNotFoundError) return NextResponse.json({ error: 'Not found' }, { status: 404 })
-  if (error instanceof InstallationVisitRevisionConflictError || error instanceof InstallationVisitArchivedOrderError) {
+  if (error instanceof InstallationVisitRevisionConflictError
+    || error instanceof InstallationVisitSyncInProgressError
+    || error instanceof InstallationVisitArchivedOrderError) {
     return NextResponse.json({ error: 'Conflict' }, { status: 409 })
   }
   if (error instanceof SyntaxError) return NextResponse.json({ error: 'Nieprawidłowy format danych.' }, { status: 400 })
