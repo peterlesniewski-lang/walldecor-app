@@ -1,6 +1,6 @@
 'use client'
 
-import { useRef, useState } from 'react'
+import { useEffect, useId, useRef, useState } from 'react'
 import { ClientQuestionRenderer } from './client-form/question-renderer'
 import type { HistoricalAnswerView } from '@/lib/installations/form-history'
 import type { FormQuestion } from '@/lib/installations/form-visibility'
@@ -16,6 +16,7 @@ export type InstallationFormRevisionView = {
 }
 
 export type InstallationFormRevisionFile = {
+  id: string
   formSubmissionId: string | null
   questionKey: string | null
   originalFilename: string
@@ -42,7 +43,7 @@ function PreviewFileContent({ revision, question, files }: {
     return <p className="mt-2 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Pliki są zapisane w sekcji dokumentów</p>
   }
   return <ul className="mt-2 list-disc pl-5 text-sm" aria-label={`Pliki: ${question.label}`}>
-    {matchingFiles.map((file) => <li key={`${file.formSubmissionId}:${file.questionKey}:${file.originalFilename}`}>{file.originalFilename}</li>)}
+    {matchingFiles.map((file) => <li key={file.id}>{file.originalFilename}</li>)}
   </ul>
 }
 
@@ -54,8 +55,15 @@ export function InstallationFormRevisionPanel({
   files?: InstallationFormRevisionFile[]
 }) {
   const [previewedRevisionId, setPreviewedRevisionId] = useState<string | null>(null)
+  const panelId = useId()
   const openerRef = useRef<HTMLButtonElement | null>(null)
+  const closePreviewRef = useRef<HTMLButtonElement | null>(null)
   const preview = revisions.find((revision) => revision.formSubmissionId === previewedRevisionId) ?? null
+  const previewId = (formSubmissionId: string) => `form-revision-preview-${panelId}-${formSubmissionId}`
+
+  useEffect(() => {
+    if (previewedRevisionId) closePreviewRef.current?.focus()
+  }, [previewedRevisionId])
 
   function closePreview() {
     setPreviewedRevisionId(null)
@@ -83,16 +91,17 @@ export function InstallationFormRevisionPanel({
           type="button"
           className="mt-4 min-h-11 w-full rounded-md border px-4 text-sm font-bold"
           aria-expanded={previewedRevisionId === revision.formSubmissionId}
+          aria-controls={previewId(revision.formSubmissionId)}
           onClick={(event) => { openerRef.current = event.currentTarget; setPreviewedRevisionId(revision.formSubmissionId) }}
         >
           Podgląd jak klient · wersja {revision.revisionNumber}
         </button>
       </article>)}
     </div>
-    {preview && <section className="mt-5 w-full border-t pt-5" aria-label={`Podgląd formularza klienta, wersja ${preview.revisionNumber}`} style={{ borderColor: 'rgba(30,30,30,.12)' }}>
+    {preview && <section id={previewId(preview.formSubmissionId)} className="mt-5 w-full border-t pt-5" aria-label={`Podgląd formularza klienta, wersja ${preview.revisionNumber}`} style={{ borderColor: 'rgba(30,30,30,.12)' }}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-lg font-extrabold" style={{ color: 'var(--wd-dark)' }}>Podgląd formularza klienta · wersja {preview.revisionNumber}</h3>
-        <button type="button" className="min-h-11 rounded-md border px-4 text-sm font-bold" onClick={closePreview}>Zamknij podgląd</button>
+        <button ref={closePreviewRef} type="button" className="min-h-11 rounded-md border px-4 text-sm font-bold" onClick={closePreview}>Zamknij podgląd</button>
       </div>
       <div className="mt-4 grid gap-4">
         {preview.questions.map((question) => {

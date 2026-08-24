@@ -44,6 +44,23 @@ describe('immutable client form history formatting', () => {
     })
   })
 
+  it('formats malformed MULTI JSON from the normalized separator without leaking pipe characters', () => {
+    const multi = question('kolory', 'Kolory ścian', 'MULTI')
+
+    expect(formatHistoricalAnswer(
+      multi,
+      storedAnswer('kolory', 'MULTI', '{not-json', 'beż|biel'),
+    ).displayValue).toBe('beż, biel')
+    expect(formatHistoricalAnswer(
+      multi,
+      storedAnswer('kolory', 'MULTI', '{not-json', 'beż||biel|'),
+    ).displayValue).toBe('beż, biel')
+    expect(formatHistoricalAnswer(
+      multi,
+      storedAnswer('kolory', 'MULTI', '{not-json', '|'),
+    ).displayValue).toBe('Brak odpowiedzi')
+  })
+
   it('keeps each snapshot separate and hides a stale descendant from its historic path', () => {
     const schema = JSON.stringify({
       templateId: 'template-old',

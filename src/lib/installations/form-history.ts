@@ -28,7 +28,16 @@ function knownQuestionType(value: string): FormQuestion['type'] | undefined {
   return questionTypes.has(value as FormQuestion['type']) ? value as FormQuestion['type'] : undefined
 }
 
-function storedValue(answer: HistoricalAnswerInput): FormAnswerValue | undefined {
+function fallbackValue(normalizedValue: string, questionType: FormQuestion['type'] | undefined): FormAnswerValue | undefined {
+  if (!normalizedValue) return undefined
+  if (questionType === 'MULTI') {
+    const choices = normalizedValue.split('|').map((choice) => choice.trim()).filter(Boolean)
+    return choices.length > 0 ? choices : undefined
+  }
+  return normalizedValue
+}
+
+function storedValue(answer: HistoricalAnswerInput, questionType?: FormQuestion['type']): FormAnswerValue | undefined {
   try {
     const parsed = JSON.parse(answer.valueJson) as { value?: unknown }
     if (typeof parsed.value === 'string') return parsed.value
@@ -36,7 +45,7 @@ function storedValue(answer: HistoricalAnswerInput): FormAnswerValue | undefined
   } catch {
     // History remains readable when an old persisted row is malformed.
   }
-  return answer.normalizedValue || undefined
+  return fallbackValue(answer.normalizedValue, questionType)
 }
 
 /** A malformed old snapshot is not a reason to hide the whole revision. */
@@ -58,7 +67,7 @@ export function formatHistoricalAnswer(
   answer: HistoricalAnswerInput,
 ): HistoricalAnswerView {
   const effectiveQuestionType = question?.type ?? knownQuestionType(answer.questionType) ?? 'TEXT'
-  const value = storedValue(answer)
+  const value = storedValue(answer, effectiveQuestionType)
   return {
     questionKey: answer.questionKey,
     label: question?.label ?? 'Pytanie archiwalne',
@@ -74,9 +83,13 @@ export function formatHistoricalRevisionContent(
   persistedAnswers: readonly HistoricalAnswerInput[],
 ) {
   const snapshotQuestions = parseHistoricalSnapshotQuestions(schemaJson)
+  const questionsByKey = new Map(snapshotQuestions.map((question) => [question.key, question]))
   const answersByKey = new Map(persistedAnswers.map((answer) => [answer.questionKey, answer]))
   const values = Object.fromEntries(
-    persistedAnswers.map((answer) => [answer.questionKey, storedValue(answer)]),
+    persistedAnswers.map((answer) => [
+      answer.questionKey,
+      storedValue(answer, questionsByKey.get(answer.questionKey)?.type ?? knownQuestionType(answer.questionType)),
+    ]),
   ) as Record<string, FormAnswerValue | undefined>
   const visibleQuestions = evaluateVisibleFormQuestions(snapshotQuestions, values)
   const knownQuestionKeys = new Set(snapshotQuestions.map((question) => question.key))

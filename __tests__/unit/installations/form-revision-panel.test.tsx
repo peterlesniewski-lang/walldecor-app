@@ -24,7 +24,10 @@ const revision = {
   }],
 }
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => {
+  vi.unstubAllGlobals()
+  vi.restoreAllMocks()
+})
 
 describe('InstallationFormRevisionPanel', () => {
   it('shows readable historical rows and previews the immutable client layout without network or mutation controls', async () => {
@@ -51,9 +54,9 @@ describe('InstallationFormRevisionPanel', () => {
   it('uses only exact READY file metadata for a revision preview and otherwise keeps files in documents', async () => {
     const user = userEvent.setup()
     render(<InstallationFormRevisionPanel revisions={[revision]} files={[
-      { formSubmissionId: 'submission-1', questionKey: 'zdjecie', originalFilename: 'właściwy.pdf', status: 'READY', softDeletedAt: null },
-      { formSubmissionId: 'submission-old', questionKey: 'zdjecie', originalFilename: 'stary.pdf', status: 'READY', softDeletedAt: null },
-      { formSubmissionId: 'submission-1', questionKey: 'zdjecie', originalFilename: 'usunięty.pdf', status: 'READY', softDeletedAt: '2026-08-23T11:00:00.000Z' },
+      { id: 'file-ready', formSubmissionId: 'submission-1', questionKey: 'zdjecie', originalFilename: 'właściwy.pdf', status: 'READY', softDeletedAt: null },
+      { id: 'file-old', formSubmissionId: 'submission-old', questionKey: 'zdjecie', originalFilename: 'stary.pdf', status: 'READY', softDeletedAt: null },
+      { id: 'file-deleted', formSubmissionId: 'submission-1', questionKey: 'zdjecie', originalFilename: 'usunięty.pdf', status: 'READY', softDeletedAt: '2026-08-23T11:00:00.000Z' },
     ]} />)
 
     await user.click(screen.getByRole('button', { name: 'Podgląd jak klient · wersja 1' }))
@@ -79,5 +82,34 @@ describe('InstallationFormRevisionPanel', () => {
 
     expect(screen.getByText('Czy są drzwi ukryte?')).not.toBeNull()
     expect(screen.getByText('Czy drzwi są ukryte po zmianie?')).not.toBeNull()
+  })
+
+  it('associates each revision disclosure with its preview and moves focus into the active preview', async () => {
+    const user = userEvent.setup()
+    const newerRevision = { ...revision, formSubmissionId: 'submission-2', revisionNumber: 2 }
+    render(<InstallationFormRevisionPanel revisions={[revision, newerRevision]} files={[]} />)
+
+    const firstOpener = screen.getByRole('button', { name: 'Podgląd jak klient · wersja 1' })
+    const secondOpener = screen.getByRole('button', { name: 'Podgląd jak klient · wersja 2' })
+    await user.click(secondOpener)
+
+    const preview = screen.getByRole('region', { name: 'Podgląd formularza klienta, wersja 2' })
+    expect(secondOpener.getAttribute('aria-controls')).toBe(preview.id)
+    expect(firstOpener.getAttribute('aria-controls')).not.toBeNull()
+    expect(document.activeElement).toBe(screen.getByRole('button', { name: 'Zamknij podgląd' }))
+  })
+
+  it('renders two same-name files without a duplicate React key warning', async () => {
+    const user = userEvent.setup()
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined)
+    render(<InstallationFormRevisionPanel revisions={[revision]} files={[
+      { id: 'file-1', formSubmissionId: 'submission-1', questionKey: 'zdjecie', originalFilename: 'ściana.pdf', status: 'READY', softDeletedAt: null },
+      { id: 'file-2', formSubmissionId: 'submission-1', questionKey: 'zdjecie', originalFilename: 'ściana.pdf', status: 'READY', softDeletedAt: null },
+    ]} />)
+
+    await user.click(screen.getByRole('button', { name: 'Podgląd jak klient · wersja 1' }))
+
+    expect(screen.getAllByText('ściana.pdf')).toHaveLength(2)
+    expect(consoleError.mock.calls.some(([message]) => String(message).includes('same key'))).toBe(false)
   })
 })
