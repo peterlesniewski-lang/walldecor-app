@@ -178,7 +178,7 @@ describe('Task 2 corrective UI invariants', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(createElement(TemplateBuilder, { initialTemplates: [draft] } as never))
 
-    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak' }))
+    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak dla pytania „Czy są okna?”' }))
     await user.type(screen.getByLabelText('Treść pytania'), 'Czy można wejść?')
     await user.click(screen.getByRole('button', { name: 'Zapisz pytanie' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
@@ -211,7 +211,7 @@ describe('Task 2 corrective UI invariants', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(createElement(TemplateBuilder, { initialTemplates: [draftA, draftB] } as never))
 
-    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak' }))
+    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak dla pytania „Czy są okna?”' }))
     await user.type(screen.getByLabelText('Treść pytania'), 'Czy można wejść?')
     await user.click(screen.getByRole('button', { name: 'Zapisz pytanie' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
@@ -244,7 +244,7 @@ describe('Task 2 corrective UI invariants', () => {
     vi.stubGlobal('fetch', vi.fn().mockResolvedValue({ ok: false, json: async () => ({ error: 'Zapis odrzucony.' }) }))
     render(createElement(TemplateBuilder, { initialTemplates: [draftA, draftB] } as never))
 
-    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak' }))
+    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak dla pytania „Czy są okna?”' }))
     await user.type(screen.getByLabelText('Treść pytania'), 'Niezapisane pytanie')
     await user.click(screen.getByRole('button', { name: 'Zapisz pytanie' }))
     await screen.findAllByRole('alert')
@@ -316,7 +316,7 @@ describe('Task 2 corrective UI invariants', () => {
     render(createElement(TemplateBuilder, { initialTemplates: [draftA, draftB, published] } as never))
     const picker = screen.getByLabelText('Wybierz szkic do edycji')
 
-    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak' }))
+    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak dla pytania „Pytanie A”' }))
     await user.type(screen.getByLabelText('Treść pytania'), 'Zmiana w toku')
     await user.click(screen.getByRole('button', { name: 'Zapisz pytanie' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
