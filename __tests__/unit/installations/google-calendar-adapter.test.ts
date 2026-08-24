@@ -167,14 +167,14 @@ describe('GoogleInstallationCalendarAdapter', () => {
     expect(mocks.events.delete).not.toHaveBeenCalled()
   })
 
-  it('fetches and verifies a supplied non-null external id instead of trusting it during force cancellation', async () => {
+  it('rejects a mismatched non-null external id before lookup even when that remote event claims the same visit', async () => {
     const foreignId = stableGoogleEventIdForVisit('other-visit')
-    mocks.events.get.mockResolvedValueOnce({ data: googleEvent('other-visit') })
+    mocks.events.get.mockResolvedValue({ data: { ...googleEvent('visit-1'), id: foreignId } })
 
     await expect(adapter().cancel({ visitId: 'visit-1', externalId: foreignId, etag: null, forceOverwrite: true }))
       .rejects.toBeInstanceOf(CalendarConflictError)
 
-    expect(mocks.events.get).toHaveBeenCalledWith(expect.objectContaining({ eventId: foreignId }), expect.anything())
+    expect(mocks.events.get).not.toHaveBeenCalled()
     expect(mocks.events.delete).not.toHaveBeenCalled()
   })
 

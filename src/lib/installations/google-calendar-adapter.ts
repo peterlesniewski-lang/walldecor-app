@@ -213,7 +213,10 @@ class GoogleInstallationCalendarAdapter implements InstallationCalendarAdapter {
 
   async cancel(input: CalendarCancelInput): Promise<void> {
     const expectedEventId = stableGoogleEventIdForVisit(input.visitId)
-    const eventId = input.externalId ?? expectedEventId
+    if (input.externalId !== null && input.externalId !== expectedEventId) {
+      throw new CalendarConflictError('Calendar event id does not belong to this WallDecor visit.')
+    }
+    const eventId = expectedEventId
     const existing = await this.getEvent(eventId)
     if (!existing) return
 

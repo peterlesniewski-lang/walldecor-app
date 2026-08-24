@@ -128,6 +128,24 @@ describe('FakeInstallationCalendarAdapter', () => {
     ]))
   })
 
+  it('rejects a mismatched non-null external id even when that fake remote record claims the same visit', async () => {
+    const adapter = new FakeInstallationCalendarAdapter()
+    const foreign = await adapter.upsert({ event: calendarEvent('other-visit'), externalId: null, etag: null, forceOverwrite: false })
+    const internalEvents = (adapter as unknown as {
+      events: Map<string, { cancelled: boolean; event: CalendarEvent }>
+    }).events
+    const remoteRecord = internalEvents.get(foreign.eventId)
+    if (!remoteRecord) throw new Error('Expected seeded fake event.')
+    remoteRecord.event.visitId = 'visit-1'
+    remoteRecord.event.privateProperties.wallDecorVisitId = 'visit-1'
+
+    await expect(adapter.cancel({
+      visitId: 'visit-1', externalId: foreign.eventId, etag: foreign.etag, forceOverwrite: true,
+    })).rejects.toBeInstanceOf(CalendarConflictError)
+
+    expect(adapter.snapshot()).toMatchObject([{ eventId: foreign.eventId, cancelled: false }])
+  })
+
   it('never calls fetch and returns defensive, deterministic snapshots', async () => {
     const adapter = new FakeInstallationCalendarAdapter()
     const fetchSpy = vi.fn()

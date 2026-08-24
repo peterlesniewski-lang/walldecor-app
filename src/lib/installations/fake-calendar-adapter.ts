@@ -96,7 +96,10 @@ export class FakeInstallationCalendarAdapter implements InstallationCalendarAdap
 
   async cancel(input: CalendarCancelInput): Promise<void> {
     const expectedEventId = eventIdForVisit(input.visitId)
-    const eventId = input.externalId ?? expectedEventId
+    if (input.externalId !== null && input.externalId !== expectedEventId) {
+      throw new CalendarConflictError('Calendar event id does not belong to this WallDecor visit.')
+    }
+    const eventId = expectedEventId
     const existing = this.events.get(eventId)
     if (!existing) return
     if (
