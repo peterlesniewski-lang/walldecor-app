@@ -18,6 +18,7 @@ const orderInclude = {
   backupEmployee: { select: { id: true, firstName: true, lastName: true, active: true } },
   delegations: { orderBy: { createdAt: 'desc' } },
   installerAssignments: { select: { employeeId: true } },
+  scopeAssignments: { select: { employeeId: true } },
   auditEvents: { orderBy: { createdAt: 'desc' } },
 } satisfies Prisma.InstallationOrderInclude
 
@@ -36,6 +37,7 @@ const orderListSelect = {
   backupEmployee: { select: { firstName: true, lastName: true } },
   delegations: { select: { delegateEmployeeId: true, startsAt: true, endsAt: true, endedAt: true } },
   installerAssignments: { select: { employeeId: true } },
+  scopeAssignments: { select: { employeeId: true } },
   formSnapshots: { select: { id: true }, take: 1 },
   clientLinks: {
     select: { id: true, sentAt: true, lastOpenedAt: true },

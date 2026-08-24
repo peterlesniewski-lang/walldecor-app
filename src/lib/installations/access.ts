@@ -15,6 +15,9 @@ export type InstallationOrderAccessRecord = {
   installerAssignments: Array<{
     employeeId: string
   }>
+  scopeAssignments: Array<{
+    employeeId: string
+  }>
   delegations: Array<{
     delegateEmployeeId: string
     startsAt: Date
@@ -43,8 +46,9 @@ export function canViewInstallationOrder(
 ): boolean {
   if (viewer.role === 'ADMIN' || viewer.role === 'MANAGER') return true
   if (viewer.role === 'INSTALLER') {
-    return Boolean(viewer.employeeId && order.installerAssignments.some(
-      (assignment) => assignment.employeeId === viewer.employeeId,
+    return Boolean(viewer.employeeId && (
+      order.installerAssignments.some((assignment) => assignment.employeeId === viewer.employeeId) ||
+      order.scopeAssignments.some((assignment) => assignment.employeeId === viewer.employeeId)
     ))
   }
   if (viewer.role !== 'EMPLOYEE' || !viewer.employeeId || viewer.employeeActive !== true) return false

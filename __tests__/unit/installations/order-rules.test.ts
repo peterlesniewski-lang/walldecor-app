@@ -177,6 +177,7 @@ describe('installation order access policy', () => {
     primaryEmployeeId: 'primary',
     backupEmployeeId: 'backup',
     installerAssignments: [{ employeeId: 'installer-a' }],
+    scopeAssignments: [{ employeeId: 'installer-b' }],
     delegations: [
       {
         delegateEmployeeId: 'delegate-active',
@@ -209,7 +210,11 @@ describe('installation order access policy', () => {
 
   it('grants installer access only to their own explicitly assigned installer record', () => {
     expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-a' }, order, now)).toBe(true)
-    expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-b' }, order, now)).toBe(false)
+    expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-c' }, order, now)).toBe(false)
+  })
+
+  it('grants installer access through an installer assignment on a work scope', () => {
+    expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-b' }, order, now)).toBe(true)
   })
 
   it('fails closed when an EMPLOYEE account is no longer active', () => {
@@ -246,6 +251,7 @@ const apiOrder = {
   primaryEmployeeId: 'primary',
   backupEmployeeId: 'backup',
   installerAssignments: [],
+  scopeAssignments: [],
   scheduledAt: null,
   externalSystem: null,
   externalId: null,
