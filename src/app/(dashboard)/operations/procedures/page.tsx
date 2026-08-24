@@ -9,7 +9,7 @@ export default async function OperationProceduresPage() {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
 
-  const role = session.user.role
+  const role = session.user.role === 'INSTALLER' ? 'EMPLOYEE' : session.user.role
   const isManager = role === 'ADMIN' || role === 'MANAGER'
   const procedures = await getArticles({ type: 'procedure' }, role, session.user.id)
 

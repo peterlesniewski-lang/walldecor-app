@@ -82,6 +82,17 @@ export const NAV_SECTIONS: Array<{ label: string | null; items: NavSectionItem[]
   },
 ]
 
+export function visibleNavSections(userRole: SidebarRole) {
+  return NAV_SECTIONS
+    .map((section) => ({
+      ...section,
+      items: section.items.filter((item) => userRole === 'INSTALLER'
+        ? item.href === '/installations'
+        : !item.roles || item.roles.includes(userRole)),
+    }))
+    .filter((section) => section.items.length > 0)
+}
+
 export function SidebarNavigation({
   userRole,
   onNavigate,
@@ -93,7 +104,7 @@ export function SidebarNavigation({
 }) {
   return (
     <nav aria-label="Główne obszary" className={cn('space-y-4 px-3', className)}>
-      {NAV_SECTIONS.map((section, i) => (
+      {visibleNavSections(userRole).map((section, i, sections) => (
         <div key={section.label ?? 'start'}>
           {section.label && (
             <p
@@ -104,13 +115,11 @@ export function SidebarNavigation({
             </p>
           )}
           <div className="space-y-0.5">
-            {section.items
-              .filter((item) => !item.roles || item.roles.includes(userRole))
-              .map((item) => (
+            {section.items.map((item) => (
                 <NavItem key={item.href} {...item} onNavigate={onNavigate} />
-              ))}
+            ))}
           </div>
-          {i < NAV_SECTIONS.length - 1 && (
+          {i < sections.length - 1 && (
             <Separator className="mt-4" style={{ background: 'var(--sidebar-border)' }} />
           )}
         </div>

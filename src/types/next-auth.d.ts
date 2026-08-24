@@ -5,7 +5,7 @@ declare module 'next-auth' {
   interface Session {
     user: {
       id: string
-      role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+      role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER'
       username?: string | null
       employeeId?: string | null
       mustChangePassword?: boolean
@@ -13,7 +13,7 @@ declare module 'next-auth' {
   }
 
   interface User extends DefaultUser {
-    role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+    role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER'
     username?: string | null
     employeeId?: string | null
     mustChangePassword?: boolean
@@ -23,7 +23,7 @@ declare module 'next-auth' {
 declare module 'next-auth/jwt' {
   interface JWT extends DefaultJWT {
     id: string
-    role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+    role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER'
     username?: string | null
     employeeId?: string | null
     mustChangePassword?: boolean

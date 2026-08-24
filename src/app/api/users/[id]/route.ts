@@ -30,7 +30,7 @@ const patchUserSchema = z.object({
   username: z.string().min(2).optional(),
   email: z.string().email().optional(),
   isActive: z.boolean().optional(),
-  role: z.enum(['ADMIN', 'MANAGER', 'EMPLOYEE']).optional(),
+  role: z.enum(['ADMIN', 'MANAGER', 'EMPLOYEE', 'INSTALLER']).optional(),
   name: z.string().min(1).optional(),
 })
 
@@ -58,6 +58,16 @@ export async function PATCH(
   }
   if (isSelf && parsed.data.role && parsed.data.role !== 'ADMIN') {
     return NextResponse.json({ error: 'Nie możesz odebrać sobie roli administratora.' }, { status: 400 })
+  }
+
+  if (parsed.data.role === 'INSTALLER') {
+    if (!existing.employeeId) {
+      return NextResponse.json({ error: 'Aby nadać rolę Instalator, konto musi być powiązane z aktywnym pracownikiem.' }, { status: 400 })
+    }
+    const installerEmployee = await prisma.employee.findUnique({ where: { id: existing.employeeId }, select: { id: true, active: true } })
+    if (!installerEmployee?.active) {
+      return NextResponse.json({ error: 'Rola Instalator wymaga aktywnego powiązanego pracownika.' }, { status: 400 })
+    }
   }
 
   const data = { ...parsed.data }

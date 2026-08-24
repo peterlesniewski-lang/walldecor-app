@@ -62,7 +62,7 @@ export const authOptions: NextAuthOptions = {
           username: user.username,
           email: user.email,
           name: user.name,
-          role: user.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE',
+          role: user.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER',
           employeeId: user.employeeId,
           mustChangePassword: user.mustChangePassword,
         }
@@ -93,7 +93,7 @@ export const authOptions: NextAuthOptions = {
 
         if (currentUser) {
           token.username = currentUser.username
-          token.role = currentUser.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+          token.role = currentUser.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER'
           token.employeeId = currentUser.employeeId
           token.mustChangePassword = currentUser.mustChangePassword || !currentUser.isActive
         }

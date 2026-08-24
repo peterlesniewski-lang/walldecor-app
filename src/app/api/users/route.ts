@@ -44,7 +44,7 @@ const createUserSchema = z.object({
   username: z.string().min(2),
   email: z.string().email(),
   name: z.string().min(1),
-  role: z.enum(['ADMIN', 'MANAGER', 'EMPLOYEE']).default('EMPLOYEE'),
+  role: z.enum(['ADMIN', 'MANAGER', 'EMPLOYEE', 'INSTALLER']).default('EMPLOYEE'),
   employeeId: z.string().optional(),
 })
 
@@ -72,6 +72,16 @@ export async function POST(req: NextRequest) {
   const existing = await prisma.user.findUnique({ where: { email } })
   if (existing) {
     return NextResponse.json({ error: 'Email już istnieje w systemie.' }, { status: 409 })
+  }
+
+  if (role === 'INSTALLER') {
+    if (!employeeId) {
+      return NextResponse.json({ error: 'Konto instalatora musi być powiązane z aktywnym pracownikiem.' }, { status: 400 })
+    }
+    const installerEmployee = await prisma.employee.findUnique({ where: { id: employeeId }, select: { id: true, active: true } })
+    if (!installerEmployee?.active) {
+      return NextResponse.json({ error: 'Konto instalatora wymaga istniejącego aktywnego pracownika.' }, { status: 400 })
+    }
   }
 
   if (employeeId) {

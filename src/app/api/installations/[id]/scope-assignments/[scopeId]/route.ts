@@ -34,7 +34,7 @@ function assignmentErrorResponse(error: unknown) {
     return NextResponse.json({ error: 'Dane przypisania są niepoprawne.', fieldErrors: fieldErrors(error) }, { status: 400 })
   }
   if (error instanceof SyntaxError) return NextResponse.json({ error: 'Nieprawidłowy format danych.' }, { status: 400 })
-  return NextResponse.json({ error: 'Nie udało się przetworzyć żądania.' }, { status: 500 })
+  throw error
 }
 
 export async function PUT(req: NextRequest, { params }: Params) {

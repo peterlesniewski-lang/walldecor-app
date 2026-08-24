@@ -90,12 +90,48 @@ describe('installation visit routes', () => {
   it('allows an assigned active installer to list only a card already admitted by shared read access', async () => {
     mocks.session = { user: { id: 'installer-user', role: 'INSTALLER', employeeId: 'installer-1' } }
     mocks.viewerFromSession.mockResolvedValue({ role: 'INSTALLER', employeeId: 'installer-1', employeeActive: true })
+    mocks.listVisits.mockResolvedValue([{ id: 'visit-1', participants: [], syncState: { status: 'NOT_REQUESTED' } }])
 
     const response = await getVisits(request('http://test/api/installations/order-1/visits', 'GET'), orderParams)
 
     expect(response.status).toBe(200)
     expect(mocks.accessible).toHaveBeenCalledWith('order-1', expect.objectContaining({ role: 'INSTALLER', employeeId: 'installer-1' }))
     expect(mocks.listVisits).toHaveBeenCalledWith({}, 'order-1')
+  })
+
+  it('projects installer visit reads without notes, authors, emails, or calendar diagnostics', async () => {
+    mocks.session = { user: { id: 'installer-user', role: 'INSTALLER', employeeId: 'installer-1' } }
+    mocks.viewerFromSession.mockResolvedValue({ role: 'INSTALLER', employeeId: 'installer-1', employeeActive: true })
+    mocks.listVisits.mockResolvedValueOnce([{
+      id: 'visit-1', orderId: 'order-1', status: 'CONFIRMED', startsAt: new Date('2026-08-25T08:00:00.000Z'), endsAt: new Date('2026-08-25T10:00:00.000Z'), timezone: 'Europe/Warsaw',
+      note: 'Kod do bramy 1234', revision: 2, confirmedAt: null, cancelledAt: null, completedAt: null, createdById: 'coordinator-user', createdAt: new Date('2026-08-24T08:00:00.000Z'), updatedAt: new Date('2026-08-24T08:00:00.000Z'), scopeIds: ['scope-1'],
+      participants: [{ employeeId: 'installer-1', name: 'Jan Instalator', email: 'jan@example.com', scopeIds: ['scope-1'], inviteStatus: 'READY' }],
+      syncState: { status: 'ATTENTION', externalId: 'event-1', externalUrl: 'https://calendar.example/event-1', externalEtag: 'etag-secret', lastErrorCode: 'AUTH_FAILED', lastErrorMessage: 'OAuth details', lastAttemptAt: new Date('2026-08-24T09:00:00.000Z'), lastSyncedAt: null },
+    }])
+
+    const response = await getVisits(request('http://test/api/installations/order-1/visits', 'GET'), orderParams)
+    const [visit] = await response.json()
+
+    expect(response.status).toBe(200)
+    expect(visit).toMatchObject({ id: 'visit-1', status: 'CONFIRMED', scopeIds: ['scope-1'], participants: [{ name: 'Jan Instalator', inviteStatus: 'READY' }], syncState: { status: 'ATTENTION' } })
+    expect(visit).not.toHaveProperty('note')
+    expect(visit).not.toHaveProperty('createdById')
+    expect(visit.participants[0]).not.toHaveProperty('email')
+    expect(visit.syncState).not.toHaveProperty('externalEtag')
+    expect(visit.syncState).not.toHaveProperty('lastErrorCode')
+    expect(visit.syncState).not.toHaveProperty('lastErrorMessage')
+    expect(visit.syncState).not.toHaveProperty('lastAttemptAt')
+  })
+
+  it('does not redact coordinator visit reads', async () => {
+    mocks.listVisits.mockResolvedValueOnce([{
+      id: 'visit-1', note: 'Koordynator widzi notatkę', createdById: 'coordinator-user', participants: [{ name: 'Jan', email: 'jan@example.com' }], syncState: { status: 'ATTENTION', externalEtag: 'etag' },
+    }])
+
+    const response = await getVisits(request('http://test/api/installations/order-1/visits', 'GET'), orderParams)
+    const [visit] = await response.json()
+
+    expect(visit).toMatchObject({ note: 'Koordynator widzi notatkę', createdById: 'coordinator-user', participants: [{ email: 'jan@example.com' }], syncState: { externalEtag: 'etag' } })
   })
 
   it.each([
@@ -227,5 +263,19 @@ describe('installation visit routes', () => {
     mocks.setAssignments.mockRejectedValueOnce(new mocks.VisitRevisionConflict())
     const concurrentRefresh = await putScopeAssignments(request('http://test/api/installations/order-1/scope-assignments/scope-1', 'PUT', { employeeIds: ['installer-1'] }), scopeParams)
     expect(concurrentRefresh.status).toBe(409)
+  })
+
+  it('rethrows unexpected service failures instead of turning them into silent 500 responses', async () => {
+    mocks.createVisit.mockRejectedValueOnce(new Error('create telemetry'))
+    await expect(postVisits(request('http://test/api/installations/order-1/visits', 'POST', { scopeIds: [] }), orderParams)).rejects.toThrow('create telemetry')
+
+    mocks.changeVisit.mockRejectedValueOnce(new Error('change telemetry'))
+    await expect(patchVisit(request('http://test/api/installations/order-1/visits/visit-1', 'PATCH', { action: 'CANCEL', expectedRevision: 1 }), visitParams)).rejects.toThrow('change telemetry')
+
+    mocks.requeueCalendar.mockRejectedValueOnce(new Error('calendar telemetry'))
+    await expect(postCalendar(request('http://test/api/installations/order-1/visits/visit-1/calendar', 'POST', { forceOverwrite: false }), visitParams)).rejects.toThrow('calendar telemetry')
+
+    mocks.setAssignments.mockRejectedValueOnce(new Error('assignment telemetry'))
+    await expect(putScopeAssignments(request('http://test/api/installations/order-1/scope-assignments/scope-1', 'PUT', { employeeIds: [] }), scopeParams)).rejects.toThrow('assignment telemetry')
   })
 })

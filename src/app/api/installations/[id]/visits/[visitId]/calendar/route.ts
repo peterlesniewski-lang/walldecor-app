@@ -36,7 +36,7 @@ function calendarErrorResponse(error: unknown) {
     return NextResponse.json({ error: 'Conflict' }, { status: 409 })
   }
   if (error instanceof SyntaxError) return NextResponse.json({ error: 'Nieprawidłowy format danych.' }, { status: 400 })
-  return NextResponse.json({ error: 'Nie udało się przetworzyć żądania.' }, { status: 500 })
+  throw error
 }
 
 export async function POST(req: NextRequest, { params }: Params) {
