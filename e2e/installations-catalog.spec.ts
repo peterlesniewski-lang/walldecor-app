@@ -56,9 +56,9 @@ test.describe('installation catalog intake', () => {
 
     await page.getByLabel('Nazwa szablonu').fill('Wywiad o glifach')
     await page.getByRole('button', { name: 'Utwórz szkic' }).click()
-    await page.getByLabel('Klucz pytania', { exact: true }).fill('glify')
-    await page.getByLabel('Etykieta pytania').fill('Czy są glify?')
-    await page.getByLabel('Typ pytania').selectOption('YES_NO_UNKNOWN')
+    await page.getByRole('button', { name: 'Dodaj pierwsze pytanie' }).click()
+    await page.getByLabel('Treść pytania').fill('Czy są glify?')
+    await page.getByLabel('Typ odpowiedzi').selectOption('YES_NO_UNKNOWN')
     await page.getByRole('button', { name: 'Zapisz pytanie' }).click()
     await page.getByRole('button', { name: 'Opublikuj v1' }).click()
     await expect(page.getByText('Opublikowano wersję 1')).toBeVisible()

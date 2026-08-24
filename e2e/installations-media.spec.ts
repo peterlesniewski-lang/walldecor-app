@@ -50,7 +50,8 @@ test.afterAll(async () => { await db?.$disconnect() })
 test('desktop QR handoff streams a mobile file through the app and revokes every later access', async ({ page, browser }) => {
   await page.goto(`/m/${clientToken}`)
   await expect(page.getByText('Zdjęcie przed montażem')).toBeVisible()
-  await page.locator('#uwagi-do-sciany').fill('Ściana przy oknie — zachować ostrożność.')
+  const wallNotes = page.getByRole('textbox', { name: 'Uwagi do ściany', exact: true })
+  await wallNotes.fill('Ściana przy oknie — zachować ostrożność.')
   await expect(page.getByRole('status')).toContainText('Wszystko zapisane', { timeout: 5_000 })
   const handoffResponse = page.waitForResponse((response) => response.url().endsWith(`/api/public/installations/${clientToken}/handoffs`) && response.request().method() === 'POST')
   await page.getByRole('button', { name: 'Dodaj z telefonu' }).click()
@@ -102,7 +103,7 @@ test('desktop QR handoff streams a mobile file through the app and revokes every
   await expect(db.installationFormSubmission.findUnique({ where: { draftKey: orderId } })).resolves.toBeNull()
 
   await page.getByRole('button', { name: 'Zgłoś korektę' }).click()
-  await expect(page.locator('#uwagi-do-sciany')).toHaveValue('Ściana przy oknie — zachować ostrożność.')
+  await expect(wallNotes).toHaveValue('Ściana przy oknie — zachować ostrożność.')
   await expect(page.getByRole('list', { name: 'Dodane pliki: Zdjęcie przed montażem' })).toContainText('mobilne-zdjecie.png')
   const correction = await db.installationFormSubmission.findUniqueOrThrow({ where: { draftKey: orderId }, include: { answers: true } })
   const submitted = await db.installationFormSubmission.findFirstOrThrow({ where: { orderId, status: 'SUBMITTED' }, orderBy: { revisionNumber: 'desc' } })
