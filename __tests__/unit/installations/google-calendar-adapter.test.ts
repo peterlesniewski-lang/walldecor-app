@@ -162,9 +162,32 @@ describe('GoogleInstallationCalendarAdapter', () => {
     const foreign = { ...googleEvent('other-visit'), id: stableGoogleEventIdForVisit('visit-1') }
     mocks.events.get.mockResolvedValueOnce({ data: foreign })
 
-    await expect(adapter().cancel({ visitId: 'visit-1', externalId: stableGoogleEventIdForVisit('visit-1'), etag: foreign.etag, forceOverwrite: true })).rejects.toBeInstanceOf(CalendarConflictError)
+    await expect(adapter().cancel({ visitId: 'visit-1', externalId: null, etag: null, forceOverwrite: true })).rejects.toBeInstanceOf(CalendarConflictError)
     expect(mocks.events.get).toHaveBeenCalledWith(expect.objectContaining({ eventId: stableGoogleEventIdForVisit('visit-1') }), expect.anything())
     expect(mocks.events.delete).not.toHaveBeenCalled()
+  })
+
+  it('fetches and verifies a supplied non-null external id instead of trusting it during force cancellation', async () => {
+    const foreignId = stableGoogleEventIdForVisit('other-visit')
+    mocks.events.get.mockResolvedValueOnce({ data: googleEvent('other-visit') })
+
+    await expect(adapter().cancel({ visitId: 'visit-1', externalId: foreignId, etag: null, forceOverwrite: true }))
+      .rejects.toBeInstanceOf(CalendarConflictError)
+
+    expect(mocks.events.get).toHaveBeenCalledWith(expect.objectContaining({ eventId: foreignId }), expect.anything())
+    expect(mocks.events.delete).not.toHaveBeenCalled()
+  })
+
+  it('recovers and cancels the stable owned event when local external state is missing', async () => {
+    mocks.events.get.mockResolvedValueOnce({ data: googleEvent('visit-1', 'remote-etag') })
+
+    await adapter().cancel({ visitId: 'visit-1', externalId: null, etag: null, forceOverwrite: false })
+
+    expect(mocks.events.delete).toHaveBeenCalledWith(expect.objectContaining({
+      calendarId: testConfiguration.calendarId,
+      eventId: stableGoogleEventIdForVisit('visit-1'),
+      sendUpdates: 'all',
+    }), expect.objectContaining({ headers: { 'If-Match': 'remote-etag' } }))
   })
 
   it('treats a 404 cancellation as an idempotent success', async () => {

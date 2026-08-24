@@ -612,21 +612,36 @@ describe('installation calendar outbox', () => {
       .toMatchObject({ status: 'COMPLETED', attemptCount: 1 })
   })
 
-  it('treats a cancellation without an external event as an idempotent completed attempt', async () => {
+  it('cancels a deterministic remote event even when the local external id was never persisted', async () => {
     const now = new Date('2026-09-14T10:01:00.000Z')
     const { visit, job: queuedJob } = await createOutboxFixture({ operation: 'CALENDAR_CANCEL' })
+    const adapter = new FakeInstallationCalendarAdapter()
+    await adapter.upsert({
+      event: {
+        visitId: visit.id,
+        summary: 'Montaż po niepewnym wyniku sieciowym',
+        location: 'Kalendarzowa 1, Warszawa',
+        description: 'Karta montażu',
+        start: { dateTime: '2026-09-14T06:00:00.000Z', timeZone: 'Europe/Warsaw' },
+        end: { dateTime: '2026-09-14T14:00:00.000Z', timeZone: 'Europe/Warsaw' },
+        attendeeEmails: ['outbox.installer@example.test'],
+        privateProperties: { wallDecorVisitId: visit.id },
+      },
+      externalId: null,
+      etag: null,
+      forceOverwrite: false,
+    })
+    expect(await dbA.integrationSyncState.findUniqueOrThrow({ where: { visitId_kind: { visitId: visit.id, kind: 'GOOGLE_CALENDAR' } } }))
+      .toMatchObject({ externalId: null })
     const job = await claimNextIntegrationJob(dbA, now, 'worker-cancel-null')
-    let cancelCalls = 0
-    const adapter: InstallationCalendarAdapter = {
-      upsert: async () => { throw new Error('upsert must not be used for cancellation') },
-      cancel: async () => { cancelCalls += 1 },
-    }
 
     expect(await processInstallationCalendarJob(dbA, adapter, job!, now)).toMatchObject({ outcome: 'COMPLETED' })
-    expect(cancelCalls).toBe(0)
+    expect(adapter.snapshot()).toMatchObject([{ event: { visitId: visit.id }, cancelled: true }])
     expect(await dbA.integrationOutbox.findUniqueOrThrow({ where: { id: queuedJob.id } })).toMatchObject({ status: 'COMPLETED' })
     expect(await dbA.integrationSyncState.findUniqueOrThrow({ where: { visitId_kind: { visitId: visit.id, kind: 'GOOGLE_CALENDAR' } } }))
       .toMatchObject({ status: 'SYNCED', externalId: null })
+    expect(await dbA.integrationAttempt.findMany({ where: { outboxId: queuedJob.id } }))
+      .toMatchObject([{ number: 1, outcome: 'SUCCESS' }])
   })
 
   it('cancels the persisted external event with its visit fencing identity', async () => {

@@ -261,8 +261,9 @@ function startLeaseHeartbeat(db: PrismaClient, initialJob: ClaimedIntegrationJob
   let lostFence = false
   let inFlight: Promise<void> | null = null
 
-  const beat = () => {
-    if (lostFence || inFlight) return
+  const beat = (): Promise<void> => {
+    if (lostFence) return Promise.resolve()
+    if (inFlight) return inFlight
     const renewal = (async () => {
       try {
         const renewed = await renewCurrentLease(db, currentJob, clock.advanceForHeartbeat())
@@ -276,6 +277,7 @@ function startLeaseHeartbeat(db: PrismaClient, initialJob: ClaimedIntegrationJob
     void renewal.finally(() => {
       if (inFlight === renewal) inFlight = null
     })
+    return renewal
   }
 
   const timer = setInterval(beat, LEASE_HEARTBEAT_MS)
@@ -425,10 +427,10 @@ export async function processInstallationCalendarJob(
         event: buildCalendarEvent(projection!.event), externalId: sync?.externalId ?? null,
         etag: sync?.externalEtag ?? null, forceOverwrite: activeJob.forceOverwrite,
       })
-    } else if (sync?.externalId) {
+    } else {
       await adapter.cancel({
-        visitId: activeJob.visitId, externalId: sync.externalId,
-        etag: sync.externalEtag ?? null, forceOverwrite: activeJob.forceOverwrite,
+        visitId: activeJob.visitId, externalId: sync?.externalId ?? null,
+        etag: sync?.externalEtag ?? null, forceOverwrite: activeJob.forceOverwrite,
       })
     }
     const latestJob = await heartbeat.stop()

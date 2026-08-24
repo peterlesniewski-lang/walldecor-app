@@ -213,10 +213,8 @@ class GoogleInstallationCalendarAdapter implements InstallationCalendarAdapter {
 
   async cancel(input: CalendarCancelInput): Promise<void> {
     const expectedEventId = stableGoogleEventIdForVisit(input.visitId)
-    if (input.externalId !== expectedEventId) {
-      throw new CalendarConflictError('Calendar event id does not belong to this WallDecor visit.')
-    }
-    const existing = await this.getEvent(expectedEventId)
+    const eventId = input.externalId ?? expectedEventId
+    const existing = await this.getEvent(eventId)
     if (!existing) return
 
     assertOwnedByVisit(existing, input.visitId)
@@ -225,14 +223,19 @@ class GoogleInstallationCalendarAdapter implements InstallationCalendarAdapter {
     let etag: string
     if (input.forceOverwrite) {
       etag = remoteEtag
-    } else {
-      if (input.etag === null || input.etag !== remoteEtag) throw new CalendarConflictError()
+    } else if (input.etag !== null) {
+      if (input.etag !== remoteEtag) throw new CalendarConflictError()
       etag = input.etag
+    } else if (input.externalId === null) {
+      // Recover a prior deterministic insert whose response never reached our database.
+      etag = remoteEtag
+    } else {
+      throw new CalendarConflictError('Calendar event has no local ETag.')
     }
     try {
       await withRequestTimeout((options) => this.events.delete({
         calendarId: this.calendarId,
-        eventId: expectedEventId,
+        eventId,
         sendUpdates: 'all',
       }, { ...options, headers: { 'If-Match': etag } }))
     } catch (error) {

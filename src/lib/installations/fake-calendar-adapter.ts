@@ -96,18 +96,24 @@ export class FakeInstallationCalendarAdapter implements InstallationCalendarAdap
 
   async cancel(input: CalendarCancelInput): Promise<void> {
     const expectedEventId = eventIdForVisit(input.visitId)
-    if (input.externalId !== expectedEventId) {
-      throw new CalendarConflictError('Calendar event id does not belong to this WallDecor visit.')
+    const eventId = input.externalId ?? expectedEventId
+    const existing = this.events.get(eventId)
+    if (!existing) return
+    if (
+      existing.event.visitId !== input.visitId
+      || existing.event.privateProperties.wallDecorVisitId !== input.visitId
+    ) {
+      throw new CalendarConflictError('Calendar event does not belong to this WallDecor visit.')
     }
-
-    const existing = this.events.get(expectedEventId)
-    if (!existing) throw new CalendarConflictError('Calendar event does not exist for cancellation.')
 
     // An outbox retry after a successful cancellation keeps its stale etag and is
     // intentionally harmless: the observable cancellation state is already true.
     if (existing.cancelled) return
 
-    if (input.etag !== existing.etag && !input.forceOverwrite) throw new CalendarConflictError()
+    if (!input.forceOverwrite) {
+      if (input.etag !== null && input.etag !== existing.etag) throw new CalendarConflictError()
+      if (input.etag === null && input.externalId !== null) throw new CalendarConflictError('Calendar event has no local ETag.')
+    }
 
     existing.version += 1
     existing.etag = etagForVersion(existing.version)

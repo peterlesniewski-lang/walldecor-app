@@ -16,7 +16,7 @@ export type CalendarUpsertInput = {
 export type CalendarCancelInput = {
   /** Used by adapters to verify privateProperties.wallDecorVisitId before cancelling. */
   visitId: string
-  externalId: string
+  externalId: string | null
   etag: string | null
   forceOverwrite: boolean
 }

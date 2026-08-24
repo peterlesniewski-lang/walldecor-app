@@ -91,6 +91,22 @@ describe('FakeInstallationCalendarAdapter', () => {
     expect(adapter.snapshot()).toEqual(afterFirstCancel)
   })
 
+  it('finds the stable event by visit id when local external state is missing', async () => {
+    const adapter = new FakeInstallationCalendarAdapter()
+    await adapter.upsert({ event: calendarEvent(), externalId: null, etag: null, forceOverwrite: false })
+
+    await adapter.cancel({ visitId: 'visit-1', externalId: null, etag: null, forceOverwrite: false })
+
+    expect(adapter.snapshot()).toMatchObject([{ event: { visitId: 'visit-1' }, cancelled: true }])
+  })
+
+  it('treats a missing stable event as an idempotent cancellation', async () => {
+    const adapter = new FakeInstallationCalendarAdapter()
+
+    await expect(adapter.cancel({ visitId: 'visit-missing', externalId: null, etag: null, forceOverwrite: false }))
+      .resolves.toBeUndefined()
+  })
+
   it.each([false, true])('never lets forceOverwrite cancel another visit event: %s', async (forceOverwrite) => {
     const adapter = new FakeInstallationCalendarAdapter()
     const createdA = await adapter.upsert({ event: calendarEvent('visit-a'), externalId: null, etag: null, forceOverwrite: false })
