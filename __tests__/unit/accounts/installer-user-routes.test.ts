@@ -74,7 +74,9 @@ describe('installer user account API contract', () => {
   })
 
   it('allows a role change to INSTALLER only for a user already linked to an active employee', async () => {
-    mocks.userFindUnique.mockResolvedValueOnce({ id: 'installer-user', employeeId: 'employee-1' })
+    mocks.userFindUnique.mockResolvedValueOnce({
+      id: 'installer-user', employeeId: 'employee-1', role: 'EMPLOYEE', isActive: true,
+    })
 
     const response = await PATCH(new NextRequest('http://test/api/users/installer-user', {
       method: 'PATCH',
@@ -88,14 +90,18 @@ describe('installer user account API contract', () => {
   })
 
   it('rejects a role change to INSTALLER without an active linked employee in Polish', async () => {
-    mocks.userFindUnique.mockResolvedValueOnce({ id: 'installer-user', employeeId: null })
+    mocks.userFindUnique.mockResolvedValueOnce({
+      id: 'installer-user', employeeId: null, role: 'EMPLOYEE', isActive: true,
+    })
     const unlinked = await PATCH(new NextRequest('http://test/api/users/installer-user', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'INSTALLER' }),
     }), { params: Promise.resolve({ id: 'installer-user' }) })
     expect(unlinked.status).toBe(400)
     await expect(unlinked.json()).resolves.toMatchObject({ error: expect.stringMatching(/powiązan/i) })
 
-    mocks.userFindUnique.mockResolvedValueOnce({ id: 'installer-user', employeeId: 'employee-1' })
+    mocks.userFindUnique.mockResolvedValueOnce({
+      id: 'installer-user', employeeId: 'employee-1', role: 'EMPLOYEE', isActive: true,
+    })
     mocks.employeeFindUnique.mockResolvedValueOnce({ id: 'employee-1', active: false })
     const inactive = await PATCH(new NextRequest('http://test/api/users/installer-user', {
       method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ role: 'INSTALLER' }),
@@ -103,5 +109,34 @@ describe('installer user account API contract', () => {
     expect(inactive.status).toBe(400)
     await expect(inactive.json()).resolves.toMatchObject({ error: expect.stringMatching(/aktywn/i) })
     expect(mocks.userUpdate).not.toHaveBeenCalled()
+  })
+
+  it('rejects re-enabling an INSTALLER while its linked employee is inactive without updating the account', async () => {
+    mocks.userFindUnique.mockResolvedValueOnce({
+      id: 'installer-user', employeeId: 'employee-1', role: 'INSTALLER', isActive: false,
+    })
+    mocks.employeeFindUnique.mockResolvedValueOnce({ id: 'employee-1', active: false })
+
+    const response = await PATCH(new NextRequest('http://test/api/users/installer-user', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isActive: true }),
+    }), { params: Promise.resolve({ id: 'installer-user' }) })
+
+    expect(response.status).toBe(400)
+    await expect(response.json()).resolves.toMatchObject({ error: expect.stringMatching(/aktywn/i) })
+    expect(mocks.userUpdate).not.toHaveBeenCalled()
+  })
+
+  it('allows re-enabling an INSTALLER when its linked employee is active', async () => {
+    mocks.userFindUnique.mockResolvedValueOnce({
+      id: 'installer-user', employeeId: 'employee-1', role: 'INSTALLER', isActive: false,
+    })
+
+    const response = await PATCH(new NextRequest('http://test/api/users/installer-user', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isActive: true }),
+    }), { params: Promise.resolve({ id: 'installer-user' }) })
+
+    expect(response.status).toBe(200)
+    expect(mocks.employeeFindUnique).toHaveBeenCalledWith({ where: { id: 'employee-1' }, select: { id: true, active: true } })
+    expect(mocks.userUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { isActive: true } }))
   })
 })

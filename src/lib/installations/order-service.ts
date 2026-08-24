@@ -106,17 +106,28 @@ async function assertActiveOwners(db: InstallationDb, primaryEmployeeId: string,
  * update: that would reopen the ownership race.
  */
 export async function deactivateEmployeeIfNoActiveInstallationOrder(db: PrismaClient, employeeId: string) {
-  return db.$executeRaw`
-    UPDATE "Employee"
-    SET "active" = ${false}
-    WHERE "id" = ${employeeId}
-      AND NOT EXISTS (
-        SELECT 1
-        FROM "InstallationOrder"
-        WHERE "archivedAt" IS NULL
-          AND ("primaryEmployeeId" = ${employeeId} OR "backupEmployeeId" = ${employeeId})
-      )
-  `
+  return db.$transaction(async (transaction) => {
+    const updatedRows = await transaction.$executeRaw`
+      UPDATE "Employee"
+      SET "active" = ${false}
+      WHERE "id" = ${employeeId}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "InstallationOrder"
+          WHERE "archivedAt" IS NULL
+            AND ("primaryEmployeeId" = ${employeeId} OR "backupEmployeeId" = ${employeeId})
+        )
+    `
+
+    if (updatedRows === 0) return updatedRows
+
+    await transaction.user.updateMany({
+      where: { employeeId, role: 'INSTALLER' },
+      data: { isActive: false },
+    })
+
+    return updatedRows
+  })
 }
 
 async function nextInstallationNumber(db: InstallationDb) {

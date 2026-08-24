@@ -60,7 +60,9 @@ export async function PATCH(
     return NextResponse.json({ error: 'Nie możesz odebrać sobie roli administratora.' }, { status: 400 })
   }
 
-  if (parsed.data.role === 'INSTALLER') {
+  const effectiveRole = parsed.data.role ?? existing.role
+  const effectiveActive = parsed.data.isActive ?? existing.isActive
+  if (effectiveRole === 'INSTALLER' && effectiveActive) {
     if (!existing.employeeId) {
       return NextResponse.json({ error: 'Aby nadać rolę Instalator, konto musi być powiązane z aktywnym pracownikiem.' }, { status: 400 })
     }
