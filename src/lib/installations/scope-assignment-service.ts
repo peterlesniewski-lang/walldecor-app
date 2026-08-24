@@ -18,6 +18,14 @@ export class InstallationScopeAssignmentValidationError extends Error {
   }
 }
 
+/** A Task 5 route maps this distinct lifecycle conflict to HTTP 409. */
+export class InstallationScopeAssignmentArchivedOrderError extends Error {
+  constructor() {
+    super('Nie można zmieniać ekipy zarchiwizowanej karty montażu.')
+    this.name = 'InstallationScopeAssignmentArchivedOrderError'
+  }
+}
+
 function normalizeEmployeeIds(employeeIds: string[]): string[] {
   return [...new Set(employeeIds.map((employeeId) => employeeId.trim()).filter(Boolean))].sort()
 }
@@ -29,11 +37,12 @@ async function assertScopeBelongsToOrder(
 ) {
   const scope = await db.installationScope.findUnique({
     where: { id: scopeId },
-    select: { room: { select: { orderId: true } } },
+    select: { room: { select: { orderId: true, order: { select: { archivedAt: true } } } } },
   })
   if (!scope || scope.room.orderId !== orderId) {
     throw new InstallationScopeAssignmentValidationError('Zakres nie należy do tego zlecenia montażu.')
   }
+  if (scope.room.order.archivedAt) throw new InstallationScopeAssignmentArchivedOrderError()
 }
 
 async function assertActiveEmployees(db: InstallationDb, employeeIds: string[]) {

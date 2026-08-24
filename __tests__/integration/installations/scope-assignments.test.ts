@@ -207,6 +207,38 @@ describe('scope installer assignments', () => {
     expect(await db.installationAuditEvent.count({ where: { orderId: order.id } })).toBe(auditCount)
   })
 
+  it('fails closed for archived orders before both replacement and no-op without changing calendar state', async () => {
+    const { order, wallpaperScope } = await createCalendarVisitFixture()
+    await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerAId], 'actor-1')
+    const confirmed = await createConfirmedVisit(order.id, [wallpaperScope.id])
+    await db.integrationSyncState.update({
+      where: { visitId_kind: { visitId: confirmed.id, kind: 'GOOGLE_CALENDAR' } },
+      data: { status: 'SYNCED', externalId: 'event-archived', externalEtag: 'etag-archived' },
+    })
+    await db.installationOrder.update({ where: { id: order.id }, data: { archivedAt: new Date() } })
+    const before = await Promise.all([
+      listScopeInstallerAssignments(db, order.id),
+      db.installationVisit.findUniqueOrThrow({ where: { id: confirmed.id } }),
+      db.integrationSyncState.findUniqueOrThrow({ where: { visitId_kind: { visitId: confirmed.id, kind: 'GOOGLE_CALENDAR' } } }),
+      db.integrationOutbox.findMany({ where: { visitId: confirmed.id }, orderBy: { revision: 'asc' } }),
+      db.installationAuditEvent.findMany({ where: { orderId: order.id }, orderBy: { createdAt: 'asc' } }),
+    ])
+
+    const replacementError = await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerBId], 'actor-2').catch((cause: unknown) => cause)
+    expect(replacementError).toMatchObject({ name: 'InstallationScopeAssignmentArchivedOrderError' })
+    expect((replacementError as Error).message).toContain('zarchiwizowanej')
+    await expect(setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerAId], 'actor-3'))
+      .rejects.toMatchObject({ name: 'InstallationScopeAssignmentArchivedOrderError' })
+
+    expect(await Promise.all([
+      listScopeInstallerAssignments(db, order.id),
+      db.installationVisit.findUniqueOrThrow({ where: { id: confirmed.id } }),
+      db.integrationSyncState.findUniqueOrThrow({ where: { visitId_kind: { visitId: confirmed.id, kind: 'GOOGLE_CALENDAR' } } }),
+      db.integrationOutbox.findMany({ where: { visitId: confirmed.id }, orderBy: { revision: 'asc' } }),
+      db.installationAuditEvent.findMany({ where: { orderId: order.id }, orderBy: { createdAt: 'asc' } }),
+    ])).toEqual(before)
+  })
+
   it('bumps every affected confirmed visit and enqueues one upsert after a real team replacement, but not after a no-op', async () => {
     const { order, wallpaperScope } = await createCalendarVisitFixture()
     await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerAId], 'actor-1')
