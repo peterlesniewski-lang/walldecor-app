@@ -122,7 +122,7 @@ export const INSTALLATION_GUIDES: readonly InstallationGuide[] = [
         steps: [
           'Po zalogowaniu otwórz Montaże. Widzisz wyłącznie karty, na których przypisano Ci konkretny zakres lub wizytę.',
           'Karta instalatora jest tylko do odczytu. Sprawdź adres, nazwę klienta, przypisane Ci zakresy oraz datę i godziny własnej wizyty.',
-          'Jeżeli przy wizycie jest dostępny link do wydarzenia Google Calendar, możesz go otworzyć. Brak linku nie zmienia terminu zapisanego na karcie.',
+          'Na karcie widzisz status synchronizacji kalendarza oraz zapisany termin wizyty. Karta instalatora nie udostępnia adresu wydarzenia.',
           'Jeżeli nie widzisz zlecenia albo zakresu, skontaktuj się z opiekunem dotychczasowym firmowym kanałem i poproś o prawidłowe przypisanie w karcie.',
         ],
         attention: 'Nie masz dostępu do formularza klienta, jego odpowiedzi, e-maila, telefonu, notatek koordynatora ani danych technicznych synchronizacji. To celowe ograniczenie prywatności.',

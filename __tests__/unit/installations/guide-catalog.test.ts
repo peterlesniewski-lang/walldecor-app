@@ -59,7 +59,8 @@ describe('installation guide access', () => {
 
     expect(installerText).toMatch(/tylko do odczytu/i)
     expect(installerText).toMatch(/poza aplikacją/i)
-    expect(installerText).toMatch(/link.*Google Calendar/i)
+    expect(installerText).toMatch(/widzisz status synchronizacji/i)
+    expect(installerText).not.toMatch(/link.*Google Calendar/i)
     expect(allGuideText).not.toMatch(/odnotuj na karcie przekazanie towaru/i)
     expect(allGuideText).not.toMatch(/instalator sporządza raport/i)
     expect(allGuideText).not.toMatch(/uzupełnij raport wizyty/i)
