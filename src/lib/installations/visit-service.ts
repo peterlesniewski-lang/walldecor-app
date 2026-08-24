@@ -283,6 +283,19 @@ function actionAuditName(action: UpdateInstallationVisitActionInput['action']): 
   }
 }
 
+const allowedActionsByStatus: Readonly<Partial<Record<string, readonly UpdateInstallationVisitActionInput['action'][]>>> = {
+  DRAFT: ['SAVE_DRAFT', 'CONFIRM', 'CANCEL'],
+  CONFIRMED: ['CONFIRM', 'CANCEL', 'COMPLETE'],
+}
+
+function assertAllowedVisitTransition(status: string, action: UpdateInstallationVisitActionInput['action']) {
+  if (!allowedActionsByStatus[status]?.includes(action)) {
+    throw new InstallationVisitValidationError({
+      action: `Nie można wykonać akcji ${action} dla wizyty o statusie ${status}.`,
+    })
+  }
+}
+
 async function replaceVisitScopes(
   db: Prisma.TransactionClient,
   visitId: string,
@@ -355,6 +368,7 @@ export async function changeInstallationVisit(
     await assertOrderIsMutable(tx, orderId)
     const current = await loadVisitOrThrow(tx, orderId, visitId)
     if (current.revision !== parsed.expectedRevision) throw new InstallationVisitRevisionConflictError()
+    assertAllowedVisitTransition(current.status, parsed.action)
 
     let scopeIds = orderedScopeIds(current)
     let nextStatus = current.status

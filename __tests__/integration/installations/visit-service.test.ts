@@ -163,6 +163,124 @@ describe('installation visit lifecycle', () => {
     expect(await db.installationAuditEvent.count({ where: { orderId: order.id } })).toBe(4)
   })
 
+  it('permits draft saves only for drafts while confirmed edits remain confirmed and enqueue an upsert', async () => {
+    const { order, wallpaperScope, plasterScope } = await createFixture()
+    await Promise.all([
+      assign(wallpaperScope.id, employees.ready, order.id),
+      assign(plasterScope.id, employees.alsoReady, order.id),
+    ])
+    const draft = await createInstallationVisit(db, order.id, { scopeIds: [wallpaperScope.id] }, 'owner-user')
+
+    const savedDraft = await changeInstallationVisit(db, order.id, draft.id, {
+      action: 'SAVE_DRAFT',
+      expectedRevision: 1,
+      startsAt: '2026-09-13T06:00:00.000Z',
+      endsAt: '2026-09-13T14:00:00.000Z',
+      note: 'Termin roboczy',
+      scopeIds: [plasterScope.id],
+    }, 'owner-user')
+    expect(savedDraft).toMatchObject({ status: 'DRAFT', revision: 2, scopeIds: [plasterScope.id] })
+    expect(await db.integrationOutbox.count({ where: { visitId: draft.id } })).toBe(0)
+
+    const confirmed = await changeInstallationVisit(db, order.id, draft.id, confirmedInput(2, [plasterScope.id]), 'owner-user')
+    const editedConfirmed = await changeInstallationVisit(db, order.id, draft.id, {
+      ...confirmedInput(3, [plasterScope.id]),
+      startsAt: '2026-09-15T06:00:00.000Z',
+      endsAt: '2026-09-15T14:00:00.000Z',
+    }, 'owner-user')
+    expect(confirmed).toMatchObject({ status: 'CONFIRMED', revision: 3 })
+    expect(editedConfirmed).toMatchObject({ status: 'CONFIRMED', revision: 4 })
+    expect(await db.integrationOutbox.findMany({ where: { visitId: draft.id }, orderBy: { revision: 'asc' } }))
+      .toMatchObject([
+        { operation: 'CALENDAR_UPSERT', revision: 3 },
+        { operation: 'CALENDAR_UPSERT', revision: 4 },
+      ])
+
+    const auditCount = await db.installationAuditEvent.count({ where: { orderId: order.id } })
+    const outboxCount = await db.integrationOutbox.count({ where: { visitId: draft.id } })
+    await expect(changeInstallationVisit(db, order.id, draft.id, {
+      action: 'SAVE_DRAFT',
+      expectedRevision: 4,
+      note: 'To nie może zmienić potwierdzonego terminu',
+      scopeIds: [wallpaperScope.id],
+    }, 'owner-user')).rejects.toMatchObject({
+      name: 'InstallationVisitValidationError',
+      fieldErrors: { action: expect.stringContaining('Nie można') },
+    })
+    expect(await db.installationVisit.findUniqueOrThrow({ where: { id: draft.id } }))
+      .toMatchObject({ status: 'CONFIRMED', revision: 4 })
+    expect(await db.installationVisitScope.findMany({ where: { visitId: draft.id } }))
+      .toMatchObject([{ scopeId: plasterScope.id }])
+    expect(await db.integrationOutbox.count({ where: { visitId: draft.id } })).toBe(outboxCount)
+    expect(await db.installationAuditEvent.count({ where: { orderId: order.id } })).toBe(auditCount)
+  })
+
+  it('allows cancellation from draft or confirmed and keeps cancelled and completed visits terminal', async () => {
+    const cancelledDraftFixture = await createFixture()
+    await assign(cancelledDraftFixture.wallpaperScope.id, employees.ready, cancelledDraftFixture.order.id)
+    const draft = await createInstallationVisit(db, cancelledDraftFixture.order.id, { scopeIds: [cancelledDraftFixture.wallpaperScope.id] }, 'owner-user')
+    const cancelledDraft = await changeInstallationVisit(db, cancelledDraftFixture.order.id, draft.id, {
+      action: 'CANCEL', expectedRevision: 1,
+    }, 'owner-user')
+    expect(cancelledDraft).toMatchObject({ status: 'CANCELLED', revision: 2 })
+    expect(await db.integrationOutbox.count({ where: { visitId: draft.id } })).toBe(0)
+
+    const cancelledConfirmedFixture = await createFixture()
+    await assign(cancelledConfirmedFixture.wallpaperScope.id, employees.ready, cancelledConfirmedFixture.order.id)
+    const confirmedForCancellation = await createInstallationVisit(db, cancelledConfirmedFixture.order.id, { scopeIds: [cancelledConfirmedFixture.wallpaperScope.id] }, 'owner-user')
+    await changeInstallationVisit(db, cancelledConfirmedFixture.order.id, confirmedForCancellation.id, confirmedInput(1, [cancelledConfirmedFixture.wallpaperScope.id]), 'owner-user')
+    const cancelledConfirmed = await changeInstallationVisit(db, cancelledConfirmedFixture.order.id, confirmedForCancellation.id, {
+      action: 'CANCEL', expectedRevision: 2,
+    }, 'owner-user')
+    expect(cancelledConfirmed).toMatchObject({ status: 'CANCELLED', revision: 3 })
+    expect(await db.integrationOutbox.findMany({ where: { visitId: confirmedForCancellation.id }, orderBy: { revision: 'asc' } }))
+      .toMatchObject([
+        { operation: 'CALENDAR_UPSERT', revision: 2 },
+        { operation: 'CALENDAR_CANCEL', revision: 3 },
+      ])
+
+    const completedFixture = await createFixture()
+    await assign(completedFixture.wallpaperScope.id, employees.ready, completedFixture.order.id)
+    const confirmedForCompletion = await createInstallationVisit(db, completedFixture.order.id, { scopeIds: [completedFixture.wallpaperScope.id] }, 'owner-user')
+    await changeInstallationVisit(db, completedFixture.order.id, confirmedForCompletion.id, confirmedInput(1, [completedFixture.wallpaperScope.id]), 'owner-user')
+    const completed = await changeInstallationVisit(db, completedFixture.order.id, confirmedForCompletion.id, {
+      action: 'COMPLETE', expectedRevision: 2,
+    }, 'owner-user')
+    expect(completed).toMatchObject({ status: 'COMPLETED', revision: 3 })
+    expect(await db.integrationOutbox.findMany({ where: { visitId: confirmedForCompletion.id } }))
+      .toMatchObject([{ operation: 'CALENDAR_UPSERT', revision: 2 }])
+
+    for (const terminal of [
+      { visitId: draft.id, orderId: cancelledDraftFixture.order.id, revision: 2, scopeId: cancelledDraftFixture.wallpaperScope.id },
+      { visitId: confirmedForCancellation.id, orderId: cancelledConfirmedFixture.order.id, revision: 3, scopeId: cancelledConfirmedFixture.wallpaperScope.id },
+      { visitId: confirmedForCompletion.id, orderId: completedFixture.order.id, revision: 3, scopeId: completedFixture.wallpaperScope.id },
+    ]) {
+      const before = await db.installationVisit.findUniqueOrThrow({ where: { id: terminal.visitId } })
+      const scopesBefore = await db.installationVisitScope.findMany({ where: { visitId: terminal.visitId }, orderBy: { scopeId: 'asc' } })
+      const outboxCount = await db.integrationOutbox.count({ where: { visitId: terminal.visitId } })
+      const auditCount = await db.installationAuditEvent.count({ where: { orderId: terminal.orderId } })
+      const actions = [
+        { action: 'SAVE_DRAFT', expectedRevision: terminal.revision, note: 'Niedozwolone', scopeIds: [terminal.scopeId] },
+        confirmedInput(terminal.revision, [terminal.scopeId]),
+        { action: 'CANCEL', expectedRevision: terminal.revision },
+        { action: 'COMPLETE', expectedRevision: terminal.revision },
+      ]
+
+      for (const action of actions) {
+        await expect(changeInstallationVisit(db, terminal.orderId, terminal.visitId, action, 'owner-user')).rejects.toMatchObject({
+          name: 'InstallationVisitValidationError',
+          fieldErrors: { action: expect.stringContaining('Nie można') },
+        })
+      }
+
+      expect(await db.installationVisit.findUniqueOrThrow({ where: { id: terminal.visitId } }))
+        .toMatchObject({ status: before.status, revision: before.revision })
+      expect(await db.installationVisitScope.findMany({ where: { visitId: terminal.visitId }, orderBy: { scopeId: 'asc' } })).toEqual(scopesBefore)
+      expect(await db.integrationOutbox.count({ where: { visitId: terminal.visitId } })).toBe(outboxCount)
+      expect(await db.installationAuditEvent.count({ where: { orderId: terminal.orderId } })).toBe(auditCount)
+    }
+  })
+
   it('rejects foreign scopes and changes to archived orders without committing visit records', async () => {
     const first = await createFixture()
     const second = await createFixture()
