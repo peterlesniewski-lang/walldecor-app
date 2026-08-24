@@ -291,16 +291,16 @@ describe('installation order API boundaries', () => {
 
   it('filters an employee list to installation orders they may access', async () => {
     mockGetServerSession.mockResolvedValue(session('EMPLOYEE', 'primary') as never)
-    mockListInstallationOrders.mockResolvedValue([
-      apiOrder,
-      { ...apiOrder, id: 'order-2', primaryEmployeeId: 'other', backupEmployeeId: 'other-backup' },
-    ] as never)
+    mockListInstallationOrders.mockResolvedValue([apiOrder] as never)
 
     const response = await listOrders(new NextRequest('http://localhost/api/installations'))
     const body = await response.json()
 
     expect(response.status).toBe(200)
     expect(body.map((order: { id: string }) => order.id)).toEqual(['order-1'])
+    expect(mockListInstallationOrders).toHaveBeenCalledWith(prisma, {
+      viewer: { role: 'EMPLOYEE', employeeId: 'primary', employeeActive: true },
+    })
   })
 
   it('returns field-level 400 errors for an invalid create payload', async () => {
@@ -597,6 +597,29 @@ describe('installation order controls', () => {
     expect(screen.getByText('Wymaga ustalenia')).not.toBeNull()
     expect(screen.getAllByRole('link')).toHaveLength(1)
     expect(screen.queryByRole('button')).toBeNull()
+  })
+
+  it('gives every client-form state a distinct visible badge tone', () => {
+    const statuses = [
+      { code: 'NO_FORM' as const, label: 'Brak formularza' },
+      { code: 'READY_TO_SEND' as const, label: 'Do wysłania' },
+      { code: 'WAITING' as const, label: 'Wysłany · czeka na klienta' },
+      { code: 'IN_PROGRESS' as const, label: 'Rozpoczęty' },
+      { code: 'COMPLETED' as const, label: 'Wypełniony' },
+    ]
+    render(createElement(InstallationOrderList, { orders: statuses.map((clientFormStatus, index) => ({
+      ...apiOrder,
+      id: `order-status-${index}`,
+      clientFormStatus: { ...clientFormStatus, requiresClarification: false },
+    })) }))
+
+    const tones = statuses.map(({ label }) => {
+      const badge = screen.getByText(label).closest('span')
+      expect(badge).not.toBeNull()
+      return `${badge!.style.backgroundColor}/${badge!.style.color}`
+    })
+
+    expect(new Set(tones).size).toBe(statuses.length)
   })
 
   it('does not render either creation control when the viewer cannot create an installation order', () => {

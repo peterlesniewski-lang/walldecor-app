@@ -7,8 +7,10 @@ import {
 } from './schemas'
 import { assertInstallationOrderCanUseStatus } from './readiness'
 import { deriveInstallationFormStatus } from './form-status'
+import { canViewInstallationOrder, type InstallationOrderViewer } from './access'
 
 type InstallationDb = PrismaClient | Prisma.TransactionClient
+type InstallationOrderListOptions = { includeArchived?: boolean; viewer?: InstallationOrderViewer }
 
 const orderInclude = {
   client: true,
@@ -186,7 +188,7 @@ export async function createInstallationOrder(
   })
 }
 
-export async function listInstallationOrders(db: InstallationDb, options: { includeArchived?: boolean } = {}) {
+export async function listInstallationOrders(db: InstallationDb, options: InstallationOrderListOptions = {}) {
   const now = new Date()
   const orders = await db.installationOrder.findMany({
     where: options.includeArchived ? {} : { archivedAt: null },
@@ -199,14 +201,26 @@ export async function listInstallationOrders(db: InstallationDb, options: { incl
     },
     orderBy: { createdAt: 'desc' },
   })
-  return orders.map(({ formSnapshots, clientLinks, formSubmissions, clarifications, ...order }) => ({
-    ...order,
+  const viewer = options.viewer
+  const visibleOrders = viewer
+    ? orders.filter((order) => canViewInstallationOrder(viewer, order, now))
+    : orders
+
+  return visibleOrders.map((order) => ({
+    id: order.id,
+    number: order.number,
+    status: order.status,
+    addressStreet: order.addressStreet,
+    addressCity: order.addressCity,
+    client: order.client,
+    primaryEmployee: order.primaryEmployee,
+    backupEmployee: order.backupEmployee,
     clientFormStatus: deriveInstallationFormStatus({
-      hasSnapshot: formSnapshots.length > 0,
-      activeLink: clientLinks[0] ?? null,
-      hasDraft: formSubmissions.some((submission) => submission.status === 'DRAFT' && Boolean(submission.draftKey?.trim())),
-      hasSubmitted: formSubmissions.some((submission) => submission.status === 'SUBMITTED'),
-      openBlockingCount: clarifications.length,
+      hasSnapshot: order.formSnapshots.length > 0,
+      activeLink: order.clientLinks[0] ?? null,
+      hasDraft: order.formSubmissions.some((submission) => submission.status === 'DRAFT' && Boolean(submission.draftKey?.trim())),
+      hasSubmitted: order.formSubmissions.some((submission) => submission.status === 'SUBMITTED'),
+      openBlockingCount: order.clarifications.length,
     }),
   }))
 }

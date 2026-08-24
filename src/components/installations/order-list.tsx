@@ -32,6 +32,14 @@ const FORM_STATUS_ICONS: Record<InstallationFormStatusCode, typeof FileQuestion>
   COMPLETED: CircleCheck,
 }
 
+const FORM_STATUS_TONES: Record<InstallationFormStatusCode, { background: string; color: string }> = {
+  NO_FORM: { background: '#F2E7D5', color: '#5A4228' },
+  READY_TO_SEND: { background: '#FBE9CB', color: '#7A4813' },
+  WAITING: { background: '#F5E5B6', color: '#65470F' },
+  IN_PROGRESS: { background: '#E7E1CF', color: '#53503B' },
+  COMPLETED: { background: '#E1EEE2', color: '#29553A' },
+}
+
 export function InstallationOrderList({ orders, canCreate = false }: { orders: OrderListItem[]; canCreate?: boolean }) {
   return (
     <section className="mx-auto max-w-6xl" aria-labelledby="installation-orders-heading">
@@ -73,6 +81,7 @@ export function InstallationOrderList({ orders, canCreate = false }: { orders: O
         <div className="grid gap-3">
           {orders.map((order) => {
             const FormStatusIcon = FORM_STATUS_ICONS[order.clientFormStatus.code]
+            const formStatusTone = FORM_STATUS_TONES[order.clientFormStatus.code]
             return (
             <Link
               key={order.id}
@@ -87,7 +96,7 @@ export function InstallationOrderList({ orders, canCreate = false }: { orders: O
                     <span className="rounded-full px-2.5 py-1 text-xs font-semibold" style={{ background: 'var(--wd-sand-light)', color: 'var(--wd-dark)' }}>
                       {STATUS_LABELS[order.status] ?? order.status}
                     </span>
-                    <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold" style={{ background: '#E7F0EA', color: '#29553A' }}>
+                    <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold" style={formStatusTone}>
                       <FormStatusIcon className="h-3.5 w-3.5" aria-hidden="true" />
                       {order.clientFormStatus.label}
                     </span>

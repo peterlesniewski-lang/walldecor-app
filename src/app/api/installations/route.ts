@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { canAccessInstallationOrder, type InstallationOrderViewer } from '@/lib/installations/access'
+import { type InstallationOrderViewer } from '@/lib/installations/access'
 import { INSTALLATION_ROLES, type InstallationRole } from '@/lib/installations/constants'
 import { InstallationOrderValidationError } from '@/lib/installations/schemas'
 import { createInstallationOrder, listInstallationOrders } from '@/lib/installations/order-service'
@@ -31,8 +31,8 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const viewer = await viewerFromSession(session)
-  const orders = await listInstallationOrders(prisma)
-  return NextResponse.json(orders.filter((order) => canAccessInstallationOrder(viewer, order)))
+  const orders = await listInstallationOrders(prisma, { viewer })
+  return NextResponse.json(orders)
 }
 
 export async function POST(req: NextRequest) {

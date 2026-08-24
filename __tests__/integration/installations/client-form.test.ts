@@ -485,4 +485,48 @@ describe('client form uses a real SQLite revision history', () => {
     })
     expect(await status()).toMatchObject({ code: 'COMPLETED', requiresClarification: true })
   })
+
+  it('shows an assigned installer only their order and its derived client-form status', async () => {
+    const installer = await db.employee.create({ data: {
+      firstName: 'Iwona', lastName: 'Instalatorka', email: 'form.installer@example.test', position: 'Instalatorka', costCenterId: 'FORM', startDate: new Date('2026-01-01'), active: true,
+    } })
+    const backup = await db.employee.findFirstOrThrow({ where: { email: 'form.backup@example.test' } })
+    const [assigned, unassigned] = await Promise.all([
+      createInstallationOrder(db, {
+        client: { name: 'Przypisany klient', email: 'assigned.private@example.test', phone: '+48 501 000 111' },
+        address: { street: 'Przypisana', buildingNumber: '1', postalCode: '00-001', city: 'Warszawa' },
+        primaryEmployeeId: ownerId, backupEmployeeId: backup.id,
+      }, 'form-admin'),
+      createInstallationOrder(db, {
+        client: { name: 'Nieprzypisany klient', email: 'unassigned.private@example.test', phone: '+48 501 000 222' },
+        address: { street: 'Nieprzypisana', buildingNumber: '2', postalCode: '00-002', city: 'Warszawa' },
+        primaryEmployeeId: ownerId, backupEmployeeId: backup.id,
+      }, 'form-admin'),
+    ])
+    await db.installationOrderInstaller.create({ data: { orderId: assigned.id, employeeId: installer.id, createdById: 'form-admin' } })
+    const template = await db.installationFormTemplate.findFirstOrThrow({ where: { status: 'PUBLISHED' }, select: { id: true } })
+    await createInstallationOrderFormSnapshot(db, { orderId: assigned.id, templateId: template.id }, 'form-admin')
+    const link = await createClientLink(db, { orderId: assigned.id, createdById: 'form-admin', expiresAt: futureDate() })
+    await loadPublicInstallationProjection(db, link.token)
+    const submission = await db.installationFormSubmission.findUniqueOrThrow({ where: { draftKey: assigned.id } })
+    await db.installationClarification.create({ data: {
+      orderId: assigned.id, sourceSubmissionId: submission.id, questionKey: 'private-question', reasonCode: 'UNKNOWN_ANSWER', reason: 'Prywatna treść ustalenia', isBlocking: true,
+    } })
+
+    const visible = await listInstallationOrders(db, { viewer: { role: 'INSTALLER', employeeId: installer.id } })
+
+    expect(visible.map((order) => order.id)).toEqual([assigned.id])
+    expect(visible[0]).toMatchObject({ clientFormStatus: { code: 'IN_PROGRESS', requiresClarification: true } })
+    expect(visible[0]).not.toHaveProperty('formSnapshots')
+    expect(visible[0]).not.toHaveProperty('clientLinks')
+    expect(visible[0]).not.toHaveProperty('formSubmissions')
+    expect(visible[0]).not.toHaveProperty('clarifications')
+    expect(visible[0]).not.toHaveProperty('installerAssignments')
+    expect(visible[0]).not.toHaveProperty('delegations')
+    const serialized = JSON.stringify(visible[0])
+    expect(serialized).not.toContain('answers')
+    expect(serialized).not.toContain(link.token)
+    expect(serialized).not.toContain('Prywatna treść ustalenia')
+    expect(serialized).not.toContain(unassigned.id)
+  })
 })
