@@ -35,7 +35,7 @@ import { GET as getCatalog, POST as postCatalog } from '@/app/api/installations/
 import { GET as getRooms, POST as postRoom } from '@/app/api/installations/[id]/rooms/route'
 
 const ownerOrder = {
-  primaryEmployeeId: 'employee-1', backupEmployeeId: 'employee-2', installerAssignments: [], delegations: [],
+  primaryEmployeeId: 'employee-1', backupEmployeeId: 'employee-2', installerAssignments: [], scopeAssignments: [], delegations: [],
 }
 
 describe('installation catalog and room routes', () => {
@@ -72,6 +72,29 @@ describe('installation catalog and room routes', () => {
     const response = await postRoom(new NextRequest('http://test/api/installations/order-1/rooms', { method: 'POST', body: JSON.stringify({ name: 'Salon' }) }), { params: Promise.resolve({ id: 'order-1' }) })
     expect(response.status).toBe(201)
     expect(mocks.createRoom).toHaveBeenCalledWith(expect.anything(), 'order-1', { name: 'Salon' }, 'owner-user')
+  })
+
+  it('loads current installer activity before exposing rooms assigned through a scope', async () => {
+    mocks.session = { user: { id: 'installer-user', role: 'INSTALLER', employeeId: 'installer-1' } }
+    mocks.getOrder.mockResolvedValue({ ...ownerOrder, scopeAssignments: [{ employeeId: 'installer-1' }] })
+    mocks.employeeFindUnique.mockResolvedValue({ active: true })
+
+    const activeResponse = await getRooms(new NextRequest('http://test/api/installations/order-1/rooms'), {
+      params: Promise.resolve({ id: 'order-1' }),
+    })
+
+    expect(activeResponse.status).toBe(200)
+    expect(mocks.employeeFindUnique).toHaveBeenCalledWith({ where: { id: 'installer-1' }, select: { active: true } })
+    expect(mocks.getRooms).toHaveBeenCalledWith(expect.anything(), 'order-1')
+
+    mocks.getRooms.mockClear()
+    mocks.employeeFindUnique.mockResolvedValue({ active: false })
+    const inactiveResponse = await getRooms(new NextRequest('http://test/api/installations/order-1/rooms'), {
+      params: Promise.resolve({ id: 'order-1' }),
+    })
+
+    expect(inactiveResponse.status).toBe(403)
+    expect(mocks.getRooms).not.toHaveBeenCalled()
   })
 
   it('returns the archived-parent domain conflict as Polish HTTP 409 instead of a raw database error', async () => {

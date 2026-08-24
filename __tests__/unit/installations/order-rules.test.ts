@@ -317,6 +317,36 @@ describe('installation order API boundaries', () => {
     })
   })
 
+  it('loads the active installer state before returning their scope-assigned order list', async () => {
+    mockGetServerSession.mockResolvedValue(session('INSTALLER', 'installer-scope') as never)
+    vi.mocked(prisma.employee.findUnique).mockResolvedValue({ id: 'installer-scope', active: true } as never)
+    mockListInstallationOrders.mockResolvedValue([{ ...apiOrder, scopeAssignments: [{ employeeId: 'installer-scope' }] }] as never)
+
+    const response = await listOrders(new NextRequest('http://localhost/api/installations'))
+
+    expect(response.status).toBe(200)
+    expect((await response.json()).map((order: { id: string }) => order.id)).toEqual(['order-1'])
+    expect(prisma.employee.findUnique).toHaveBeenCalledWith({ where: { id: 'installer-scope' }, select: { active: true } })
+    expect(mockListInstallationOrders).toHaveBeenCalledWith(prisma, {
+      viewer: { role: 'INSTALLER', employeeId: 'installer-scope', employeeActive: true },
+    })
+  })
+
+  it('passes an inactive installer to the list policy so their list is empty', async () => {
+    mockGetServerSession.mockResolvedValue(session('INSTALLER', 'installer-scope') as never)
+    vi.mocked(prisma.employee.findUnique).mockResolvedValue({ id: 'installer-scope', active: false } as never)
+    mockListInstallationOrders.mockImplementation(async (_db, options) => options.viewer?.employeeActive === true ? [apiOrder] : [])
+
+    const response = await listOrders(new NextRequest('http://localhost/api/installations'))
+
+    expect(response.status).toBe(200)
+    expect(await response.json()).toEqual([])
+    expect(prisma.employee.findUnique).toHaveBeenCalledWith({ where: { id: 'installer-scope' }, select: { active: true } })
+    expect(mockListInstallationOrders).toHaveBeenCalledWith(prisma, {
+      viewer: { role: 'INSTALLER', employeeId: 'installer-scope', employeeActive: false },
+    })
+  })
+
   it('returns field-level 400 errors for an invalid create payload', async () => {
     mockGetServerSession.mockResolvedValue(session('ADMIN') as never)
     mockCreateInstallationOrder.mockRejectedValue(new InstallationOrderValidationError({
@@ -423,6 +453,32 @@ describe('installation order API boundaries', () => {
     })
 
     expect(response.status).toBe(403)
+  })
+
+  it('returns an assigned installation order to an active INSTALLER after looking up their activity', async () => {
+    mockGetServerSession.mockResolvedValue(session('INSTALLER', 'installer-scope') as never)
+    vi.mocked(prisma.employee.findUnique).mockResolvedValue({ id: 'installer-scope', active: true } as never)
+    mockGetInstallationOrder.mockResolvedValue({ ...apiOrder, scopeAssignments: [{ employeeId: 'installer-scope' }] } as never)
+
+    const response = await getOrder(new NextRequest('http://localhost/api/installations/order-1'), {
+      params: Promise.resolve({ id: 'order-1' }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(prisma.employee.findUnique).toHaveBeenCalledWith({ where: { id: 'installer-scope' }, select: { active: true } })
+  })
+
+  it('returns 403 to an inactive INSTALLER even when their scope is assigned', async () => {
+    mockGetServerSession.mockResolvedValue(session('INSTALLER', 'installer-scope') as never)
+    vi.mocked(prisma.employee.findUnique).mockResolvedValue({ id: 'installer-scope', active: false } as never)
+    mockGetInstallationOrder.mockResolvedValue({ ...apiOrder, scopeAssignments: [{ employeeId: 'installer-scope' }] } as never)
+
+    const response = await getOrder(new NextRequest('http://localhost/api/installations/order-1'), {
+      params: Promise.resolve({ id: 'order-1' }),
+    })
+
+    expect(response.status).toBe(403)
+    expect(prisma.employee.findUnique).toHaveBeenCalledWith({ where: { id: 'installer-scope' }, select: { active: true } })
   })
 
   it('checks a session independently before patching or archiving', async () => {
