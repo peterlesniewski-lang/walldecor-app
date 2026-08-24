@@ -836,6 +836,7 @@ model InstallationCatalogCategory {
   isActive   Boolean                   @default(true)
   archivedAt DateTime?
   types      InstallationCatalogType[]
+  scopes     InstallationScope[]
   createdAt  DateTime                  @default(now())
   updatedAt  DateTime                  @updatedAt
 
@@ -1156,32 +1157,36 @@ model InstallationRoom {
 }
 
 model InstallationScope {
-  id           String                     @id @default(cuid())
-  roomId       String
-  room         InstallationRoom           @relation(fields: [roomId], references: [id], onDelete: Cascade)
-  name         String
-  sortOrder    Int                        @default(0)
-  scopeProducts InstallationScopeProduct[]
-  measurements InstallationMeasurement[]
-  files        InstallationFile[]          @relation("InstallationFileScope")
-  visitScopes  InstallationVisitScope[]
-  assignments  InstallationScopeAssignment[]
-  createdAt    DateTime                   @default(now())
-  updatedAt    DateTime                   @updatedAt
+  id                String                     @id @default(cuid())
+  roomId            String
+  room              InstallationRoom           @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  catalogCategoryId String?
+  catalogCategory   InstallationCatalogCategory? @relation(fields: [catalogCategoryId], references: [id], onDelete: SetNull)
+  name              String
+  sortOrder         Int                        @default(0)
+  scopeProducts     InstallationScopeProduct[]
+  measurements      InstallationMeasurement[]
+  files             InstallationFile[]          @relation("InstallationFileScope")
+  visitScopes       InstallationVisitScope[]
+  assignments       InstallationScopeAssignment[]
+  createdAt         DateTime                   @default(now())
+  updatedAt         DateTime                   @updatedAt
 
   @@index([roomId, sortOrder])
+  @@index([catalogCategoryId])
 }
 
 model InstallationScopeProduct {
   id                          String                      @id @default(cuid())
   scopeId                     String
   scope                       InstallationScope           @relation(fields: [scopeId], references: [id], onDelete: Cascade)
-  catalogProductId            String
-  catalogProduct              InstallationCatalogProduct  @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
-  productNameSnapshot         String
+  catalogProductId            String?
+  catalogProduct              InstallationCatalogProduct? @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
+  productNameSnapshot         String?
   productCodeSnapshot         String?
   manufacturerSnapshot        String?
   collectionSnapshot          String?
+  batchSnapshot               String?
   sortOrder                   Int                         @default(0)
   createdAt                   DateTime                    @default(now())
   updatedAt                   DateTime                    @updatedAt
@@ -1197,7 +1202,9 @@ model InstallationMeasurement {
   scopeId       String?
   scope         InstallationScope? @relation(fields: [scopeId], references: [id], onDelete: Cascade)
   elementName   String
+  kind          String             @default("SINGLE")
   value         Decimal
+  secondaryValue Decimal?
   unit          String
   source        String
   authorId      String?
