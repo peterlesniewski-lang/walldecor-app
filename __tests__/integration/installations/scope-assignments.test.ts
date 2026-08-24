@@ -11,9 +11,15 @@ import {
   listInstallationOrders,
 } from '@/lib/installations/order-service'
 import {
+  InstallationScopeAssignmentValidationError,
   listScopeInstallerAssignments,
   setScopeInstallerAssignments,
 } from '@/lib/installations/scope-assignment-service'
+import {
+  changeInstallationVisit,
+  createInstallationVisit,
+  listInstallationVisits,
+} from '@/lib/installations/visit-service'
 
 const databaseDirectory = mkdtempSync(path.join(tmpdir(), 'walldecor-scope-assignments-'))
 const databasePath = path.join(databaseDirectory, 'scope-assignments.db')
@@ -29,6 +35,7 @@ let installerAId: string
 let installerBId: string
 let installerCId: string
 let inactiveInstallerId: string
+let calendarVisitSequence = 0
 
 function applyMigrations(databaseFile: string) {
   const migrationRoot = path.join(process.cwd(), 'prisma', 'migrations')
@@ -46,6 +53,40 @@ function applyMigrations(databaseFile: string) {
 
 function installerViewer(employeeId: string, employeeActive = true) {
   return { role: 'INSTALLER' as const, employeeId, employeeActive }
+}
+
+async function createCalendarVisitFixture() {
+  const suffix = ++calendarVisitSequence
+  const order = await createInstallationOrder(db, {
+    client: { name: `Klient kalendarza ${suffix}`, email: `calendar-scope-${suffix}@example.test`, phone: '+48 501 000 099' },
+    address: { street: 'Kalendarzowa', buildingNumber: String(suffix), postalCode: '00-099', city: 'Warszawa' },
+    primaryEmployeeId: 'scope-primary',
+    backupEmployeeId: 'scope-backup',
+  }, 'scope-calendar-fixture')
+  const [wallpaperRoom, plasterRoom] = await Promise.all([
+    db.installationRoom.create({ data: { id: `calendar-scope-wallpaper-room-${suffix}`, orderId: order.id, name: 'Salon', sortOrder: 0 } }),
+    db.installationRoom.create({ data: { id: `calendar-scope-plaster-room-${suffix}`, orderId: order.id, name: 'Korytarz', sortOrder: 1 } }),
+  ])
+  const [wallpaperScope, plasterScope] = await Promise.all([
+    db.installationScope.create({ data: { id: `calendar-scope-wallpaper-${suffix}`, roomId: wallpaperRoom.id, name: 'Tapety', sortOrder: 0 } }),
+    db.installationScope.create({ data: { id: `calendar-scope-plaster-${suffix}`, roomId: plasterRoom.id, name: 'Gładzie', sortOrder: 0 } }),
+  ])
+  return { order, wallpaperScope, plasterScope }
+}
+
+function confirmedVisitInput(expectedRevision: number, scopeIds: string[]) {
+  return {
+    action: 'CONFIRM' as const,
+    expectedRevision,
+    startsAt: '2026-09-14T06:00:00.000Z',
+    endsAt: '2026-09-14T14:00:00.000Z',
+    scopeIds,
+  }
+}
+
+async function createConfirmedVisit(orderId: string, scopeIds: string[]) {
+  const draft = await createInstallationVisit(db, orderId, { scopeIds }, 'scope-calendar-fixture')
+  return changeInstallationVisit(db, orderId, draft.id, confirmedVisitInput(1, scopeIds), 'scope-calendar-fixture')
 }
 
 beforeAll(async () => {
@@ -150,5 +191,116 @@ describe('scope installer assignments', () => {
 
     expect(await db.installationAuditEvent.count({ where: { orderId } })).toBe(auditCountBefore)
     expect(await listScopeInstallerAssignments(db, foreignOrderId)).toEqual([])
+  })
+
+  it('treats an identical persisted normalized team as a no-op before validating employee activity', async () => {
+    const { order, wallpaperScope } = await createCalendarVisitFixture()
+    await db.installationScopeAssignment.create({
+      data: { orderId: order.id, scopeId: wallpaperScope.id, employeeId: inactiveInstallerId, createdById: 'legacy-fixture' },
+    })
+    const auditCount = await db.installationAuditEvent.count({ where: { orderId: order.id } })
+
+    await expect(setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [` ${inactiveInstallerId} `], 'actor-1'))
+      .resolves.toEqual({ scopeId: wallpaperScope.id, employeeIds: [inactiveInstallerId] })
+    expect(await listScopeInstallerAssignments(db, order.id))
+      .toEqual([{ scopeId: wallpaperScope.id, employeeIds: [inactiveInstallerId] }])
+    expect(await db.installationAuditEvent.count({ where: { orderId: order.id } })).toBe(auditCount)
+  })
+
+  it('bumps every affected confirmed visit and enqueues one upsert after a real team replacement, but not after a no-op', async () => {
+    const { order, wallpaperScope } = await createCalendarVisitFixture()
+    await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerAId], 'actor-1')
+    const confirmed = await createConfirmedVisit(order.id, [wallpaperScope.id])
+    const beforeOutbox = await db.integrationOutbox.findMany({ where: { visitId: confirmed.id } })
+    await db.integrationSyncState.update({
+      where: { visitId_kind: { visitId: confirmed.id, kind: 'GOOGLE_CALENDAR' } },
+      data: { status: 'SYNCED', lastSyncedAt: new Date() },
+    })
+
+    await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerBId], 'actor-2')
+
+    expect(await db.installationVisit.findUniqueOrThrow({ where: { id: confirmed.id } }))
+      .toMatchObject({ status: 'CONFIRMED', revision: 3 })
+    expect(await db.integrationOutbox.findMany({ where: { visitId: confirmed.id }, orderBy: { revision: 'asc' } }))
+      .toMatchObject([
+        { operation: 'CALENDAR_UPSERT', revision: 2, status: 'PENDING' },
+        { operation: 'CALENDAR_UPSERT', revision: 3, status: 'PENDING', idempotencyKey: `calendar:${confirmed.id}:3:CALENDAR_UPSERT` },
+      ])
+    expect(await db.integrationSyncState.findUniqueOrThrow({ where: { visitId_kind: { visitId: confirmed.id, kind: 'GOOGLE_CALENDAR' } } }))
+      .toMatchObject({ status: 'PENDING' })
+    expect(await listInstallationVisits(db, order.id)).toMatchObject([
+      { id: confirmed.id, revision: 3, participants: [{ employeeId: installerBId, inviteStatus: 'READY' }] },
+    ])
+    expect(await db.installationAuditEvent.findMany({ where: { orderId: order.id, action: 'INSTALLATION_VISIT_PARTICIPANTS_CHANGED' } })).toHaveLength(1)
+
+    const revisionBeforeNoOp = (await db.installationVisit.findUniqueOrThrow({ where: { id: confirmed.id } })).revision
+    const outboxCountBeforeNoOp = await db.integrationOutbox.count({ where: { visitId: confirmed.id } })
+    const auditCountBeforeNoOp = await db.installationAuditEvent.count({ where: { orderId: order.id } })
+    await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [` ${installerBId} `, installerBId], 'actor-3')
+    expect((await db.installationVisit.findUniqueOrThrow({ where: { id: confirmed.id } })).revision).toBe(revisionBeforeNoOp)
+    expect(await db.integrationOutbox.count({ where: { visitId: confirmed.id } })).toBe(outboxCountBeforeNoOp)
+    expect(await db.installationAuditEvent.count({ where: { orderId: order.id } })).toBe(auditCountBeforeNoOp)
+    expect(beforeOutbox).toHaveLength(1)
+  })
+
+  it('rolls back a replacement that leaves a confirmed visit without a ready participant', async () => {
+    const { order, wallpaperScope } = await createCalendarVisitFixture()
+    await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerAId], 'actor-1')
+    const confirmed = await createConfirmedVisit(order.id, [wallpaperScope.id])
+    const assignmentsBefore = await listScopeInstallerAssignments(db, order.id)
+    const auditCountBefore = await db.installationAuditEvent.count({ where: { orderId: order.id } })
+    const outboxCountBefore = await db.integrationOutbox.count({ where: { visitId: confirmed.id } })
+
+    const error = await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [], 'actor-2').catch((cause: unknown) => cause)
+    expect(error).toBeInstanceOf(InstallationScopeAssignmentValidationError)
+    expect((error as Error).message).toContain('e-mail')
+    expect(await listScopeInstallerAssignments(db, order.id)).toEqual(assignmentsBefore)
+    expect(await db.installationVisit.findUniqueOrThrow({ where: { id: confirmed.id } }))
+      .toMatchObject({ status: 'CONFIRMED', revision: 2 })
+    expect(await db.integrationOutbox.count({ where: { visitId: confirmed.id } })).toBe(outboxCountBefore)
+    expect(await db.installationAuditEvent.count({ where: { orderId: order.id } })).toBe(auditCountBefore)
+  })
+
+  it('allows a changed scope team when another scope of the confirmed visit keeps a ready participant', async () => {
+    const { order, wallpaperScope, plasterScope } = await createCalendarVisitFixture()
+    await Promise.all([
+      setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerAId], 'actor-1'),
+      setScopeInstallerAssignments(db, order.id, plasterScope.id, [installerBId], 'actor-1'),
+    ])
+    const confirmed = await createConfirmedVisit(order.id, [wallpaperScope.id, plasterScope.id])
+
+    await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [], 'actor-2')
+
+    expect(await db.installationVisit.findUniqueOrThrow({ where: { id: confirmed.id } }))
+      .toMatchObject({ status: 'CONFIRMED', revision: 3 })
+    expect(await db.integrationOutbox.findMany({ where: { visitId: confirmed.id }, orderBy: { revision: 'asc' } }))
+      .toMatchObject([
+        { operation: 'CALENDAR_UPSERT', revision: 2 },
+        { operation: 'CALENDAR_UPSERT', revision: 3, idempotencyKey: `calendar:${confirmed.id}:3:CALENDAR_UPSERT` },
+      ])
+    expect(await listInstallationVisits(db, order.id)).toMatchObject([
+      { id: confirmed.id, participants: [{ employeeId: installerBId, inviteStatus: 'READY', scopeIds: [plasterScope.id] }] },
+    ])
+  })
+
+  it('queues each confirmed visit containing the replaced scope independently', async () => {
+    const { order, wallpaperScope } = await createCalendarVisitFixture()
+    await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerAId], 'actor-1')
+    const [first, second] = await Promise.all([
+      createConfirmedVisit(order.id, [wallpaperScope.id]),
+      createConfirmedVisit(order.id, [wallpaperScope.id]),
+    ])
+
+    await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerBId], 'actor-2')
+
+    for (const visit of [first, second]) {
+      expect(await db.installationVisit.findUniqueOrThrow({ where: { id: visit.id } })).toMatchObject({ revision: 3, status: 'CONFIRMED' })
+      expect(await db.integrationOutbox.findMany({ where: { visitId: visit.id }, orderBy: { revision: 'asc' } }))
+        .toMatchObject([
+          { operation: 'CALENDAR_UPSERT', revision: 2 },
+          { operation: 'CALENDAR_UPSERT', revision: 3, idempotencyKey: `calendar:${visit.id}:3:CALENDAR_UPSERT` },
+        ])
+    }
+    expect(await db.installationAuditEvent.count({ where: { orderId: order.id, action: 'INSTALLATION_VISIT_PARTICIPANTS_CHANGED' } })).toBe(2)
   })
 })

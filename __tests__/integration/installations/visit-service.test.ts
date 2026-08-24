@@ -11,6 +11,7 @@ import {
   listInstallationVisits,
   requeueInstallationCalendar,
 } from '@/lib/installations/visit-service'
+import { setScopeInstallerAssignments } from '@/lib/installations/scope-assignment-service'
 
 const databaseDirectory = mkdtempSync(path.join(tmpdir(), 'walldecor-visit-service-'))
 const databasePath = path.join(databaseDirectory, 'visit-service.db')
@@ -279,6 +280,27 @@ describe('installation visit lifecycle', () => {
       expect(await db.integrationOutbox.count({ where: { visitId: terminal.visitId } })).toBe(outboxCount)
       expect(await db.installationAuditEvent.count({ where: { orderId: terminal.orderId } })).toBe(auditCount)
     }
+  })
+
+  it('does not revise or queue draft and terminal visits when a scope team changes', async () => {
+    const { order, wallpaperScope } = await createFixture()
+    await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [employees.ready], 'owner-user')
+    const draft = await createInstallationVisit(db, order.id, { scopeIds: [wallpaperScope.id] }, 'owner-user')
+    const confirmed = await createInstallationVisit(db, order.id, { scopeIds: [wallpaperScope.id] }, 'owner-user')
+    await changeInstallationVisit(db, order.id, confirmed.id, confirmedInput(1, [wallpaperScope.id]), 'owner-user')
+    const completed = await changeInstallationVisit(db, order.id, confirmed.id, { action: 'COMPLETE', expectedRevision: 2 }, 'owner-user')
+    const auditCount = await db.installationAuditEvent.count({ where: { orderId: order.id } })
+    const outboxCount = await db.integrationOutbox.count({ where: { visit: { orderId: order.id } } })
+
+    await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [employees.alsoReady], 'owner-user')
+
+    expect(await listInstallationVisits(db, order.id)).toMatchObject([
+      { id: draft.id, status: 'DRAFT', revision: 1, participants: [{ employeeId: employees.alsoReady }] },
+      { id: completed.id, status: 'COMPLETED', revision: 3, participants: [{ employeeId: employees.alsoReady }] },
+    ])
+    expect(await db.integrationOutbox.count({ where: { visit: { orderId: order.id } } })).toBe(outboxCount)
+    expect(await db.installationAuditEvent.count({ where: { orderId: order.id, action: 'INSTALLATION_VISIT_PARTICIPANTS_CHANGED' } })).toBe(0)
+    expect(await db.installationAuditEvent.count({ where: { orderId: order.id } })).toBe(auditCount + 1)
   })
 
   it('rejects foreign scopes and changes to archived orders without committing visit records', async () => {

@@ -1,4 +1,8 @@
 import { Prisma, PrismaClient } from '@/generated/prisma'
+import {
+  InstallationVisitParticipantsUnavailableError,
+  refreshConfirmedInstallationVisitsAfterScopeAssignment,
+} from './visit-service'
 
 type InstallationDb = PrismaClient | Prisma.TransactionClient
 
@@ -55,25 +59,41 @@ export async function setScopeInstallerAssignments(
 
   return db.$transaction(async (tx) => {
     await assertScopeBelongsToOrder(tx, orderId, scopeId)
-    await assertActiveEmployees(tx, normalizedEmployeeIds)
-
     const before = await tx.installationScopeAssignment.findMany({
       where: { orderId, scopeId },
       select: { employeeId: true },
       orderBy: { employeeId: 'asc' },
     })
+    const beforeEmployeeIds = before.map((assignment) => assignment.employeeId)
+    if (beforeEmployeeIds.length === normalizedEmployeeIds.length
+      && beforeEmployeeIds.every((employeeId, index) => employeeId === normalizedEmployeeIds[index])) {
+      return { scopeId, employeeIds: normalizedEmployeeIds }
+    }
+
+    await assertActiveEmployees(tx, normalizedEmployeeIds)
+
     await tx.installationScopeAssignment.deleteMany({ where: { orderId, scopeId } })
     if (normalizedEmployeeIds.length > 0) {
       await tx.installationScopeAssignment.createMany({
         data: normalizedEmployeeIds.map((employeeId) => ({ orderId, scopeId, employeeId, createdById: actorId })),
       })
     }
+    try {
+      await refreshConfirmedInstallationVisitsAfterScopeAssignment(tx, orderId, scopeId, actorId)
+    } catch (error) {
+      if (error instanceof InstallationVisitParticipantsUnavailableError) {
+        throw new InstallationScopeAssignmentValidationError(
+          'Nie można zmienić ekipy: potwierdzona wizyta musi zachować co najmniej jednego aktywnego instalatora z adresem e-mail.',
+        )
+      }
+      throw error
+    }
     await tx.installationAuditEvent.create({
       data: {
         orderId,
         actorId,
         action: 'INSTALLATION_SCOPE_ASSIGNMENTS_CHANGED',
-        beforeJson: JSON.stringify({ scopeId, employeeIds: before.map((assignment) => assignment.employeeId) }),
+        beforeJson: JSON.stringify({ scopeId, employeeIds: beforeEmployeeIds }),
         afterJson: JSON.stringify({ scopeId, employeeIds: normalizedEmployeeIds }),
       },
     })

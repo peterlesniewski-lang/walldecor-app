@@ -87,6 +87,14 @@ export class InstallationVisitNotFoundError extends Error {
   }
 }
 
+/** Raised only inside a transaction when a team edit would invalidate a confirmed visit. */
+export class InstallationVisitParticipantsUnavailableError extends Error {
+  constructor() {
+    super('Potwierdzona wizyta musi mieć co najmniej jednego aktywnego instalatora z adresem e-mail.')
+    this.name = 'InstallationVisitParticipantsUnavailableError'
+  }
+}
+
 function missingCalendarState(): InstallationVisitSyncState {
   return {
     status: 'NOT_REQUESTED',
@@ -272,6 +280,62 @@ async function enqueueCalendarOperation(
       status: 'PENDING',
     },
   })
+}
+
+/**
+ * Keeps a confirmed visit and its calendar projection inseparable from a real
+ * scope-team replacement. The caller owns the surrounding transaction, so a
+ * missing ready participant rolls back both the assignment and every update
+ * below. This module deliberately has no dependency on the assignment service.
+ */
+export async function refreshConfirmedInstallationVisitsAfterScopeAssignment(
+  db: Prisma.TransactionClient,
+  orderId: string,
+  scopeId: string,
+  actorId: string,
+) {
+  const visits = await db.installationVisit.findMany({
+    where: {
+      orderId,
+      status: 'CONFIRMED',
+      scopes: { some: { scopeId } },
+    },
+    select: {
+      id: true,
+      revision: true,
+      scopes: { select: { scopeId: true } },
+    },
+  })
+
+  for (const visit of visits) {
+    const scopeIds = visit.scopes.map((scope) => scope.scopeId)
+    const participants = await participantsForScopeIds(db, orderId, scopeIds)
+    if (!participants.some((participant) => participant.inviteStatus === 'READY')) {
+      throw new InstallationVisitParticipantsUnavailableError()
+    }
+
+    const claimed = await db.installationVisit.updateMany({
+      where: { id: visit.id, orderId, status: 'CONFIRMED', revision: visit.revision },
+      data: { revision: { increment: 1 } },
+    })
+    if (claimed.count !== 1) throw new InstallationVisitRevisionConflictError()
+
+    const revision = visit.revision + 1
+    await enqueueCalendarOperation(db, visit.id, revision, 'CALENDAR_UPSERT')
+    await db.installationAuditEvent.create({
+      data: {
+        orderId,
+        actorId,
+        action: 'INSTALLATION_VISIT_PARTICIPANTS_CHANGED',
+        afterJson: JSON.stringify({
+          visitId: visit.id,
+          scopeId,
+          revision,
+          participants,
+        }),
+      },
+    })
+  }
 }
 
 function actionAuditName(action: UpdateInstallationVisitActionInput['action']): string {
