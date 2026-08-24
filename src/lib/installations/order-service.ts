@@ -11,6 +11,11 @@ import { canViewInstallationOrder, type InstallationOrderViewer } from './access
 
 type InstallationDb = PrismaClient | Prisma.TransactionClient
 type InstallationOrderListOptions = { includeArchived?: boolean; viewer?: InstallationOrderViewer }
+type InstallationCalendarSummary = {
+  nextVisitAt: string | null
+  visitStatus: 'NONE' | 'DRAFT' | 'CONFIRMED'
+  syncStatus: 'NOT_REQUESTED' | 'PENDING' | 'SYNCED' | 'ATTENTION'
+}
 
 const orderInclude = {
   client: true,
@@ -46,7 +51,37 @@ const orderListSelect = {
   },
   formSubmissions: { select: { status: true, draftKey: true }, orderBy: { revisionNumber: 'desc' } },
   clarifications: { where: { status: 'OPEN', isBlocking: true }, select: { id: true } },
+  visits: {
+    where: { status: { not: 'CANCELLED' } },
+    orderBy: [
+      { startsAt: { sort: 'asc', nulls: 'last' } },
+      { createdAt: 'asc' },
+    ],
+    take: 1,
+    select: {
+      startsAt: true,
+      status: true,
+      syncStates: {
+        where: { kind: 'GOOGLE_CALENDAR' },
+        select: { status: true },
+        take: 1,
+      },
+    },
+  },
 } satisfies Prisma.InstallationOrderSelect
+
+function summarizeNextInstallationVisit(
+  visit: { startsAt: Date | null; status: string; syncStates: Array<{ status: string }> } | undefined,
+): InstallationCalendarSummary {
+  const syncStatus = visit?.syncStates[0]?.status
+  return {
+    nextVisitAt: visit?.startsAt?.toISOString() ?? null,
+    visitStatus: visit?.status === 'DRAFT' ? 'DRAFT' : visit?.status === 'CONFIRMED' ? 'CONFIRMED' : 'NONE',
+    syncStatus: syncStatus === 'PENDING' || syncStatus === 'SYNCED' || syncStatus === 'ATTENTION'
+      ? syncStatus
+      : 'NOT_REQUESTED',
+  }
+}
 
 export class InstallationOrderNotFoundError extends Error {
   constructor() {
@@ -220,6 +255,7 @@ export async function listInstallationOrders(db: InstallationDb, options: Instal
     : orders
 
   return visibleOrders.map((order) => ({
+    calendarSummary: summarizeNextInstallationVisit(order.visits[0]),
     id: order.id,
     number: order.number,
     status: order.status,
