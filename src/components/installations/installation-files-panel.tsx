@@ -5,7 +5,7 @@ import { FileDown, RotateCcw, Trash2, Upload } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 
 type StoredFile = {
-  id: string; purpose: string; questionKey: string | null; roomId: string | null; scopeId: string | null
+  id: string; formSubmissionId: string | null; purpose: string; questionKey: string | null; roomId: string | null; scopeId: string | null
   originalFilename: string; status: string; byteSize: number | null; softDeletedAt: Date | string | null
   remoteDeleteStatus: string; remoteDeleteAttemptCount: number; remoteDeleteLastError: string | null
   remoteDeleteNextAttemptAt: Date | string | null; remoteDeletedAt: Date | string | null

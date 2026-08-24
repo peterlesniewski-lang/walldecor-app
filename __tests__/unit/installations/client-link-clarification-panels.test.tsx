@@ -82,14 +82,25 @@ describe('installation detail client-link and clarification panels', () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({ clarification: { id: 'clarification-1', status: 'RESOLVED' } }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
     render(<InstallationClarificationPanel orderId="order-1" canEdit readiness={{ isReady: false, openBlockingCount: 1, submittedCount: 1 }} clarifications={[{
-      id: 'clarification-1', status: 'OPEN', isBlocking: true, questionKey: 'glify', reason: 'Klient wskazał odpowiedź „Nie wiem”.',
+      id: 'clarification-1', status: 'OPEN', isBlocking: true, questionLabel: 'Czy są glify?', reason: 'Klient wskazał odpowiedź „Nie wiem”.',
       revisionNumber: 1, answer: 'UNKNOWN', createdAt: '2026-08-22T00:00:00.000Z', resolution: null, resolutionNote: null, evidenceReference: null,
     }]} />)
 
     expect(screen.getByText('Wymaga ustalenia przed terminem montażu')).not.toBeNull()
-    await user.type(screen.getByLabelText('Ustalenie dla glify'), 'Glif ma 12 cm')
-    await user.type(screen.getByLabelText('Notatka dla glify'), 'Potwierdzone telefonicznie')
+    await user.type(screen.getByLabelText('Ustalenie dla Czy są glify?'), 'Glif ma 12 cm')
+    await user.type(screen.getByLabelText('Notatka dla Czy są glify?'), 'Potwierdzone telefonicznie')
     await user.click(screen.getByRole('button', { name: 'Oznacz jako ustalone' }))
     expect(fetchMock).toHaveBeenCalledWith('/api/installations/order-1/clarifications/clarification-1', expect.objectContaining({ method: 'PATCH' }))
+  })
+
+  it('uses the snapshot question label rather than a technical key in clarification text and fields', () => {
+    render(<InstallationClarificationPanel orderId="order-1" canEdit readiness={{ isReady: false, openBlockingCount: 1, submittedCount: 1 }} clarifications={[{
+      id: 'clarification-readable', status: 'OPEN', isBlocking: true, questionLabel: 'Czy są glify?', reason: 'Klient wskazał odpowiedź „Nie wiem”.',
+      revisionNumber: 1, answer: 'Nie wiem', createdAt: '2026-08-22T00:00:00.000Z', resolution: null, resolutionNote: null, evidenceReference: null,
+    }]} /> as never)
+
+    expect(screen.getByText('Czy są glify? · wersja 1')).not.toBeNull()
+    expect(screen.getByLabelText('Ustalenie dla Czy są glify?')).not.toBeNull()
+    expect(screen.queryByText('glify')).toBeNull()
   })
 })

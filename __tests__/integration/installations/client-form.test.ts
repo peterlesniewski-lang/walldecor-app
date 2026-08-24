@@ -18,6 +18,8 @@ import {
 import {
   autosaveClientForm,
   getInstallationReadiness,
+  listInstallationClarifications,
+  listInstallationFormRevisions,
   resolveInstallationClarification,
   startClientFormCorrection,
   submitClientForm,
@@ -191,6 +193,22 @@ describe('client form uses a real SQLite revision history', () => {
     expect(revisions.map(({ revisionNumber, status }) => ({ revisionNumber, status }))).toEqual([{ revisionNumber: 1, status: 'SUBMITTED' }, { revisionNumber: 2, status: 'SUBMITTED' }])
     expect(revisions[1].revisionOfId).toBe(revisions[0].id)
     expect(originalAnswer).toEqual([{ normalizedValue: 'UNKNOWN' }])
+  })
+
+  it('projects each submitted revision and clarification from its immutable snapshot', async () => {
+    const revisions = await listInstallationFormRevisions(db, orderId)
+    const firstRevision = revisions.find((revision) => revision.revisionNumber === 1)
+    const clarifications = await listInstallationClarifications(db, orderId)
+    const clarification = clarifications.find((item) => item.revisionNumber === 1)
+
+    expect(firstRevision).toMatchObject({
+      formSubmissionId: expect.any(String),
+      questions: expect.arrayContaining([expect.objectContaining({ label: 'Czy są glify?' })]),
+      answers: expect.arrayContaining([expect.objectContaining({ label: 'Czy są glify?', displayValue: 'Nie wiem' })]),
+    })
+    expect(firstRevision?.questions.map((question) => question.label)).not.toContain('Ile cm ma glif?')
+    expect(clarification).toMatchObject({ questionLabel: 'Czy są glify?', answer: 'Nie wiem' })
+    expect(clarification).not.toHaveProperty('questionKey')
   })
 
   it('removes recursively hidden answers and does not require a hidden file on submit', async () => {

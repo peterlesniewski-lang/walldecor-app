@@ -10,6 +10,7 @@ import { RoomScopeEditor } from './room-scope-editor'
 import { InstallationFormSnapshotPanel } from './form-snapshot-panel'
 import { ClientLinkPanel, type InstallationClientLinkStatus } from './client-link-panel'
 import { InstallationClarificationPanel, type InstallationClarificationView } from './installation-clarification-panel'
+import { InstallationFormRevisionPanel } from './form-revision-panel'
 import { OwnershipPanel } from './ownership-panel'
 import { VisitFeePanel } from './visit-fee-panel'
 import { InstallationFilesPanel } from './installation-files-panel'
@@ -52,7 +53,7 @@ export function InstallationOrderDetail({
   clientLinks?: InstallationClientLinkStatus[]
   clarifications?: InstallationClarificationView[]
   readiness?: { isReady: boolean; openBlockingCount: number; submittedCount: number }
-  formRevisions?: Parameters<typeof InstallationClarificationPanel>[0]['formRevisions']
+  formRevisions?: Parameters<typeof InstallationFormRevisionPanel>[0]['revisions']
   ownership?: Awaited<ReturnType<typeof import('@/lib/installations/delegation-service').getInstallationOwnershipView>> | null
   visitFee?: Awaited<ReturnType<typeof import('@/lib/installations/delegation-service').getInstallationVisitFeeView>> | null
   canManageGovernance?: boolean
@@ -138,7 +139,8 @@ export function InstallationOrderDetail({
       <RoomScopeEditor orderId={order.id} initialRooms={rooms} catalog={catalog} canEdit={canEditActiveOrder} />
       <InstallationFilesPanel orderId={order.id} initialFiles={files} mismatches={mismatches} rooms={rooms.map((room) => ({ id: room.id, name: room.name, scopes: room.scopes.map((scope) => ({ id: scope.id, name: scope.name })) }))} canEdit={canEditActiveOrder} />
       {canEditActiveOrder && <ClientLinkPanel orderId={order.id} initialLinks={clientLinks} canEdit canGenerate={formSnapshot !== null} />}
-      {canEditActiveOrder && <InstallationClarificationPanel orderId={order.id} clarifications={clarifications} readiness={readiness} canEdit formRevisions={formRevisions} />}
+      {canEditActiveOrder && <InstallationClarificationPanel orderId={order.id} clarifications={clarifications} readiness={readiness} canEdit />}
+      {canEditActiveOrder && <InstallationFormRevisionPanel revisions={formRevisions} files={files} />}
       {error && <p role="alert" className="mt-4 text-sm text-red-700">{error}</p>}
     </div>
   )

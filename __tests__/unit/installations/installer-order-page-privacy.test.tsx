@@ -11,6 +11,8 @@ const mocks = vi.hoisted(() => ({
   listClarifications: vi.fn(),
   listRevisions: vi.fn(),
   getReadiness: vi.fn(),
+  listFiles: vi.fn(),
+  listMismatches: vi.fn(),
   canView: vi.fn(),
   canEdit: vi.fn(),
   canArchive: vi.fn(),
@@ -40,6 +42,10 @@ vi.mock('@/lib/installations/form-service', () => ({
   listInstallationFormRevisions: mocks.listRevisions,
 }))
 vi.mock('@/lib/installations/readiness', () => ({ getInstallationReadiness: mocks.getReadiness }))
+vi.mock('@/lib/installation-media/service', () => ({
+  listInstallationFiles: mocks.listFiles,
+  listInstallationMismatchesForEvidence: mocks.listMismatches,
+}))
 vi.mock('@/components/installations/order-detail', () => ({ InstallationOrderDetail: () => null }))
 
 import InstallationOrderPage from '@/app/(dashboard)/installations/[id]/page'
@@ -66,11 +72,14 @@ describe('installer installation detail privacy', () => {
     expect(mocks.listClarifications).not.toHaveBeenCalled()
     expect(mocks.listRevisions).not.toHaveBeenCalled()
     expect(mocks.getReadiness).not.toHaveBeenCalled()
+    expect(mocks.listFiles).not.toHaveBeenCalled()
+    expect(mocks.listMismatches).not.toHaveBeenCalled()
     expect(mocks.getSnapshot).not.toHaveBeenCalled()
     expect(mocks.listCatalog).not.toHaveBeenCalled()
     expect(mocks.listTemplates).not.toHaveBeenCalled()
     expect(result.props.clientLinks).toEqual([])
     expect(result.props.clarifications).toEqual([])
     expect(result.props.formRevisions).toEqual([])
+    expect(result.props.files).toEqual([])
   })
 })

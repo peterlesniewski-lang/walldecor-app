@@ -429,7 +429,7 @@ export async function listInstallationFiles(db: InstallationDb, orderId: string)
       ],
     },
     select: {
-      id: true, purpose: true, questionKey: true, roomId: true, scopeId: true,
+      id: true, formSubmissionId: true, purpose: true, questionKey: true, roomId: true, scopeId: true,
       originalFilename: true, contentType: true, byteSize: true, sha256: true,
       status: true, source: true, softDeletedAt: true, remoteDeleteStatus: true,
       remoteDeleteAttemptCount: true, remoteDeleteLastError: true,

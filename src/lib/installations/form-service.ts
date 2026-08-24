@@ -9,6 +9,11 @@ import {
   type FormAnswerValue,
   type FormQuestion,
 } from './form-visibility'
+import {
+  formatHistoricalAnswer,
+  formatHistoricalRevisionContent,
+  parseHistoricalSnapshotQuestions,
+} from './form-history'
 
 export { getInstallationReadiness } from './readiness'
 export { evaluateVisibleFormQuestions } from './form-visibility'
@@ -636,27 +641,68 @@ export async function startClientFormCorrection(db: PrismaClient, token: string)
 export async function listInstallationClarifications(db: InstallationDb, orderId: string) {
   const clarifications = await db.installationClarification.findMany({
     where: { orderId },
-    include: { sourceSubmission: { select: { revisionNumber: true, answers: { select: { questionKey: true, normalizedValue: true } } } } },
+    select: {
+      id: true,
+      status: true,
+      isBlocking: true,
+      reason: true,
+      createdAt: true,
+      resolution: true,
+      resolutionNote: true,
+      evidenceReference: true,
+      questionKey: true,
+      sourceSubmission: {
+        select: {
+          revisionNumber: true,
+          formSnapshot: { select: { schemaJson: true } },
+          answers: { select: { questionKey: true, questionType: true, valueJson: true, normalizedValue: true, isUnknown: true } },
+        },
+      },
+    },
     orderBy: [{ status: 'asc' }, { createdAt: 'asc' }],
   })
-  return clarifications.map(({ sourceSubmission, ...clarification }) => ({
-    ...clarification,
-    revisionNumber: sourceSubmission.revisionNumber,
-    answer: sourceSubmission.answers.find((answer) => answer.questionKey === clarification.questionKey)?.normalizedValue ?? null,
-  }))
+  return clarifications.map((clarification) => {
+    const question = parseHistoricalSnapshotQuestions(clarification.sourceSubmission.formSnapshot.schemaJson)
+      .find((candidate) => candidate.key === clarification.questionKey)
+    const storedAnswer = clarification.sourceSubmission.answers
+      .find((answer) => answer.questionKey === clarification.questionKey)
+    const answer = storedAnswer ? formatHistoricalAnswer(question, storedAnswer) : undefined
+    return {
+      id: clarification.id,
+      status: clarification.status,
+      isBlocking: clarification.isBlocking,
+      reason: clarification.reason,
+      createdAt: clarification.createdAt,
+      resolution: clarification.resolution,
+      resolutionNote: clarification.resolutionNote,
+      evidenceReference: clarification.evidenceReference,
+      revisionNumber: clarification.sourceSubmission.revisionNumber,
+      questionLabel: question?.label ?? answer?.label ?? 'Pytanie archiwalne',
+      answer: answer?.displayValue ?? null,
+    }
+  })
 }
 
 export async function listInstallationFormRevisions(db: InstallationDb, orderId: string) {
   const submissions = await db.installationFormSubmission.findMany({
     where: { orderId },
-    select: { revisionNumber: true, status: true, submittedAt: true, answers: { select: { questionKey: true, normalizedValue: true, isUnknown: true }, orderBy: { questionKey: 'asc' } } },
+    select: {
+      id: true,
+      revisionNumber: true,
+      status: true,
+      submittedAt: true,
+      formSnapshot: { select: { schemaJson: true, templateVersion: true } },
+      answers: { select: { questionKey: true, questionType: true, valueJson: true, normalizedValue: true, isUnknown: true }, orderBy: { questionKey: 'asc' } },
+    },
     orderBy: { revisionNumber: 'asc' },
   })
   return submissions.map((submission) => ({
+    formSubmissionId: submission.id,
     revisionNumber: submission.revisionNumber,
     status: submission.status,
     submittedAt: submission.submittedAt,
-    answers: submission.answers.map((answer) => ({ ...answer })),
+    templateVersion: submission.formSnapshot.templateVersion,
+    ...formatHistoricalRevisionContent(submission.formSnapshot.schemaJson, submission.answers),
   }))
 }
 

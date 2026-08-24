@@ -60,6 +60,23 @@ describe('Task 2 corrective UI invariants', () => {
     expect(screen.queryByText('Wymaga ustalenia przed terminem montażu')).toBeNull()
     expect(screen.queryByText('wewnętrzny-dowód')).toBeNull()
     expect(screen.queryByText('Wersje odpowiedzi klienta')).toBeNull()
+    expect(screen.queryByRole('button', { name: /Podgląd jak klient/ })).toBeNull()
+  })
+
+  it('renders readable form history separately for a coordinator detail view', () => {
+    render(createElement(InstallationOrderDetail, {
+      order: { ...archivedOrder, id: 'history-order', archivedAt: null, status: 'NEW' },
+      employees: [], canEdit: true, rooms, catalog, files: [],
+      formRevisions: [{
+        formSubmissionId: 'history-submission', revisionNumber: 1, status: 'SUBMITTED', submittedAt: '2026-08-23T10:30:00.000Z', templateVersion: 1,
+        questions: [{ key: 'glify_history', type: 'YES_NO_UNKNOWN', label: 'Czy są glify?' }],
+        answers: [{ questionKey: 'glify_history', label: 'Czy są glify?', type: 'YES_NO_UNKNOWN', value: 'NO', displayValue: 'Nie', isUnknown: false }],
+      }],
+    } as never))
+
+    expect(screen.getByRole('heading', { name: 'Wersje odpowiedzi klienta' })).toBeTruthy()
+    expect(screen.getByText('Czy są glify?')).toBeTruthy()
+    expect(screen.queryByText('glify_history')).toBeNull()
   })
 
   it('lets an authorized editor pin exactly one published form snapshot from the order detail', async () => {

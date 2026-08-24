@@ -135,6 +135,11 @@ describe('private client files', () => {
     await expect(db.installationFormSubmission.findUnique({ where: { draftKey: orderId } })).resolves.toBeNull()
     await expect(db.installationFile.count({ where: { orderId } })).resolves.toBe(1)
     await expect(db.mobileUploadHandoff.count({ where: { orderId } })).resolves.toBe(2)
+    expect((await listInstallationFiles(db, orderId)).find((file) => file.id === created.id)).toMatchObject({
+      formSubmissionId: submitted.id,
+      questionKey: 'zdjecie-sciany',
+      originalFilename: 'sciana.png',
+    })
 
     const correction = await startClientFormCorrection(db, token)
     expect(correction).toMatchObject({ revisionNumber: 2, status: 'DRAFT' })
