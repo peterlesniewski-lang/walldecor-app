@@ -26,8 +26,8 @@ const draftVisit = {
   syncState: { status: 'NOT_REQUESTED', externalId: null, externalUrl: null, externalEtag: null, lastErrorCode: null, lastErrorMessage: null, lastAttemptAt: null, lastSyncedAt: null },
 }
 
-function jsonResponse(value: unknown, ok = true) {
-  return { ok, json: async () => value }
+function jsonResponse(value: unknown, ok = true, status = ok ? 200 : 400) {
+  return { ok, status, json: async () => value }
 }
 
 describe('InstallationVisitsPanel', () => {
@@ -78,13 +78,14 @@ describe('InstallationVisitsPanel', () => {
       orderId: 'order-1', scopes, employees, canEdit: true, canForceOverwrite: false,
       visits: [{
         ...draftVisit, id: 'visit-attention', status: 'CONFIRMED', startsAt: '2026-09-14T06:00:00.000Z', endsAt: '2026-09-14T14:00:00.000Z', scopeIds: ['scope-salon-tapety'],
-        syncState: { ...draftVisit.syncState, status: 'ATTENTION', externalUrl: 'https://calendar.google.test/event' },
+        syncState: { ...draftVisit.syncState, status: 'ATTENTION', externalUrl: 'https://calendar.google.test/event', lastSyncedAt: '2026-09-14T06:00:00.000Z' },
       }],
     }))
 
     expect(screen.getByText('Wymaga uwagi')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: /Wymaga uwagi/ }))
     expect(screen.getByRole('link', { name: 'Otwórz w Google Calendar' }).getAttribute('href')).toBe('https://calendar.google.test/event')
+    expect(screen.getByText('Ostatnia synchronizacja: 14.09.2026, 08:00')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Ponów synchronizację' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledWith(
       '/api/installations/order-1/visits/visit-attention/calendar',
@@ -104,15 +105,29 @@ describe('InstallationVisitsPanel', () => {
     expect(screen.getByRole('button', { name: 'Wymuś nadpisanie w Google Calendar' })).toBeTruthy()
   })
 
-  it('allows confirmation immediately after saving a changed team for a selected scope', async () => {
+  it('blocks stale visit actions after saving a crew until fresh props provide the bumped revision', async () => {
     const user = userEvent.setup()
-    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ employeeIds: ['installer-anna'] }))
+    const confirmed = {
+      ...draftVisit,
+      id: 'visit-confirmed-after-team-change',
+      status: 'CONFIRMED',
+      revision: 4,
+      startsAt: '2026-09-14T06:00:00.000Z',
+      endsAt: '2026-09-14T14:00:00.000Z',
+      scopeIds: ['scope-salon-tapety'],
+    }
+    const refreshedVisit = { ...confirmed, revision: 5 }
+    const refreshedScopes = scopes.map((scope) => scope.id === 'scope-salon-tapety' ? { ...scope, installerIds: ['installer-anna'] } : scope)
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ employeeIds: ['installer-anna'] }))
+      .mockResolvedValueOnce(jsonResponse({ ...refreshedVisit, revision: 6 }))
     vi.stubGlobal('fetch', fetchMock)
-    render(createElement(InstallationVisitsPanel, {
+    const view = render(createElement(InstallationVisitsPanel, {
       orderId: 'order-1', scopes, employees, canEdit: true, canForceOverwrite: false,
-      visits: [{ ...draftVisit, scopeIds: ['scope-salon-tapety'] }],
+      visits: [confirmed],
     }))
 
+    await user.click(screen.getByRole('button', { name: /Potwierdzona/ }))
     await user.click(screen.getByRole('checkbox', { name: 'Marek Montaż dla Salon — Tapety' }))
     await user.click(screen.getByRole('button', { name: 'Zapisz ekipę' }))
 
@@ -120,7 +135,64 @@ describe('InstallationVisitsPanel', () => {
       '/api/installations/order-1/scope-assignments/scope-salon-tapety',
       expect.objectContaining({ method: 'PUT' }),
     ))
-    expect(screen.getByRole('button', { name: 'Potwierdź i wyślij zaproszenia' })).toHaveProperty('disabled', false)
+    const scheduleButton = screen.getByRole('button', { name: 'Zapisz zmianę terminu i wyślij aktualizacje' })
+    expect(scheduleButton).toHaveProperty('disabled', true)
+    expect(screen.getByRole('checkbox', { name: 'Anna Montaż dla Salon — Tapety' })).toHaveProperty('disabled', true)
+    await user.click(scheduleButton)
+    expect(fetchMock).toHaveBeenCalledTimes(1)
+
+    view.rerender(createElement(InstallationVisitsPanel, {
+      orderId: 'order-1', scopes: refreshedScopes, employees, canEdit: true, canForceOverwrite: false,
+      visits: [refreshedVisit],
+    }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Zapisz zmianę terminu i wyślij aktualizacje' })).toHaveProperty('disabled', false))
+    await user.click(screen.getByRole('button', { name: 'Zapisz zmianę terminu i wyślij aktualizacje' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(JSON.parse((fetchMock.mock.calls[1]?.[1] as RequestInit).body as string)).toMatchObject({
+      action: 'CHANGE_SCHEDULE',
+      expectedRevision: 5,
+    })
+  })
+
+  it('cancels a draft with its current expected revision', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ...draftVisit, status: 'CANCELLED', revision: 2 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(createElement(InstallationVisitsPanel, {
+      orderId: 'order-1', scopes, employees, canEdit: true, canForceOverwrite: false, visits: [draftVisit],
+    }))
+
+    await user.click(screen.getByRole('button', { name: 'Odwołaj szkic' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    expect(JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({
+      action: 'CANCEL',
+      expectedRevision: 1,
+    })
+  })
+
+  it('refreshes and explains a 409 revision conflict in Polish', async () => {
+    const user = userEvent.setup()
+    const confirmed = {
+      ...draftVisit,
+      id: 'visit-conflict-refresh',
+      status: 'CONFIRMED',
+      revision: 4,
+      startsAt: '2026-09-14T06:00:00.000Z',
+      endsAt: '2026-09-14T14:00:00.000Z',
+      scopeIds: ['scope-salon-tapety'],
+    }
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse({ error: 'Conflict' }, false, 409)))
+    render(createElement(InstallationVisitsPanel, {
+      orderId: 'order-1', scopes, employees, canEdit: true, canForceOverwrite: false, visits: [confirmed],
+    }))
+
+    await user.click(screen.getByRole('button', { name: /Potwierdzona/ }))
+    await user.click(screen.getByRole('button', { name: 'Zapisz zmianę terminu i wyślij aktualizacje' }))
+
+    expect((await screen.findByRole('alert')).textContent).toContain('Dane wizyty lub ekipy zmieniły się. Odświeżamy kartę — spróbuj ponownie za chwilę.')
+    expect(mocks.refresh).toHaveBeenCalled()
   })
 
   it('changes a confirmed schedule without exposing or sending SAVE_DRAFT', async () => {
