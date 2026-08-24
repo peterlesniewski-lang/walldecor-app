@@ -9,9 +9,36 @@ export class InstallationVisitValidationError extends Error {
 
 const invalidDateMessage = 'Podaj poprawną datę i godzinę.'
 
+const MAX_VISIT_NOTE_LENGTH = 4_000
+const MAX_SCOPE_ID_LENGTH = 191
+const rfc3339InstantPattern = /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})$/
+
+function isValidRfc3339Instant(value: string): boolean {
+  const match = rfc3339InstantPattern.exec(value)
+  if (!match) return false
+
+  const [, yearValue, monthValue, dayValue, hourValue, minuteValue, secondValue] = match
+  const year = Number(yearValue)
+  const month = Number(monthValue)
+  const day = Number(dayValue)
+  const hour = Number(hourValue)
+  const minute = Number(minuteValue)
+  const second = Number(secondValue)
+  const daysInMonth = month === 2
+    ? (year % 4 === 0 && (year % 100 !== 0 || year % 400 === 0) ? 29 : 28)
+    : [4, 6, 9, 11].includes(month) ? 30 : 31
+
+  return month >= 1 && month <= 12
+    && day >= 1 && day <= daysInMonth
+    && hour <= 23
+    && minute <= 59
+    && second <= 59
+    && Number.isFinite(new Date(value).getTime())
+}
+
 const visitDateSchema = z.union([
-  z.date(),
-  z.string().trim().min(1, invalidDateMessage).pipe(z.coerce.date()),
+  z.date().refine((value) => Number.isFinite(value.getTime()), invalidDateMessage),
+  z.string().refine(isValidRfc3339Instant, invalidDateMessage).transform((value) => new Date(value)),
 ])
 
 const optionalVisitDateSchema = z.preprocess(
@@ -21,16 +48,16 @@ const optionalVisitDateSchema = z.preprocess(
 
 const optionalTrimmedNoteSchema = z.preprocess(
   (value) => typeof value === 'string' && value.trim() === '' ? undefined : value,
-  z.string().trim().min(1).optional(),
+  z.string().trim().min(1).max(MAX_VISIT_NOTE_LENGTH, 'Notatka może mieć maksymalnie 4 000 znaków.').optional(),
 )
 
 const nullableOptionalTrimmedNoteSchema = z.preprocess(
   (value) => typeof value === 'string' && value.trim() === '' ? null : value,
-  z.string().trim().min(1).nullish(),
+  z.string().trim().min(1).max(MAX_VISIT_NOTE_LENGTH, 'Notatka może mieć maksymalnie 4 000 znaków.').nullish(),
 )
 
 const scopeIdsSchema = z.array(
-  z.string().trim().min(1, 'Wybierz poprawny zakres prac.'),
+  z.string().trim().min(1, 'Wybierz poprawny zakres prac.').max(MAX_SCOPE_ID_LENGTH, 'Identyfikator zakresu prac może mieć maksymalnie 191 znaków.'),
 ).transform((scopeIds) => [...new Set(scopeIds)]).pipe(
   z.array(z.string()).max(100, 'Wizyta może obejmować maksymalnie 100 zakresów prac.'),
 )

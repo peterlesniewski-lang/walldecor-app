@@ -30,22 +30,34 @@ describe('installation visit Warsaw time boundary', () => {
     '2026-02-30T08:00',
     'not-a-date',
   ])('rejects a malformed local date-time: %s', (value) => {
-    expect(() => parseWarsawLocalDateTime(value)).toThrow(InstallationVisitValidationError)
-    try {
-      parseWarsawLocalDateTime(value)
-    } catch (error) {
-      expect(error).toMatchObject({
-        fieldErrors: { startsAt: 'Podaj poprawny termin wizyty w czasie Warszawy.' },
-      })
-    }
+    expectTimeValidationField(() => parseWarsawLocalDateTime(value), 'form')
   })
 
   it('rejects a nonexistent Warsaw wall time during the DST spring transition', () => {
     expect(() => parseWarsawLocalDateTime('2026-03-29T02:30')).toThrow(InstallationVisitValidationError)
   })
 
-  it('rejects invalid instants passed to formatters', () => {
-    expect(() => formatWarsawDateTime(new Date('invalid'))).toThrow(InstallationVisitValidationError)
-    expect(() => formatWarsawDateTimeInput('not-a-date')).toThrow(InstallationVisitValidationError)
+  it('rejects an ambiguous Warsaw wall time during the DST autumn transition', () => {
+    expectTimeValidationField(() => parseWarsawLocalDateTime('2026-10-25T02:30', 'endsAt'), 'endsAt')
+  })
+
+  it('attributes invalid local input to the field supplied by the caller', () => {
+    expectTimeValidationField(() => parseWarsawLocalDateTime('not-a-date', 'startsAt'), 'startsAt')
+  })
+
+  it('attributes invalid formatter input to the form', () => {
+    expectTimeValidationField(() => formatWarsawDateTime(new Date('invalid')), 'form')
+    expectTimeValidationField(() => formatWarsawDateTimeInput('not-a-date'), 'form')
   })
 })
+
+function expectTimeValidationField(run: () => unknown, field: 'startsAt' | 'endsAt' | 'form') {
+  expect(run).toThrow(InstallationVisitValidationError)
+  try {
+    run()
+  } catch (error) {
+    expect(error).toMatchObject({
+      fieldErrors: { [field]: 'Podaj poprawny termin wizyty w czasie Warszawy.' },
+    })
+  }
+}
