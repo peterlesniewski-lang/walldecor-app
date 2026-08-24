@@ -11,11 +11,13 @@ const mocks = vi.hoisted(() => ({
   approveFee: vi.fn(),
   rejectFee: vi.fn(),
   editable: vi.fn(),
+  viewerFromSession: vi.fn(),
 }))
 
 vi.mock('next-auth', () => ({ getServerSession: vi.fn(async () => mocks.session) }))
 vi.mock('@/lib/auth', () => ({ authOptions: {} }))
 vi.mock('@/lib/prisma', () => ({ prisma: {} }))
+vi.mock('@/lib/installations/http-access', () => ({ installationViewerFromSession: mocks.viewerFromSession }))
 vi.mock('@/lib/installations/delegation-service', () => ({
   changeInstallationOwnership: mocks.ownership,
   createInstallationDelegation: mocks.delegation,
@@ -40,7 +42,21 @@ describe('installation governance routes', () => {
     for (const mock of [mocks.ownership, mocks.delegation, mocks.endDelegation, mocks.defaultFee, mocks.overrideFee, mocks.approveFee, mocks.rejectFee]) {
       mock.mockReset().mockResolvedValue({ id: 'result-1' })
     }
-    mocks.editable.mockReset().mockResolvedValue({ session: mocks.session })
+    mocks.viewerFromSession.mockReset().mockImplementation(async () => ({
+      role: mocks.session!.user.role,
+      employeeId: mocks.session!.user.employeeId ?? null,
+      employeeActive: mocks.session!.user.role === 'EMPLOYEE',
+      authorized: true,
+    }))
+    mocks.editable.mockReset().mockImplementation(async () => ({
+      order: { id: 'order-1' },
+      viewer: {
+        role: mocks.session!.user.role,
+        employeeId: mocks.session!.user.employeeId ?? null,
+        employeeActive: mocks.session!.user.role === 'EMPLOYEE',
+        authorized: true,
+      },
+    }))
   })
 
   it('allows only admin or manager to change named owners and create/end a delegation', async () => {
@@ -66,7 +82,6 @@ describe('installation governance routes', () => {
 
   it('lets an owner choose/request fee but reserves approval for admin or manager', async () => {
     mocks.session = { user: { id: 'owner-user', role: 'EMPLOYEE', employeeId: 'employee-owner' } }
-    mocks.editable.mockResolvedValue({ session: mocks.session })
     const defaultResult = await visitFee(request('http://test/api/installations/order-1/visit-fee', { action: 'USE_DEFAULT' }), params)
     expect(defaultResult.status).toBe(200)
     expect(mocks.defaultFee).toHaveBeenCalledWith({}, 'order-1', 'owner-user')

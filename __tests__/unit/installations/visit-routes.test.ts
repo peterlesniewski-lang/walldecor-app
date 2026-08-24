@@ -71,7 +71,15 @@ describe('installation visit routes', () => {
     mocks.session = { user: { id: 'user-1', role: 'EMPLOYEE', employeeId: 'employee-1' } }
     mocks.viewerFromSession.mockReset().mockResolvedValue({ role: 'EMPLOYEE', employeeId: 'employee-1', employeeActive: true })
     mocks.accessible.mockReset().mockResolvedValue({ order: { id: 'order-1' } })
-    mocks.editable.mockReset().mockResolvedValue({ order: { id: 'order-1' } })
+    mocks.editable.mockReset().mockImplementation(async () => ({
+      order: { id: 'order-1' },
+      viewer: {
+        role: mocks.session!.user.role,
+        employeeId: mocks.session!.user.employeeId ?? null,
+        employeeActive: mocks.session!.user.role === 'EMPLOYEE',
+        authorized: true,
+      },
+    }))
     mocks.listVisits.mockReset().mockResolvedValue([{ id: 'visit-1' }])
     mocks.createVisit.mockReset().mockResolvedValue({ id: 'visit-1' })
     mocks.changeVisit.mockReset().mockResolvedValue({ id: 'visit-1', revision: 2 })

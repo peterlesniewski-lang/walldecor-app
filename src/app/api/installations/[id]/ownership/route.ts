@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth'
 import { z } from 'zod'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { canManageInstallationCatalog } from '@/lib/installations/access'
+import { installationViewerFromSession } from '@/lib/installations/http-access'
 import {
   changeInstallationOwnership,
   createInstallationDelegation,
@@ -18,14 +20,11 @@ const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('END_DELEGATION'), delegationId: z.string().trim().min(1) }).strict(),
 ])
 
-function canManageOwnership(role: string) {
-  return role === 'ADMIN' || role === 'MANAGER'
-}
-
 export async function PATCH(req: NextRequest, { params }: Params) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!canManageOwnership(session.user.role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const viewer = await installationViewerFromSession(session)
+  if (!canManageInstallationCatalog(viewer)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const { id } = await params
   try {
     const parsed = actionSchema.safeParse(await req.json())

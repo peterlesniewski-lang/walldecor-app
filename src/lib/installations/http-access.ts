@@ -10,6 +10,12 @@ const deniedViewer: InstallationOrderViewer = {
   role: 'EMPLOYEE', employeeId: null, employeeActive: false, authorized: false,
 }
 
+type AccessibleInstallationOrder = NonNullable<Awaited<ReturnType<typeof getInstallationOrder>>>
+
+export type AccessibleInstallationOrderResult =
+  | { response: NextResponse; order?: never }
+  | { order: AccessibleInstallationOrder; response?: never }
+
 /**
  * Resolves installation access from the current database row, not JWT claims.
  * A missing, disabled, or no-longer-supported account is denied before any
@@ -37,7 +43,7 @@ export async function installationViewerFromSession(session: InstallationSession
   return { role, employeeId: user.employeeId, employeeActive: true, authorized: true }
 }
 
-export async function accessibleInstallationOrder(id: string, viewer: InstallationOrderViewer) {
+export async function accessibleInstallationOrder(id: string, viewer: InstallationOrderViewer): Promise<AccessibleInstallationOrderResult> {
   if (!isInstallationViewerAuthorized(viewer)) {
     return { response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
   }

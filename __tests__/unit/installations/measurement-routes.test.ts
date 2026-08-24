@@ -17,7 +17,7 @@ vi.mock('@/lib/prisma', () => ({ prisma: {} }))
 vi.mock('@/lib/installations/room-route-access', () => ({
   editableInstallationOrder: mocks.editable,
   roomInInstallationOrder: mocks.room,
-  measurementActorFromSession: mocks.actor,
+  measurementActorFromViewer: mocks.actor,
 }))
 vi.mock('@/lib/installations/catalog-service', () => ({
   addInstallationMeasurement: mocks.add,
@@ -35,9 +35,12 @@ const actor = { userId: 'employee-user', role: 'EMPLOYEE', employeeId: 'employee
 describe('internal measurement routes', () => {
   beforeEach(() => {
     mocks.session = null
-    mocks.editable.mockResolvedValue({ order: { id: 'order-1' } })
+    mocks.editable.mockResolvedValue({
+      order: { id: 'order-1' },
+      viewer: { role: 'EMPLOYEE', employeeId: 'employee-1', employeeActive: true, authorized: true },
+    })
     mocks.room.mockResolvedValue(room)
-    mocks.actor.mockResolvedValue(actor)
+    mocks.actor.mockReturnValue(actor)
     mocks.add.mockResolvedValue({ id: 'measurement-1', source: 'EMPLOYEE', authorId: 'employee-1' })
     mocks.update.mockResolvedValue({ id: 'measurement-1', source: 'EMPLOYEE', authorId: 'employee-1' })
   })

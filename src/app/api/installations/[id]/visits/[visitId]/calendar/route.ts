@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { z } from 'zod'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { canManageInstallationCatalog } from '@/lib/installations/access'
 import { editableInstallationOrder } from '@/lib/installations/room-route-access'
 import {
   InstallationVisitArchivedOrderError,
@@ -49,7 +50,7 @@ export async function POST(req: NextRequest, { params }: Params) {
 
   try {
     const { forceOverwrite } = calendarRequeueSchema.parse(await req.json())
-    if (forceOverwrite && session.user.role !== 'ADMIN' && session.user.role !== 'MANAGER') {
+    if (forceOverwrite && !canManageInstallationCatalog(editable.viewer)) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     }
     const visit = await requeueInstallationCalendar(prisma, id, visitId, forceOverwrite, session.user.id)
