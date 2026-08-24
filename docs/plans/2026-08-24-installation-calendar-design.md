@@ -1,7 +1,7 @@
 # Integracja kart montażu z Google Calendar — projekt
 
-**Status:** zaakceptowany przez właściciela produktu 2026-08-24  
-**Gałąź:** `feature/installation-calendar`  
+**Status:** zaakceptowany przez właściciela produktu 2026-08-24
+**Gałąź:** `feature/installation-calendar`
 **Baza:** `feature/installation-operations` (`e4af584`)
 
 ## Cel
@@ -226,4 +226,3 @@ Samo przejście testów, status kontenera lub odpowiedź endpointu zdrowia nie j
 dowodem zakończenia integracji. Dowód końcowy obejmuje rzeczywiste wydarzenie,
 aktualizację tego samego `eventId`, anulowanie, uczestników oraz stan widoczny w
 interfejsie i bazie po restarcie.
-
