@@ -11,6 +11,7 @@ import { buildCalendarEvent, type CalendarEventParticipant, type CalendarEventPr
 import { claimNextIntegrationJob, INTEGRATION_OUTBOX_LEASE_MS, type ClaimedIntegrationJob } from './integration-outbox'
 
 const CALENDAR_KIND = 'GOOGLE_CALENDAR'
+const LEASE_HEARTBEAT_MS = Math.max(1_000, Math.floor(INTEGRATION_OUTBOX_LEASE_MS / 3))
 const SAFE_MESSAGES = {
   stale: 'Pominięto nieaktualne zadanie synchronizacji kalendarza.',
   invalidData: 'Wizyta nie ma kompletnych danych wymaganych do synchronizacji kalendarza.',
@@ -213,6 +214,48 @@ async function renewCurrentLease(
   return renewed === 1 ? { ...job, lockedUntil } : null
 }
 
+type LeaseHeartbeat = {
+  stop(): Promise<ClaimedIntegrationJob | null>
+}
+
+/**
+ * Keeps the fencing token fresh throughout adapter I/O. Adapters must impose
+ * their own hard I/O timeout well below the five-minute lease; a lost or
+ * indeterminate heartbeat intentionally leaves the job PROCESSING for a
+ * later worker to reclaim rather than writing an unsafe final state.
+ */
+function startLeaseHeartbeat(db: PrismaClient, initialJob: ClaimedIntegrationJob): LeaseHeartbeat {
+  let currentJob = initialJob
+  let lostFence = false
+  let inFlight: Promise<void> | null = null
+
+  const beat = () => {
+    if (lostFence || inFlight) return
+    const renewal = (async () => {
+      try {
+        const renewed = await renewCurrentLease(db, currentJob, new Date())
+        if (renewed) currentJob = renewed
+        else lostFence = true
+      } catch {
+        lostFence = true
+      }
+    })()
+    inFlight = renewal
+    void renewal.finally(() => {
+      if (inFlight === renewal) inFlight = null
+    })
+  }
+
+  const timer = setInterval(beat, LEASE_HEARTBEAT_MS)
+  return {
+    async stop() {
+      clearInterval(timer)
+      await inFlight
+      return lostFence ? null : currentJob
+    },
+  }
+}
+
 function staleFinalState(now: Date): FinalState {
   return {
     status: 'COMPLETED', availableAt: now, completedAt: now,
@@ -342,6 +385,7 @@ export async function processInstallationCalendarJob(
   // before adapter I/O. A reclaimed or expired worker makes no external call.
   const activeJob = await renewCurrentLease(db, job, clock())
   if (!activeJob) return { outboxId: job.id, outcome: 'FENCED' }
+  const heartbeat = startLeaseHeartbeat(db, activeJob)
   try {
     let write: CalendarWriteResult | null = null
     if (activeJob.operation === 'CALENDAR_UPSERT') {
@@ -355,29 +399,33 @@ export async function processInstallationCalendarJob(
         etag: sync.externalEtag ?? null, forceOverwrite: activeJob.forceOverwrite,
       })
     }
+    const latestJob = await heartbeat.stop()
+    if (!latestJob) return { outboxId: activeJob.id, outcome: 'FENCED' }
     const finishedAt = clock()
-    const persisted = await persistFinalState(db, activeJob, finishedAt, durationMs(), successState(finishedAt, write))
-    return resultFromPersisted(activeJob.id, persisted, 'COMPLETED')
+    const persisted = await persistFinalState(db, latestJob, finishedAt, durationMs(), successState(finishedAt, write))
+    return resultFromPersisted(latestJob.id, persisted, 'COMPLETED')
   } catch (error) {
+    const latestJob = await heartbeat.stop()
+    if (!latestJob) return { outboxId: activeJob.id, outcome: 'FENCED' }
     const kind = calendarErrorKind(error)
     if (kind === 'RETRY') {
       const finishedAt = clock()
-      const persisted = await persistFinalState(db, activeJob, finishedAt, durationMs(), retryState(activeJob, finishedAt, safeRetryErrorCode(error)))
-      return resultFromPersisted(activeJob.id, persisted, 'RETRIED')
+      const persisted = await persistFinalState(db, latestJob, finishedAt, durationMs(), retryState(latestJob, finishedAt, safeRetryErrorCode(error)))
+      return resultFromPersisted(latestJob.id, persisted, 'RETRIED')
     }
     if (kind === 'CONFLICT') {
       const finishedAt = clock()
-      const persisted = await persistFinalState(db, activeJob, finishedAt, durationMs(), attentionState('ETAG_CONFLICT', SAFE_MESSAGES.conflict, finishedAt))
-      return resultFromPersisted(activeJob.id, persisted, 'ATTENTION')
+      const persisted = await persistFinalState(db, latestJob, finishedAt, durationMs(), attentionState('ETAG_CONFLICT', SAFE_MESSAGES.conflict, finishedAt))
+      return resultFromPersisted(latestJob.id, persisted, 'ATTENTION')
     }
     if (kind === 'CONFIGURATION') {
       const finishedAt = clock()
-      const persisted = await persistFinalState(db, activeJob, finishedAt, durationMs(), attentionState('CONFIGURATION_ERROR', SAFE_MESSAGES.configuration, finishedAt))
-      return resultFromPersisted(activeJob.id, persisted, 'ATTENTION')
+      const persisted = await persistFinalState(db, latestJob, finishedAt, durationMs(), attentionState('CONFIGURATION_ERROR', SAFE_MESSAGES.configuration, finishedAt))
+      return resultFromPersisted(latestJob.id, persisted, 'ATTENTION')
     }
     const finishedAt = clock()
-    const persisted = await persistFinalState(db, activeJob, finishedAt, durationMs(), attentionState('INTERNAL_ERROR', SAFE_MESSAGES.internal, finishedAt))
-    return resultFromPersisted(activeJob.id, persisted, 'ATTENTION')
+    const persisted = await persistFinalState(db, latestJob, finishedAt, durationMs(), attentionState('INTERNAL_ERROR', SAFE_MESSAGES.internal, finishedAt))
+    return resultFromPersisted(latestJob.id, persisted, 'ATTENTION')
   }
 }
 

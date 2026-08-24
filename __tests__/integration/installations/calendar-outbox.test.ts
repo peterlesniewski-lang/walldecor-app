@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterAll, beforeAll, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
 import { PrismaClient } from '@/generated/prisma'
 import {
   CalendarConflictError,
@@ -10,7 +10,7 @@ import {
   type InstallationCalendarAdapter,
 } from '@/lib/installations/calendar-adapter'
 import { FakeInstallationCalendarAdapter } from '@/lib/installations/fake-calendar-adapter'
-import { claimNextIntegrationJob } from '@/lib/installations/integration-outbox'
+import { claimNextIntegrationJob, INTEGRATION_OUTBOX_LEASE_MS } from '@/lib/installations/integration-outbox'
 import {
   processInstallationCalendarBatch,
   processInstallationCalendarJob,
@@ -383,7 +383,7 @@ describe('installation calendar outbox', () => {
     })
   })
 
-  it('allows a mutation after lease expiry and keeps the old worker from adapter I/O', async () => {
+  it('keeps a mutation blocked after lease expiry until another worker reclaims and completes it', async () => {
     const now = new Date()
     const { order, visit } = await createOutboxFixture({ availableAt: now })
     const job = await claimNextIntegrationJob(dbA, now, 'worker-expired-mutation')
@@ -401,11 +401,122 @@ describe('installation calendar outbox', () => {
     expect(await processInstallationCalendarJob(dbA, adapter, job!, now)).toMatchObject({ outcome: 'FENCED' })
     expect(adapterCalls).toBe(0)
     await expect(changeInstallationVisit(dbB, order.id, visit.id, { action: 'CANCEL', expectedRevision: 2 }, 'outbox-fixture'))
+      .rejects.toBeInstanceOf(InstallationVisitSyncInProgressError)
+    const recovered = await claimNextIntegrationJob(dbB, new Date(now.getTime() + 1), 'worker-reclaimed-mutation')
+    expect(await processInstallationCalendarJob(dbB, new FakeInstallationCalendarAdapter(), recovered!, new Date(now.getTime() + 1)))
+      .toMatchObject({ outcome: 'COMPLETED' })
+    await expect(changeInstallationVisit(dbB, order.id, visit.id, { action: 'CANCEL', expectedRevision: 2 }, 'outbox-fixture'))
       .resolves.toMatchObject({ revision: 3, status: 'CANCELLED' })
     await dbA.integrationOutbox.updateMany({
       where: { visitId: visit.id },
       data: { status: 'COMPLETED', lockedUntil: null, completedAt: now },
     })
+  })
+
+  it('heartbeats a held adapter lease past its original expiry and permits one mutation only after success', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    const now = new Date('2026-09-14T10:01:00.000Z')
+    vi.setSystemTime(now)
+    try {
+      const { order, visit, job: queuedJob, scope } = await createOutboxFixture({ availableAt: now })
+      const job = await claimNextIntegrationJob(dbA, now, 'worker-heartbeat')
+      let adapterEntered!: () => void
+      let releaseAdapter!: () => void
+      const enteredAdapter = new Promise<void>((resolve) => { adapterEntered = resolve })
+      const waitForRelease = new Promise<void>((resolve) => { releaseAdapter = resolve })
+      const adapter: InstallationCalendarAdapter = {
+        upsert: async () => {
+          adapterEntered()
+          await waitForRelease
+          return { eventId: `heartbeat-${visit.id}`, htmlLink: `https://calendar.example.test/${visit.id}`, etag: 'heartbeat-etag' }
+        },
+        cancel: async () => undefined,
+      }
+
+      const processing = processInstallationCalendarJob(dbA, adapter, job!)
+      await enteredAdapter
+      await vi.advanceTimersByTimeAsync(INTEGRATION_OUTBOX_LEASE_MS + 1)
+
+      const renewed = await dbA.integrationOutbox.findUniqueOrThrow({ where: { id: queuedJob.id } })
+      expect(renewed.lockedUntil!.getTime()).toBeGreaterThan(now.getTime() + INTEGRATION_OUTBOX_LEASE_MS)
+      await dbA.integrationOutbox.updateMany({
+        where: { status: 'RETRY' },
+        data: { availableAt: new Date('2030-01-01T00:00:00.000Z') },
+      })
+      expect(await claimNextIntegrationJob(dbB, new Date())).toBeNull()
+      await expect(changeInstallationVisit(dbB, order.id, visit.id, { action: 'CANCEL', expectedRevision: 2 }, 'outbox-fixture'))
+        .rejects.toBeInstanceOf(InstallationVisitSyncInProgressError)
+      await expect(setScopeInstallerAssignments(dbB, order.id, scope.id, ['outbox-installer-b'], 'outbox-fixture'))
+        .rejects.toBeInstanceOf(InstallationVisitSyncInProgressError)
+
+      releaseAdapter()
+      expect(await processing).toMatchObject({ outcome: 'COMPLETED', outboxId: queuedJob.id })
+      expect(await dbA.integrationAttempt.findMany({ where: { outboxId: queuedJob.id } }))
+        .toMatchObject([{ number: 1, outcome: 'SUCCESS' }])
+      await expect(changeInstallationVisit(dbB, order.id, visit.id, { action: 'CANCEL', expectedRevision: 2 }, 'outbox-fixture'))
+        .resolves.toMatchObject({ revision: 3, status: 'CANCELLED' })
+      await dbA.integrationOutbox.updateMany({
+        where: { visitId: visit.id },
+        data: { status: 'COMPLETED', lockedUntil: null, completedAt: new Date() },
+      })
+    } finally {
+      vi.useRealTimers()
+    }
+  })
+
+  it('leaves a heartbeat fence-loss job processing for reclaim without recording its stale adapter result', async () => {
+    vi.useFakeTimers({ toFake: ['Date', 'setInterval', 'clearInterval'] })
+    const now = new Date('2026-09-14T11:01:00.000Z')
+    vi.setSystemTime(now)
+    try {
+      const { order, visit, job: queuedJob } = await createOutboxFixture({ availableAt: now })
+      const job = await claimNextIntegrationJob(dbA, now, 'worker-heartbeat-lost')
+      let adapterEntered!: () => void
+      let releaseAdapter!: () => void
+      const enteredAdapter = new Promise<void>((resolve) => { adapterEntered = resolve })
+      const waitForRelease = new Promise<void>((resolve) => { releaseAdapter = resolve })
+      const adapter: InstallationCalendarAdapter = {
+        upsert: async () => {
+          adapterEntered()
+          await waitForRelease
+          return { eventId: `lost-${visit.id}`, htmlLink: `https://calendar.example.test/${visit.id}`, etag: 'lost-etag' }
+        },
+        cancel: async () => undefined,
+      }
+
+      const processing = processInstallationCalendarJob(dbA, adapter, job!)
+      await enteredAdapter
+      await dbA.integrationOutbox.update({
+        where: { id: queuedJob.id },
+        data: { lockedUntil: new Date(now.getTime() - 1) },
+      })
+      await vi.advanceTimersByTimeAsync(Math.floor(INTEGRATION_OUTBOX_LEASE_MS / 3) + 1)
+      releaseAdapter()
+
+      expect(await processing).toMatchObject({ outcome: 'FENCED', outboxId: queuedJob.id })
+      expect(await dbA.integrationOutbox.findUniqueOrThrow({ where: { id: queuedJob.id } }))
+        .toMatchObject({ status: 'PROCESSING', attemptCount: 0 })
+      expect(await dbA.integrationAttempt.count({ where: { outboxId: queuedJob.id } })).toBe(0)
+      await expect(changeInstallationVisit(dbB, order.id, visit.id, { action: 'CANCEL', expectedRevision: 2 }, 'outbox-fixture'))
+        .rejects.toBeInstanceOf(InstallationVisitSyncInProgressError)
+
+      await dbA.integrationOutbox.updateMany({
+        where: { status: 'RETRY' },
+        data: { availableAt: new Date('2030-01-01T00:00:00.000Z') },
+      })
+      const reclaimed = await claimNextIntegrationJob(dbB, new Date(), 'worker-heartbeat-reclaimed')
+      expect(reclaimed).toMatchObject({ id: queuedJob.id })
+      expect(await processInstallationCalendarJob(dbB, new FakeInstallationCalendarAdapter(), reclaimed!))
+        .toMatchObject({ outcome: 'COMPLETED' })
+      await expect(changeInstallationVisit(dbB, order.id, visit.id, { action: 'CANCEL', expectedRevision: 2 }, 'outbox-fixture'))
+        .resolves.toMatchObject({ revision: 3, status: 'CANCELLED' })
+      await dbA.integrationOutbox.updateMany({
+        where: { visitId: visit.id },
+        data: { status: 'COMPLETED', lockedUntil: null, completedAt: new Date() },
+      })
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('puts incomplete calendar projection data into ATTENTION without calling an adapter', async () => {

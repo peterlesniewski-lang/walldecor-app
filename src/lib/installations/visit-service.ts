@@ -76,7 +76,7 @@ export class InstallationVisitRevisionConflictError extends Error {
 /** Raised when a calendar worker holds the fenced lease for this visit. */
 export class InstallationVisitSyncInProgressError extends Error {
   constructor() {
-    super('Trwa synchronizacja kalendarza tej wizyty. Poczekaj na jej zakończenie i spróbuj ponownie.')
+    super('Synchronizacja kalendarza tej wizyty trwa albo oczekuje na bezpieczne odzyskanie zadania. Poczekaj na jej zakończenie i spróbuj ponownie.')
     this.name = 'InstallationVisitSyncInProgressError'
   }
 }
@@ -88,11 +88,10 @@ export class InstallationVisitArchivedOrderError extends Error {
   }
 }
 
-function activeCalendarOutboxLease(now: Date): Prisma.IntegrationOutboxWhereInput {
+function activeCalendarOutboxProcessing(): Prisma.IntegrationOutboxWhereInput {
   return {
     operation: { in: ['CALENDAR_UPSERT', 'CALENDAR_CANCEL'] },
     status: 'PROCESSING',
-    lockedUntil: { gt: now },
   }
 }
 
@@ -100,14 +99,13 @@ async function throwSyncInProgressOrRevisionConflict(
   db: InstallationDb,
   visitId: string,
   expectedRevision: number,
-  now: Date,
 ): Promise<never> {
   const current = await db.installationVisit.findUnique({
     where: { id: visitId },
     select: {
       revision: true,
       outbox: {
-        where: activeCalendarOutboxLease(now),
+        where: activeCalendarOutboxProcessing(),
         select: { id: true },
         take: 1,
       },
@@ -334,7 +332,6 @@ export async function refreshConfirmedInstallationVisitsAfterScopeAssignment(
   scopeId: string,
   actorId: string,
 ) {
-  const now = new Date()
   const visits = await db.installationVisit.findMany({
     where: {
       orderId,
@@ -361,12 +358,12 @@ export async function refreshConfirmedInstallationVisitsAfterScopeAssignment(
         orderId,
         status: 'CONFIRMED',
         revision: visit.revision,
-        outbox: { none: activeCalendarOutboxLease(now) },
+        outbox: { none: activeCalendarOutboxProcessing() },
       },
       data: { revision: { increment: 1 } },
     })
     if (claimed.count !== 1) {
-      await throwSyncInProgressOrRevisionConflict(db, visit.id, visit.revision, now)
+      await throwSyncInProgressOrRevisionConflict(db, visit.id, visit.revision)
     }
 
     const revision = visit.revision + 1
@@ -533,12 +530,12 @@ export async function changeInstallationVisit(
         id: visitId,
         orderId,
         revision: parsed.expectedRevision,
-        outbox: { none: activeCalendarOutboxLease(now) },
+        outbox: { none: activeCalendarOutboxProcessing() },
       },
       data: patch,
     })
     if (changed.count !== 1) {
-      await throwSyncInProgressOrRevisionConflict(tx, visitId, parsed.expectedRevision, now)
+      await throwSyncInProgressOrRevisionConflict(tx, visitId, parsed.expectedRevision)
     }
 
     if (parsed.action === 'SAVE_DRAFT' || parsed.action === 'CONFIRM') {

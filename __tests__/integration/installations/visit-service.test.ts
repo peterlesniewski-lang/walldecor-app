@@ -397,7 +397,7 @@ describe('installation visit lifecycle', () => {
       .toMatchObject({ status: 'PENDING', lastErrorCode: null, lastErrorMessage: null })
   })
 
-  it('atomically rejects a visit mutation while its calendar outbox lease is active but permits it after expiry', async () => {
+  it('atomically rejects a visit mutation while any calendar outbox worker is processing it, even after lease expiry', async () => {
     const { order, wallpaperScope } = await createFixture()
     await assign(wallpaperScope.id, employees.ready, order.id)
     const draft = await createInstallationVisit(db, order.id, { scopeIds: [wallpaperScope.id] }, 'owner-user')
@@ -412,6 +412,9 @@ describe('installation visit lifecycle', () => {
     expect(await db.integrationOutbox.count({ where: { visitId: draft.id } })).toBe(1)
 
     await db.integrationOutbox.update({ where: { id: outbox.id }, data: { lockedUntil: new Date(Date.now() - 1) } })
+    await expect(changeInstallationVisit(db, order.id, draft.id, { action: 'CANCEL', expectedRevision: confirmed.revision }, 'owner-user'))
+      .rejects.toBeInstanceOf(InstallationVisitSyncInProgressError)
+    await db.integrationOutbox.update({ where: { id: outbox.id }, data: { status: 'COMPLETED', lockedUntil: null } })
     await expect(changeInstallationVisit(db, order.id, draft.id, { action: 'CANCEL', expectedRevision: confirmed.revision }, 'owner-user'))
       .resolves.toMatchObject({ status: 'CANCELLED', revision: confirmed.revision + 1 })
   })

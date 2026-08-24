@@ -276,7 +276,7 @@ describe('scope installer assignments', () => {
     expect(beforeOutbox).toHaveLength(1)
   })
 
-  it('rolls back a scope-team replacement while the confirmed visit calendar lease is active, then allows it after expiry', async () => {
+  it('rolls back a scope-team replacement while the confirmed visit calendar worker is processing it, even after lease expiry', async () => {
     const { order, wallpaperScope } = await createCalendarVisitFixture()
     await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerAId], 'actor-1')
     const confirmed = await createConfirmedVisit(order.id, [wallpaperScope.id])
@@ -300,6 +300,12 @@ describe('scope installer assignments', () => {
     await db.integrationOutbox.update({
       where: { id: job.id },
       data: { lockedUntil: new Date(Date.now() - 1) },
+    })
+    await expect(setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerBId], 'actor-3'))
+      .rejects.toBeInstanceOf(InstallationVisitSyncInProgressError)
+    await db.integrationOutbox.update({
+      where: { id: job.id },
+      data: { status: 'COMPLETED', lockedUntil: null },
     })
     await expect(setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerBId], 'actor-3'))
       .resolves.toEqual({ scopeId: wallpaperScope.id, employeeIds: [installerBId] })
