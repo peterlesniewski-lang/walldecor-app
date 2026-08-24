@@ -249,7 +249,15 @@ describe('installation order-owned products migration', () => {
         db.installationScopeProduct.count(),
         db.installationMeasurement.count(),
         db.installationScope.findMany({
-          select: { id: true, roomId: true, name: true, catalogCategoryId: true },
+          select: {
+            id: true,
+            roomId: true,
+            name: true,
+            sortOrder: true,
+            createdAt: true,
+            updatedAt: true,
+            catalogCategoryId: true,
+          },
           orderBy: { id: 'asc' },
         }),
         db.installationScopeProduct.findMany({ orderBy: { id: 'asc' } }),
@@ -269,6 +277,9 @@ describe('installation order-owned products migration', () => {
         id: 'legacy-scope',
         roomId: 'legacy-room',
         name: 'Ściana historyczna',
+        sortOrder: 3,
+        createdAt: history.createdAt,
+        updatedAt: history.updatedAt,
         catalogCategoryId: null,
       },
     ])
@@ -375,7 +386,7 @@ describe('installation order-owned products migration', () => {
           },
         }),
         db.$queryRawUnsafe<Array<{ name: string }>>(
-          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'InstallationScope_catalogCategoryId_idx'"
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'InstallationScope' AND name NOT LIKE 'sqlite_autoindex%' ORDER BY name"
         ),
         db.$queryRawUnsafe<Array<{ name: string }>>(
           "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'InstallationScopeProduct' AND name NOT LIKE 'sqlite_autoindex%' ORDER BY name"
@@ -397,6 +408,7 @@ describe('installation order-owned products migration', () => {
     })
     expect(scopeIndexes).toEqual([
       { name: 'InstallationScope_catalogCategoryId_idx' },
+      { name: 'InstallationScope_roomId_sortOrder_idx' },
     ])
     expect(scopeProductIndexes).toEqual([
       { name: 'InstallationScopeProduct_catalogProductId_idx' },
