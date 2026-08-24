@@ -1,15 +1,25 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, lstatSync, readFileSync, readdirSync, rmSync } from 'node:fs'
-import { randomUUID } from 'node:crypto'
+import { existsSync, lstatSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 
 const workspace = process.cwd()
-const databasePath = `/tmp/walldecor-installations-e2e-validator-${randomUUID()}.db`
+const databaseDirectory = mkdtempSync('/tmp/walldecor-installations-e2e-')
+const databasePath = path.join(databaseDirectory, 'calendar.db')
 const databaseUrl = `file:${databasePath}`
-const SAFE_DATABASE_PATH = /^\/tmp\/walldecor-installations-e2e-validator-[a-z0-9-]+\.db(?:-(?:journal|wal|shm))?$/u
+const SAFE_DIRECTORY_NAME = /^walldecor-installations-e2e-[A-Za-z0-9_-]+$/u
 
-function safeDatabasePath(candidate) {
-  return SAFE_DATABASE_PATH.test(candidate)
+function isValidatedPrivateDirectory() {
+  if (path.dirname(databaseDirectory) !== '/tmp' || !SAFE_DIRECTORY_NAME.test(path.basename(databaseDirectory))) return false
+  if (databasePath !== path.join(databaseDirectory, 'calendar.db')) return false
+  try {
+    const directory = lstatSync(databaseDirectory)
+    return !directory.isSymbolicLink()
+      && directory.isDirectory()
+      && (directory.mode & 0o077) === 0
+      && (typeof process.getuid !== 'function' || directory.uid === process.getuid())
+  } catch {
+    return false
+  }
 }
 
 function runChecked(command, args, options = {}) {
@@ -32,17 +42,13 @@ function applyCommittedMigrations() {
   }
 }
 
-function removeGeneratedDatabaseFile(candidate) {
-  if (!safeDatabasePath(candidate) || !existsSync(candidate)) return
-  if (lstatSync(candidate).isSymbolicLink()) throw new Error('VALIDATION_UNSAFE_CLEANUP_TARGET')
-  rmSync(candidate, { force: true })
-}
-
 function cleanup() {
-  removeGeneratedDatabaseFile(databasePath)
-  removeGeneratedDatabaseFile(`${databasePath}-journal`)
-  removeGeneratedDatabaseFile(`${databasePath}-wal`)
-  removeGeneratedDatabaseFile(`${databasePath}-shm`)
+  if (!isValidatedPrivateDirectory()) throw new Error('VALIDATION_UNSAFE_CLEANUP_TARGET')
+  if (existsSync(databasePath)) {
+    const database = lstatSync(databasePath)
+    if (database.isSymbolicLink() || !database.isFile()) throw new Error('VALIDATION_UNSAFE_CLEANUP_TARGET')
+  }
+  rmSync(databaseDirectory, { recursive: true, force: true })
 }
 
 function runWorkflow() {
@@ -52,7 +58,7 @@ const { createInstallationRoom, createInstallationScope } = (await import('@/lib
 const { createInstallationOrder } = (await import('@/lib/installations/order-service')).default
 const { setScopeInstallerAssignments } = (await import('@/lib/installations/scope-assignment-service')).default
 const { createInstallationVisit, changeInstallationVisit } = (await import('@/lib/installations/visit-service')).default
-const { createInstallationCalendarAdapter } = (await import('@/lib/installations/calendar-adapter-factory')).default
+const { FakeInstallationCalendarAdapter } = (await import('@/lib/installations/fake-calendar-adapter')).default
 const { readInstallationCalendarConfig } = (await import('@/lib/installations/calendar-server-config')).default
 const { processInstallationCalendarBatch } = (await import('@/lib/installations/calendar-worker')).default
 
@@ -82,7 +88,7 @@ try {
     scopeIds: [scope.id],
   }, 'validator')
   const config = readInstallationCalendarConfig(process.env)
-  const adapter = createInstallationCalendarAdapter()
+  const adapter = new FakeInstallationCalendarAdapter()
   const initialBatch = await processInstallationCalendarBatch(db, adapter, config.batchSize)
   if (initialBatch.claimed !== 1 || initialBatch.completed !== 1 || initialBatch.retried !== 0 || initialBatch.attention !== 0) throw new Error('VALIDATION_INITIAL_BATCH')
   const before = await db.integrationSyncState.findUniqueOrThrow({ where: { visitId_kind: { visitId: confirmed.id, kind: 'GOOGLE_CALENDAR' } } })
@@ -105,7 +111,7 @@ try {
   const integrity = Array.isArray(integrityRows) ? integrityRows.map((row) => Object.values(row).join('')).join(',') : ''
   const persisted = await reopened.integrationSyncState.findUniqueOrThrow({ where: { visitId_kind: { visitId: confirmed.id, kind: 'GOOGLE_CALENDAR' } } })
   if (integrity !== 'ok' || !Array.isArray(foreignKeyRows) || foreignKeyRows.length !== 0 || persisted.externalId !== before.externalId || persisted.externalEtag !== after.externalEtag) throw new Error('VALIDATION_DATABASE_READBACK')
-  process.stdout.write(JSON.stringify({ status: 'ok', externalId: after.externalId, etagChanged: true, integrityCheck: 'ok', foreignKeyCheck: 'ok' }))
+  process.stdout.write(JSON.stringify({ status: 'ok', syncStateCount: 1, sameExternalId: true, etagChanged: true, integrityCheck: 'ok', foreignKeyCheck: 'ok' }))
 } finally {
   await reopened?.$disconnect()
   await db.$disconnect().catch(() => undefined)
@@ -128,10 +134,10 @@ try {
 }
 
 try {
-  if (!safeDatabasePath(databasePath)) throw new Error('VALIDATION_UNSAFE_DATABASE_PATH')
+  if (!isValidatedPrivateDirectory() || existsSync(databasePath)) throw new Error('VALIDATION_UNSAFE_DATABASE_PATH')
   applyCommittedMigrations()
   const result = runWorkflow()
-  if (result?.status !== 'ok' || typeof result.externalId !== 'string' || result.etagChanged !== true || result.integrityCheck !== 'ok' || result.foreignKeyCheck !== 'ok') {
+  if (result?.status !== 'ok' || result.syncStateCount !== 1 || result.sameExternalId !== true || result.etagChanged !== true || result.integrityCheck !== 'ok' || result.foreignKeyCheck !== 'ok') {
     throw new Error('VALIDATION_RESULT_SHAPE')
   }
   process.stdout.write(`${JSON.stringify(result)}\n`)

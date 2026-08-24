@@ -32,6 +32,8 @@ describe('installation calendar worker deployment contract', () => {
     expect(dockerfile).not.toContain('worker:installation-calendar &')
 
     expect(worker).toContain('createInstallationCalendarAdapter')
+    expect(worker).toContain('readInstallationCalendarCliConfig')
+    expect(worker.indexOf('const config = readInstallationCalendarCliConfig')).toBeLessThan(worker.indexOf('const adapter = createInstallationCalendarAdapter'))
     expect(worker).toContain('processInstallationCalendarBatch')
     expect(worker).toContain('config.batchSize')
     expect(worker).toContain('finally')
@@ -42,7 +44,8 @@ describe('installation calendar worker deployment contract', () => {
     expect(worker).not.toContain('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64')
 
     expect(runbook).toContain('INSTALLATION_CALENDAR_ENABLED=true')
-    expect(runbook).toContain('adapter fake jest zabroniony w produkcji')
+    expect(runbook).toMatch(/adapter fake jest\s+zabroniony w produkcji/u)
+    expect(runbook).toMatch(/worker CLI odrzuca adapter fake w każdym\s+środowisku/u)
     expect(runbook).toContain('npm run worker:installation-calendar')
     expect(runbook).toContain('co minutę')
     expect(runbook).toContain('WallDecor-App')

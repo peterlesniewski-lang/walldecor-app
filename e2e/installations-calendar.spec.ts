@@ -136,13 +136,37 @@ test('keeps one calendar event per visit through reschedule and cancellation', a
   const fake = new FakeInstallationCalendarAdapter()
   const initialBatch = await processInstallationCalendarBatch(db, fake, 10)
   expect(initialBatch).toMatchObject({ claimed: 2, completed: 2, retried: 0, attention: 0 })
+  const initialEvents = fake.snapshot()
+  expect(initialEvents).toHaveLength(2)
+  expect(initialEvents.find(({ event }) => event.visitId === firstVisitId)?.event.attendeeEmails)
+    .toEqual(['calendar-a@example.test'])
+  expect(initialEvents.find(({ event }) => event.visitId === secondVisitId)?.event.attendeeEmails)
+    .toEqual(['calendar-b@example.test', 'calendar-c@example.test'])
 
   await page.goto('/installations')
   const orderCard = page.locator('article').filter({ hasText: `Kalendarz E2E ${suffix}` })
+  await expect(orderCard.getByText('Zsynchronizowano', { exact: true })).toBeVisible()
   await expect(orderCard.getByRole('link', { name: 'Wizyty i terminy' })).toBeVisible()
   await orderCard.getByRole('link', { name: 'Wizyty i terminy' }).click()
   await expect(page).toHaveURL(new RegExp(`/installations/${orderId}#visits$`))
-  await expect(page.locator('#visits')).toBeVisible()
+  const visitsPanel = page.locator('#visits')
+  await expect(visitsPanel).toBeVisible()
+
+  const firstVisitCard = visitsPanel.locator('article').filter({ hasText: '15.02.2027, 09:00–13:00' })
+  const secondVisitCard = visitsPanel.locator('article').filter({ hasText: '16.02.2027, 09:00–13:00' })
+  await expect(firstVisitCard.getByText('W Google Calendar', { exact: true })).toBeVisible()
+  await expect(secondVisitCard.getByText('W Google Calendar', { exact: true })).toBeVisible()
+
+  await firstVisitCard.getByRole('button', { name: /15\.02\.2027, 09:00–13:00/u }).click()
+  await expect(firstVisitCard.getByText('Instalatorzy dla Salon — Tapety tekstylne', { exact: true })).toBeVisible()
+  await expect(firstVisitCard.getByLabel('Alicja Kalendarz dla Salon — Tapety tekstylne')).toBeChecked()
+  await expect(firstVisitCard.getByRole('link', { name: 'Otwórz w Google Calendar' })).toBeVisible()
+
+  await secondVisitCard.getByRole('button', { name: /16\.02\.2027, 09:00–13:00/u }).click()
+  await expect(secondVisitCard.getByText('Instalatorzy dla Salon — Sztukateria ścienna', { exact: true })).toBeVisible()
+  await expect(secondVisitCard.getByLabel('Bartek Kalendarz dla Salon — Sztukateria ścienna')).toBeChecked()
+  await expect(secondVisitCard.getByLabel('Celina Kalendarz dla Salon — Sztukateria ścienna')).toBeChecked()
+  await expect(secondVisitCard.getByRole('link', { name: 'Otwórz w Google Calendar' })).toBeVisible()
 
   const beforeReschedule = await db.integrationSyncState.findUniqueOrThrow({
     where: { visitId_kind: { visitId: firstVisitId, kind: 'GOOGLE_CALENDAR' } },

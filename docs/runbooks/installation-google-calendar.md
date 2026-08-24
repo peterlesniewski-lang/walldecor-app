@@ -9,7 +9,11 @@
 
 1. Pozostaw `INSTALLATION_CALENDAR_ADAPTER=disabled` i nie włączaj zadania
    cyklicznego.
-2. Lokalnie użyj adaptera `fake` wyłącznie do testów. `adapter fake jest zabroniony w produkcji` — produkcyjny worker kończy się bez pobrania zadań.
+2. Adapter `fake` jest wyłącznie pamięciowym dublem uruchamianym przez
+   bezpośredni import w automatycznym E2E lub walidatorze. `adapter fake jest
+   zabroniony w produkcji`, a `worker CLI odrzuca adapter fake w każdym
+   środowisku` i kończy się kodem `1` przed pobraniem zadań. Nie uruchamiaj go
+   z crona ani jako substytutu Google — mapa wydarzeń nie przetrwa końca procesu.
 3. Na koncie `info@walldecor.pl` utwórz osobny, testowy kalendarz o nazwie
    **TEST – Montaże**. Najpierw przejdź na nim cały smoke test opisany niżej.
 4. Dopiero po potwierdzeniu create/update/cancel ustaw ID firmowego kalendarza

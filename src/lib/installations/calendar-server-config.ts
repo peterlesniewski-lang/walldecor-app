@@ -1,5 +1,4 @@
 import { Buffer } from 'node:buffer'
-import { existsSync, lstatSync } from 'node:fs'
 import { CalendarConfigurationError } from './calendar-adapter'
 import {
   INSTALLATION_CALENDAR_ADAPTERS,
@@ -9,11 +8,11 @@ import {
   type GoogleServiceAccountCredentials,
   type InstallationCalendarAdapterName,
 } from './calendar-config'
+import { validateInstallationCalendarE2eDatabase } from './calendar-e2e-database'
 
 const DEFAULT_IMPERSONATED_USER = 'info@walldecor.pl'
 const DEFAULT_WORKER_BATCH_SIZE = 20
 const MAX_WORKER_BATCH_SIZE = 100
-const ISOLATED_E2E_DATABASE_URL = /^file:\/tmp\/walldecor-installations-e2e-[A-Za-z0-9_-]+\.db$/u
 
 /** Non-secret runtime settings required before a scheduled worker can claim work. */
 export type InstallationCalendarWorkerConfiguration = {
@@ -53,16 +52,7 @@ function rawAdapterIsValid(env: CalendarEnvironment): boolean {
  * rules out SQLite query parameters, relative URLs and directory traversal.
  */
 function hasIsolatedE2eDatabase(env: CalendarEnvironment): boolean {
-  const databaseUrl = env.DATABASE_URL
-  const e2eDatabaseUrl = env.E2E_DATABASE_URL
-  if (!databaseUrl || databaseUrl !== e2eDatabaseUrl || !ISOLATED_E2E_DATABASE_URL.test(databaseUrl)) return false
-
-  const databasePath = databaseUrl.slice('file:'.length)
-  try {
-    return !existsSync(databasePath) || !lstatSync(databasePath).isSymbolicLink()
-  } catch {
-    return false
-  }
+  return validateInstallationCalendarE2eDatabase(env) !== null
 }
 
 function decodeCredentials(value: string | undefined): GoogleServiceAccountCredentials | null {
@@ -133,8 +123,16 @@ export function getGoogleCalendarConfiguration(env: CalendarEnvironment = proces
 export function assertInstallationCalendarAdapterAllowed(env: CalendarEnvironment = process.env): InstallationCalendarAdapterName {
   const raw = rawCalendarConfiguration(env)
   if (!raw.adapterValid) throw new CalendarConfigurationError('Calendar adapter configuration is invalid.')
-  if (raw.adapter === 'fake' && !hasIsolatedE2eDatabase(env)) {
-    throw new CalendarConfigurationError('Fake calendar adapter is allowed only for an isolated E2E database.')
+  if (raw.adapter === 'fake') {
+    if (env.NODE_ENV === 'production') {
+      throw new CalendarConfigurationError('Fake calendar adapter is forbidden in production.')
+    }
+    if (env.NODE_ENV !== 'test' && env.NODE_ENV !== 'development') {
+      throw new CalendarConfigurationError('Fake calendar adapter is allowed only for direct-import E2E tests.')
+    }
+    if (!hasIsolatedE2eDatabase(env)) {
+      throw new CalendarConfigurationError('Fake calendar adapter is allowed only for an isolated E2E database.')
+    }
   }
   return raw.adapter
 }
@@ -168,4 +166,15 @@ export function readInstallationCalendarConfig(
     throw new CalendarConfigurationError('Calendar adapter is disabled.')
   }
   return { adapter, batchSize: workerBatchSize(env) }
+}
+
+/** Scheduled CLI workers must use a durable external adapter. */
+export function readInstallationCalendarCliConfig(
+  env: CalendarEnvironment = process.env,
+): InstallationCalendarWorkerConfiguration {
+  const config = readInstallationCalendarConfig(env)
+  if (config.adapter === 'fake') {
+    throw new CalendarConfigurationError('Fake calendar adapter cannot be used by the scheduled CLI worker.')
+  }
+  return config
 }

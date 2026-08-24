@@ -1,27 +1,32 @@
 import { defineConfig } from '@playwright/test'
-import { existsSync, lstatSync } from 'node:fs'
+import { mkdtempSync } from 'node:fs'
+import path from 'node:path'
+import { validateInstallationCalendarE2eDatabase } from './src/lib/installations/calendar-e2e-database'
 
-const stableRunId = (process.env.E2E_RUN_ID ?? 'local').replace(/[^a-zA-Z0-9_-]/g, '_')
-const e2eDatabaseUrl = process.env.E2E_DATABASE_URL
-  ?? `file:/tmp/walldecor-installations-e2e-${stableRunId}.db`
-const e2eMediaRoot = process.env.E2E_MEDIA_ROOT
-  ?? `/tmp/walldecor-installations-e2e-media-${stableRunId}`
-const isolatedE2eDatabasePattern = /^file:\/tmp\/walldecor-installations-e2e-[A-Za-z0-9_-]+\.db$/u
-if (!isolatedE2eDatabasePattern.test(e2eDatabaseUrl)) {
-  throw new Error('E2E_DATABASE_URL musi wskazywać izolowaną SQLite w /tmp.')
+if (process.env.E2E_DATABASE_URL && process.env.WALLDECOR_E2E_PRIVATE_DIRECTORY_OWNED !== 'true') {
+  throw new Error('Playwright odmawia użycia bazy E2E, której prywatnego katalogu sam nie utworzył.')
 }
-const e2eDatabasePath = e2eDatabaseUrl.slice('file:'.length)
-if (existsSync(e2eDatabasePath) && lstatSync(e2eDatabasePath).isSymbolicLink()) {
-  throw new Error('E2E_DATABASE_URL nie może wskazywać na dowiązanie symboliczne.')
+const createdE2eDirectory = process.env.E2E_DATABASE_URL ? null : mkdtempSync('/tmp/walldecor-installations-e2e-')
+const e2eDatabaseUrl = process.env.E2E_DATABASE_URL
+  ?? `file:${path.join(createdE2eDirectory!, 'calendar.db')}`
+const e2eMediaRoot = process.env.E2E_MEDIA_ROOT
+  ?? path.join(path.dirname(e2eDatabaseUrl.slice('file:'.length)), 'media')
+if (!validateInstallationCalendarE2eDatabase({
+  DATABASE_URL: e2eDatabaseUrl,
+  E2E_DATABASE_URL: e2eDatabaseUrl,
+})) {
+  throw new Error('E2E_DATABASE_URL musi wskazywać calendar.db w prywatnym katalogu /tmp/walldecor-installations-e2e-* bez dowiązań.')
 }
 process.env.E2E_DATABASE_URL = e2eDatabaseUrl
 process.env.DATABASE_URL = e2eDatabaseUrl
+process.env.WALLDECOR_E2E_PRIVATE_DIRECTORY_OWNED = 'true'
 process.env.ADMIN_USERNAME ??= 'admin'
 process.env.ADMIN_PASSWORD ??= 'ChangeMe123!'
 
 export default defineConfig({
   testDir: './e2e',
   globalSetup: './e2e/global-setup.ts',
+  globalTeardown: './e2e/global-teardown.ts',
   // All installation E2E specs deliberately use the one database passed to
   // the shared web server. SQLite cannot safely migrate that file in parallel.
   workers: 1,
