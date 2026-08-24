@@ -8,7 +8,7 @@ async function run(): Promise<void> {
   let exitCode = 1
   try {
     const config = readInstallationCalendarConfig(process.env)
-    const adapter = createInstallationCalendarAdapter(process.env)
+    const adapter = createInstallationCalendarAdapter()
     const result = await processInstallationCalendarBatch(prisma, adapter, config.batchSize)
     console.log(JSON.stringify({ claimed: result.claimed, completed: result.completed, retried: result.retried, attention: result.attention }))
     exitCode = result.attention > 0 ? 2 : 0

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { CalendarConfigurationError } from '@/lib/installations/calendar-adapter'
 import { createInstallationCalendarAdapter } from '@/lib/installations/calendar-adapter-factory'
 import * as calendarServerConfig from '@/lib/installations/calendar-server-config'
@@ -10,6 +10,10 @@ type CalendarRuntimeReader = (env: Record<string, string | undefined>) => {
 }
 
 describe('installation Calendar worker runtime configuration', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
   it('requires an enabled non-disabled adapter and bounds the batch before the worker opens Prisma', () => {
     expect(calendarServerConfig).toHaveProperty('readInstallationCalendarConfig')
     const read = (calendarServerConfig as typeof calendarServerConfig & {
@@ -38,21 +42,27 @@ describe('installation Calendar worker runtime configuration', () => {
   })
 
   it('constructs adapters through one guarded factory instead of letting the worker select a class', () => {
-    expect(createInstallationCalendarAdapter({
-      NODE_ENV: 'test',
-      INSTALLATION_CALENDAR_ENABLED: 'true',
-      INSTALLATION_CALENDAR_ADAPTER: 'fake',
-    })).toBeInstanceOf(FakeInstallationCalendarAdapter)
+    vi.stubEnv('NODE_ENV', 'test')
+    vi.stubEnv('INSTALLATION_CALENDAR_ENABLED', 'true')
+    vi.stubEnv('INSTALLATION_CALENDAR_ADAPTER', 'fake')
+    expect(createInstallationCalendarAdapter()).toBeInstanceOf(FakeInstallationCalendarAdapter)
 
-    expect(() => createInstallationCalendarAdapter({
-      NODE_ENV: 'production',
-      INSTALLATION_CALENDAR_ENABLED: 'true',
-      INSTALLATION_CALENDAR_ADAPTER: 'fake',
-    })).toThrow(CalendarConfigurationError)
-    expect(() => createInstallationCalendarAdapter({
-      NODE_ENV: 'production',
+    vi.stubEnv('NODE_ENV', 'production')
+    expect(() => createInstallationCalendarAdapter()).toThrow(CalendarConfigurationError)
+
+    vi.stubEnv('INSTALLATION_CALENDAR_ENABLED', 'false')
+    vi.stubEnv('INSTALLATION_CALENDAR_ADAPTER', 'google')
+    expect(() => createInstallationCalendarAdapter()).toThrow(CalendarConfigurationError)
+  })
+
+  it('uses only the worker process environment for the central adapter factory', () => {
+    vi.stubEnv('INSTALLATION_CALENDAR_ENABLED', 'true')
+    vi.stubEnv('INSTALLATION_CALENDAR_ADAPTER', 'fake')
+
+    const factory = createInstallationCalendarAdapter as unknown as (ignoredEnvironment?: Record<string, string>) => unknown
+    expect(factory({
       INSTALLATION_CALENDAR_ENABLED: 'false',
-      INSTALLATION_CALENDAR_ADAPTER: 'google',
-    })).toThrow(CalendarConfigurationError)
+      INSTALLATION_CALENDAR_ADAPTER: 'disabled',
+    })).toBeInstanceOf(FakeInstallationCalendarAdapter)
   })
 })
