@@ -1,292 +1,415 @@
-import { readFile } from 'node:fs/promises'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { spawnSync } from 'node:child_process'
+import { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
-import { join } from 'node:path'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import path from 'node:path'
+import { afterAll, describe, expect, it } from 'vitest'
 import { PrismaClient } from '@/generated/prisma'
 
-const MIGRATION_PATH =
-  'prisma/migrations/20260824230000_installation_order_products/migration.sql'
+const workspace = process.cwd()
+const legacyMigration = '20260824100000_installer_user_employee_invariant'
+const orderProductsMigration = '20260824230000_installation_order_products'
+const databaseDirectory = mkdtempSync(
+  path.join(tmpdir(), 'walldecor-order-products-migration-')
+)
+const databasePath = path.join(databaseDirectory, 'legacy-upgrade.db')
+const databaseUrl = `file:${databasePath}`
+const completeMigrationNames = readdirSync(
+  path.join(workspace, 'prisma', 'migrations')
+)
+  .sort()
+  .filter((name) =>
+    existsSync(path.join(workspace, 'prisma', 'migrations', name, 'migration.sql'))
+  )
+const legacyMigrationNames = completeMigrationNames.filter(
+  (name) => name <= legacyMigration
+)
 
-let tempDir = ''
-let prisma: PrismaClient
+function runMigrate(databaseUrlValue: string, schemaPath?: string) {
+  const args = [
+    path.join(workspace, 'node_modules/prisma/build/index.js'),
+    'migrate',
+    'deploy',
+  ]
 
-function splitSqlStatements(sql: string) {
-  return sql
-    .split(';')
-    .map((statement) => statement.trim())
-    .filter(Boolean)
-}
+  if (schemaPath) args.push('--schema', schemaPath)
 
-async function executeSql(sql: string) {
-  for (const statement of splitSqlStatements(sql)) {
-    await prisma.$executeRawUnsafe(statement)
+  const result = spawnSync(process.execPath, args, {
+    cwd: workspace,
+    env: { ...process.env, DATABASE_URL: databaseUrlValue, RUST_LOG: 'debug' },
+    encoding: 'utf8',
+  })
+
+  if (result.status !== 0) {
+    throw new Error(
+      `migrate deploy failed (status ${result.status})\n${result.stdout}\n${result.stderr}`
+    )
   }
 }
 
-async function createPreMigrationFixture() {
-  await prisma.$executeRawUnsafe('PRAGMA foreign_keys = ON')
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE "InstallationCatalogCategory" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "name" TEXT NOT NULL,
-      "nameKey" TEXT NOT NULL UNIQUE,
-      "sortOrder" INTEGER NOT NULL DEFAULT 0,
-      "isActive" BOOLEAN NOT NULL DEFAULT true,
-      "archivedAt" DATETIME,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL
-    )
-  `)
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE "InstallationCatalogType" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "categoryId" TEXT NOT NULL,
-      "name" TEXT NOT NULL,
-      "nameKey" TEXT NOT NULL,
-      "sortOrder" INTEGER NOT NULL DEFAULT 0,
-      "isActive" BOOLEAN NOT NULL DEFAULT true,
-      "archivedAt" DATETIME,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL,
-      CONSTRAINT "InstallationCatalogType_categoryId_fkey"
-        FOREIGN KEY ("categoryId") REFERENCES "InstallationCatalogCategory" ("id")
-        ON DELETE RESTRICT ON UPDATE CASCADE
-    )
-  `)
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE "InstallationCatalogProduct" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "typeId" TEXT NOT NULL,
-      "name" TEXT NOT NULL,
-      "nameKey" TEXT NOT NULL,
-      "manufacturer" TEXT,
-      "collection" TEXT,
-      "code" TEXT,
-      "sortOrder" INTEGER NOT NULL DEFAULT 0,
-      "isActive" BOOLEAN NOT NULL DEFAULT true,
-      "archivedAt" DATETIME,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL,
-      CONSTRAINT "InstallationCatalogProduct_typeId_fkey"
-        FOREIGN KEY ("typeId") REFERENCES "InstallationCatalogType" ("id")
-        ON DELETE RESTRICT ON UPDATE CASCADE
-    )
-  `)
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE "InstallationRoom" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "name" TEXT NOT NULL
-    )
-  `)
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE "InstallationScope" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "roomId" TEXT NOT NULL,
-      "name" TEXT NOT NULL,
-      "sortOrder" INTEGER NOT NULL DEFAULT 0,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL,
-      CONSTRAINT "InstallationScope_roomId_fkey"
-        FOREIGN KEY ("roomId") REFERENCES "InstallationRoom" ("id")
-        ON DELETE CASCADE ON UPDATE CASCADE
-    )
-  `)
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE "InstallationScopeProduct" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "scopeId" TEXT NOT NULL,
-      "catalogProductId" TEXT NOT NULL,
-      "productNameSnapshot" TEXT NOT NULL,
-      "productCodeSnapshot" TEXT,
-      "manufacturerSnapshot" TEXT,
-      "collectionSnapshot" TEXT,
-      "sortOrder" INTEGER NOT NULL DEFAULT 0,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL,
-      CONSTRAINT "InstallationScopeProduct_scopeId_fkey"
-        FOREIGN KEY ("scopeId") REFERENCES "InstallationScope" ("id")
-        ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "InstallationScopeProduct_catalogProductId_fkey"
-        FOREIGN KEY ("catalogProductId") REFERENCES "InstallationCatalogProduct" ("id")
-        ON DELETE RESTRICT ON UPDATE CASCADE
-    )
-  `)
-  await prisma.$executeRawUnsafe(`
-    CREATE TABLE "InstallationMeasurement" (
-      "id" TEXT NOT NULL PRIMARY KEY,
-      "roomId" TEXT NOT NULL,
-      "scopeId" TEXT,
-      "elementName" TEXT NOT NULL,
-      "value" DECIMAL NOT NULL,
-      "unit" TEXT NOT NULL,
-      "source" TEXT NOT NULL,
-      "authorId" TEXT,
-      "authorContext" TEXT,
-      "actorUserId" TEXT,
-      "actorRole" TEXT,
-      "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-      "updatedAt" DATETIME NOT NULL,
-      CONSTRAINT "InstallationMeasurement_roomId_fkey"
-        FOREIGN KEY ("roomId") REFERENCES "InstallationRoom" ("id")
-        ON DELETE CASCADE ON UPDATE CASCADE,
-      CONSTRAINT "InstallationMeasurement_scopeId_fkey"
-        FOREIGN KEY ("scopeId") REFERENCES "InstallationScope" ("id")
-        ON DELETE CASCADE ON UPDATE CASCADE
-    )
-  `)
+function createLegacyPrismaDirectory() {
+  const root = path.join(databaseDirectory, 'legacy-prisma')
+  const migrations = path.join(root, 'migrations')
 
-  await prisma.$executeRawUnsafe(`
-    INSERT INTO "InstallationCatalogCategory" ("id", "name", "nameKey", "updatedAt")
-    VALUES
-      ('scope-category', 'Tapeta', 'tapeta', '2026-08-24T00:00:00.000Z'),
-      ('catalog-category', 'Katalog', 'katalog', '2026-08-24T00:00:00.000Z')
-  `)
-  await prisma.$executeRawUnsafe(`
-    INSERT INTO "InstallationCatalogType" ("id", "categoryId", "name", "nameKey", "updatedAt")
-    VALUES ('catalog-type', 'catalog-category', 'Typ katalogowy', 'typ-katalogowy', '2026-08-24T00:00:00.000Z')
-  `)
-  await prisma.$executeRawUnsafe(`
-    INSERT INTO "InstallationCatalogProduct" ("id", "typeId", "name", "nameKey", "updatedAt")
-    VALUES ('catalog-product', 'catalog-type', 'Produkt katalogowy', 'produkt-katalogowy', '2026-08-24T00:00:00.000Z')
-  `)
-  await prisma.$executeRawUnsafe(`
-    INSERT INTO "InstallationRoom" ("id", "name") VALUES ('room-1', 'Salon')
-  `)
-  await prisma.$executeRawUnsafe(`
-    INSERT INTO "InstallationScope" ("id", "roomId", "name", "updatedAt")
-    VALUES ('scope-1', 'room-1', 'Ściana A', '2026-08-24T00:00:00.000Z')
-  `)
-  await prisma.$executeRawUnsafe(`
-    INSERT INTO "InstallationScopeProduct" (
-      "id", "scopeId", "catalogProductId", "productNameSnapshot",
-      "productCodeSnapshot", "manufacturerSnapshot", "collectionSnapshot", "updatedAt"
-    ) VALUES (
-      'scope-product-legacy', 'scope-1', 'catalog-product', 'Produkt historyczny',
-      'HIST-01', 'WallDecor', 'Historia', '2026-08-24T00:00:00.000Z'
+  mkdirSync(migrations, { recursive: true })
+  cpSync(
+    path.join(workspace, 'prisma', 'schema.prisma'),
+    path.join(root, 'schema.prisma')
+  )
+  cpSync(
+    path.join(workspace, 'prisma', 'migrations', 'migration_lock.toml'),
+    path.join(migrations, 'migration_lock.toml')
+  )
+
+  for (const migration of legacyMigrationNames) {
+    cpSync(
+      path.join(workspace, 'prisma', 'migrations', migration),
+      path.join(migrations, migration),
+      { recursive: true }
     )
-  `)
-  await prisma.$executeRawUnsafe(`
-    INSERT INTO "InstallationMeasurement" (
-      "id", "roomId", "scopeId", "elementName", "value", "unit", "source",
-      "authorId", "authorContext", "actorUserId", "actorRole", "updatedAt"
-    ) VALUES (
-      'measurement-legacy', 'room-1', 'scope-1', 'Szerokość', 250.5, 'CM', 'EMPLOYEE',
-      'employee-1', 'internal', 'user-1', 'ADMIN', '2026-08-24T00:00:00.000Z'
-    )
-  `)
+  }
+
+  return path.join(root, 'schema.prisma')
 }
 
-beforeEach(async () => {
-  tempDir = await mkdtemp(join(tmpdir(), 'walldecor-order-products-migration-'))
-  prisma = new PrismaClient({
-    datasources: {
-      db: { url: `file:${join(tempDir, 'migration.db')}` },
+async function seedLegacyRecords(db: PrismaClient) {
+  const createdAt = new Date('2026-08-20T08:09:10.000Z')
+  const updatedAt = new Date('2026-08-21T11:12:13.000Z')
+
+  await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+  await db.costCenter.create({
+    data: { id: 'legacy-cost-center', name: 'Legacy migration' },
+  })
+  const [primaryEmployee, backupEmployee] = await Promise.all([
+    db.employee.create({
+      data: {
+        id: 'legacy-primary-employee',
+        firstName: 'Anna',
+        lastName: 'Historyczna',
+        email: 'legacy-primary@example.test',
+        position: 'Koordynatorka',
+        costCenterId: 'legacy-cost-center',
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    }),
+    db.employee.create({
+      data: {
+        id: 'legacy-backup-employee',
+        firstName: 'Bartek',
+        lastName: 'Historyczny',
+        email: 'legacy-backup@example.test',
+        position: 'Koordynator',
+        costCenterId: 'legacy-cost-center',
+        startDate: new Date('2026-01-01T00:00:00.000Z'),
+      },
+    }),
+  ])
+  const client = await db.installationClient.create({
+    data: {
+      id: 'legacy-client',
+      name: 'Klient historyczny',
+      email: 'legacy-client@example.test',
+      phone: '+48 500 600 700',
     },
   })
-  await createPreMigrationFixture()
-})
+  const order = await db.installationOrder.create({
+    data: {
+      id: 'legacy-order',
+      number: 'MON-LEGACY-ORDER-PRODUCTS',
+      clientId: client.id,
+      addressStreet: 'Migracyjna',
+      addressBuildingNumber: '24',
+      addressPostalCode: '00-024',
+      addressCity: 'Warszawa',
+      primaryEmployeeId: primaryEmployee.id,
+      backupEmployeeId: backupEmployee.id,
+    },
+  })
+  const room = await db.installationRoom.create({
+    data: {
+      id: 'legacy-room',
+      orderId: order.id,
+      name: 'Salon historyczny',
+      sortOrder: 7,
+      createdAt,
+      updatedAt,
+    },
+  })
+  const scopeCategory = await db.installationCatalogCategory.create({
+    data: {
+      id: 'legacy-scope-category',
+      name: 'Kategoria zakresu',
+      nameKey: 'kategoria-zakresu',
+      updatedAt,
+    },
+  })
+  const catalogCategory = await db.installationCatalogCategory.create({
+    data: {
+      id: 'legacy-catalog-category',
+      name: 'Kategoria katalogowa',
+      nameKey: 'kategoria-katalogowa',
+      updatedAt,
+    },
+  })
+  const catalogType = await db.installationCatalogType.create({
+    data: {
+      id: 'legacy-catalog-type',
+      categoryId: catalogCategory.id,
+      name: 'Typ katalogowy',
+      nameKey: 'typ-katalogowy',
+      updatedAt,
+    },
+  })
+  const catalogProduct = await db.installationCatalogProduct.create({
+    data: {
+      id: 'legacy-catalog-product',
+      typeId: catalogType.id,
+      name: 'Produkt katalogowy',
+      nameKey: 'produkt-katalogowy',
+      manufacturer: 'WallDecor',
+      collection: 'Kolekcja',
+      code: 'KAT-001',
+      updatedAt,
+    },
+  })
 
-afterEach(async () => {
-  await prisma?.$disconnect()
-  if (tempDir) await rm(tempDir, { recursive: true, force: true })
-  tempDir = ''
-})
+  // The current client expects the new scope/product/measurement columns, so
+  // these rows deliberately use the actual pre-migration table shape.
+  await db.$executeRawUnsafe(
+    `INSERT INTO "InstallationScope" (
+      "id", "roomId", "name", "sortOrder", "createdAt", "updatedAt"
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+    'legacy-scope',
+    room.id,
+    'Ściana historyczna',
+    3,
+    createdAt,
+    updatedAt
+  )
+  await db.$executeRawUnsafe(
+    `INSERT INTO "InstallationScopeProduct" (
+      "id", "scopeId", "catalogProductId", "productNameSnapshot",
+      "productCodeSnapshot", "manufacturerSnapshot", "collectionSnapshot",
+      "sortOrder", "createdAt", "updatedAt"
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    'legacy-scope-product',
+    'legacy-scope',
+    catalogProduct.id,
+    'Nazwa ze zlecenia',
+    'ZLEC-001',
+    'Producent ze zlecenia',
+    'Kolekcja ze zlecenia',
+    5,
+    createdAt,
+    updatedAt
+  )
+  await db.$executeRawUnsafe(
+    `INSERT INTO "InstallationMeasurement" (
+      "id", "roomId", "scopeId", "elementName", "value", "unit", "source",
+      "authorId", "authorContext", "actorUserId", "actorRole", "createdAt", "updatedAt"
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    'legacy-measurement',
+    room.id,
+    'legacy-scope',
+    'Szerokość ściany',
+    321.5,
+    'CM',
+    'EMPLOYEE',
+    'legacy-author',
+    'HISTORY_IMPORT',
+    'legacy-user',
+    'ADMIN',
+    createdAt,
+    updatedAt
+  )
+
+  return { catalogProduct, createdAt, scopeCategory, updatedAt }
+}
+
+afterAll(() => rmSync(databaseDirectory, { recursive: true, force: true }))
 
 describe('installation order-owned products migration', () => {
-  it('preserves historical catalogue products and measurements while enabling order-owned products', async () => {
-    const migration = await readFile(MIGRATION_PATH, 'utf8')
+  it('upgrades a real legacy migration chain without losing scope product or measurement history', async () => {
+    runMigrate(databaseUrl, createLegacyPrismaDirectory())
+    let db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
+    const history = await seedLegacyRecords(db)
 
-    await executeSql(migration)
-
-    const [legacyProduct] = await prisma.$queryRawUnsafe<
-      Array<{
-        catalogProductId: string | null
-        productNameSnapshot: string | null
-        productCodeSnapshot: string | null
-        manufacturerSnapshot: string | null
-        collectionSnapshot: string | null
-        batchSnapshot: string | null
-      }>
-    >(`
-      SELECT
-        "catalogProductId", "productNameSnapshot", "productCodeSnapshot",
-        "manufacturerSnapshot", "collectionSnapshot", "batchSnapshot"
-      FROM "InstallationScopeProduct"
-      WHERE "id" = 'scope-product-legacy'
-    `)
-    const [legacyMeasurement] = await prisma.$queryRawUnsafe<
-      Array<{ kind: string; secondaryValue: number | null; actorUserId: string | null }>
-    >(`
-      SELECT "kind", "secondaryValue", "actorUserId"
-      FROM "InstallationMeasurement"
-      WHERE "id" = 'measurement-legacy'
-    `)
-
-    expect(legacyProduct).toEqual({
-      catalogProductId: 'catalog-product',
-      productNameSnapshot: 'Produkt historyczny',
-      productCodeSnapshot: 'HIST-01',
-      manufacturerSnapshot: 'WallDecor',
-      collectionSnapshot: 'Historia',
-      batchSnapshot: null,
-    })
-    expect(legacyMeasurement).toEqual({
-      kind: 'SINGLE',
-      secondaryValue: null,
-      actorUserId: 'user-1',
-    })
-
-    await prisma.$executeRawUnsafe(`
-      UPDATE "InstallationScope"
-      SET "catalogCategoryId" = 'scope-category'
-      WHERE "id" = 'scope-1'
-    `)
-    await prisma.$executeRawUnsafe(`
-      INSERT INTO "InstallationScopeProduct" (
-        "id", "scopeId", "catalogProductId", "productNameSnapshot", "batchSnapshot", "updatedAt"
-      ) VALUES (
-        'scope-product-order-owned', 'scope-1', NULL, NULL, 'PARTIA-24', '2026-08-24T00:00:00.000Z'
+    expect(
+      await db.$queryRawUnsafe<Array<{ migration_name: string }>>(
+        'SELECT migration_name FROM _prisma_migrations ORDER BY migration_name'
       )
-    `)
-    await prisma.$executeRawUnsafe(
-      'DELETE FROM "InstallationCatalogCategory" WHERE "id" = \'scope-category\''
+    ).toEqual(legacyMigrationNames.map((migration_name) => ({ migration_name })))
+    await db.$disconnect()
+
+    runMigrate(databaseUrl)
+    db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
+
+    const [scopeCount, scopeProductCount, measurementCount, scopes, scopeProducts, measurements, migrations] =
+      await Promise.all([
+        db.installationScope.count(),
+        db.installationScopeProduct.count(),
+        db.installationMeasurement.count(),
+        db.installationScope.findMany({
+          select: { id: true, roomId: true, name: true, catalogCategoryId: true },
+          orderBy: { id: 'asc' },
+        }),
+        db.installationScopeProduct.findMany({ orderBy: { id: 'asc' } }),
+        db.installationMeasurement.findMany({ orderBy: { id: 'asc' } }),
+        db.$queryRawUnsafe<Array<{ migration_name: string }>>(
+          'SELECT migration_name FROM _prisma_migrations ORDER BY migration_name'
+        ),
+      ])
+
+    expect({ scopeCount, scopeProductCount, measurementCount }).toEqual({
+      scopeCount: 1,
+      scopeProductCount: 1,
+      measurementCount: 1,
+    })
+    expect(scopes).toEqual([
+      {
+        id: 'legacy-scope',
+        roomId: 'legacy-room',
+        name: 'Ściana historyczna',
+        catalogCategoryId: null,
+      },
+    ])
+    expect(
+      scopeProducts.map((product) => ({
+        id: product.id,
+        scopeId: product.scopeId,
+        catalogProductId: product.catalogProductId,
+        productNameSnapshot: product.productNameSnapshot,
+        productCodeSnapshot: product.productCodeSnapshot,
+        manufacturerSnapshot: product.manufacturerSnapshot,
+        collectionSnapshot: product.collectionSnapshot,
+        batchSnapshot: product.batchSnapshot,
+        sortOrder: product.sortOrder,
+        createdAt: product.createdAt.toISOString(),
+        updatedAt: product.updatedAt.toISOString(),
+      }))
+    ).toEqual([
+      {
+        id: 'legacy-scope-product',
+        scopeId: 'legacy-scope',
+        catalogProductId: history.catalogProduct.id,
+        productNameSnapshot: 'Nazwa ze zlecenia',
+        productCodeSnapshot: 'ZLEC-001',
+        manufacturerSnapshot: 'Producent ze zlecenia',
+        collectionSnapshot: 'Kolekcja ze zlecenia',
+        batchSnapshot: null,
+        sortOrder: 5,
+        createdAt: history.createdAt.toISOString(),
+        updatedAt: history.updatedAt.toISOString(),
+      },
+    ])
+    expect(
+      measurements.map((measurement) => ({
+        id: measurement.id,
+        roomId: measurement.roomId,
+        scopeId: measurement.scopeId,
+        elementName: measurement.elementName,
+        kind: measurement.kind,
+        value: measurement.value.toString(),
+        secondaryValue: measurement.secondaryValue,
+        unit: measurement.unit,
+        source: measurement.source,
+        authorId: measurement.authorId,
+        authorContext: measurement.authorContext,
+        actorUserId: measurement.actorUserId,
+        actorRole: measurement.actorRole,
+        createdAt: measurement.createdAt.toISOString(),
+        updatedAt: measurement.updatedAt.toISOString(),
+      }))
+    ).toEqual([
+      {
+        id: 'legacy-measurement',
+        roomId: 'legacy-room',
+        scopeId: 'legacy-scope',
+        elementName: 'Szerokość ściany',
+        kind: 'SINGLE',
+        value: '321.5',
+        secondaryValue: null,
+        unit: 'CM',
+        source: 'EMPLOYEE',
+        authorId: 'legacy-author',
+        authorContext: 'HISTORY_IMPORT',
+        actorUserId: 'legacy-user',
+        actorRole: 'ADMIN',
+        createdAt: history.createdAt.toISOString(),
+        updatedAt: history.updatedAt.toISOString(),
+      },
+    ])
+    expect(migrations.map((migration) => migration.migration_name)).toEqual(
+      completeMigrationNames
+    )
+    expect(migrations.map((migration) => migration.migration_name)).toContain(
+      orderProductsMigration
     )
 
-    const [scope] = await prisma.$queryRawUnsafe<
-      Array<{ catalogCategoryId: string | null }>
-    >('SELECT "catalogCategoryId" FROM "InstallationScope" WHERE "id" = \'scope-1\'')
-    const [orderOwnedProduct] = await prisma.$queryRawUnsafe<
-      Array<{
-        catalogProductId: string | null
-        productNameSnapshot: string | null
-        batchSnapshot: string | null
-      }>
-    >(`
-      SELECT "catalogProductId", "productNameSnapshot", "batchSnapshot"
-      FROM "InstallationScopeProduct"
-      WHERE "id" = 'scope-product-order-owned'
-    `)
-    const integrity = await prisma.$queryRawUnsafe<Array<{ integrity_check: string }>>(
-      'PRAGMA integrity_check'
-    )
-    const foreignKeyViolations = await prisma.$queryRawUnsafe<Array<unknown>>(
-      'PRAGMA foreign_key_check'
-    )
-    const scopeIndexes = await prisma.$queryRawUnsafe<Array<{ name: string }>>(
-      'SELECT "name" FROM sqlite_master WHERE "type" = \'index\' AND "name" = \'InstallationScope_catalogCategoryId_idx\''
-    )
+    await db.installationScope.update({
+      where: { id: 'legacy-scope' },
+      data: { catalogCategoryId: history.scopeCategory.id },
+    })
+    await db.installationScopeProduct.create({
+      data: {
+        id: 'order-owned-scope-product',
+        scopeId: 'legacy-scope',
+        batchSnapshot: 'PARTIA-24',
+      },
+    })
+    await db.installationCatalogCategory.delete({
+      where: { id: history.scopeCategory.id },
+    })
 
-    expect(scope).toEqual({ catalogCategoryId: null })
+    const [scopeAfterCategoryDelete, orderOwnedProduct, scopeIndexes, scopeProductIndexes, measurementIndexes, foreignKeys, integrity] =
+      await Promise.all([
+        db.installationScope.findUniqueOrThrow({
+          where: { id: 'legacy-scope' },
+          select: { catalogCategoryId: true },
+        }),
+        db.installationScopeProduct.findUniqueOrThrow({
+          where: { id: 'order-owned-scope-product' },
+          select: {
+            catalogProductId: true,
+            productNameSnapshot: true,
+            batchSnapshot: true,
+          },
+        }),
+        db.$queryRawUnsafe<Array<{ name: string }>>(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'InstallationScope_catalogCategoryId_idx'"
+        ),
+        db.$queryRawUnsafe<Array<{ name: string }>>(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'InstallationScopeProduct' AND name NOT LIKE 'sqlite_autoindex%' ORDER BY name"
+        ),
+        db.$queryRawUnsafe<Array<{ name: string }>>(
+          "SELECT name FROM sqlite_master WHERE type = 'index' AND tbl_name = 'InstallationMeasurement' AND name NOT LIKE 'sqlite_autoindex%' ORDER BY name"
+        ),
+        db.$queryRawUnsafe('PRAGMA foreign_key_check'),
+        db.$queryRawUnsafe<Array<{ integrity_check: string }>>(
+          'PRAGMA integrity_check'
+        ),
+      ])
+
+    expect(scopeAfterCategoryDelete).toEqual({ catalogCategoryId: null })
     expect(orderOwnedProduct).toEqual({
       catalogProductId: null,
       productNameSnapshot: null,
       batchSnapshot: 'PARTIA-24',
     })
-    expect(integrity).toEqual([{ integrity_check: 'ok' }])
-    expect(foreignKeyViolations).toEqual([])
     expect(scopeIndexes).toEqual([
       { name: 'InstallationScope_catalogCategoryId_idx' },
     ])
+    expect(scopeProductIndexes).toEqual([
+      { name: 'InstallationScopeProduct_catalogProductId_idx' },
+      { name: 'InstallationScopeProduct_scopeId_sortOrder_idx' },
+    ])
+    expect(measurementIndexes).toEqual([
+      { name: 'InstallationMeasurement_actorUserId_createdAt_idx' },
+      { name: 'InstallationMeasurement_roomId_createdAt_idx' },
+      { name: 'InstallationMeasurement_scopeId_createdAt_idx' },
+    ])
+    expect(foreignKeys).toEqual([])
+    expect(integrity).toEqual([{ integrity_check: 'ok' }])
+
+    await db.$disconnect()
   })
 })
