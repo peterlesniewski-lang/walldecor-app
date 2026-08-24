@@ -9,6 +9,7 @@ import { CashThresholdsForm } from '@/components/shared/cash-thresholds-form'
 import { KsefSettingsForm } from '@/components/shared/ksef-settings-form'
 import { KsefCutoverMaintenance } from '@/components/shared/ksef-cutover-maintenance'
 import { VisitFeeSettingsPanel } from '@/components/installations/visit-fee-settings-panel'
+import { CalendarSettingsPanel } from '@/components/installations/calendar-settings-panel'
 
 export default async function SettingsPage() {
   const session = await getServerSession(authOptions)
@@ -68,6 +69,20 @@ export default async function SettingsPage() {
             <p className="text-xs text-gray-400 mt-0.5">Wersjonowana kwota i tekst wymagające zapisu zatwierdzenia prawnego</p>
           </div>
           <VisitFeeSettingsPanel />
+        </section>
+      )}
+
+      {userRole === 'ADMIN' && (
+        <section className="space-y-4">
+          <div className="border-b border-[var(--wd-border)] pb-3">
+            <h2 className="text-base font-semibold" style={{ color: 'var(--wd-dark)' }}>
+              Montaże — Google Calendar
+            </h2>
+            <p className="text-xs text-gray-400 mt-0.5">
+              Bezpieczny odczyt gotowości synchronizacji wizyt z firmowym kalendarzem
+            </p>
+          </div>
+          <CalendarSettingsPanel />
         </section>
       )}
 
