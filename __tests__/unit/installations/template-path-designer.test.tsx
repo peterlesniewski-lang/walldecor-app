@@ -48,7 +48,7 @@ describe('TemplatePathDesigner', () => {
     const onPersist = vi.fn().mockResolvedValue(undefined)
     renderDesigner([root], onPersist)
 
-    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak' }))
+    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak dla pytania „Czy są okna?”' }))
     expect(screen.queryByLabelText('Klucz pytania')).toBeNull()
     expect(screen.queryByLabelText('Warunek: klucz pytania')).toBeNull()
     expect(screen.queryByLabelText('Warunek: równa się')).toBeNull()
@@ -72,6 +72,8 @@ describe('TemplatePathDesigner', () => {
     expect(screen.getByText('Czy są okna?')).toBeTruthy()
     expect(screen.getByText('Czy są glify?')).toBeTruthy()
     expect(screen.getByText('Która strona?')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Nie dla pytania „Czy są okna?”' })).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Nie dla pytania „Czy są glify?”' })).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Góra: Druga strona' }))
     await vi.waitFor(() => expect(onPersist).toHaveBeenCalledTimes(1))
     const moved = onPersist.mock.calls[0]?.[0] as FormQuestion[]
@@ -323,7 +325,7 @@ describe('TemplatePathDesigner', () => {
       .mockResolvedValueOnce(undefined)
     renderDesigner([root], onPersist)
 
-    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak' }))
+    await user.click(screen.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Tak dla pytania „Czy są okna?”' }))
     await user.type(screen.getByLabelText('Treść pytania'), 'Czy można wejść?')
     await user.click(screen.getByRole('button', { name: 'Zapisz pytanie' }))
     expect((await screen.findByRole('alert')).textContent).toContain('Nie udało się zapisać pytań. Spróbuj ponownie.')

@@ -208,9 +208,9 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
       <div className="wd-template-branch__heading">
         <span className="wd-template-branch__label">Odpowiedź: {branch.label}</span>
         {depth > 3 && <span className="wd-template-pill">Poziom {depth}</span>}
-        <button type="button" className="wd-template-button wd-template-button--small" onClick={() => addQuestion({ parentKey: parent.key, equals: branch.value })} disabled={busy} aria-label={`Dodaj pytanie po odpowiedzi ${branch.label}`}>+ Dodaj pytanie</button>
+        <button type="button" className="wd-template-button wd-template-button--small" onClick={() => addQuestion({ parentKey: parent.key, equals: branch.value })} disabled={busy} aria-label={`Dodaj pytanie po odpowiedzi ${branch.label} dla pytania „${parent.label}”`}>+ Dodaj pytanie</button>
       </div>
-      <div className="wd-template-branch__children" aria-label={`Pytania po odpowiedzi ${branch.label}`}>
+      <div className="wd-template-branch__children" aria-label={`Pytania po odpowiedzi ${branch.label} dla pytania „${parent.label}”`}>
         {branch.children.map((child, index) => renderNode(child, depth, branch.children, index, { parentKey: parent.key, equals: branch.value }))}
       </div>
     </div>

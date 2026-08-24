@@ -47,6 +47,38 @@ async function chooseAnswer(
   return request.postData() ?? ''
 }
 
+async function tabTo(
+  page: import('@playwright/test').Page,
+  target: import('@playwright/test').Locator,
+  maxTabs = 120,
+) {
+  for (let index = 0; index < maxTabs; index += 1) {
+    await page.keyboard.press('Tab')
+    if (await target.evaluate((element) => element === document.activeElement)) return
+  }
+  throw new Error(`Nie udało się dojść klawiszem Tab do elementu: ${await target.getAttribute('aria-label') ?? 'bez etykiety'}`)
+}
+
+async function expectVisibleKeyboardFocus(target: import('@playwright/test').Locator) {
+  await expect(target).toBeFocused()
+  const outline = await target.evaluate((element) => {
+    const style = window.getComputedStyle(element)
+    return { style: style.outlineStyle, width: Number.parseFloat(style.outlineWidth) }
+  })
+  expect(outline.style).not.toBe('none')
+  expect(outline.width).toBeGreaterThan(0)
+}
+
+async function expectNoHorizontalOverflow(page: import('@playwright/test').Page) {
+  const viewport = await page.evaluate(() => ({
+    innerWidth: window.innerWidth,
+    documentWidth: document.documentElement.scrollWidth,
+    bodyWidth: document.body.scrollWidth,
+  }))
+  expect(viewport.documentWidth).toBeLessThanOrEqual(viewport.innerWidth + 1)
+  expect(viewport.bodyWidth).toBeLessThanOrEqual(viewport.innerWidth + 1)
+}
+
 test.beforeAll(async () => {
   db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
   await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
@@ -106,6 +138,8 @@ test('admin sends an anonymous client link through autosave, clarification and i
   const orderId = page.url().split('/').at(-1)!
   await expect(page.getByText('Najpierw przypnij dokładnie jeden formularz klienta do zlecenia.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Wygeneruj link' })).toBeDisabled()
+  await expectOrderFormStatus(page, orderId, 'Brak formularza')
+  await page.goto(`/installations/${orderId}`)
 
   const setup = await page.evaluate(async ({ orderId, templateId }) => {
     const room = await fetch(`/api/installations/${orderId}/rooms`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ name: 'Salon' }) })
@@ -246,8 +280,22 @@ test('admin sends an anonymous client link through autosave, clarification and i
   await client.getByRole('button', { name: 'Wyślij formularz' }).click()
   await expect(client.getByText(/wersję 2/i)).toBeVisible()
   await page.reload()
-  await expect(page.getByRole('button', { name: 'Podgląd jak klient · wersja 1' })).toBeVisible()
-  await expect(page.getByRole('button', { name: 'Podgląd jak klient · wersja 2' })).toBeVisible()
+  const version1Opener = page.getByRole('button', { name: 'Podgląd jak klient · wersja 1' })
+  const version2Opener = page.getByRole('button', { name: 'Podgląd jak klient · wersja 2' })
+  await expect(version1Opener).toBeVisible()
+  await expect(version2Opener).toBeVisible()
+
+  await version1Opener.click()
+  const version1Preview = page.getByRole('region', { name: 'Podgląd formularza klienta, wersja 1' })
+  await expect(version1Preview.getByText('Czy tapetujemy glify?', { exact: true }).locator('..')).toContainText('Nie wiem')
+  await expect(version1Preview.getByText('Podaj głębokość glifów', { exact: true })).toHaveCount(0)
+  await version1Preview.getByRole('button', { name: 'Zamknij podgląd' }).click()
+
+  await version2Opener.click()
+  const version2Preview = page.getByRole('region', { name: 'Podgląd formularza klienta, wersja 2' })
+  await expect(version2Preview.getByText('Czy tapetujemy glify?', { exact: true }).locator('..')).toContainText('Tak')
+  await expect(version2Preview.getByText('Podaj głębokość glifów', { exact: true }).locator('..')).toContainText('12.5')
+  await version2Preview.getByRole('button', { name: 'Zamknij podgląd' }).click()
 
   await page.getByRole('button', { name: 'Cofnij link' }).click()
   await expect.poll(async () => (await db.installationClientLink.findFirstOrThrow({ where: { orderId, tokenHash: createHash('sha256').update(new URL(clientUrl!).pathname.split('/').at(-1)!).digest('hex') } })).revokedAt).not.toBeNull()
@@ -282,49 +330,52 @@ test('path designer stays keyboard-operable without horizontal overflow on mobil
   await page.getByLabel('Wybierz szkic do edycji').selectOption({ label: 'E2E projektant · v1 · szkic' })
 
   const collapse = page.getByRole('button', { name: 'Zwiń gałęzie pytania Czy są okna?' })
-  await collapse.focus()
-  await expect(collapse).toBeFocused()
+  await tabTo(page, collapse)
+  await expectVisibleKeyboardFocus(collapse)
   await page.keyboard.press('Enter')
   await expect(collapse).toHaveAttribute('aria-expanded', 'false')
   await page.keyboard.press('Enter')
   await expect(collapse).toHaveAttribute('aria-expanded', 'true')
 
-  const branchAction = page.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Nie' }).first()
+  const branchAction = page.getByRole('button', { name: 'Dodaj pytanie po odpowiedzi Nie dla pytania „Czy są okna?”' })
   await branchAction.scrollIntoViewIfNeeded()
-  await branchAction.focus()
-  await expect(branchAction).toBeFocused()
+  await tabTo(page, branchAction)
+  await expectVisibleKeyboardFocus(branchAction)
   await page.keyboard.press('Enter')
   await expect(page.getByRole('form', { name: 'Dodaj pytanie' })).toBeVisible()
+  await expectNoHorizontalOverflow(page)
+  await expect(page.getByLabel('Treść pytania')).toBeFocused()
+  await page.keyboard.press('Tab')
+  await expect(page.getByLabel('Typ odpowiedzi')).toBeFocused()
   await page.getByRole('button', { name: 'Anuluj' }).click()
 
   const edit = page.getByRole('button', { name: 'Edytuj pytanie Podaj głębokość' })
-  await edit.focus()
+  await tabTo(page, edit)
+  await expectVisibleKeyboardFocus(edit)
   await page.keyboard.press('Enter')
   await expect(page.getByRole('form', { name: 'Edytuj pytanie Podaj głębokość' })).toBeVisible()
+  await expectNoHorizontalOverflow(page)
   await page.getByRole('button', { name: 'Anuluj' }).click()
 
   const testForm = page.getByRole('button', { name: 'Testuj formularz' })
-  await testForm.focus()
-  await expect(testForm).toBeFocused()
+  await tabTo(page, testForm)
+  await expectVisibleKeyboardFocus(testForm)
   await page.keyboard.press('Enter')
   await expect(page.getByRole('region', { name: 'Test formularza' })).toBeVisible()
+  await expectNoHorizontalOverflow(page)
   await page.getByRole('group', { name: 'Czy są okna?' }).getByRole('button', { name: 'Tak', exact: true }).click()
   await expect(page.getByRole('group', { name: 'Czy tapetujemy glify?' })).toBeVisible()
+  await expectNoHorizontalOverflow(page)
   await page.getByRole('button', { name: 'Wróć do mapy' }).click()
 
   const remove = page.getByRole('button', { name: 'Usuń pytanie Podaj głębokość' })
-  await remove.focus()
+  await tabTo(page, remove)
+  await expectVisibleKeyboardFocus(remove)
   await page.keyboard.press('Enter')
   const confirmation = page.getByRole('alertdialog')
   await expect(confirmation).toBeFocused()
+  await expectNoHorizontalOverflow(page)
   await page.keyboard.press('Escape')
   await expect(remove).toBeFocused()
-
-  const viewport = await page.evaluate(() => ({
-    innerWidth: window.innerWidth,
-    documentWidth: document.documentElement.scrollWidth,
-    bodyWidth: document.body.scrollWidth,
-  }))
-  expect(viewport.documentWidth).toBeLessThanOrEqual(viewport.innerWidth + 1)
-  expect(viewport.bodyWidth).toBeLessThanOrEqual(viewport.innerWidth + 1)
+  await expectNoHorizontalOverflow(page)
 })
