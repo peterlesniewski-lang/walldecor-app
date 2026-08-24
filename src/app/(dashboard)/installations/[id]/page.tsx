@@ -19,6 +19,7 @@ import { listInstallationVisits } from '@/lib/installations/visit-service'
 import { listScopeInstallerAssignments } from '@/lib/installations/scope-assignment-service'
 import { InstallationOrderDetail } from '@/components/installations/order-detail'
 import type { InstallationVisitValue } from '@/components/installations/installation-visits-panel'
+import { presentInstallerInstallationOrder } from '@/lib/installations/order-presenter'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -84,13 +85,20 @@ export default async function InstallationOrderPage({ params }: Params) {
     return { employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches }
   })() : null
 
-  // Decimal is a Prisma value object and cannot cross the Server/Client
-  // Component boundary. Keep the order model intact in the service layer and
-  // serialize only the Task 4 snapshot exposed to the detail component.
-  const clientOrder = {
-    ...order,
-    visitFeeGrossAmount: order.visitFeeGrossAmount?.toFixed(2) ?? null,
-  }
+  // Cross the Server/Client boundary with a role-specific payload: an explicit
+  // installer allowlist, or the coordinator model with Decimal serialized.
+  const installerView = viewer.role === 'INSTALLER'
+  const clientOrder = installerView
+    ? presentInstallerInstallationOrder(order)
+    : {
+        ...order,
+        visitFeeGrossAmount: order.visitFeeGrossAmount?.toFixed(2) ?? null,
+      }
+  const clientVisits = installerView
+    ? visits
+        .filter((visit) => visit.participants.some((participant) => participant.employeeId === viewer.employeeId))
+        .map(installerVisitProjection)
+    : visits
 
   return <InstallationOrderDetail
     order={clientOrder}
@@ -110,7 +118,7 @@ export default async function InstallationOrderPage({ params }: Params) {
     files={coordinatorData?.files ?? []}
     mismatches={coordinatorData?.mismatches ?? []}
     canManageGovernance={canManageGovernance}
-    visits={viewer.role === 'INSTALLER' ? visits.map(installerVisitProjection) : visits}
-    scopeAssignments={scopeAssignments}
+    visits={clientVisits}
+    scopeAssignments={installerView ? [] : scopeAssignments}
   />
 }

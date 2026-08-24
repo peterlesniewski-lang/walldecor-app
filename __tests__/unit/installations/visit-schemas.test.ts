@@ -130,6 +130,24 @@ describe('installation visit action validation', () => {
     })
   })
 
+  it('requires the same complete payload to change a confirmed schedule', () => {
+    expect(parseInstallationVisitAction({
+      action: 'CHANGE_SCHEDULE',
+      expectedRevision: 4,
+      startsAt,
+      endsAt,
+      note: ' Zmiana terminu ',
+      scopeIds: [' scope-a '],
+    })).toEqual({
+      action: 'CHANGE_SCHEDULE',
+      expectedRevision: 4,
+      startsAt,
+      endsAt,
+      note: 'Zmiana terminu',
+      scopeIds: ['scope-a'],
+    })
+  })
+
   it('rejects an overlong note when saving a draft', () => {
     expectValidationError(() => parseInstallationVisitAction({
       action: 'SAVE_DRAFT', expectedRevision: 1, note: 'n'.repeat(4_001), scopeIds: [],

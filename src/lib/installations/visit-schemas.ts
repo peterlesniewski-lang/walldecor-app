@@ -132,6 +132,23 @@ const confirmActionSchema = z.object({
   }
 })
 
+const changeScheduleActionSchema = z.object({
+  action: z.literal('CHANGE_SCHEDULE'),
+  expectedRevision: expectedRevisionSchema,
+  startsAt: visitDateSchema,
+  endsAt: visitDateSchema,
+  note: nullableOptionalTrimmedNoteSchema,
+  scopeIds: nonEmptyScopeIdsSchema,
+}).strict().superRefine((value, ctx) => {
+  if (value.endsAt <= value.startsAt) {
+    ctx.addIssue({
+      code: 'custom',
+      path: ['endsAt'],
+      message: 'Koniec wizyty musi przypadać po jej rozpoczęciu.',
+    })
+  }
+})
+
 const cancelActionSchema = z.object({
   action: z.literal('CANCEL'),
   expectedRevision: expectedRevisionSchema,
@@ -145,6 +162,7 @@ const completeActionSchema = z.object({
 export const updateVisitActionSchema = z.discriminatedUnion('action', [
   saveDraftActionSchema,
   confirmActionSchema,
+  changeScheduleActionSchema,
   cancelActionSchema,
   completeActionSchema,
 ])

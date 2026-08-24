@@ -198,33 +198,38 @@ export function InstallationVisitsPanel({ orderId, visits, scopes, employees, ca
     })
   }
 
-  async function saveVisit(visit: InstallationVisitValue, confirm: boolean) {
+  async function saveVisit(visit: InstallationVisitValue, action: 'SAVE_DRAFT' | 'CONFIRM' | 'CHANGE_SCHEDULE') {
     const form = forms[visit.id]
     if (!form) return
-    if (confirm && hasUnsavedScopeTeams(form)) {
+    const requiresSchedule = action !== 'SAVE_DRAFT'
+    if (requiresSchedule && hasUnsavedScopeTeams(form)) {
       setError('Najpierw zapisz zmienioną ekipę dla wybranych zakresów.')
       return
     }
-    const dates = confirm ? datesFromForm(form) : (() => {
+    const dates = requiresSchedule ? datesFromForm(form) : (() => {
       if (!form.startsAt && !form.endsAt) return { startsAt: null, endsAt: null }
       return datesFromForm(form)
     })()
     if (!dates) return
 
     const updated = await request<InstallationVisitValue>(
-      `${confirm ? 'confirm' : 'draft'}:${visit.id}`,
+      `${action === 'SAVE_DRAFT' ? 'draft' : action === 'CONFIRM' ? 'confirm' : 'schedule'}:${visit.id}`,
       `/api/installations/${orderId}/visits/${visit.id}`,
       {
         method: 'PATCH',
         body: JSON.stringify({
-          action: confirm ? 'CONFIRM' : 'SAVE_DRAFT',
+          action,
           expectedRevision: visit.revision,
           ...dates,
           scopeIds: form.scopeIds,
           note: form.note.trim() || null,
         }),
       },
-      confirm ? 'Wizyta została potwierdzona. Zaproszenia oczekują na wysyłkę.' : 'Zapisano szkic wizyty.',
+      action === 'SAVE_DRAFT'
+        ? 'Zapisano szkic wizyty.'
+        : action === 'CONFIRM'
+          ? 'Wizyta została potwierdzona. Zaproszenia oczekują na wysyłkę.'
+          : 'Zapisano zmianę terminu. Aktualizacje oczekują na wysyłkę.',
     )
     if (updated) replaceVisit(updated)
   }
@@ -326,8 +331,10 @@ export function InstallationVisitsPanel({ orderId, visits, scopes, employees, ca
               {missingEmailEmployees.map((employee) => <p key={employee.id} className="mt-3 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">{employee.firstName} {employee.lastName} nie ma adresu e-mail — zaproszenie nie zostanie wysłane.</p>)}
               {hasUnsavedScopeTeams(form) && <p className="mt-3 text-sm text-amber-900">Zapisz zmienioną ekipę dla wybranych zakresów przed potwierdzeniem wizyty.</p>}
               <div className="mt-5 flex flex-wrap gap-2">
-                <Button type="button" variant="outline" onClick={() => void saveVisit(visit, false)} disabled={actionBusy('draft')}><Save /> {actionBusy('draft') ? 'Zapisywanie…' : 'Zapisz szkic'}</Button>
-                <Button type="button" onClick={() => void saveVisit(visit, true)} disabled={actionBusy('confirm') || hasUnsavedScopeTeams(form)}><CheckCircle2 /> {actionBusy('confirm') ? 'Potwierdzanie…' : 'Potwierdź i wyślij zaproszenia'}</Button>
+                {visit.status === 'DRAFT' ? <>
+                  <Button type="button" variant="outline" onClick={() => void saveVisit(visit, 'SAVE_DRAFT')} disabled={actionBusy('draft')}><Save /> {actionBusy('draft') ? 'Zapisywanie…' : 'Zapisz szkic'}</Button>
+                  <Button type="button" onClick={() => void saveVisit(visit, 'CONFIRM')} disabled={actionBusy('confirm') || hasUnsavedScopeTeams(form)}><CheckCircle2 /> {actionBusy('confirm') ? 'Potwierdzanie…' : 'Potwierdź i wyślij zaproszenia'}</Button>
+                </> : <Button type="button" onClick={() => void saveVisit(visit, 'CHANGE_SCHEDULE')} disabled={actionBusy('schedule') || hasUnsavedScopeTeams(form)}><Save /> {actionBusy('schedule') ? 'Zapisywanie…' : 'Zapisz zmianę terminu i wyślij aktualizacje'}</Button>}
               </div>
             </> : <div className="text-sm" style={{ color: 'var(--wd-text-muted)' }}>
               <p>{visit.startsAt && visit.endsAt ? `${formatWarsawDateTime(visit.startsAt)} – ${formatWarsawDateTime(visit.endsAt)}` : 'Termin nieustalony'}</p>

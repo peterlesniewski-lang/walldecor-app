@@ -140,6 +140,7 @@ describe('installation visit lifecycle', () => {
 
     const changed = await changeInstallationVisit(db, order.id, draft.id, {
       ...confirmedInput(2, [wallpaperScope.id]),
+      action: 'CHANGE_SCHEDULE',
       startsAt: '2026-09-15T06:00:00.000Z',
       endsAt: '2026-09-15T14:00:00.000Z',
     }, 'owner-user')
@@ -187,6 +188,7 @@ describe('installation visit lifecycle', () => {
     const confirmed = await changeInstallationVisit(db, order.id, draft.id, confirmedInput(2, [plasterScope.id]), 'owner-user')
     const editedConfirmed = await changeInstallationVisit(db, order.id, draft.id, {
       ...confirmedInput(3, [plasterScope.id]),
+      action: 'CHANGE_SCHEDULE',
       startsAt: '2026-09-15T06:00:00.000Z',
       endsAt: '2026-09-15T14:00:00.000Z',
     }, 'owner-user')
@@ -197,6 +199,10 @@ describe('installation visit lifecycle', () => {
         { operation: 'CALENDAR_UPSERT', revision: 3 },
         { operation: 'CALENDAR_UPSERT', revision: 4 },
       ])
+    expect(await db.installationAuditEvent.findFirst({
+      where: { orderId: order.id, action: 'INSTALLATION_VISIT_SCHEDULE_CHANGED' },
+      orderBy: { createdAt: 'desc' },
+    })).toMatchObject({ action: 'INSTALLATION_VISIT_SCHEDULE_CHANGED' })
 
     const auditCount = await db.installationAuditEvent.count({ where: { orderId: order.id } })
     const outboxCount = await db.integrationOutbox.count({ where: { visitId: draft.id } })

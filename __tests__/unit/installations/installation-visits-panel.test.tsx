@@ -122,4 +122,42 @@ describe('InstallationVisitsPanel', () => {
     ))
     expect(screen.getByRole('button', { name: 'Potwierdź i wyślij zaproszenia' })).toHaveProperty('disabled', false)
   })
+
+  it('changes a confirmed schedule without exposing or sending SAVE_DRAFT', async () => {
+    const user = userEvent.setup()
+    const confirmed = {
+      ...draftVisit,
+      id: 'visit-confirmed',
+      status: 'CONFIRMED',
+      revision: 4,
+      startsAt: '2026-09-14T06:00:00.000Z',
+      endsAt: '2026-09-14T14:00:00.000Z',
+      scopeIds: ['scope-salon-tapety'],
+      syncState: { ...draftVisit.syncState, status: 'SYNCED' },
+    }
+    const fetchMock = vi.fn().mockResolvedValue(jsonResponse({ ...confirmed, revision: 5, syncState: { ...confirmed.syncState, status: 'PENDING' } }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(createElement(InstallationVisitsPanel, {
+      orderId: 'order-1', scopes, employees, canEdit: true, canForceOverwrite: false, visits: [confirmed],
+    }))
+
+    await user.click(screen.getByRole('button', { name: /Potwierdzona/ }))
+    expect(screen.queryByRole('button', { name: 'Zapisz szkic' })).toBeNull()
+    await user.clear(screen.getByLabelText('Początek wizyty'))
+    await user.type(screen.getByLabelText('Początek wizyty'), '2026-09-15T08:00')
+    await user.clear(screen.getByLabelText('Koniec wizyty'))
+    await user.type(screen.getByLabelText('Koniec wizyty'), '2026-09-15T16:00')
+    await user.click(screen.getByRole('button', { name: 'Zapisz zmianę terminu i wyślij aktualizacje' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(1))
+    const body = JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)
+    expect(body).toMatchObject({
+      action: 'CHANGE_SCHEDULE',
+      expectedRevision: 4,
+      startsAt: '2026-09-15T06:00:00.000Z',
+      endsAt: '2026-09-15T14:00:00.000Z',
+      scopeIds: ['scope-salon-tapety'],
+    })
+    expect(body.action).not.toBe('SAVE_DRAFT')
+  })
 })

@@ -388,6 +388,7 @@ function actionAuditName(action: UpdateInstallationVisitActionInput['action']): 
   switch (action) {
     case 'SAVE_DRAFT': return 'INSTALLATION_VISIT_DRAFT_SAVED'
     case 'CONFIRM': return 'INSTALLATION_VISIT_CONFIRMED'
+    case 'CHANGE_SCHEDULE': return 'INSTALLATION_VISIT_SCHEDULE_CHANGED'
     case 'CANCEL': return 'INSTALLATION_VISIT_CANCELLED'
     case 'COMPLETE': return 'INSTALLATION_VISIT_COMPLETED'
   }
@@ -395,7 +396,7 @@ function actionAuditName(action: UpdateInstallationVisitActionInput['action']): 
 
 const allowedActionsByStatus: Readonly<Partial<Record<string, readonly UpdateInstallationVisitActionInput['action'][]>>> = {
   DRAFT: ['SAVE_DRAFT', 'CONFIRM', 'CANCEL'],
-  CONFIRMED: ['CONFIRM', 'CANCEL', 'COMPLETE'],
+  CONFIRMED: ['CHANGE_SCHEDULE', 'CANCEL', 'COMPLETE'],
 }
 
 function assertAllowedVisitTransition(status: string, action: UpdateInstallationVisitActionInput['action']) {
@@ -497,7 +498,8 @@ export async function changeInstallationVisit(
         patch.note = parsed.note ?? null
         break
       }
-      case 'CONFIRM': {
+      case 'CONFIRM':
+      case 'CHANGE_SCHEDULE': {
         scopeIds = parsed.scopeIds
         await assertScopesBelongToOrder(tx, orderId, scopeIds)
         await assertConfirmableParticipants(tx, orderId, scopeIds)
@@ -538,7 +540,7 @@ export async function changeInstallationVisit(
       await throwSyncInProgressOrRevisionConflict(tx, visitId, parsed.expectedRevision)
     }
 
-    if (parsed.action === 'SAVE_DRAFT' || parsed.action === 'CONFIRM') {
+    if (parsed.action === 'SAVE_DRAFT' || parsed.action === 'CONFIRM' || parsed.action === 'CHANGE_SCHEDULE') {
       await replaceVisitScopes(tx, visitId, orderId, scopeIds)
     }
     await ensureCalendarSyncState(tx, visitId)

@@ -60,10 +60,25 @@ describe('installer installation detail privacy', () => {
   it('does not fetch or pass links, client answers, evidence, readiness or revisions to an installer page', async () => {
     const order = {
       id: 'order-1',
+      number: 'MON-PRIVATE-1',
+      status: 'SCHEDULED',
+      archivedAt: null,
+      client: { name: 'Klient montażu', email: 'sentinel-client-secret@example.test', phone: '+48 SENTINEL PHONE' },
+      addressStreet: 'Sienna',
+      addressBuildingNumber: '10',
+      addressApartmentNumber: '7',
+      addressPostalCode: '00-001',
+      addressCity: 'Warszawa',
       primaryEmployeeId: 'owner',
       backupEmployeeId: 'backup',
+      primaryEmployee: { id: 'owner', firstName: 'Anna', lastName: 'Opiekun', active: true },
+      backupEmployee: { id: 'backup', firstName: 'Bartek', lastName: 'Zastępca', active: true },
       installerAssignments: [{ employeeId: 'installer-employee' }],
       delegations: [],
+      auditEvents: [{ id: 'audit-private', afterJson: 'SENTINEL PRIVATE AUDIT' }],
+      formSubmissions: [{ answersJson: 'SENTINEL PRIVATE FORM ANSWER' }],
+      externalSystem: 'SENTINEL TECHNICAL SYSTEM',
+      externalId: 'SENTINEL TECHNICAL ID',
     }
     mocks.getOrder.mockResolvedValue(order)
     mocks.getRooms.mockResolvedValue([{ id: 'room-1', name: 'Salon' }])
@@ -80,6 +95,11 @@ describe('installer installation detail privacy', () => {
       scopeIds: ['scope-1'], note: 'Prywatna notatka koordynatora', createdById: 'coordinator-1',
       participants: [{ employeeId: 'installer-employee', name: 'Instalator', email: 'installer@example.test', scopeIds: ['scope-1'], inviteStatus: 'READY' }],
       syncState: { status: 'PENDING', externalId: 'calendar-id', externalUrl: 'https://calendar.example.test/event', externalEtag: 'etag', lastErrorCode: 'INTERNAL', lastErrorMessage: 'Prywatny błąd', lastAttemptAt: null, lastSyncedAt: null },
+    }, {
+      id: 'foreign-visit', orderId: 'order-1', status: 'CONFIRMED', startsAt: '2026-09-15T06:00:00.000Z', endsAt: '2026-09-15T14:00:00.000Z', timezone: 'Europe/Warsaw', revision: 1,
+      scopeIds: ['scope-foreign'], note: 'SENTINEL FOREIGN VISIT',
+      participants: [{ employeeId: 'other-installer', name: 'Inny instalator', email: 'other@example.test', scopeIds: ['scope-foreign'], inviteStatus: 'READY' }],
+      syncState: { status: 'SYNCED' },
     }])
     mocks.listScopeAssignments.mockResolvedValue([{ scopeId: 'scope-1', employeeIds: ['installer-employee'] }])
 
@@ -106,6 +126,25 @@ describe('installer installation detail privacy', () => {
     expect(result.props.visits[0]).not.toHaveProperty('createdById')
     expect(result.props.visits[0].participants[0]).not.toHaveProperty('email')
     expect(result.props.visits[0].syncState).not.toHaveProperty('externalUrl')
-    expect(result.props.scopeAssignments).toEqual([{ scopeId: 'scope-1', employeeIds: ['installer-employee'] }])
+    expect(result.props.visits).toHaveLength(1)
+    expect(result.props.scopeAssignments).toEqual([])
+    expect(result.props.order).toEqual({
+      id: 'order-1',
+      number: 'MON-PRIVATE-1',
+      status: 'SCHEDULED',
+      archivedAt: null,
+      client: { name: 'Klient montażu' },
+      addressStreet: 'Sienna',
+      addressBuildingNumber: '10',
+      addressApartmentNumber: '7',
+      addressPostalCode: '00-001',
+      addressCity: 'Warszawa',
+      primaryEmployee: { firstName: 'Anna', lastName: 'Opiekun' },
+      backupEmployee: { firstName: 'Bartek', lastName: 'Zastępca' },
+    })
+    const flightProps = JSON.stringify(result.props)
+    for (const secret of ['sentinel-client-secret@example.test', '+48 SENTINEL PHONE', 'SENTINEL PRIVATE AUDIT', 'SENTINEL PRIVATE FORM ANSWER', 'SENTINEL TECHNICAL SYSTEM', 'SENTINEL TECHNICAL ID', 'SENTINEL FOREIGN VISIT']) {
+      expect(flightProps).not.toContain(secret)
+    }
   })
 })

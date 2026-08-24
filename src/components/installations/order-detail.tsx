@@ -16,13 +16,20 @@ import { VisitFeePanel } from './visit-fee-panel'
 import { InstallationFilesPanel } from './installation-files-panel'
 import { InstallationVisitsPanel, type InstallationVisitValue } from './installation-visits-panel'
 import type { ScopeAssignmentView } from '@/lib/installations/scope-assignment-service'
+import type { InstallerInstallationOrderView } from '@/lib/installations/order-presenter'
 
-type InstallationOrderDetailValue = InstallationOrderFormValue & {
+type CoordinatorInstallationOrderDetailValue = InstallationOrderFormValue & {
   number: string
   status: string
   archivedAt: Date | string | null
   primaryEmployee: { firstName: string; lastName: string }
   backupEmployee: { firstName: string; lastName: string }
+}
+
+type InstallationOrderDetailValue = CoordinatorInstallationOrderDetailValue | InstallerInstallationOrderView
+
+function isCoordinatorOrder(order: InstallationOrderDetailValue): order is CoordinatorInstallationOrderDetailValue {
+  return 'email' in order.client && 'phone' in order.client && 'primaryEmployeeId' in order && 'backupEmployeeId' in order
 }
 
 export function InstallationOrderDetail({
@@ -70,6 +77,7 @@ export function InstallationOrderDetail({
   const [archiving, setArchiving] = useState(false)
   const [error, setError] = useState('')
   const isArchived = Boolean(order.archivedAt) || order.status === 'ARCHIVED'
+  const editableOrder = isCoordinatorOrder(order) ? order : null
   const canEditActiveOrder = canEdit && !isArchived
   const installerIdsByScope = new Map(scopeAssignments.map((assignment) => [assignment.scopeId, assignment.employeeIds]))
   const visitScopes = rooms.flatMap((room) => room.scopes.map((scope) => ({
@@ -133,8 +141,8 @@ export function InstallationOrderDetail({
         <p className="rounded-xl border px-4 py-3 text-sm font-medium" style={{ background: 'var(--wd-sand-light)', borderColor: 'rgba(30, 30, 30, 0.12)', color: 'var(--wd-dark)' }}>
           Karta jest zarchiwizowana. Historia i odpowiedzialność pozostają zachowane.
         </p>
-      ) : canEditActiveOrder ? (
-        <InstallationOrderForm mode="edit" order={order} employees={employees} canManageOwners={false} />
+      ) : canEditActiveOrder && editableOrder ? (
+        <InstallationOrderForm mode="edit" order={editableOrder} employees={employees} canManageOwners={false} />
       ) : null}
       {canEditActiveOrder && ownership && <OwnershipPanel
         orderId={order.id}
