@@ -10,11 +10,11 @@ describe('installation detail client-link and clarification panels', () => {
   it('shows a one-time URL only after the editor really generates it', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      link: { id: 'link-2', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null },
+      link: { id: 'link-2', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: null, sentById: null },
       url: 'https://app.example.test/m/secret-once',
     }), { status: 201 }))
     vi.stubGlobal('fetch', fetchMock)
-    render(<ClientLinkPanel orderId="order-1" canEdit initialLinks={[{ id: 'link-1', expiresAt: '2026-12-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null }]} />)
+    render(<ClientLinkPanel orderId="order-1" canEdit initialLinks={[{ id: 'link-1', expiresAt: '2026-12-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: null, sentById: null }]} />)
 
     expect(screen.queryByText('https://app.example.test/m/secret-once')).toBeNull()
     await user.click(screen.getByRole('button', { name: /Wygeneruj/ }))
@@ -25,10 +25,10 @@ describe('installation detail client-link and clarification panels', () => {
   it('extends an active link by fourteen days without rendering its token again', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
-      link: { id: 'link-1', expiresAt: '2027-01-15T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null },
+      link: { id: 'link-1', expiresAt: '2027-01-15T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: null, sentById: null },
     }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    render(<ClientLinkPanel orderId="order-1" canEdit initialLinks={[{ id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null }]} />)
+    render(<ClientLinkPanel orderId="order-1" canEdit initialLinks={[{ id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: null, sentById: null }]} />)
 
     await user.click(screen.getByRole('button', { name: 'Przedłuż o 14 dni' }))
     expect(fetchMock).toHaveBeenCalledWith('/api/installations/order-1/client-link', expect.objectContaining({ method: 'PATCH' }))
@@ -37,12 +37,28 @@ describe('installation detail client-link and clarification panels', () => {
   })
 
   it('keeps generation unavailable until the order has exactly one form snapshot, without disabling an existing link lifecycle', async () => {
-    render(<ClientLinkPanel orderId="order-1" canEdit canGenerate={false} initialLinks={[{ id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null }]} />)
+    render(<ClientLinkPanel orderId="order-1" canEdit canGenerate={false} initialLinks={[{ id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: null, sentById: null }]} />)
 
     expect(screen.getByText('Najpierw przypnij dokładnie jeden formularz klienta do zlecenia.')).not.toBeNull()
     expect(screen.getByRole('button', { name: 'Wygeneruj nowy link' }).hasAttribute('disabled')).toBe(true)
     expect(screen.getByRole('button', { name: 'Przedłuż o 14 dni' }).hasAttribute('disabled')).toBe(false)
     expect(screen.getByRole('button', { name: 'Cofnij link' }).hasAttribute('disabled')).toBe(false)
+  })
+
+  it('marks an active unsent link and never receives a plaintext URL again', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      link: { id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: '2026-08-23T08:15:00.000Z', sentById: 'owner-user' },
+    }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientLinkPanel orderId="order-1" canEdit initialLinks={[{ id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: null, sentById: null }]} />)
+
+    await user.click(screen.getByRole('button', { name: 'Oznacz jako wysłany' }))
+    expect(fetchMock).toHaveBeenCalledWith('/api/installations/order-1/client-link', expect.objectContaining({ method: 'PATCH' }))
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ action: 'MARK_SENT', linkId: 'link-1' })
+    expect(await screen.findByText(/oznaczono jako wysłany/i)).not.toBeNull()
+    expect(screen.queryByRole('button', { name: 'Oznacz jako wysłany' })).toBeNull()
+    expect(screen.queryByText(/\/m\//)).toBeNull()
   })
 
   it('requires an actual resolution/note form instead of prompt before closing an open clarification', async () => {

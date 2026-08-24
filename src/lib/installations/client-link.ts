@@ -171,6 +171,47 @@ export async function extendClientLink(db: PrismaClient, linkId: string, expires
   })
 }
 
+/** Records the first staff hand-off without exposing or storing the plaintext link token. */
+export async function markClientLinkSent(db: PrismaClient, linkId: string, actorId: string, expectedOrderId?: string) {
+  const now = new Date()
+  return db.$transaction(async (tx) => {
+    const link = await tx.installationClientLink.findUnique({ where: { id: linkId } })
+    if (!link || link.revokedAt || link.expiresAt <= now || (expectedOrderId && link.orderId !== expectedOrderId)) {
+      throw new InstallationClientLinkNotFoundError()
+    }
+
+    const marked = await tx.installationClientLink.updateMany({
+      where: {
+        id: linkId,
+        ...(expectedOrderId ? { orderId: expectedOrderId } : {}),
+        sentAt: null,
+        revokedAt: null,
+        expiresAt: { gt: now },
+      },
+      data: { sentAt: now, sentById: actorId },
+    })
+    if (marked.count === 1) {
+      const sent = await tx.installationClientLink.findUnique({ where: { id: linkId } })
+      if (!sent) throw new InstallationClientLinkNotFoundError()
+      await tx.installationAuditEvent.create({
+        data: {
+          orderId: link.orderId,
+          actorId,
+          action: 'INSTALLATION_CLIENT_LINK_SENT',
+          metadataJson: JSON.stringify({ linkId, sentAt: now.toISOString() }),
+        },
+      })
+      return sent
+    }
+
+    const current = await tx.installationClientLink.findUnique({ where: { id: linkId } })
+    if (!current || current.revokedAt || current.expiresAt <= now || !current.sentAt || (expectedOrderId && current.orderId !== expectedOrderId)) {
+      throw new InstallationClientLinkNotFoundError()
+    }
+    return current
+  })
+}
+
 /** Hashes every candidate before lookup so malformed, revoked and unknown links share the public failure path. */
 export async function resolveActiveClientLink(db: InstallationDb, token: string) {
   const tokenHash = hashClientLinkSecret(token)
@@ -318,7 +359,7 @@ export async function loadPublicInstallationProjection(db: PrismaClient, token: 
 export async function listClientLinkStatuses(db: InstallationDb, orderId: string) {
   return db.installationClientLink.findMany({
     where: { orderId },
-    select: { id: true, expiresAt: true, revokedAt: true, createdAt: true, lastOpenedAt: true },
+    select: { id: true, expiresAt: true, revokedAt: true, createdAt: true, lastOpenedAt: true, sentAt: true, sentById: true },
     orderBy: { createdAt: 'desc' },
   })
 }

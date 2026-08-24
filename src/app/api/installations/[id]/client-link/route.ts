@@ -10,6 +10,7 @@ import {
   InstallationClientLinkNotFoundError,
   InstallationClientLinkPrerequisiteError,
   InstallationClientLinkValidationError,
+  markClientLinkSent,
   revokeClientLink,
 } from '@/lib/installations/client-link'
 
@@ -20,16 +21,19 @@ const createSchema = z.object({ expiresAt: expiry }).strict()
 const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('REVOKE'), linkId: z.string().trim().min(1) }).strict(),
   z.object({ action: z.literal('EXTEND'), linkId: z.string().trim().min(1), expiresAt: expiry }).strict(),
+  z.object({ action: z.literal('MARK_SENT'), linkId: z.string().trim().min(1) }).strict(),
   z.object({ action: z.literal('REGENERATE'), expiresAt: expiry }).strict(),
 ])
 
-function safeLink(link: { id: string; expiresAt: Date; revokedAt: Date | null; createdAt: Date; lastOpenedAt: Date | null }) {
+function safeLink(link: { id: string; expiresAt: Date; revokedAt: Date | null; createdAt: Date; lastOpenedAt: Date | null; sentAt: Date | null; sentById: string | null }) {
   return {
     id: link.id,
     expiresAt: link.expiresAt,
     revokedAt: link.revokedAt,
     createdAt: link.createdAt,
     lastOpenedAt: link.lastOpenedAt,
+    sentAt: link.sentAt,
+    sentById: link.sentById,
   }
 }
 
@@ -76,6 +80,9 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     }
     if (parsed.data.action === 'EXTEND') {
       return NextResponse.json({ link: safeLink(await extendClientLink(prisma, parsed.data.linkId, parsed.data.expiresAt, access.session.user.id, id)) })
+    }
+    if (parsed.data.action === 'MARK_SENT') {
+      return NextResponse.json({ link: safeLink(await markClientLinkSent(prisma, parsed.data.linkId, access.session.user.id, id)) })
     }
     const created = await createClientLink(prisma, { orderId: id, createdById: access.session.user.id, expiresAt: parsed.data.expiresAt })
     return NextResponse.json({

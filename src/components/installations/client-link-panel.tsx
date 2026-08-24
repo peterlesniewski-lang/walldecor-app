@@ -8,6 +8,8 @@ export type InstallationClientLinkStatus = {
   revokedAt: Date | string | null
   createdAt: Date | string
   lastOpenedAt: Date | string | null
+  sentAt: Date | string | null
+  sentById: string | null
 }
 
 function defaultExpiry() {
@@ -62,7 +64,7 @@ export function ClientLinkPanel({ orderId, initialLinks, canEdit, canGenerate = 
   return <section className="mt-6 rounded-xl border p-4" style={{ background: 'var(--wd-white)', borderColor: 'rgba(30,30,30,.12)', boxShadow: 'var(--card-shadow)' }}>
     <p className="data-label">Formularz klienta</p>
     <h2 className="mt-1 text-xl font-extrabold tracking-tight" style={{ color: 'var(--wd-dark)' }}>Bezpieczny link do przygotowania montażu</h2>
-    {active ? <p className="mt-2 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Aktywny do <span className="num">{new Date(active.expiresAt).toLocaleString('pl-PL')}</span>{active.lastOpenedAt ? ' · klient otworzył link' : ' · jeszcze nieotwarty'}.</p> : <p className="mt-2 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Brak aktywnego linku klienta.</p>}
+    {active ? <p className="mt-2 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Aktywny do <span className="num">{new Date(active.expiresAt).toLocaleString('pl-PL')}</span>{active.sentAt ? <> · oznaczono jako wysłany <span className="num">{new Date(active.sentAt).toLocaleString('pl-PL')}</span></> : active.lastOpenedAt ? ' · klient otworzył link' : ' · jeszcze nieotwarty'}.</p> : <p className="mt-2 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Brak aktywnego linku klienta.</p>}
     {canEdit && !canGenerate && <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">Najpierw przypnij dokładnie jeden formularz klienta do zlecenia.</p>}
     {canEdit && <div className="mt-4 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
       <label className="grid gap-1 text-sm font-semibold" htmlFor={`client-link-expiry-${orderId}`}>Ważny do
@@ -70,6 +72,7 @@ export function ClientLinkPanel({ orderId, initialLinks, canEdit, canGenerate = 
       </label>
       <div className="flex flex-wrap items-end gap-2">
         <button type="button" className="min-h-11 rounded-md px-4 text-sm font-bold" style={{ background: '#E4DCD1', color: '#1E1E1E' }} onClick={() => void request({ expiresAt: new Date(expiresAt).toISOString() }, 'POST')} disabled={state === 'loading' || !canGenerate}>{active ? 'Wygeneruj nowy link' : 'Wygeneruj link'}</button>
+        {active && !active.sentAt && <button type="button" className="min-h-11 rounded-md border px-4 text-sm font-bold" onClick={() => void request({ action: 'MARK_SENT', linkId: active.id }, 'PATCH')} disabled={state === 'loading'}>Oznacz jako wysłany</button>}
         {active && <button type="button" className="min-h-11 rounded-md border px-4 text-sm font-bold" onClick={() => void request({ action: 'EXTEND', linkId: active.id, expiresAt: extensionExpiry(14) }, 'PATCH')} disabled={state === 'loading'}>Przedłuż o 14 dni</button>}
         {active && <button type="button" className="min-h-11 rounded-md border px-4 text-sm font-bold" onClick={() => void request({ action: 'REVOKE', linkId: active.id }, 'PATCH')} disabled={state === 'loading'}>Cofnij link</button>}
       </div>

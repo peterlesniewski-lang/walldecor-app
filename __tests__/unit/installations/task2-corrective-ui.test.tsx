@@ -46,7 +46,7 @@ describe('Task 2 corrective UI invariants', () => {
       canEdit: false,
       rooms,
       catalog,
-      clientLinks: [{ id: 'private-link', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-08-22T12:00:00.000Z', lastOpenedAt: null }],
+      clientLinks: [{ id: 'private-link', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-08-22T12:00:00.000Z', lastOpenedAt: null, sentAt: null, sentById: null }],
       clarifications: [{
         id: 'private-clarification', status: 'OPEN', isBlocking: true, questionKey: 'glify',
         reason: 'Klient wskazał odpowiedź.', revisionNumber: 1, answer: 'UNKNOWN',

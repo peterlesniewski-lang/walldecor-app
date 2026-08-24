@@ -10,6 +10,8 @@ import {
   createClientLink,
   hashClientLinkSecret,
   InstallationClientLinkNotFoundError,
+  listClientLinkStatuses,
+  markClientLinkSent,
   loadPublicInstallationProjection,
   revokeClientLink,
 } from '@/lib/installations/client-link'
@@ -368,5 +370,44 @@ describe('client form uses a real SQLite revision history', () => {
     } })
     await expect(db.installationFormSubmission.update({ where: { id: draft.id }, data: { draftVersion: 1 } })).resolves.toMatchObject({ draftVersion: 1 })
     await expect(db.installationFormSubmission.delete({ where: { id: draft.id } })).resolves.toMatchObject({ id: draft.id })
+  })
+
+  it('marks a client link sent once, preserving the first actor and rejecting inactive or foreign links', async () => {
+    const firstLink = await createClientLink(db, { orderId, createdById: 'form-admin', expiresAt: futureDate() })
+    const first = await markClientLinkSent(db, firstLink.link.id, 'send-owner', orderId)
+    const repeated = await markClientLinkSent(db, firstLink.link.id, 'different-actor', orderId)
+    const sentAudits = await db.installationAuditEvent.findMany({
+      where: { orderId, action: 'INSTALLATION_CLIENT_LINK_SENT' }, orderBy: { createdAt: 'asc' },
+    })
+    expect(first.sentAt).not.toBeNull()
+    expect(first.sentById).toBe('send-owner')
+    expect(repeated.sentAt).toEqual(first.sentAt)
+    expect(repeated.sentById).toBe('send-owner')
+    expect((await listClientLinkStatuses(db, orderId)).find((link) => link.id === firstLink.link.id)).toMatchObject({
+      sentAt: first.sentAt,
+      sentById: 'send-owner',
+    })
+    expect(sentAudits).toHaveLength(1)
+    expect(JSON.parse(sentAudits[0].metadataJson)).toEqual({ linkId: firstLink.link.id, sentAt: first.sentAt!.toISOString() })
+
+    const wrongOrder = await createClientLink(db, { orderId, createdById: 'form-admin', expiresAt: futureDate() })
+    const sentCountBeforeWrongOrder = await db.installationAuditEvent.count({ where: { orderId, action: 'INSTALLATION_CLIENT_LINK_SENT' } })
+    await expect(markClientLinkSent(db, wrongOrder.link.id, 'send-owner', 'another-order')).rejects.toBeInstanceOf(InstallationClientLinkNotFoundError)
+    expect(await db.installationClientLink.findUniqueOrThrow({ where: { id: wrongOrder.link.id } })).toMatchObject({ sentAt: null, sentById: null })
+    expect(await db.installationAuditEvent.count({ where: { orderId, action: 'INSTALLATION_CLIENT_LINK_SENT' } })).toBe(sentCountBeforeWrongOrder)
+
+    const expired = await createClientLink(db, { orderId, createdById: 'form-admin', expiresAt: futureDate() })
+    await db.installationClientLink.update({ where: { id: expired.link.id }, data: { expiresAt: new Date('2020-01-01') } })
+    const sentCountBeforeExpired = await db.installationAuditEvent.count({ where: { orderId, action: 'INSTALLATION_CLIENT_LINK_SENT' } })
+    await expect(markClientLinkSent(db, expired.link.id, 'send-owner', orderId)).rejects.toBeInstanceOf(InstallationClientLinkNotFoundError)
+    expect(await db.installationClientLink.findUniqueOrThrow({ where: { id: expired.link.id } })).toMatchObject({ sentAt: null, sentById: null })
+    expect(await db.installationAuditEvent.count({ where: { orderId, action: 'INSTALLATION_CLIENT_LINK_SENT' } })).toBe(sentCountBeforeExpired)
+
+    const revoked = await createClientLink(db, { orderId, createdById: 'form-admin', expiresAt: futureDate() })
+    await revokeClientLink(db, revoked.link.id, 'form-admin', orderId)
+    const sentCountBeforeRevoked = await db.installationAuditEvent.count({ where: { orderId, action: 'INSTALLATION_CLIENT_LINK_SENT' } })
+    await expect(markClientLinkSent(db, revoked.link.id, 'send-owner', orderId)).rejects.toBeInstanceOf(InstallationClientLinkNotFoundError)
+    expect(await db.installationClientLink.findUniqueOrThrow({ where: { id: revoked.link.id } })).toMatchObject({ sentAt: null, sentById: null })
+    expect(await db.installationAuditEvent.count({ where: { orderId, action: 'INSTALLATION_CLIENT_LINK_SENT' } })).toBe(sentCountBeforeRevoked)
   })
 })

@@ -7,6 +7,7 @@ const mocks = vi.hoisted(() => ({
   accessible: vi.fn(),
   createLink: vi.fn(),
   extendLink: vi.fn(),
+  markSent: vi.fn(),
   revokeLink: vi.fn(),
   listLinks: vi.fn(),
   listClarifications: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('@/lib/installations/http-access', () => ({
 vi.mock('@/lib/installations/client-link', () => ({
   createClientLink: mocks.createLink,
   extendClientLink: mocks.extendLink,
+  markClientLinkSent: mocks.markSent,
   revokeClientLink: mocks.revokeLink,
   listClientLinkStatuses: mocks.listLinks,
   InstallationClientLinkNotFoundError: class InstallationClientLinkNotFoundError extends Error {},
@@ -49,9 +51,11 @@ describe('client-link and clarification internal routes', () => {
     mocks.session = null
     mocks.editable.mockReset().mockResolvedValue({ order: { id: 'order-1' } })
     mocks.accessible.mockReset().mockResolvedValue({ order: { id: 'order-1' } })
-    mocks.createLink.mockReset().mockResolvedValue({ token: 'b'.repeat(43), link: { id: 'link-1', expiresAt: new Date('2027-01-01'), revokedAt: null, createdAt: new Date(), lastOpenedAt: null } })
-    mocks.extendLink.mockReset().mockResolvedValue({ id: 'link-1' })
-    mocks.revokeLink.mockReset().mockResolvedValue({ id: 'link-1' })
+    const link = { id: 'link-1', expiresAt: new Date('2027-01-01'), revokedAt: null, createdAt: new Date(), lastOpenedAt: null, sentAt: null, sentById: null }
+    mocks.createLink.mockReset().mockResolvedValue({ token: 'b'.repeat(43), link })
+    mocks.extendLink.mockReset().mockResolvedValue(link)
+    mocks.markSent.mockReset().mockResolvedValue({ ...link, sentAt: new Date('2026-08-23T08:00:00.000Z'), sentById: 'owner-user' })
+    mocks.revokeLink.mockReset().mockResolvedValue(link)
     mocks.listLinks.mockReset().mockResolvedValue([{ id: 'link-1' }])
     mocks.listClarifications.mockReset().mockResolvedValue([{ id: 'clarification-1', status: 'OPEN' }])
     mocks.resolveClarification.mockReset().mockResolvedValue({ id: 'clarification-1', status: 'RESOLVED' })
@@ -105,6 +109,33 @@ describe('client-link and clarification internal routes', () => {
 
     const listing = await listClarifications(new NextRequest('http://test/api/installations/order-1/clarifications'), orderParams)
     expect(listing.status).toBe(200)
+  })
+
+  it('marks only the requested active link as sent with strict payload and no token disclosure', async () => {
+    const body = JSON.stringify({ action: 'MARK_SENT', linkId: 'link-1' })
+    expect((await PATCH(new NextRequest('http://test/api/installations/order-1/client-link', { method: 'PATCH', body }), orderParams)).status).toBe(401)
+    expect(mocks.markSent).not.toHaveBeenCalled()
+
+    mocks.session = { user: { id: 'owner-user', role: 'EMPLOYEE', employeeId: 'owner-employee' } }
+    mocks.editable.mockResolvedValue({ response: new Response(JSON.stringify({ error: 'Forbidden' }), { status: 403 }) })
+    expect((await PATCH(new NextRequest('http://test/api/installations/order-1/client-link', { method: 'PATCH', body }), orderParams)).status).toBe(403)
+    expect(mocks.markSent).not.toHaveBeenCalled()
+
+    mocks.editable.mockResolvedValue({ order: { id: 'order-1' } })
+    const invalid = await PATCH(new NextRequest('http://test/api/installations/order-1/client-link', {
+      method: 'PATCH', body: JSON.stringify({ action: 'MARK_SENT', linkId: 'link-1', extra: true }),
+    }), orderParams)
+    expect(invalid.status).toBe(400)
+    expect(mocks.markSent).not.toHaveBeenCalled()
+
+    const response = await PATCH(new NextRequest('http://test/api/installations/order-1/client-link', { method: 'PATCH', body }), orderParams)
+    const result = await response.json()
+    expect(response.status).toBe(200)
+    expect(mocks.markSent).toHaveBeenCalledWith(expect.anything(), 'link-1', 'owner-user', 'order-1')
+    expect(result).not.toHaveProperty('url')
+    expect(result.link).not.toHaveProperty('token')
+    expect(result.link).not.toHaveProperty('tokenHash')
+    expect(result.link).toMatchObject({ sentAt: '2026-08-23T08:00:00.000Z', sentById: 'owner-user' })
   })
 
   it('never discloses client answers or clarification evidence to an assigned installer', async () => {
