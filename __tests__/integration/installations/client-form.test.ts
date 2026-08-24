@@ -28,6 +28,7 @@ const databasePath = path.join(databaseDirectory, 'client-form.db')
 const databaseUrl = `file:${databasePath}`
 
 let db: PrismaClient
+let concurrentDb: PrismaClient
 let orderId: string
 let ownerId: string
 let linkToken: string
@@ -56,7 +57,8 @@ function applyMigrations() {
 beforeAll(async () => {
   applyMigrations()
   db = createDb()
-  await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
+  concurrentDb = createDb()
+  await Promise.all([db.$executeRawUnsafe('PRAGMA foreign_keys = ON'), concurrentDb.$executeRawUnsafe('PRAGMA foreign_keys = ON')])
   await db.costCenter.create({ data: { id: 'FORM', name: 'Formularz montaży' } })
   const [owner, backup] = await Promise.all([
     db.employee.create({ data: { firstName: 'Anna', lastName: 'Opiekun', email: 'form.owner@example.test', position: 'Koordynatorka', costCenterId: 'FORM', startDate: new Date('2026-01-01'), active: true } }),
@@ -102,7 +104,7 @@ beforeAll(async () => {
 })
 
 afterAll(async () => {
-  await db?.$disconnect()
+  await Promise.all([db?.$disconnect(), concurrentDb?.$disconnect()])
   rmSync(databaseDirectory, { recursive: true, force: true })
 })
 
@@ -409,5 +411,24 @@ describe('client form uses a real SQLite revision history', () => {
     await expect(markClientLinkSent(db, revoked.link.id, 'send-owner', orderId)).rejects.toBeInstanceOf(InstallationClientLinkNotFoundError)
     expect(await db.installationClientLink.findUniqueOrThrow({ where: { id: revoked.link.id } })).toMatchObject({ sentAt: null, sentById: null })
     expect(await db.installationAuditEvent.count({ where: { orderId, action: 'INSTALLATION_CLIENT_LINK_SENT' } })).toBe(sentCountBeforeRevoked)
+  })
+
+  it('keeps concurrent send markings idempotent across Prisma clients', async () => {
+    const link = await createClientLink(db, { orderId, createdById: 'form-admin', expiresAt: futureDate() })
+    const [first, second] = await Promise.all([
+      markClientLinkSent(db, link.link.id, 'first-sender', orderId),
+      markClientLinkSent(concurrentDb, link.link.id, 'second-sender', orderId),
+    ])
+    const persisted = await db.installationClientLink.findUniqueOrThrow({ where: { id: link.link.id } })
+    const sentAudits = (await db.installationAuditEvent.findMany({ where: { orderId, action: 'INSTALLATION_CLIENT_LINK_SENT' } }))
+      .filter((audit) => JSON.parse(audit.metadataJson).linkId === link.link.id)
+
+    expect(first.sentAt).toEqual(second.sentAt)
+    expect(first.sentById).toBe(second.sentById)
+    expect(['first-sender', 'second-sender']).toContain(first.sentById)
+    expect(persisted).toMatchObject({ sentAt: first.sentAt, sentById: first.sentById })
+    expect(sentAudits).toHaveLength(1)
+    expect(sentAudits[0]).toMatchObject({ actorId: first.sentById })
+    expect(JSON.parse(sentAudits[0].metadataJson)).toEqual({ linkId: link.link.id, sentAt: first.sentAt!.toISOString() })
   })
 })

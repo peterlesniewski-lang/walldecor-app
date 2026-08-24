@@ -56,9 +56,25 @@ describe('installation detail client-link and clarification panels', () => {
     await user.click(screen.getByRole('button', { name: 'Oznacz jako wysłany' }))
     expect(fetchMock).toHaveBeenCalledWith('/api/installations/order-1/client-link', expect.objectContaining({ method: 'PATCH' }))
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ action: 'MARK_SENT', linkId: 'link-1' })
-    expect(await screen.findByText(`Wysłano: ${new Date('2026-08-23T08:15:00.000Z').toLocaleString('pl-PL')}`)).not.toBeNull()
+    const status = await screen.findByRole('status')
+    expect(status.getAttribute('aria-live')).toBe('polite')
+    expect(status.tabIndex).toBe(-1)
+    expect(status.textContent).toBe(`Wysłano: ${new Date('2026-08-23T08:15:00.000Z').toLocaleString('pl-PL')}`)
+    expect(document.activeElement).toBe(status)
     expect(screen.queryByRole('button', { name: 'Oznacz jako wysłany' })).toBeNull()
     expect(screen.queryByText(/\/m\//)).toBeNull()
+  })
+
+  it('keeps sent and client-opened timestamps visible together', () => {
+    const sentAt = '2026-08-23T08:15:00.000Z'
+    const openedAt = '2026-08-23T09:30:00.000Z'
+    render(<ClientLinkPanel orderId="order-1" canEdit initialLinks={[{
+      id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z',
+      lastOpenedAt: openedAt, sentAt, sentById: 'owner-user',
+    }]} />)
+
+    expect(screen.getByText(`Wysłano: ${new Date(sentAt).toLocaleString('pl-PL')}`)).not.toBeNull()
+    expect(screen.getByText(`Klient otworzył link: ${new Date(openedAt).toLocaleString('pl-PL')}`)).not.toBeNull()
   })
 
   it('requires an actual resolution/note form instead of prompt before closing an open clarification', async () => {

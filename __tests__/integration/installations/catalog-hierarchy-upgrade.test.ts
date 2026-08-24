@@ -15,7 +15,6 @@ const freshDatabaseUrl = `file:${freshDatabasePath}`
 const remoteDeleteUpgradeDatabasePath = path.join(databaseDirectory, 'remote-delete-checksum-upgrade.db')
 const remoteDeleteUpgradeDatabaseUrl = `file:${remoteDeleteUpgradeDatabasePath}`
 const remoteDeleteMigration = '20260823060000_installation_remote_delete_lifecycle'
-const remoteDeleteGuardMigration = '20260823070000_installation_soft_delete_remote_guard'
 const remoteDeleteMigrationChecksum = '4c6a561d580d306a10773121e9c5e610fe3428a8bb8699ee6132aa8738248f1e'
 
 function runMigrate(databaseUrlValue: string, schemaPath?: string) {
@@ -174,20 +173,30 @@ describe('installation catalog hierarchy migration upgrade', () => {
       contentType: 'application/pdf', status: 'PENDING', source: 'INTERNAL', createdById: primary.id,
     } })
     await db.installationFile.update({ where: { id: file.id }, data: { status: 'READY', byteSize: 4, sha256: 'a'.repeat(64) } })
+    await db.$executeRawUnsafe(
+      'INSERT INTO "InstallationClientLink" ("id", "orderId", "tokenHash", "expiresAt", "createdById", "createdAt") VALUES (?, ?, ?, ?, ?, ?)',
+      'remote-delete-upgrade-client-link', order.id, 'b'.repeat(64), new Date('2027-01-01T00:00:00.000Z'), primary.id, new Date('2026-08-23T07:00:00.000Z'),
+    )
     await db.$disconnect()
 
     runMigrate(remoteDeleteUpgradeDatabaseUrl)
     runMigrate(remoteDeleteUpgradeDatabaseUrl)
     db = new PrismaClient({ datasources: { db: { url: remoteDeleteUpgradeDatabaseUrl } } })
-    const [migrations, checksum, integrity] = await Promise.all([
+    const [migrations, checksum, integrity, migratedClientLink, clientLinkColumns, clientLinkIndexes] = await Promise.all([
       db.$queryRawUnsafe<Array<{ migration_name: string; finished_at: Date | null; rolled_back_at: Date | null }>>('SELECT migration_name, finished_at, rolled_back_at FROM _prisma_migrations ORDER BY migration_name'),
       db.$queryRawUnsafe<Array<{ checksum: string }>>('SELECT checksum FROM _prisma_migrations WHERE migration_name = ?', remoteDeleteMigration),
       db.$queryRawUnsafe<Array<{ integrity_check: string }>>('PRAGMA integrity_check'),
+      db.$queryRawUnsafe<Array<{ sentAt: null; sentById: null }>>('SELECT "sentAt", "sentById" FROM "InstallationClientLink" WHERE "id"=?', 'remote-delete-upgrade-client-link'),
+      db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM pragma_table_info('InstallationClientLink') WHERE name IN ('sentAt', 'sentById') ORDER BY cid"),
+      db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type='index' AND name='InstallationClientLink_orderId_sentAt_idx'"),
     ])
-    expect(migrations).toHaveLength(33)
+    expect(migrations).toHaveLength(34)
     expect(migrations.every((migration) => migration.finished_at !== null && migration.rolled_back_at === null)).toBe(true)
-    expect(migrations.at(-1)).toMatchObject({ migration_name: remoteDeleteGuardMigration, finished_at: expect.anything(), rolled_back_at: null })
+    expect(migrations.at(-1)).toMatchObject({ migration_name: '20260823080000_installation_client_link_sent', finished_at: expect.anything(), rolled_back_at: null })
     expect(checksum).toEqual([{ checksum: remoteDeleteMigrationChecksum }])
+    expect(migratedClientLink).toEqual([{ sentAt: null, sentById: null }])
+    expect(clientLinkColumns).toEqual([{ name: 'sentAt' }, { name: 'sentById' }])
+    expect(clientLinkIndexes).toEqual([{ name: 'InstallationClientLink_orderId_sentAt_idx' }])
     await expect(db.$executeRawUnsafe(
       'UPDATE "InstallationFile" SET "softDeletedAt"=?, "softDeletedById"=? WHERE "id"=?',
       new Date(), primary.id, file.id,
@@ -200,7 +209,7 @@ describe('installation catalog hierarchy migration upgrade', () => {
   it('applies the complete fresh chain, including client-form and governance migrations, with healthy SQLite integrity', async () => {
     runMigrate(freshDatabaseUrl)
     const db = new PrismaClient({ datasources: { db: { url: freshDatabaseUrl } } })
-    const [migrations, triggers, clientFormTriggers, submittedRevisionTriggers, governanceTriggers, cleanupColumns, cleanupTriggers, foreignKeys, integrity] = await Promise.all([
+    const [migrations, triggers, clientFormTriggers, submittedRevisionTriggers, governanceTriggers, cleanupColumns, cleanupTriggers, clientLinkColumns, clientLinkIndexes, foreignKeys, integrity] = await Promise.all([
       db.$queryRawUnsafe<Array<{ migration_name: string }>>('SELECT migration_name FROM _prisma_migrations ORDER BY migration_name'),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationCatalog%' ORDER BY name"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'InstallationAnswer_submitted_%' ORDER BY name"),
@@ -208,9 +217,11 @@ describe('installation catalog hierarchy migration upgrade', () => {
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND (name LIKE 'InstallationOrder_visitFeePolicy_%' OR name LIKE 'InstallationOrder_accepted_fee_%' OR name LIKE 'InstallationOrder_billed_fee_%' OR name LIKE 'InstallationMismatch_task5_%' OR name LIKE 'InstallationMismatch_private_%' OR name LIKE 'InstallationMismatch_billed_%' OR name LIKE 'InstallationVisitFeePolicy_referenced_%' OR name LIKE 'InstallationVisitFeePolicy_historic_%' OR name LIKE 'InstallationBillingTask_mismatch_%') ORDER BY name"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM pragma_table_info('InstallationFile') WHERE name LIKE 'remoteDelete%' ORDER BY cid"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type = 'trigger' AND (name LIKE 'InstallationFile_remote_delete_%' OR name = 'InstallationFile_soft_delete_remote_state_guard') ORDER BY name"),
+      db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM pragma_table_info('InstallationClientLink') WHERE name IN ('sentAt', 'sentById') ORDER BY cid"),
+      db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type='index' AND name='InstallationClientLink_orderId_sentAt_idx'"),
       db.$queryRawUnsafe('PRAGMA foreign_key_check'), db.$queryRawUnsafe<Array<{ integrity_check: string }>>('PRAGMA integrity_check'),
     ])
-    expect(migrations).toHaveLength(33)
+    expect(migrations).toHaveLength(34)
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030000_installation_client_form')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030100_installation_submitted_answer_insert_guard')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030200_installation_submitted_revision_guard')
@@ -222,6 +233,8 @@ describe('installation catalog hierarchy migration upgrade', () => {
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260823050000_mobile_handoff_retry_release')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260823060000_installation_remote_delete_lifecycle')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260823070000_installation_soft_delete_remote_guard')
+    expect(migrations.map((migration) => migration.migration_name)).toContain('20260823080000_installation_client_link_sent')
+    expect(migrations.at(-1)).toMatchObject({ migration_name: '20260823080000_installation_client_link_sent' })
     expect(triggers).toHaveLength(6)
     expect(clientFormTriggers).toEqual([
       { name: 'InstallationAnswer_submitted_delete_guard' },
@@ -256,6 +269,8 @@ describe('installation catalog hierarchy migration upgrade', () => {
       { name: 'InstallationFile_remote_delete_update_guard' },
       { name: 'InstallationFile_soft_delete_remote_state_guard' },
     ])
+    expect(clientLinkColumns).toEqual([{ name: 'sentAt' }, { name: 'sentById' }])
+    expect(clientLinkIndexes).toEqual([{ name: 'InstallationClientLink_orderId_sentAt_idx' }])
     expect(foreignKeys).toEqual([])
     expect(integrity[0]?.integrity_check).toBe('ok')
     await db.$disconnect()
