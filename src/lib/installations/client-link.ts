@@ -173,8 +173,8 @@ export async function extendClientLink(db: PrismaClient, linkId: string, expires
 
 /** Records the first staff hand-off without exposing or storing the plaintext link token. */
 export async function markClientLinkSent(db: PrismaClient, linkId: string, actorId: string, expectedOrderId?: string) {
-  const now = new Date()
   return db.$transaction(async (tx) => {
+    const now = new Date()
     const link = await tx.installationClientLink.findUnique({ where: { id: linkId } })
     if (!link || link.revokedAt || link.expiresAt <= now || (expectedOrderId && link.orderId !== expectedOrderId)) {
       throw new InstallationClientLinkNotFoundError()

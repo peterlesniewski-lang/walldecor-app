@@ -56,7 +56,7 @@ describe('installation detail client-link and clarification panels', () => {
     await user.click(screen.getByRole('button', { name: 'Oznacz jako wysłany' }))
     expect(fetchMock).toHaveBeenCalledWith('/api/installations/order-1/client-link', expect.objectContaining({ method: 'PATCH' }))
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ action: 'MARK_SENT', linkId: 'link-1' })
-    expect(await screen.findByText(/oznaczono jako wysłany/i)).not.toBeNull()
+    expect(await screen.findByText(`Wysłano: ${new Date('2026-08-23T08:15:00.000Z').toLocaleString('pl-PL')}`)).not.toBeNull()
     expect(screen.queryByRole('button', { name: 'Oznacz jako wysłany' })).toBeNull()
     expect(screen.queryByText(/\/m\//)).toBeNull()
   })
