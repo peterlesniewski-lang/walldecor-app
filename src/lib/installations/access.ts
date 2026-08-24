@@ -3,7 +3,7 @@ import type { InstallationRole } from './constants'
 export type InstallationOrderViewer = {
   role: InstallationRole
   employeeId: string | null | undefined
-  /** Verified against Employee.active before an EMPLOYEE policy is evaluated. */
+  /** Verified against Employee.active before EMPLOYEE or INSTALLER policy is evaluated. */
   employeeActive?: boolean
 }
 
@@ -46,7 +46,7 @@ export function canViewInstallationOrder(
 ): boolean {
   if (viewer.role === 'ADMIN' || viewer.role === 'MANAGER') return true
   if (viewer.role === 'INSTALLER') {
-    return Boolean(viewer.employeeId && (
+    return Boolean(viewer.employeeId && viewer.employeeActive === true && (
       order.installerAssignments.some((assignment) => assignment.employeeId === viewer.employeeId) ||
       order.scopeAssignments.some((assignment) => assignment.employeeId === viewer.employeeId)
     ))

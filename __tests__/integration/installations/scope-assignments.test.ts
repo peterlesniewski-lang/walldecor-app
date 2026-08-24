@@ -44,8 +44,8 @@ function applyMigrations(databaseFile: string) {
   }
 }
 
-function installerViewer(employeeId: string) {
-  return { role: 'INSTALLER' as const, employeeId }
+function installerViewer(employeeId: string, employeeActive = true) {
+  return { role: 'INSTALLER' as const, employeeId, employeeActive }
 }
 
 beforeAll(async () => {
@@ -106,8 +106,11 @@ afterAll(async () => {
 
 describe('scope installer assignments', () => {
   it('replaces a scope team from normalized active employee IDs and writes an audit event', async () => {
-    await setScopeInstallerAssignments(db, orderId, wallpaperScopeId, [installerAId, ` ${installerAId} `, installerAId], 'actor-1')
-    await setScopeInstallerAssignments(db, orderId, plasterScopeId, [installerBId, installerCId, installerBId], 'actor-1')
+    const wallpaperAssignment = await setScopeInstallerAssignments(db, orderId, wallpaperScopeId, [installerAId, ` ${installerAId} `, installerAId], 'actor-1')
+    const plasterAssignment = await setScopeInstallerAssignments(db, orderId, plasterScopeId, [installerCId, installerBId, installerBId], 'actor-1')
+
+    expect(wallpaperAssignment).toEqual({ scopeId: wallpaperScopeId, employeeIds: [installerAId] })
+    expect(plasterAssignment).toEqual({ scopeId: plasterScopeId, employeeIds: [installerBId, installerCId] })
 
     expect(await listScopeInstallerAssignments(db, orderId)).toEqual([
       { scopeId: wallpaperScopeId, employeeIds: [installerAId] },
@@ -125,7 +128,10 @@ describe('scope installer assignments', () => {
       orderBy: { createdAt: 'asc' },
     })
     expect(audits).toHaveLength(2)
-    expect(JSON.parse(audits[0]!.afterJson!)).toEqual({ scopeId: wallpaperScopeId, employeeIds: [installerAId] })
+    expect(JSON.parse(audits.find((audit) => JSON.parse(audit.afterJson!).scopeId === wallpaperScopeId)!.afterJson!))
+      .toEqual({ scopeId: wallpaperScopeId, employeeIds: [installerAId] })
+    expect(JSON.parse(audits.find((audit) => JSON.parse(audit.afterJson!).scopeId === plasterScopeId)!.afterJson!))
+      .toEqual({ scopeId: plasterScopeId, employeeIds: [installerBId, installerCId] })
 
     await setScopeInstallerAssignments(db, orderId, wallpaperScopeId, [installerBId], 'actor-2')
     expect(await listScopeInstallerAssignments(db, orderId)).toEqual([

@@ -15,7 +15,7 @@ export class InstallationScopeAssignmentValidationError extends Error {
 }
 
 function normalizeEmployeeIds(employeeIds: string[]): string[] {
-  return [...new Set(employeeIds.map((employeeId) => employeeId.trim()).filter(Boolean))]
+  return [...new Set(employeeIds.map((employeeId) => employeeId.trim()).filter(Boolean))].sort()
 }
 
 async function assertScopeBelongsToOrder(
