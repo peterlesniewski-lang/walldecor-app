@@ -81,18 +81,21 @@ workera jako drugiego procesu przy starcie kontenera.
 
    - Cron: `* * * * *` (co minutę)
    - Command: `npm run worker:installation-calendar`
-   - Timeout: 1200 s
+   - Timeout: 2400 s
 
 3. Nie dodawaj drugiego wolumenu ani osobnych zmiennych dla Scheduled Task.
    Zadanie korzysta z działającego kontenera WallDecor-App, a więc z jego
    istniejącego `/data`, `DATABASE_URL` i zmiennych Google. Jeżeli te elementy
    nie są poprawne w aplikacji, najpierw napraw konfigurację aplikacji i nie
    uruchamiaj zadania.
-4. Timeout musi obejmować najgorszy czas batcha: `batchSize × 45 s + margines`.
-   Dla domyślnego batcha 20 ustawione 1200 sekund daje 900 sekund na żądania i
-   300 sekund marginesu. Cron może uruchomić kolejny batch, gdy poprzedni jeszcze
-   trwa; lease outboxa zabezpiecza zadania przed podwójnym przejęciem, lecz po
-   obserwacji czasu wykonania trzeba wspólnie dostroić batch i timeout.
+4. Każde zadanie może wykonać odczyt GET, a następnie zapis albo usunięcie;
+   oba żądania mają osobny limit 45 sekund. Timeout musi więc obejmować
+   konserwatywny najgorszy czas batcha: `batchSize × 2 × 45 s + margines`.
+   Dla domyślnego batcha 20 ustawione 2400 sekund daje 1800 sekund na żądania i
+   600 sekund na autoryzację, bazę i pozostały margines. Cron może uruchomić
+   kolejny batch, gdy poprzedni jeszcze trwa; lease outboxa zabezpiecza zadania
+   przed podwójnym przejęciem, lecz po obserwacji czasu wykonania trzeba wspólnie
+   dostroić batch i timeout.
 5. Sprawdź dostępność konfiguracji jako administrator w aplikacji w sekcji
    ustawień kalendarza: muszą być zielone wyłącznie flagi enabled, google,
    credentials, calendar i impersonation. Nie oczekuj tam sekretów.
