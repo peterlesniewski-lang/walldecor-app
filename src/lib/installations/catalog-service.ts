@@ -27,6 +27,14 @@ const optionalText = z.preprocess(
   z.string().trim().min(1).max(160).nullish(),
 )
 const optionalSortOrder = z.number().int().min(0).optional()
+const decimalText = z.string().trim()
+  .regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/, 'Wartość musi być dziesiętnym tekstem bez notacji float.')
+  .refine((value) => new Prisma.Decimal(value).greaterThan(0), 'Wartość musi być dodatnia.')
+const optionalDecimalText = z.preprocess(
+  (value) => typeof value === 'string' && value.trim() === '' ? null : value,
+  decimalText.nullish(),
+)
+const measurementKind = z.enum(['SINGLE', 'RECTANGLE'])
 
 const categoryCreateSchema = z.object({ name: requiredName, sortOrder: optionalSortOrder }).strict()
 const categoryUpdateSchema = z.object({ name: requiredName.optional(), sortOrder: optionalSortOrder }).strict()
@@ -46,20 +54,44 @@ const templateCreateSchema = z.object({
 const templateUpdateSchema = z.object({ name: requiredName.optional(), questions: z.unknown().optional() }).strict()
 const roomCreateSchema = z.object({ name: requiredName, sortOrder: optionalSortOrder }).strict()
 const roomUpdateSchema = z.object({ name: requiredName.optional(), sortOrder: optionalSortOrder }).strict()
-const scopeCreateSchema = z.object({ name: requiredName, sortOrder: optionalSortOrder }).strict()
+const scopeCreateSchema = z.object({
+  name: requiredName.optional(),
+  catalogCategoryId: z.string().trim().min(1).optional(),
+  sortOrder: optionalSortOrder,
+}).strict()
 const scopeUpdateSchema = z.object({ name: requiredName.optional(), sortOrder: optionalSortOrder }).strict()
-const scopeProductCreateSchema = z.object({ catalogProductId: z.string().trim().min(1), sortOrder: optionalSortOrder }).strict()
+const scopeProductCreateSchema = z.object({
+  catalogProductId: z.string().trim().min(1).optional(),
+  productNameSnapshot: optionalText,
+  productCodeSnapshot: optionalText,
+  manufacturerSnapshot: optionalText,
+  collectionSnapshot: optionalText,
+  batchSnapshot: optionalText,
+  sortOrder: optionalSortOrder,
+}).strict()
+const scopeProductUpdateSchema = z.object({
+  productNameSnapshot: optionalText,
+  productCodeSnapshot: optionalText,
+  manufacturerSnapshot: optionalText,
+  collectionSnapshot: optionalText,
+  batchSnapshot: optionalText,
+  updatedAt: z.string().trim().refine((value) => Number.isFinite(new Date(value).getTime()), 'Data aktualizacji jest niepoprawna.'),
+}).strict()
 const measurementCreateSchema = z.object({
   scopeId: z.string().trim().min(1).nullish(),
   elementName: requiredName,
-  value: z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/, 'Wartość musi być dziesiętnym tekstem bez notacji float.'),
-  unit: z.enum(['MM', 'CM', 'M', 'M2']),
+  kind: measurementKind.optional().default('SINGLE'),
+  value: decimalText,
+  secondaryValue: optionalDecimalText,
+  unit: z.enum(['MM', 'CM', 'M', 'M2', 'MB', 'SZT']),
 })
 const measurementUpdateSchema = z.object({
   scopeId: z.string().trim().min(1).nullable().optional(),
   elementName: requiredName.optional(),
-  value: z.string().regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/, 'Wartość musi być dziesiętnym tekstem bez notacji float.').optional(),
-  unit: z.enum(['MM', 'CM', 'M', 'M2']).optional(),
+  kind: measurementKind.optional(),
+  value: decimalText.optional(),
+  secondaryValue: optionalDecimalText,
+  unit: z.enum(['MM', 'CM', 'M', 'M2', 'MB', 'SZT']).optional(),
 })
 
 export type InstallationMeasurementActor = {
@@ -534,8 +566,22 @@ export async function createInstallationScope(db: PrismaClient, roomId: string, 
   return db.$transaction(async (tx) => {
     const room = await getRoomOrThrow(tx, roomId)
     await assertActiveRoomOrder(tx, room)
-    const scope = await tx.installationScope.create({ data: { roomId, name: value.name.trim().replace(/\s+/g, ' '), sortOrder: value.sortOrder ?? await nextSortOrder(tx, 'scope', roomId) }, include: { scopeProducts: true, measurements: true } })
-    await audit(tx, room.orderId, actorId, 'INSTALLATION_SCOPE_CREATED', null, JSON.stringify({ id: scope.id, name: scope.name, roomId }))
+    const category = value.catalogCategoryId
+      ? await tx.installationCatalogCategory.findUnique({ where: { id: value.catalogCategoryId }, select: { id: true, name: true, isActive: true } })
+      : null
+    if (value.catalogCategoryId && !category?.isActive) validationError('catalogCategoryId', 'Wybierz aktywną kategorię katalogu.')
+    if (!category && !value.name) validationError('name', 'Nazwa jest wymagana.')
+    const scopeName = category ? category.name : value.name!.trim().replace(/\s+/g, ' ')
+    const scope = await tx.installationScope.create({
+      data: {
+        roomId,
+        catalogCategoryId: category?.id ?? null,
+        name: scopeName,
+        sortOrder: value.sortOrder ?? await nextSortOrder(tx, 'scope', roomId),
+      },
+      include: { scopeProducts: true, measurements: true },
+    })
+    await audit(tx, room.orderId, actorId, 'INSTALLATION_SCOPE_CREATED', null, JSON.stringify({ id: scope.id, name: scope.name, roomId, catalogCategoryId: scope.catalogCategoryId }))
     return scope
   })
 }
@@ -564,21 +610,109 @@ export async function deleteInstallationScope(db: PrismaClient, id: string, acto
 export async function addInstallationScopeProduct(db: PrismaClient, scopeId: string, input: unknown, actorId: string) {
   const value = parse(scopeProductCreateSchema, input)
   return db.$transaction(async (tx) => {
-    const [scope, product] = await Promise.all([
-      getScopeOrThrow(tx, scopeId),
-      tx.installationCatalogProduct.findUnique({ where: { id: value.catalogProductId }, include: { type: { include: { category: true } } } }),
-    ])
+    const scope = await getScopeOrThrow(tx, scopeId)
     await assertActiveScopeOrder(tx, scope)
-    if (!product?.isActive || !product.type.isActive || !product.type.category.isActive) validationError('catalogProductId', 'Nowy zakres może użyć tylko aktywnego produktu katalogowego.')
+    const hasOrderOwnedSnapshot = [
+      value.productNameSnapshot,
+      value.productCodeSnapshot,
+      value.manufacturerSnapshot,
+      value.collectionSnapshot,
+      value.batchSnapshot,
+    ].some((snapshot) => snapshot !== null && snapshot !== undefined)
+    if (!value.catalogProductId && !hasOrderOwnedSnapshot) return null
+    const product = value.catalogProductId
+      ? await tx.installationCatalogProduct.findUnique({ where: { id: value.catalogProductId }, include: { type: { include: { category: true } } } })
+      : null
+    if (value.catalogProductId && (!product?.isActive || !product.type.isActive || !product.type.category.isActive)) {
+      validationError('catalogProductId', 'Nowy zakres może użyć tylko aktywnego produktu katalogowego.')
+    }
     const scopeProduct = await tx.installationScopeProduct.create({
       data: {
-        scopeId, catalogProductId: product.id, productNameSnapshot: product.name, productCodeSnapshot: product.code,
-        manufacturerSnapshot: product.manufacturer, collectionSnapshot: product.collection,
+        scopeId,
+        catalogProductId: product?.id ?? null,
+        productNameSnapshot: product?.name ?? value.productNameSnapshot ?? null,
+        productCodeSnapshot: product?.code ?? value.productCodeSnapshot ?? null,
+        manufacturerSnapshot: product?.manufacturer ?? value.manufacturerSnapshot ?? null,
+        collectionSnapshot: product?.collection ?? value.collectionSnapshot ?? null,
+        batchSnapshot: value.batchSnapshot ?? null,
         sortOrder: value.sortOrder ?? await nextSortOrder(tx, 'scopeProduct', scopeId),
       },
     })
-    await audit(tx, scope.room.orderId, actorId, 'INSTALLATION_SCOPE_PRODUCT_ADDED', null, JSON.stringify({ id: scopeProduct.id, catalogProductId: product.id, productNameSnapshot: product.name }))
+    await audit(tx, scope.room.orderId, actorId, 'INSTALLATION_SCOPE_PRODUCT_ADDED', null, JSON.stringify(scopeProductAuditSnapshot(scopeProduct)))
     return scopeProduct
+  })
+}
+
+function scopeProductAuditSnapshot(product: {
+  id: string
+  scopeId: string
+  catalogProductId: string | null
+  productNameSnapshot: string | null
+  productCodeSnapshot: string | null
+  manufacturerSnapshot: string | null
+  collectionSnapshot: string | null
+  batchSnapshot: string | null
+  sortOrder: number
+  createdAt: Date
+  updatedAt: Date
+}) {
+  return {
+    id: product.id,
+    scopeId: product.scopeId,
+    catalogProductId: product.catalogProductId,
+    productNameSnapshot: product.productNameSnapshot,
+    productCodeSnapshot: product.productCodeSnapshot,
+    manufacturerSnapshot: product.manufacturerSnapshot,
+    collectionSnapshot: product.collectionSnapshot,
+    batchSnapshot: product.batchSnapshot,
+    sortOrder: product.sortOrder,
+    createdAt: product.createdAt.toISOString(),
+    updatedAt: product.updatedAt.toISOString(),
+  }
+}
+
+const scopeProductConflictMessage = 'Karta została zmieniona. Odśwież dane i spróbuj ponownie.'
+
+export async function updateInstallationScopeProduct(db: PrismaClient, id: string, input: unknown, actorId: string) {
+  const value = parse(scopeProductUpdateSchema, input)
+  const expectedUpdatedAt = new Date(value.updatedAt)
+  return db.$transaction(async (tx) => {
+    const current = await tx.installationScopeProduct.findUnique({
+      where: { id },
+      include: { scope: { include: { room: { select: { orderId: true } } } } },
+    })
+    if (!current) validationError('scopeProductId', 'Produkt zakresu nie istnieje.')
+    await assertActiveInstallationOrder(tx, current.scope.room.orderId)
+    const next = {
+      productNameSnapshot: value.productNameSnapshot === undefined ? current.productNameSnapshot : value.productNameSnapshot,
+      productCodeSnapshot: value.productCodeSnapshot === undefined ? current.productCodeSnapshot : value.productCodeSnapshot,
+      manufacturerSnapshot: value.manufacturerSnapshot === undefined ? current.manufacturerSnapshot : value.manufacturerSnapshot,
+      collectionSnapshot: value.collectionSnapshot === undefined ? current.collectionSnapshot : value.collectionSnapshot,
+      batchSnapshot: value.batchSnapshot === undefined ? current.batchSnapshot : value.batchSnapshot,
+    }
+    if (current.catalogProductId && !next.productNameSnapshot) {
+      validationError('productNameSnapshot', 'Produkt katalogowy musi zachować nazwę zlecenia.')
+    }
+    if (!Object.values(next).some((snapshot) => snapshot !== null)) {
+      validationError('product', 'Podaj przynajmniej jedną informację o produkcie.')
+    }
+    const guarded = await tx.installationScopeProduct.updateMany({
+      where: { id, updatedAt: expectedUpdatedAt },
+      data: next,
+    })
+    if (guarded.count !== 1) {
+      throw new InstallationCatalogValidationError({ updatedAt: scopeProductConflictMessage }, 409)
+    }
+    const updated = await tx.installationScopeProduct.findUniqueOrThrow({ where: { id } })
+    await audit(
+      tx,
+      current.scope.room.orderId,
+      actorId,
+      'INSTALLATION_SCOPE_PRODUCT_UPDATED',
+      JSON.stringify(scopeProductAuditSnapshot(current)),
+      JSON.stringify(scopeProductAuditSnapshot(updated)),
+    )
+    return updated
   })
 }
 
@@ -592,8 +726,8 @@ export async function deleteInstallationScopeProduct(db: PrismaClient, id: strin
   })
 }
 
-function measurementAuditSnapshot(measurement: { id: string; roomId: string; scopeId: string | null; elementName: string; value: { toString(): string }; unit: string; source: string; authorId: string | null; authorContext: string | null; actorUserId: string | null; actorRole: string | null; createdAt: Date }) {
-  return { id: measurement.id, roomId: measurement.roomId, scopeId: measurement.scopeId, elementName: measurement.elementName, value: measurement.value.toString(), unit: measurement.unit, source: measurement.source, authorId: measurement.authorId, authorContext: measurement.authorContext, actorUserId: measurement.actorUserId, actorRole: measurement.actorRole, createdAt: measurement.createdAt.toISOString() }
+function measurementAuditSnapshot(measurement: { id: string; roomId: string; scopeId: string | null; elementName: string; kind: string; value: { toString(): string }; secondaryValue: { toString(): string } | null; unit: string; source: string; authorId: string | null; authorContext: string | null; actorUserId: string | null; actorRole: string | null; createdAt: Date }) {
+  return { id: measurement.id, roomId: measurement.roomId, scopeId: measurement.scopeId, elementName: measurement.elementName, kind: measurement.kind, value: measurement.value.toString(), secondaryValue: measurement.secondaryValue?.toString() ?? null, unit: measurement.unit, source: measurement.source, authorId: measurement.authorId, authorContext: measurement.authorContext, actorUserId: measurement.actorUserId, actorRole: measurement.actorRole, createdAt: measurement.createdAt.toISOString() }
 }
 
 function measurementProvenance(actor: InstallationMeasurementActor) {
@@ -614,13 +748,40 @@ async function assertMeasurementScopeBelongsToRoom(db: InstallationDb, roomId: s
   if (!scope || scope.roomId !== roomId) validationError('scopeId', 'Zakres pomiaru musi należeć do tego samego pomieszczenia.')
 }
 
+const rectangleMeasurementUnits = new Set(['MM', 'CM', 'M'])
+const singleMeasurementUnits = new Set(['MM', 'CM', 'M', 'M2', 'MB', 'SZT'])
+
+function validateMeasurementShape(shape: { kind: 'SINGLE' | 'RECTANGLE'; value: string; secondaryValue: string | null; unit: string }) {
+  const errors: Record<string, string> = {}
+  if (shape.kind === 'RECTANGLE') {
+    if (!shape.secondaryValue) errors.secondaryValue = 'Prostokąt wymaga drugiego dodatniego wymiaru.'
+    if (!rectangleMeasurementUnits.has(shape.unit)) errors.unit = 'Prostokąt obsługuje tylko MM, CM lub M.'
+  } else if (!singleMeasurementUnits.has(shape.unit)) {
+    errors.unit = 'Pomiar pojedynczy obsługuje MM, CM, M, M2, MB lub SZT.'
+  }
+  if (Object.keys(errors).length > 0) throw new InstallationCatalogValidationError(errors)
+  return { ...shape, secondaryValue: shape.kind === 'SINGLE' ? null : shape.secondaryValue }
+}
+
 export async function addInstallationMeasurement(db: PrismaClient, roomId: string, input: unknown, actor: InstallationMeasurementActor) {
   const value = parse(measurementCreateSchema, input)
   return db.$transaction(async (tx) => {
     const room = await getRoomOrThrow(tx, roomId)
     await assertActiveRoomOrder(tx, room)
     await assertMeasurementScopeBelongsToRoom(tx, roomId, value.scopeId)
-    const measurement = await tx.installationMeasurement.create({ data: { roomId, scopeId: value.scopeId ?? null, elementName: value.elementName.trim().replace(/\s+/g, ' '), value: value.value, unit: value.unit, ...measurementProvenance(actor) } })
+    const shape = validateMeasurementShape({ kind: value.kind, value: value.value, secondaryValue: value.secondaryValue ?? null, unit: value.unit })
+    const measurement = await tx.installationMeasurement.create({
+      data: {
+        roomId,
+        scopeId: value.scopeId ?? null,
+        elementName: value.elementName.trim().replace(/\s+/g, ' '),
+        kind: shape.kind,
+        value: shape.value,
+        secondaryValue: shape.secondaryValue,
+        unit: shape.unit,
+        ...measurementProvenance(actor),
+      },
+    })
     await audit(tx, room.orderId, actor.userId, 'INSTALLATION_MEASUREMENT_CREATED', null, JSON.stringify(measurementAuditSnapshot(measurement)))
     return measurement
   })
@@ -636,13 +797,21 @@ export async function updateInstallationMeasurement(db: PrismaClient, id: string
     await assertActiveInstallationOrder(tx, current.room.orderId)
     const nextScopeId = value.scopeId === undefined ? current.scopeId : value.scopeId
     await assertMeasurementScopeBelongsToRoom(tx, current.roomId, nextScopeId)
+    const shape = validateMeasurementShape({
+      kind: value.kind ?? (current.kind === 'RECTANGLE' ? 'RECTANGLE' : 'SINGLE'),
+      value: value.value ?? current.value.toString(),
+      secondaryValue: value.secondaryValue === undefined ? current.secondaryValue?.toString() ?? null : value.secondaryValue,
+      unit: value.unit ?? current.unit,
+    })
     const updated = await tx.installationMeasurement.update({
       where: { id },
       data: {
         ...(value.scopeId === undefined ? {} : { scopeId: value.scopeId }),
         ...(value.elementName === undefined ? {} : { elementName: value.elementName.trim().replace(/\s+/g, ' ') }),
-        ...(value.value === undefined ? {} : { value: value.value }),
-        ...(value.unit === undefined ? {} : { unit: value.unit }),
+        kind: shape.kind,
+        value: shape.value,
+        secondaryValue: shape.secondaryValue,
+        unit: shape.unit,
       },
     })
     await audit(tx, current.room.orderId, actor.userId, 'INSTALLATION_MEASUREMENT_UPDATED', JSON.stringify(measurementAuditSnapshot(current)), JSON.stringify(measurementAuditSnapshot(updated)))
@@ -699,12 +868,13 @@ export async function getInstallerInstallationOrderRooms(
               productCodeSnapshot: true,
               manufacturerSnapshot: true,
               collectionSnapshot: true,
+              batchSnapshot: true,
               sortOrder: true,
             },
           },
           measurements: {
             orderBy: { createdAt: 'asc' },
-            select: { id: true, elementName: true, value: true, unit: true },
+            select: { id: true, elementName: true, kind: true, value: true, secondaryValue: true, unit: true },
           },
         },
       },

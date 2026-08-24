@@ -14,16 +14,19 @@ export type InstallerRoomView = {
     sortOrder: number
     scopeProducts: Array<{
       id: string
-      productNameSnapshot: string
+      productNameSnapshot: string | null
       productCodeSnapshot: string | null
       manufacturerSnapshot: string | null
       collectionSnapshot: string | null
+      batchSnapshot: string | null
       sortOrder: number
     }>
     measurements: Array<{
       id: string
       elementName: string
+      kind: string
       value: string
+      secondaryValue: string | null
       unit: string
     }>
   }>
@@ -39,16 +42,19 @@ type InstallerRoomSource = {
     sortOrder: number
     scopeProducts: Array<{
       id: string
-      productNameSnapshot: string
+      productNameSnapshot: string | null
       productCodeSnapshot: string | null
       manufacturerSnapshot: string | null
       collectionSnapshot: string | null
+      batchSnapshot: string | null
       sortOrder: number
     }>
     measurements: Array<{
       id: string
       elementName: string
+      kind: string
       value: { toString(): string } | string | number
+      secondaryValue: { toString(): string } | string | number | null
       unit: string
     }>
   }>
@@ -71,12 +77,15 @@ export function presentInstallerInstallationRooms(rooms: InstallerRoomSource[]):
         productCodeSnapshot: product.productCodeSnapshot,
         manufacturerSnapshot: product.manufacturerSnapshot,
         collectionSnapshot: product.collectionSnapshot,
+        batchSnapshot: product.batchSnapshot,
         sortOrder: product.sortOrder,
       })),
       measurements: scope.measurements.map((measurement) => ({
         id: measurement.id,
         elementName: measurement.elementName,
+        kind: measurement.kind,
         value: measurement.value.toString(),
+        secondaryValue: measurement.secondaryValue?.toString() ?? null,
         unit: measurement.unit,
       })),
     })),

@@ -342,7 +342,7 @@ export async function loadPublicInstallationProjection(db: PrismaClient, token: 
       scopes: room.scopes.map((scope) => ({
         name: scope.name,
         products: scope.scopeProducts.map((product) => ({
-          name: product.productNameSnapshot,
+          name: product.productNameSnapshot ?? 'Produkt bez nazwy',
           code: product.productCodeSnapshot,
           manufacturer: product.manufacturerSnapshot,
           collection: product.collectionSnapshot,

@@ -71,15 +71,15 @@ describe('internal measurement routes', () => {
 
   it('strips spoofed source and author fields before create and patch, leaving trusted provenance to the service', async () => {
     mocks.session = { user: { id: 'employee-user', role: 'EMPLOYEE', employeeId: 'employee-1' } }
-    const payload = { elementName: 'Szerokość', value: '12', unit: 'CM', source: 'CLIENT', authorId: 'foreign-employee', authorContext: 'CLIENT:spoofed' }
+    const payload = { elementName: 'Szerokość', kind: 'RECTANGLE', value: '12', secondaryValue: '8', unit: 'CM', source: 'CLIENT', authorId: 'foreign-employee', authorContext: 'CLIENT:spoofed' }
 
     const created = await POST(new NextRequest('http://test/api/installations/order-1/rooms/room-1/measurements', { method: 'POST', body: JSON.stringify(payload) }), { params: Promise.resolve({ id: 'order-1', roomId: 'room-1' }) })
     expect(created.status).toBe(201)
-    expect(mocks.add).toHaveBeenCalledWith(expect.anything(), 'room-1', { elementName: 'Szerokość', value: '12', unit: 'CM' }, actor)
+    expect(mocks.add).toHaveBeenCalledWith(expect.anything(), 'room-1', { elementName: 'Szerokość', kind: 'RECTANGLE', value: '12', secondaryValue: '8', unit: 'CM' }, actor)
 
     mocks.room.mockResolvedValueOnce({ id: 'room-1', measurements: [{ id: 'measurement-1' }], scopes: [] })
-    const patched = await PATCH(new NextRequest('http://test/api/installations/order-1/rooms/room-1/measurements/measurement-1', { method: 'PATCH', body: JSON.stringify({ value: '13', source: 'CLIENT', authorId: 'foreign-employee', authorContext: 'CLIENT:patched' }) }), { params: Promise.resolve({ id: 'order-1', roomId: 'room-1', measurementId: 'measurement-1' }) })
+    const patched = await PATCH(new NextRequest('http://test/api/installations/order-1/rooms/room-1/measurements/measurement-1', { method: 'PATCH', body: JSON.stringify({ kind: 'SINGLE', value: '13', secondaryValue: null, source: 'CLIENT', authorId: 'foreign-employee', authorContext: 'CLIENT:patched' }) }), { params: Promise.resolve({ id: 'order-1', roomId: 'room-1', measurementId: 'measurement-1' }) })
     expect(patched.status).toBe(200)
-    expect(mocks.update).toHaveBeenCalledWith(expect.anything(), 'measurement-1', { value: '13' }, actor)
+    expect(mocks.update).toHaveBeenCalledWith(expect.anything(), 'measurement-1', { kind: 'SINGLE', value: '13', secondaryValue: null }, actor)
   })
 })

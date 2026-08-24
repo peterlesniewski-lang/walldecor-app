@@ -8,8 +8,8 @@ describe('installer room presenter', () => {
       id: 'room-1', name: 'Salon', sortOrder: 0,
       scopes: [{
         id: 'scope-own', name: 'Tapeta', sortOrder: 0,
-        scopeProducts: [{ id: 'product-own', productNameSnapshot: 'Produkt własny', productCodeSnapshot: 'P-1', manufacturerSnapshot: 'Producent', collectionSnapshot: 'Kolekcja', sortOrder: 0, catalogProductId: 'SENTINEL-CATALOG-ID' }],
-        measurements: [{ id: 'measurement-own', elementName: 'Szerokość', value: '500', unit: 'CM', source: 'CLIENT', authorId: 'SENTINEL-AUTHOR', authorContext: 'SENTINEL-CONTEXT', actorUserId: 'SENTINEL-USER', actorRole: 'ADMIN' }],
+        scopeProducts: [{ id: 'product-own', productNameSnapshot: 'Produkt własny', productCodeSnapshot: 'P-1', manufacturerSnapshot: 'Producent', collectionSnapshot: 'Kolekcja', batchSnapshot: 'PARTIA-24', sortOrder: 0, catalogProductId: 'SENTINEL-CATALOG-ID' }],
+        measurements: [{ id: 'measurement-own', elementName: 'Szerokość', kind: 'RECTANGLE', value: '500', secondaryValue: '250', unit: 'CM', source: 'CLIENT', authorId: 'SENTINEL-AUTHOR', authorContext: 'SENTINEL-CONTEXT', actorUserId: 'SENTINEL-USER', actorRole: 'ADMIN' }],
       }],
     }])
     const serialized = JSON.stringify(payload)
@@ -17,8 +17,8 @@ describe('installer room presenter', () => {
     expect(payload).toEqual([{
       id: 'room-1', name: 'Salon', sortOrder: 0, measurements: [], scopes: [{
         id: 'scope-own', name: 'Tapeta', sortOrder: 0,
-        scopeProducts: [{ id: 'product-own', productNameSnapshot: 'Produkt własny', productCodeSnapshot: 'P-1', manufacturerSnapshot: 'Producent', collectionSnapshot: 'Kolekcja', sortOrder: 0 }],
-        measurements: [{ id: 'measurement-own', elementName: 'Szerokość', value: '500', unit: 'CM' }],
+        scopeProducts: [{ id: 'product-own', productNameSnapshot: 'Produkt własny', productCodeSnapshot: 'P-1', manufacturerSnapshot: 'Producent', collectionSnapshot: 'Kolekcja', batchSnapshot: 'PARTIA-24', sortOrder: 0 }],
+        measurements: [{ id: 'measurement-own', elementName: 'Szerokość', kind: 'RECTANGLE', value: '500', secondaryValue: '250', unit: 'CM' }],
       }],
     }])
     for (const sentinel of ['SENTINEL-CATALOG-ID', 'SENTINEL-AUTHOR', 'SENTINEL-CONTEXT', 'SENTINEL-USER', 'source', 'author', 'actor']) {

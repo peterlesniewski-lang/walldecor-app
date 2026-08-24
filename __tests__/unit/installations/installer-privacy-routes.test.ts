@@ -54,7 +54,7 @@ describe('installer privacy at installation routes', () => {
       id: 'room-1', name: 'Salon', sortOrder: 0,
       measurements: [{ id: 'room-measurement', elementName: 'SENTINEL ROOM MEASUREMENT', value: '500', unit: 'CM', source: 'CLIENT', authorId: 'SENTINEL-AUTHOR', authorContext: 'SENTINEL-CONTEXT', actorUserId: 'SENTINEL-USER', actorRole: 'ADMIN' }],
       scopes: [
-        { id: 'scope-own', name: 'Tapeta', sortOrder: 0, assignments: [{ employeeId: 'installer-1' }], scopeProducts: [{ id: 'product-own', productNameSnapshot: 'Produkt własny', productCodeSnapshot: 'P-1', manufacturerSnapshot: 'Producent', collectionSnapshot: 'Kolekcja', catalogProductId: 'catalog-own', sortOrder: 0 }], measurements: [{ id: 'measurement-own', elementName: 'Szerokość', value: '500', unit: 'CM', source: 'EMPLOYEE', authorId: 'SENTINEL-AUTHOR', authorContext: 'SENTINEL-CONTEXT', actorUserId: 'SENTINEL-USER', actorRole: 'ADMIN' }] },
+        { id: 'scope-own', name: 'Tapeta', sortOrder: 0, assignments: [{ employeeId: 'installer-1' }], scopeProducts: [{ id: 'product-own', productNameSnapshot: 'Produkt własny', productCodeSnapshot: 'P-1', manufacturerSnapshot: 'Producent', collectionSnapshot: 'Kolekcja', batchSnapshot: 'PARTIA-24', catalogProductId: 'catalog-own', sortOrder: 0 }], measurements: [{ id: 'measurement-own', elementName: 'Szerokość', kind: 'RECTANGLE', value: '500', secondaryValue: '250', unit: 'CM', source: 'EMPLOYEE', authorId: 'SENTINEL-AUTHOR', authorContext: 'SENTINEL-CONTEXT', actorUserId: 'SENTINEL-USER', actorRole: 'ADMIN' }] },
         { id: 'scope-foreign', name: 'SENTINEL FOREIGN SCOPE', sortOrder: 1, assignments: [{ employeeId: 'installer-2' }], scopeProducts: [{ id: 'product-foreign', productNameSnapshot: 'SENTINEL FOREIGN PRODUCT', productCodeSnapshot: null, manufacturerSnapshot: null, collectionSnapshot: null, catalogProductId: 'catalog-foreign', sortOrder: 0 }], measurements: [{ id: 'measurement-foreign', elementName: 'SENTINEL FOREIGN MEASUREMENT', value: '1', unit: 'CM', source: 'CLIENT', authorId: 'foreign', authorContext: 'CLIENT', actorUserId: 'foreign-user', actorRole: 'ADMIN' }] },
       ],
     }])
@@ -107,8 +107,8 @@ describe('installer privacy at installation routes', () => {
     mocks.getRooms.mockResolvedValueOnce([{
       id: 'room-1', name: 'Salon', sortOrder: 0, measurements: [], scopes: [{
         id: 'scope-own', name: 'Tapeta', sortOrder: 0,
-        scopeProducts: [{ id: 'product-own', productNameSnapshot: 'Produkt własny', productCodeSnapshot: 'P-1', manufacturerSnapshot: 'Producent', collectionSnapshot: 'Kolekcja', sortOrder: 0 }],
-        measurements: [{ id: 'measurement-own', elementName: 'Szerokość', value: '500', unit: 'CM' }],
+        scopeProducts: [{ id: 'product-own', productNameSnapshot: 'Produkt własny', productCodeSnapshot: 'P-1', manufacturerSnapshot: 'Producent', collectionSnapshot: 'Kolekcja', batchSnapshot: 'PARTIA-24', sortOrder: 0 }],
+        measurements: [{ id: 'measurement-own', elementName: 'Szerokość', kind: 'RECTANGLE', value: '500', secondaryValue: '250', unit: 'CM' }],
       }],
     }])
     const response = await getRooms(new NextRequest('http://test/api/installations/order-1/rooms'), params)
@@ -121,8 +121,8 @@ describe('installer privacy at installation routes', () => {
       id: 'room-1', name: 'Salon', sortOrder: 0, measurements: [],
       scopes: [{
         id: 'scope-own', name: 'Tapeta', sortOrder: 0,
-        scopeProducts: [{ id: 'product-own', productNameSnapshot: 'Produkt własny', productCodeSnapshot: 'P-1', manufacturerSnapshot: 'Producent', collectionSnapshot: 'Kolekcja', sortOrder: 0 }],
-        measurements: [{ id: 'measurement-own', elementName: 'Szerokość', value: '500', unit: 'CM' }],
+        scopeProducts: [{ id: 'product-own', productNameSnapshot: 'Produkt własny', productCodeSnapshot: 'P-1', manufacturerSnapshot: 'Producent', collectionSnapshot: 'Kolekcja', batchSnapshot: 'PARTIA-24', sortOrder: 0 }],
+        measurements: [{ id: 'measurement-own', elementName: 'Szerokość', kind: 'RECTANGLE', value: '500', secondaryValue: '250', unit: 'CM' }],
       }],
     }])
     for (const sentinel of ['SENTINEL ROOM MEASUREMENT', 'SENTINEL FOREIGN SCOPE', 'SENTINEL FOREIGN PRODUCT', 'SENTINEL FOREIGN MEASUREMENT', 'SENTINEL-AUTHOR', 'SENTINEL-CONTEXT', 'SENTINEL-USER']) {
