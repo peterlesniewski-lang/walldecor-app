@@ -10,6 +10,14 @@ import {
 } from './calendar-config'
 
 const DEFAULT_IMPERSONATED_USER = 'info@walldecor.pl'
+const DEFAULT_WORKER_BATCH_SIZE = 20
+const MAX_WORKER_BATCH_SIZE = 100
+
+/** Non-secret runtime settings required before a scheduled worker can claim work. */
+export type InstallationCalendarWorkerConfiguration = {
+  adapter: Exclude<InstallationCalendarAdapterName, 'disabled'>
+  batchSize: number
+}
 
 function nonEmpty(value: string | undefined): string | null {
   const normalized = value?.trim() ?? ''
@@ -108,4 +116,35 @@ export function assertInstallationCalendarAdapterAllowed(env: CalendarEnvironmen
     throw new CalendarConfigurationError('Fake calendar adapter is forbidden in production.')
   }
   return raw.adapter
+}
+
+function workerBatchSize(env: CalendarEnvironment): number {
+  const candidate = nonEmpty(env.INSTALLATION_CALENDAR_WORKER_BATCH_SIZE)
+  if (candidate === null) return DEFAULT_WORKER_BATCH_SIZE
+  if (!/^\d+$/u.test(candidate)) {
+    throw new CalendarConfigurationError('Calendar worker batch size is invalid.')
+  }
+  const value = Number(candidate)
+  if (!Number.isSafeInteger(value) || value < 1 || value > MAX_WORKER_BATCH_SIZE) {
+    throw new CalendarConfigurationError('Calendar worker batch size is outside the allowed range.')
+  }
+  return value
+}
+
+/**
+ * Server/worker-only configuration boundary. Disabled integration is a
+ * deliberate configuration error for the scheduled worker: it must not claim
+ * outbox records and pretend a disabled Calendar is healthy.
+ */
+export function readInstallationCalendarConfig(
+  env: CalendarEnvironment = process.env,
+): InstallationCalendarWorkerConfiguration {
+  const adapter = assertInstallationCalendarAdapterAllowed(env)
+  if (env.INSTALLATION_CALENDAR_ENABLED !== 'true') {
+    throw new CalendarConfigurationError('Calendar synchronization is disabled.')
+  }
+  if (adapter === 'disabled') {
+    throw new CalendarConfigurationError('Calendar adapter is disabled.')
+  }
+  return { adapter, batchSize: workerBatchSize(env) }
 }
