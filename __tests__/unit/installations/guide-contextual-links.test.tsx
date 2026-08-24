@@ -32,4 +32,29 @@ describe('installation guide contextual links', () => {
 
     expect(screen.getByRole('link', { name: 'Instrukcje montaży' }).getAttribute('href')).toBe('/installations/instrukcje')
   })
+
+  it('offers the catalog shortcut on the list only to catalog managers without nesting links', () => {
+    const { container, rerender } = render(createElement(InstallationOrderList, {
+      orders: [{
+        ...order,
+        clientFormStatus: { code: 'WAITING', label: 'Czeka na klienta', requiresClarification: false },
+        calendarSummary: { nextVisitAt: null, visitStatus: 'NONE', syncStatus: 'NOT_REQUESTED' },
+      }],
+      canManageCatalog: true,
+    } as never))
+
+    expect(screen.getByRole('link', { name: 'Katalog i formularze' }).getAttribute('href')).toBe('/installations/catalog')
+    expect(container.querySelector('a a')).toBeNull()
+
+    rerender(createElement(InstallationOrderList, {
+      orders: [{
+        ...order,
+        clientFormStatus: { code: 'WAITING', label: 'Czeka na klienta', requiresClarification: false },
+        calendarSummary: { nextVisitAt: null, visitStatus: 'NONE', syncStatus: 'NOT_REQUESTED' },
+      }],
+      canManageCatalog: false,
+    } as never))
+
+    expect(screen.queryByRole('link', { name: 'Katalog i formularze' })).toBeNull()
+  })
 })

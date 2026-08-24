@@ -105,6 +105,28 @@ describe('InstallationVisitsPanel', () => {
     expect(screen.getByRole('button', { name: 'Wymuś nadpisanie w Google Calendar' })).toBeTruthy()
   })
 
+  it('never renders a legacy Calendar URL for a cancelled visit', async () => {
+    const user = userEvent.setup()
+    render(createElement(InstallationVisitsPanel, {
+      orderId: 'order-1', scopes, employees, canEdit: true, canForceOverwrite: false,
+      visits: [{
+        ...draftVisit,
+        id: 'visit-cancelled-legacy-url',
+        status: 'CANCELLED',
+        syncState: {
+          ...draftVisit.syncState,
+          status: 'SYNCED',
+          externalUrl: 'https://calendar.google.test/stale-event',
+          externalEtag: 'legacy-etag',
+        },
+      }],
+    }))
+
+    await user.click(screen.getByRole('button', { name: /Odwołana/ }))
+
+    expect(screen.queryByRole('link', { name: 'Otwórz w Google Calendar' })).toBeNull()
+  })
+
   it('rebases a changed crew revision without rerendering or losing a dirty visit form', async () => {
     const user = userEvent.setup()
     const confirmed = {

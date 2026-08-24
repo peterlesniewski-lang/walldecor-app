@@ -690,6 +690,17 @@ describe('installation calendar outbox', () => {
     expect(await processInstallationCalendarJob(dbA, adapter, cancelJob!, now)).toMatchObject({ outcome: 'COMPLETED' })
     expect(adapter.snapshot()).toMatchObject([{ eventId: adapter.snapshot()[0].eventId, cancelled: true }])
     expect(await dbA.integrationOutbox.findUniqueOrThrow({ where: { id: cancelQueued.id } })).toMatchObject({ status: 'COMPLETED' })
+    expect(await dbA.integrationSyncState.findUniqueOrThrow({ where: { visitId_kind: { visitId: visit.id, kind: 'GOOGLE_CALENDAR' } } }))
+      .toMatchObject({
+        status: 'SYNCED',
+        // Keep the deterministic identity for a repeat cancel, but never retain
+        // a clickable URL or a version token for a deleted remote event.
+        externalId: adapter.snapshot()[0].eventId,
+        externalUrl: null,
+        externalEtag: null,
+      })
+    expect(await dbA.integrationAttempt.findMany({ where: { outboxId: cancelQueued.id } }))
+      .toMatchObject([{ number: 1, outcome: 'SUCCESS' }])
   })
 
   it('treats unknown adapter failures as safe internal attention without error leakage', async () => {

@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { ArrowRight, BookOpen, CalendarDays, CircleCheck, ClipboardList, Clock3, FileQuestion, PencilLine, Plus, Send, TriangleAlert } from 'lucide-react'
+import { ArrowRight, BookOpen, CalendarDays, CircleCheck, ClipboardList, Clock3, FileQuestion, Layers3, PencilLine, Plus, Send, TriangleAlert } from 'lucide-react'
 import type { InstallationFormStatus, InstallationFormStatusCode } from '@/lib/installations/form-status'
 import { formatWarsawDateTime } from '@/lib/installations/visit-time'
 
@@ -53,7 +53,16 @@ const CALENDAR_STATUS_TONES: Record<OrderListItem['calendarSummary']['syncStatus
   ATTENTION: { label: 'Wymaga uwagi', background: '#F9E1DB', color: '#963D28' },
 }
 
-export function InstallationOrderList({ orders, canCreate = false }: { orders: OrderListItem[]; canCreate?: boolean }) {
+export function InstallationOrderList({
+  orders,
+  canCreate = false,
+  canManageCatalog = false,
+}: {
+  orders: OrderListItem[]
+  canCreate?: boolean
+  /** Calculated server-side from the current installation viewer. */
+  canManageCatalog?: boolean
+}) {
   return (
     <section className="mx-auto max-w-6xl" aria-labelledby="installation-orders-heading">
       <div className="mb-8 flex flex-wrap items-end justify-between gap-4">
@@ -75,6 +84,14 @@ export function InstallationOrderList({ orders, canCreate = false }: { orders: O
             <BookOpen className="h-4 w-4" aria-hidden="true" />
             Instrukcje montaży
           </Link>
+          {canManageCatalog && <Link
+            href="/installations/catalog"
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg border px-4 text-sm font-bold transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+            style={{ background: 'var(--wd-white)', color: '#7B4D13', borderColor: '#D9C1A0' }}
+          >
+            <Layers3 className="h-4 w-4" aria-hidden="true" />
+            Katalog i formularze
+          </Link>}
           {canCreate && <Link
             href="/installations/new"
             className="inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-bold transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"

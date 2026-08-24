@@ -108,6 +108,7 @@ describe('installer SSR installation access', () => {
     expect(mocks.listOrders).toHaveBeenCalledWith(expect.anything(), { viewer: installerViewer(true) })
     expect(result.props.orders).toEqual([scopeAssignedOrder])
     expect(result.props.canCreate).toBe(false)
+    expect(result.props.canManageCatalog).toBe(false)
   })
 
   it('hides every order on the list for an inactive installer', async () => {
@@ -118,6 +119,15 @@ describe('installer SSR installation access', () => {
     expect(mocks.viewerFromSession).toHaveBeenCalledWith(mocks.session)
     expect(result.props.orders).toEqual([])
     expect(result.props.canCreate).toBe(false)
+    expect(result.props.canManageCatalog).toBe(false)
+  })
+
+  it.each(['ADMIN', 'MANAGER'])('passes the catalog shortcut only for a current %s viewer', async (role) => {
+    mocks.viewerFromSession.mockResolvedValue({ role, employeeId: null })
+
+    const result = await InstallationsPage()
+
+    expect(result.props.canManageCatalog).toBe(true)
   })
 
   it('renders a scope-assigned order detail for an active installer', async () => {

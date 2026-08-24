@@ -354,7 +354,21 @@ async function persistFinalState(
   })
 }
 
-function successState(now: Date, write: CalendarWriteResult | null): FinalState {
+function successState(
+  now: Date,
+  write: CalendarWriteResult | null,
+  operation: ClaimedIntegrationJob['operation'],
+): FinalState {
+  // A cancellation is a successful sync, but its remote resource is gone.
+  // Keep externalId for the adapter's deterministic/idempotent cancel path;
+  // URL and ETag respectively point to and version a resource that no longer exists.
+  if (operation === 'CALENDAR_CANCEL') {
+    return {
+      status: 'COMPLETED', availableAt: now, completedAt: now,
+      errorCode: null, errorMessage: null, attemptOutcome: 'SUCCESS',
+      sync: { status: 'SYNCED', externalUrl: null, externalEtag: null, lastSyncedAt: now },
+    }
+  }
   return {
     status: 'COMPLETED', availableAt: now, completedAt: now,
     errorCode: null, errorMessage: null, attemptOutcome: 'SUCCESS',
@@ -436,7 +450,13 @@ export async function processInstallationCalendarJob(
     const latestJob = await heartbeat.stop()
     if (!latestJob) return { outboxId: activeJob.id, outcome: 'FENCED' }
     const finishedAt = clock.now()
-    const persisted = await persistFinalState(db, latestJob, finishedAt, durationMs(), successState(finishedAt, write))
+    const persisted = await persistFinalState(
+      db,
+      latestJob,
+      finishedAt,
+      durationMs(),
+      successState(finishedAt, write, latestJob.operation),
+    )
     return resultFromPersisted(latestJob.id, persisted, 'COMPLETED')
   } catch (error) {
     const latestJob = await heartbeat.stop()
