@@ -177,6 +177,50 @@ describe('installation order CRUD persists in a real SQLite database', () => {
     })
   })
 
+  it('deterministically selects the lower visit id when active visits have identical dates', async () => {
+    const order = await createInstallationOrder(db, {
+      client: { name: 'Remis Terminów', email: 'calendar-tie@example.pl', phone: '+48 504 000 001' },
+      address: { street: 'Kalendarzowa', buildingNumber: '10', postalCode: '00-001', city: 'Warszawa' },
+      primaryEmployeeId,
+      backupEmployeeId,
+    }, 'admin-user')
+    const startsAt = new Date('2026-10-10T06:00:00.000Z')
+    const endsAt = new Date('2026-10-10T14:00:00.000Z')
+    const createdAt = new Date('2026-08-24T10:00:00.000Z')
+
+    await db.installationVisit.create({
+      data: {
+        id: 'order-list-tie-z',
+        orderId: order.id,
+        status: 'CONFIRMED',
+        startsAt,
+        endsAt,
+        createdAt,
+        createdById: 'admin-user',
+        syncStates: { create: { status: 'SYNCED' } },
+      },
+    })
+    await db.installationVisit.create({
+      data: {
+        id: 'order-list-tie-a',
+        orderId: order.id,
+        status: 'DRAFT',
+        startsAt,
+        endsAt,
+        createdAt,
+        createdById: 'admin-user',
+        syncStates: { create: { status: 'PENDING' } },
+      },
+    })
+
+    const listed = (await listInstallationOrders(db)).find((candidate) => candidate.id === order.id)
+    expect(listed?.calendarSummary).toEqual({
+      nextVisitAt: startsAt.toISOString(),
+      visitStatus: 'DRAFT',
+      syncStatus: 'PENDING',
+    })
+  })
+
   it('enforces order and concrete installer assignment unique/FK constraints in SQLite', async () => {
     const created = await createInstallationOrder(db, {
       client: { name: 'Maria Nowak', email: 'maria.nowak@example.pl', phone: '+48 502 345 678' },

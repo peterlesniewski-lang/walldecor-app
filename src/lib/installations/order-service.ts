@@ -52,10 +52,11 @@ const orderListSelect = {
   formSubmissions: { select: { status: true, draftKey: true }, orderBy: { revisionNumber: 'desc' } },
   clarifications: { where: { status: 'OPEN', isBlocking: true }, select: { id: true } },
   visits: {
-    where: { status: { not: 'CANCELLED' } },
+    where: { status: { in: ['DRAFT', 'CONFIRMED'] } },
     orderBy: [
       { startsAt: { sort: 'asc', nulls: 'last' } },
       { createdAt: 'asc' },
+      { id: 'asc' },
     ],
     take: 1,
     select: {
@@ -73,6 +74,9 @@ const orderListSelect = {
 function summarizeNextInstallationVisit(
   visit: { startsAt: Date | null; status: string; syncStates: Array<{ status: string }> } | undefined,
 ): InstallationCalendarSummary {
+  if (visit?.status !== 'DRAFT' && visit?.status !== 'CONFIRMED') {
+    return { nextVisitAt: null, visitStatus: 'NONE', syncStatus: 'NOT_REQUESTED' }
+  }
   const syncStatus = visit?.syncStates[0]?.status
   return {
     nextVisitAt: visit?.startsAt?.toISOString() ?? null,

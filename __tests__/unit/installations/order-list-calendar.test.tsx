@@ -47,12 +47,46 @@ describe('installation order list calendar summary', () => {
     expect(findMany).toHaveBeenCalledWith(expect.objectContaining({
       select: expect.objectContaining({
         visits: expect.objectContaining({
-          where: { status: { not: 'CANCELLED' } },
+          where: { status: { in: ['DRAFT', 'CONFIRMED'] } },
+          orderBy: [
+            { startsAt: { sort: 'asc', nulls: 'last' } },
+            { createdAt: 'asc' },
+            { id: 'asc' },
+          ],
           take: 1,
         }),
       }),
     }))
     expect(order).not.toHaveProperty('visits')
+  })
+
+  it('does not surface a completed visit or its historic synchronized state on the card', async () => {
+    const findMany = vi.fn().mockResolvedValue([{
+      ...baseOrder,
+      delegations: [],
+      installerAssignments: [],
+      scopeAssignments: [],
+      formSnapshots: [],
+      clientLinks: [],
+      formSubmissions: [],
+      clarifications: [],
+      visits: [{
+        startsAt: new Date('2026-09-13T06:00:00.000Z'),
+        status: 'COMPLETED',
+        syncStates: [{ status: 'SYNCED' }],
+      }],
+    }])
+
+    const [order] = await listInstallationOrders({ installationOrder: { findMany } } as never)
+    render(createElement(InstallationOrderList, { orders: [order] }))
+
+    expect(order.calendarSummary).toEqual({
+      nextVisitAt: null,
+      visitStatus: 'NONE',
+      syncStatus: 'NOT_REQUESTED',
+    })
+    expect(screen.getByText('Termin nieustalony')).not.toBeNull()
+    expect(screen.getByText('Nie wysłano')).not.toBeNull()
   })
 
   it('renders separately accessible detail and visit links with the next visit calendar state', () => {
