@@ -1,5 +1,5 @@
 import { createElement } from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { InstallationVisitsPanel } from '@/components/installations/installation-visits-panel'
@@ -50,8 +50,8 @@ describe('InstallationVisitsPanel', () => {
     expect(screen.getByRole('heading', { name: 'Wizyty i terminy' })).toBeTruthy()
     expect(screen.getByText('Termin nieustalony')).toBeTruthy()
     await user.click(screen.getByRole('button', { name: 'Dodaj wizytę' }))
-    await user.type(screen.getByLabelText('Początek wizyty'), '2026-09-14T08:00')
-    await user.type(screen.getByLabelText('Koniec wizyty'), '2026-09-14T16:00')
+    fireEvent.change(screen.getByLabelText('Początek wizyty'), { target: { value: '2026-09-14T08:00' } })
+    fireEvent.change(screen.getByLabelText('Koniec wizyty'), { target: { value: '2026-09-14T16:00' } })
     await user.click(screen.getByRole('checkbox', { name: 'Salon — Tapety' }))
 
     expect(screen.getByText('Instalatorzy dla Salon — Tapety')).toBeTruthy()
