@@ -101,28 +101,57 @@ describe('installation visit routes', () => {
     expect(mocks.listVisits).toHaveBeenCalledWith({}, 'order-1')
   })
 
-  it('projects installer visit reads without notes, authors, emails, or calendar diagnostics', async () => {
+  it.each([
+    ['missing employee link', { role: 'INSTALLER', employeeId: null, employeeActive: false }],
+    ['inactive linked employee', { role: 'INSTALLER', employeeId: 'installer-1', employeeActive: false }],
+  ])('fails closed with an empty visit list for an installer with %s', async (_scenario, viewer) => {
+    mocks.session = { user: { id: 'installer-user', role: 'INSTALLER', employeeId: viewer.employeeId } }
+    mocks.viewerFromSession.mockResolvedValue(viewer)
+
+    const response = await getVisits(request('http://test/api/installations/order-1/visits', 'GET'), orderParams)
+
+    expect(response.status).toBe(200)
+    await expect(response.json()).resolves.toEqual([])
+  })
+
+  it('returns an installer only their own visits and strips other people and private calendar diagnostics', async () => {
     mocks.session = { user: { id: 'installer-user', role: 'INSTALLER', employeeId: 'installer-1' } }
     mocks.viewerFromSession.mockResolvedValue({ role: 'INSTALLER', employeeId: 'installer-1', employeeActive: true })
     mocks.listVisits.mockResolvedValueOnce([{
       id: 'visit-1', orderId: 'order-1', status: 'CONFIRMED', startsAt: new Date('2026-08-25T08:00:00.000Z'), endsAt: new Date('2026-08-25T10:00:00.000Z'), timezone: 'Europe/Warsaw',
-      note: 'Kod do bramy 1234', revision: 2, confirmedAt: null, cancelledAt: null, completedAt: null, createdById: 'coordinator-user', createdAt: new Date('2026-08-24T08:00:00.000Z'), updatedAt: new Date('2026-08-24T08:00:00.000Z'), scopeIds: ['scope-1'],
-      participants: [{ employeeId: 'installer-1', name: 'Jan Instalator', email: 'jan@example.com', scopeIds: ['scope-1'], inviteStatus: 'READY' }],
-      syncState: { status: 'ATTENTION', externalId: 'event-1', externalUrl: 'https://calendar.example/event-1', externalEtag: 'etag-secret', lastErrorCode: 'AUTH_FAILED', lastErrorMessage: 'OAuth details', lastAttemptAt: new Date('2026-08-24T09:00:00.000Z'), lastSyncedAt: null },
+      note: 'SENTINEL PRIVATE NOTE', revision: 2, confirmedAt: null, cancelledAt: null, completedAt: null, createdById: 'coordinator-user', createdAt: new Date('2026-08-24T08:00:00.000Z'), updatedAt: new Date('2026-08-24T08:00:00.000Z'), scopeIds: ['scope-1'],
+      participants: [
+        { employeeId: 'installer-1', name: 'Jan Instalator', email: 'own@example.com', scopeIds: ['scope-1'], inviteStatus: 'READY' },
+        { employeeId: 'installer-2', name: 'SENTINEL TEAMMATE NAME', email: 'sentinel-teammate@example.test', scopeIds: ['scope-1'], inviteStatus: 'READY' },
+      ],
+      syncState: { status: 'ATTENTION', externalId: 'SENTINEL EXTERNAL ID', externalUrl: 'https://calendar.example/private-event', externalEtag: 'SENTINEL ETAG', lastErrorCode: 'SENTINEL ERROR CODE', lastErrorMessage: 'SENTINEL ERROR MESSAGE', lastAttemptAt: new Date('2026-08-24T09:00:00.000Z'), lastSyncedAt: null },
+    }, {
+      id: 'visit-other-team', orderId: 'order-1', status: 'CONFIRMED', startsAt: new Date('2026-08-26T08:00:00.000Z'), endsAt: new Date('2026-08-26T10:00:00.000Z'), timezone: 'Europe/Warsaw',
+      note: 'SENTINEL FOREIGN VISIT NOTE', revision: 1, confirmedAt: null, cancelledAt: null, completedAt: null, createdById: 'coordinator-user', createdAt: new Date('2026-08-24T08:00:00.000Z'), updatedAt: new Date('2026-08-24T08:00:00.000Z'), scopeIds: ['scope-2'],
+      participants: [{ employeeId: 'installer-2', name: 'SENTINEL FOREIGN INSTALLER', email: 'sentinel-foreign@example.test', scopeIds: ['scope-2'], inviteStatus: 'READY' }],
+      syncState: { status: 'SYNCED', externalId: 'foreign-event' },
     }])
 
     const response = await getVisits(request('http://test/api/installations/order-1/visits', 'GET'), orderParams)
-    const [visit] = await response.json()
+    const payload = await response.json()
+    const [visit] = payload
 
     expect(response.status).toBe(200)
+    expect(payload).toHaveLength(1)
     expect(visit).toMatchObject({ id: 'visit-1', status: 'CONFIRMED', scopeIds: ['scope-1'], participants: [{ name: 'Jan Instalator', inviteStatus: 'READY' }], syncState: { status: 'ATTENTION' } })
+    expect(visit.participants).toHaveLength(1)
     expect(visit).not.toHaveProperty('note')
     expect(visit).not.toHaveProperty('createdById')
     expect(visit.participants[0]).not.toHaveProperty('email')
+    expect(visit.syncState).not.toHaveProperty('externalId')
     expect(visit.syncState).not.toHaveProperty('externalEtag')
     expect(visit.syncState).not.toHaveProperty('lastErrorCode')
     expect(visit.syncState).not.toHaveProperty('lastErrorMessage')
     expect(visit.syncState).not.toHaveProperty('lastAttemptAt')
+    const serialized = JSON.stringify(payload)
+    for (const sentinel of ['SENTINEL TEAMMATE NAME', 'sentinel-teammate@example.test', 'SENTINEL EXTERNAL ID', 'SENTINEL ETAG', 'SENTINEL ERROR CODE', 'SENTINEL ERROR MESSAGE', 'SENTINEL FOREIGN VISIT NOTE', 'SENTINEL FOREIGN INSTALLER', 'sentinel-foreign@example.test']) {
+      expect(serialized).not.toContain(sentinel)
+    }
   })
 
   it('does not redact coordinator visit reads', async () => {

@@ -12,7 +12,7 @@ import {
   listInstallationVisits,
 } from '@/lib/installations/visit-service'
 import { InstallationVisitValidationError } from '@/lib/installations/visit-schemas'
-import type { InstallationVisitView } from '@/lib/installations/visit-service'
+import { presentInstallerInstallationVisits } from '@/lib/installations/installer-visit-presenter'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -28,31 +28,6 @@ function visitErrorResponse(error: unknown) {
   throw error
 }
 
-function installerVisitProjection(visit: InstallationVisitView) {
-  return {
-    id: visit.id,
-    orderId: visit.orderId,
-    status: visit.status,
-    startsAt: visit.startsAt,
-    endsAt: visit.endsAt,
-    timezone: visit.timezone,
-    revision: visit.revision,
-    confirmedAt: visit.confirmedAt,
-    cancelledAt: visit.cancelledAt,
-    completedAt: visit.completedAt,
-    createdAt: visit.createdAt,
-    updatedAt: visit.updatedAt,
-    scopeIds: visit.scopeIds,
-    participants: visit.participants.map((participant) => ({
-      employeeId: participant.employeeId,
-      name: participant.name,
-      scopeIds: participant.scopeIds,
-      inviteStatus: participant.inviteStatus,
-    })),
-    syncState: { status: visit.syncState.status },
-  }
-}
-
 export async function GET(_req: NextRequest, { params }: Params) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
@@ -63,7 +38,7 @@ export async function GET(_req: NextRequest, { params }: Params) {
   if ('response' in loaded) return loaded.response
 
   const visits = await listInstallationVisits(prisma, id)
-  return NextResponse.json(viewer.role === 'INSTALLER' ? visits.map(installerVisitProjection) : visits)
+  return NextResponse.json(viewer.role === 'INSTALLER' ? presentInstallerInstallationVisits(visits, viewer) : visits)
 }
 
 export async function POST(req: NextRequest, { params }: Params) {

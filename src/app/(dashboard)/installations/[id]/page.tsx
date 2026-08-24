@@ -18,30 +18,10 @@ import { listInstallationFiles, listInstallationMismatchesForEvidence } from '@/
 import { listInstallationVisits } from '@/lib/installations/visit-service'
 import { listScopeInstallerAssignments } from '@/lib/installations/scope-assignment-service'
 import { InstallationOrderDetail } from '@/components/installations/order-detail'
-import type { InstallationVisitValue } from '@/components/installations/installation-visits-panel'
 import { presentInstallerInstallationOrder } from '@/lib/installations/order-presenter'
+import { presentInstallerInstallationVisits } from '@/lib/installations/installer-visit-presenter'
 
 type Params = { params: Promise<{ id: string }> }
-
-function installerVisitProjection(visit: Awaited<ReturnType<typeof listInstallationVisits>>[number]): InstallationVisitValue {
-  return {
-    id: visit.id,
-    orderId: visit.orderId,
-    status: visit.status,
-    startsAt: visit.startsAt,
-    endsAt: visit.endsAt,
-    timezone: visit.timezone,
-    revision: visit.revision,
-    scopeIds: visit.scopeIds,
-    participants: visit.participants.map((participant) => ({
-      employeeId: participant.employeeId,
-      name: participant.name,
-      scopeIds: participant.scopeIds,
-      inviteStatus: participant.inviteStatus,
-    })),
-    syncState: { status: visit.syncState.status },
-  }
-}
 
 export default async function InstallationOrderPage({ params }: Params) {
   const session = await getServerSession(authOptions)
@@ -95,9 +75,7 @@ export default async function InstallationOrderPage({ params }: Params) {
         visitFeeGrossAmount: order.visitFeeGrossAmount?.toFixed(2) ?? null,
       }
   const clientVisits = installerView
-    ? visits
-        .filter((visit) => visit.participants.some((participant) => participant.employeeId === viewer.employeeId))
-        .map(installerVisitProjection)
+    ? presentInstallerInstallationVisits(visits, viewer)
     : visits
 
   return <InstallationOrderDetail

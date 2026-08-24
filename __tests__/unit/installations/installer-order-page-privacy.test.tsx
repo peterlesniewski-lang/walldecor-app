@@ -94,7 +94,7 @@ describe('installer installation detail privacy', () => {
       id: 'installer-visit', orderId: 'order-1', status: 'CONFIRMED', startsAt: '2026-09-14T06:00:00.000Z', endsAt: '2026-09-14T14:00:00.000Z', timezone: 'Europe/Warsaw', revision: 2,
       scopeIds: ['scope-1'], note: 'Prywatna notatka koordynatora', createdById: 'coordinator-1',
       participants: [{ employeeId: 'installer-employee', name: 'Instalator', email: 'installer@example.test', scopeIds: ['scope-1'], inviteStatus: 'READY' }],
-      syncState: { status: 'PENDING', externalId: 'calendar-id', externalUrl: 'https://calendar.example.test/event', externalEtag: 'etag', lastErrorCode: 'INTERNAL', lastErrorMessage: 'Prywatny błąd', lastAttemptAt: null, lastSyncedAt: null },
+      syncState: { status: 'PENDING', externalId: 'SENTINEL PAGE EXTERNAL ID', externalUrl: 'https://calendar.example.test/event', externalEtag: 'SENTINEL PAGE ETAG', lastErrorCode: 'SENTINEL PAGE ERROR CODE', lastErrorMessage: 'SENTINEL PAGE ERROR MESSAGE', lastAttemptAt: null, lastSyncedAt: null },
     }, {
       id: 'foreign-visit', orderId: 'order-1', status: 'CONFIRMED', startsAt: '2026-09-15T06:00:00.000Z', endsAt: '2026-09-15T14:00:00.000Z', timezone: 'Europe/Warsaw', revision: 1,
       scopeIds: ['scope-foreign'], note: 'SENTINEL FOREIGN VISIT',
@@ -143,7 +143,7 @@ describe('installer installation detail privacy', () => {
       backupEmployee: { firstName: 'Bartek', lastName: 'Zastępca' },
     })
     const flightProps = JSON.stringify(result.props)
-    for (const secret of ['sentinel-client-secret@example.test', '+48 SENTINEL PHONE', 'SENTINEL PRIVATE AUDIT', 'SENTINEL PRIVATE FORM ANSWER', 'SENTINEL TECHNICAL SYSTEM', 'SENTINEL TECHNICAL ID', 'SENTINEL FOREIGN VISIT']) {
+    for (const secret of ['sentinel-client-secret@example.test', '+48 SENTINEL PHONE', 'SENTINEL PRIVATE AUDIT', 'SENTINEL PRIVATE FORM ANSWER', 'SENTINEL TECHNICAL SYSTEM', 'SENTINEL TECHNICAL ID', 'SENTINEL FOREIGN VISIT', 'SENTINEL PAGE EXTERNAL ID', 'SENTINEL PAGE ETAG', 'SENTINEL PAGE ERROR CODE', 'SENTINEL PAGE ERROR MESSAGE']) {
       expect(flightProps).not.toContain(secret)
     }
   })
