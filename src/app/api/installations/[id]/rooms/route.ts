@@ -2,14 +2,15 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { canEditInstallationOrder, canViewInstallationOrder, type InstallationOrderViewer } from '@/lib/installations/access'
-import { InstallationCatalogValidationError, createInstallationRoom, getInstallationOrderRooms } from '@/lib/installations/catalog-service'
+import { canEditInstallationOrder, canViewInstallationOrder, isInstallationViewerAuthorized, type InstallationOrderViewer } from '@/lib/installations/access'
+import { InstallationCatalogValidationError, createInstallationRoom, getInstallerInstallationOrderRooms, getInstallationOrderRooms } from '@/lib/installations/catalog-service'
 import { installationViewerFromSession } from '@/lib/installations/http-access'
 import { getInstallationOrder } from '@/lib/installations/order-service'
 
 type Params = { params: Promise<{ id: string }> }
 
 async function loadedOrder(id: string, viewer: InstallationOrderViewer) {
+  if (!isInstallationViewerAuthorized(viewer)) return { response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
   const order = await getInstallationOrder(prisma, id)
   if (!order) return { response: NextResponse.json({ error: 'Not found' }, { status: 404 }) }
   if (!canViewInstallationOrder(viewer, order)) return { response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
@@ -23,6 +24,10 @@ export async function GET(_req: NextRequest, { params }: Params) {
   const viewer = await installationViewerFromSession(session)
   const loaded = await loadedOrder(id, viewer)
   if ('response' in loaded) return loaded.response
+  if (viewer.role === 'INSTALLER') {
+    // Access above guarantees the current active Employee identity is present.
+    return NextResponse.json(await getInstallerInstallationOrderRooms(prisma, id, viewer.employeeId!))
+  }
   return NextResponse.json(await getInstallationOrderRooms(prisma, id))
 }
 

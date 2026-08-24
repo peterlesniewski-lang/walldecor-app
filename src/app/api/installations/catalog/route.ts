@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { canManageInstallationCatalog, type InstallationOrderViewer } from '@/lib/installations/access'
-import { INSTALLATION_ROLES, type InstallationRole } from '@/lib/installations/constants'
+import { canManageInstallationCatalog, isInstallationViewerAuthorized } from '@/lib/installations/access'
+import { installationViewerFromSession } from '@/lib/installations/http-access'
 import {
   createCatalogCategory,
   createCatalogProduct,
@@ -12,17 +12,8 @@ import {
   listInstallationCatalog,
 } from '@/lib/installations/catalog-service'
 
-async function viewerFromSession(session: { user: { role: string; employeeId?: string | null } }): Promise<InstallationOrderViewer> {
-  const role = INSTALLATION_ROLES.includes(session.user.role as InstallationRole) ? session.user.role as InstallationRole : 'EMPLOYEE'
-  if (role !== 'EMPLOYEE') return { role, employeeId: session.user.employeeId }
-  if (!session.user.employeeId) return { role, employeeId: null, employeeActive: false }
-  const employee = await prisma.employee.findUnique({ where: { id: session.user.employeeId }, select: { active: true } })
-  return { role, employeeId: session.user.employeeId, employeeActive: employee?.active === true }
-}
-
 function bodyWithoutKind(body: Record<string, unknown>) {
-  const { kind: _kind, ...input } = body
-  return input
+  return Object.fromEntries(Object.entries(body).filter(([field]) => field !== 'kind'))
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -32,7 +23,8 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 export async function GET(req?: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  const viewer = await viewerFromSession(session)
+  const viewer = await installationViewerFromSession(session)
+  if (!isInstallationViewerAuthorized(viewer)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const includeInactive = req?.nextUrl.searchParams.get('includeInactive') === 'true'
   if (includeInactive && !canManageInstallationCatalog(viewer)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   return NextResponse.json(await listInstallationCatalog(prisma, { includeInactive }))
@@ -41,7 +33,8 @@ export async function GET(req?: NextRequest) {
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  const viewer = await viewerFromSession(session)
+  const viewer = await installationViewerFromSession(session)
+  if (!isInstallationViewerAuthorized(viewer)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   if (!canManageInstallationCatalog(viewer)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   try {
     const body = await req.json()

@@ -1,4 +1,4 @@
-import type { InstallationOrderViewer } from './access'
+import { isInstallationViewerAuthorized, type InstallationOrderViewer } from './access'
 import type { InstallationGuide } from './guide-catalog'
 import { findInstallationGuide, INSTALLATION_GUIDES } from './guide-catalog'
 
@@ -10,6 +10,7 @@ export function canViewInstallationGuide(
   guide: InstallationGuide,
   viewer: InstallationOrderViewer,
 ): boolean {
+  if (!isInstallationViewerAuthorized(viewer)) return false
   if (viewer.role === 'ADMIN') return true
   if (viewer.role === 'INSTALLER') return canInstallerReadGuides(viewer) && guide.audience === 'INSTALLER'
   if (viewer.role === 'MANAGER') return guide.audience !== 'ADMIN'

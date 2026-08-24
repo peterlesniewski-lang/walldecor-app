@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { installationViewerFromSession } from '@/lib/installations/http-access'
+import { isInstallationViewerAuthorized } from '@/lib/installations/access'
 import { InstallationOrderValidationError } from '@/lib/installations/schemas'
 import { createInstallationOrder, listInstallationOrders } from '@/lib/installations/order-service'
 
@@ -17,6 +18,7 @@ export async function GET() {
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
 
   const viewer = await installationViewerFromSession(session)
+  if (!isInstallationViewerAuthorized(viewer)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   const orders = await listInstallationOrders(prisma, { viewer })
   return NextResponse.json(orders)
 }
@@ -25,6 +27,7 @@ export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const viewer = await installationViewerFromSession(session)
+  if (!isInstallationViewerAuthorized(viewer)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   if (viewer.role === 'INSTALLER') {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }

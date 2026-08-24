@@ -11,7 +11,7 @@ export type InternalMeasurementActor = {
   employeeId: string | null
 }
 
-export async function editableInstallationOrder(session: { user: { role: string; employeeId?: string | null } }, orderId: string) {
+export async function editableInstallationOrder(session: { user: { id: string; role: string; employeeId?: string | null } }, orderId: string) {
   const viewer = await installationViewerFromSession(session)
   const loaded = await accessibleInstallationOrder(orderId, viewer)
   if ('response' in loaded) return loaded

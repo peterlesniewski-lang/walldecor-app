@@ -3,7 +3,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
   session: null as null | { user: { id: string; role: string; employeeId?: string | null } },
-  employeeFindUnique: vi.fn(),
+  userFindUnique: vi.fn(),
   listCatalog: vi.fn(),
   createCatalogCategory: vi.fn(),
   createCatalogType: vi.fn(),
@@ -15,13 +15,14 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('next-auth', () => ({ getServerSession: vi.fn(async () => mocks.session) }))
 vi.mock('@/lib/auth', () => ({ authOptions: {} }))
-vi.mock('@/lib/prisma', () => ({ prisma: { employee: { findUnique: mocks.employeeFindUnique } } }))
+vi.mock('@/lib/prisma', () => ({ prisma: { user: { findUnique: mocks.userFindUnique } } }))
 vi.mock('@/lib/installations/catalog-service', () => ({
   listInstallationCatalog: mocks.listCatalog,
   createCatalogCategory: mocks.createCatalogCategory,
   createCatalogType: mocks.createCatalogType,
   createCatalogProduct: mocks.createCatalogProduct,
   getInstallationOrderRooms: mocks.getRooms,
+  getInstallerInstallationOrderRooms: mocks.getRooms,
   createInstallationRoom: mocks.createRoom,
   InstallationCatalogValidationError: class InstallationCatalogValidationError extends Error {
     fieldErrors: Record<string, string>
@@ -41,7 +42,18 @@ const ownerOrder = {
 describe('installation catalog and room routes', () => {
   beforeEach(() => {
     mocks.session = null
-    mocks.employeeFindUnique.mockResolvedValue({ active: true })
+    mocks.userFindUnique.mockImplementation(async () => {
+      const session = mocks.session
+      if (!session) return null
+      const employeeId = session.user.employeeId ?? null
+      return {
+        id: session.user.id,
+        role: session.user.role,
+        isActive: true,
+        employeeId,
+        employee: employeeId ? { active: true } : null,
+      }
+    })
     mocks.listCatalog.mockResolvedValue([])
     mocks.createCatalogCategory.mockResolvedValue({ id: 'category-1', name: 'Tapety' })
     mocks.createCatalogType.mockResolvedValue({ id: 'type-1', name: 'Winylowe' })
@@ -77,18 +89,17 @@ describe('installation catalog and room routes', () => {
   it('loads current installer activity before exposing rooms assigned through a scope', async () => {
     mocks.session = { user: { id: 'installer-user', role: 'INSTALLER', employeeId: 'installer-1' } }
     mocks.getOrder.mockResolvedValue({ ...ownerOrder, scopeAssignments: [{ employeeId: 'installer-1' }] })
-    mocks.employeeFindUnique.mockResolvedValue({ active: true })
 
     const activeResponse = await getRooms(new NextRequest('http://test/api/installations/order-1/rooms'), {
       params: Promise.resolve({ id: 'order-1' }),
     })
 
     expect(activeResponse.status).toBe(200)
-    expect(mocks.employeeFindUnique).toHaveBeenCalledWith({ where: { id: 'installer-1' }, select: { active: true } })
-    expect(mocks.getRooms).toHaveBeenCalledWith(expect.anything(), 'order-1')
+    expect(mocks.userFindUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'installer-user' } }))
+    expect(mocks.getRooms).toHaveBeenCalledWith(expect.anything(), 'order-1', 'installer-1')
 
     mocks.getRooms.mockClear()
-    mocks.employeeFindUnique.mockResolvedValue({ active: false })
+    mocks.userFindUnique.mockResolvedValue({ id: 'installer-user', role: 'INSTALLER', isActive: true, employeeId: 'installer-1', employee: { active: false } })
     const inactiveResponse = await getRooms(new NextRequest('http://test/api/installations/order-1/rooms'), {
       params: Promise.resolve({ id: 'order-1' }),
     })

@@ -6,10 +6,11 @@ import {
   canArchiveInstallationOrder,
   canEditInstallationOrder,
   canViewInstallationOrder,
+  isInstallationViewerAuthorized,
 } from '@/lib/installations/access'
 import { installationViewerFromSession } from '@/lib/installations/http-access'
 import { getInstallationOrder } from '@/lib/installations/order-service'
-import { getInstallationOrderFormSnapshot, getInstallationOrderRooms, listInstallationCatalog, listInstallationFormTemplates } from '@/lib/installations/catalog-service'
+import { getInstallationOrderFormSnapshot, getInstallationOrderRooms, getInstallerInstallationOrderRooms, listInstallationCatalog, listInstallationFormTemplates } from '@/lib/installations/catalog-service'
 import { listClientLinkStatuses } from '@/lib/installations/client-link'
 import { listInstallationClarifications, listInstallationFormRevisions } from '@/lib/installations/form-service'
 import { getInstallationReadiness } from '@/lib/installations/readiness'
@@ -28,16 +29,19 @@ export default async function InstallationOrderPage({ params }: Params) {
   if (!session) redirect('/login')
 
   const { id } = await params
+  const viewer = await installationViewerFromSession(session)
+  if (!isInstallationViewerAuthorized(viewer)) notFound()
   const order = await getInstallationOrder(prisma, id)
   if (!order) notFound()
 
-  const viewer = await installationViewerFromSession(session)
   if (!canViewInstallationOrder(viewer, order)) notFound()
 
   const canCoordinateClientForm = canEditInstallationOrder(viewer, order)
   const canManageGovernance = viewer.role === 'ADMIN' || viewer.role === 'MANAGER'
   const [rooms, visits, scopeAssignments] = await Promise.all([
-    getInstallationOrderRooms(prisma, id),
+    viewer.role === 'INSTALLER'
+      ? getInstallerInstallationOrderRooms(prisma, id, viewer.employeeId!)
+      : getInstallationOrderRooms(prisma, id),
     listInstallationVisits(prisma, id),
     listScopeInstallerAssignments(prisma, id),
   ])

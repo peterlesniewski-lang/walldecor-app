@@ -7,7 +7,7 @@ import { editableInstallationOrder, roomInInstallationOrder } from '@/lib/instal
 
 type Params = { params: Promise<{ id: string; roomId: string }> }
 
-async function permitted(session: { user: { role: string; employeeId?: string | null } }, orderId: string, roomId: string) {
+async function permitted(session: { user: { id: string; role: string; employeeId?: string | null } }, orderId: string, roomId: string) {
   const access = await editableInstallationOrder(session, orderId)
   if ('response' in access) return access
   if (!await roomInInstallationOrder(orderId, roomId)) return { response: NextResponse.json({ error: 'Not found' }, { status: 404 }) }

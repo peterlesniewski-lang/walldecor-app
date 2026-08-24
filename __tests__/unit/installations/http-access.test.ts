@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 const mocks = vi.hoisted(() => ({
-  findEmployee: vi.fn(),
+  findUser: vi.fn(),
 }))
 
 vi.mock('@/lib/prisma', () => ({
-  prisma: { employee: { findUnique: mocks.findEmployee } },
+  prisma: { user: { findUnique: mocks.findUser } },
 }))
 vi.mock('@/lib/installations/order-service', () => ({ getInstallationOrder: vi.fn() }))
 
@@ -16,25 +16,28 @@ describe('installationViewerFromSession', () => {
     vi.clearAllMocks()
   })
 
-  it('loads the current active flag for an INSTALLER with an employee record', async () => {
-    mocks.findEmployee.mockResolvedValue({ active: true })
+  it('uses the current user role and linked employee instead of stale session claims', async () => {
+    mocks.findUser.mockResolvedValue({
+      id: 'installer-user', role: 'INSTALLER', isActive: true, employeeId: 'installer-1', employee: { active: true },
+    })
 
-    await expect(installationViewerFromSession({ user: { role: 'INSTALLER', employeeId: 'installer-1' } }))
-      .resolves.toEqual({ role: 'INSTALLER', employeeId: 'installer-1', employeeActive: true })
-    expect(mocks.findEmployee).toHaveBeenCalledWith({ where: { id: 'installer-1' }, select: { active: true } })
+    await expect(installationViewerFromSession({ user: { id: 'installer-user', role: 'ADMIN', employeeId: null } }))
+      .resolves.toMatchObject({ role: 'INSTALLER', employeeId: 'installer-1', employeeActive: true, authorized: true })
+    expect(mocks.findUser).toHaveBeenCalledWith({
+      where: { id: 'installer-user' },
+      select: expect.objectContaining({ role: true, isActive: true, employeeId: true, employee: { select: { active: true } } }),
+    })
   })
 
-  it('fails closed for an inactive INSTALLER', async () => {
-    mocks.findEmployee.mockResolvedValue({ active: false })
+  it.each([
+    ['the account is disabled', { id: 'user-1', role: 'ADMIN', isActive: false, employeeId: null, employee: null }],
+    ['the account was deleted', null],
+    ['the account role is no longer an installation role', { id: 'user-1', role: 'SUSPENDED', isActive: true, employeeId: null, employee: null }],
+    ['the current installer employee is inactive', { id: 'user-1', role: 'INSTALLER', isActive: true, employeeId: 'installer-1', employee: { active: false } }],
+  ])('fails closed when %s', async (_scenario, currentUser) => {
+    mocks.findUser.mockResolvedValue(currentUser)
 
-    await expect(installationViewerFromSession({ user: { role: 'INSTALLER', employeeId: 'installer-1' } }))
-      .resolves.toEqual({ role: 'INSTALLER', employeeId: 'installer-1', employeeActive: false })
-    expect(mocks.findEmployee).toHaveBeenCalledWith({ where: { id: 'installer-1' }, select: { active: true } })
-  })
-
-  it.each(['ADMIN', 'MANAGER'])('keeps %s on the no-lookup fast path', async (role) => {
-    await expect(installationViewerFromSession({ user: { role, employeeId: 'manager-1' } }))
-      .resolves.toEqual({ role, employeeId: 'manager-1' })
-    expect(mocks.findEmployee).not.toHaveBeenCalled()
+    await expect(installationViewerFromSession({ user: { id: 'user-1', role: 'ADMIN', employeeId: null } }))
+      .resolves.toMatchObject({ authorized: false })
   })
 })

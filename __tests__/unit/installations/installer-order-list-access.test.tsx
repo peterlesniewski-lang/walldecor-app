@@ -35,6 +35,7 @@ vi.mock('@/lib/installations/order-service', () => ({
 }))
 vi.mock('@/lib/installations/catalog-service', () => ({
   getInstallationOrderRooms: mocks.getRooms,
+  getInstallerInstallationOrderRooms: mocks.getRooms,
   listInstallationCatalog: mocks.listCatalog,
   listInstallationFormTemplates: mocks.listTemplates,
   getInstallationOrderFormSnapshot: mocks.getSnapshot,
@@ -135,7 +136,7 @@ describe('installer SSR installation access', () => {
 
     expect(mocks.viewerFromSession).toHaveBeenCalledWith(mocks.session)
     expect(result.props.order.id).toBe('order-1')
-    expect(mocks.getRooms).toHaveBeenCalledWith(expect.anything(), 'order-1')
+    expect(mocks.getRooms).toHaveBeenCalledWith(expect.anything(), 'order-1', 'installer-employee')
   })
 
   it('returns notFound for an inactive installer despite a scope assignment', async () => {

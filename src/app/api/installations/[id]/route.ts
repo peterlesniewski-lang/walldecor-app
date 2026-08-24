@@ -6,9 +6,11 @@ import {
   canArchiveInstallationOrder,
   canEditInstallationOrder,
   canViewInstallationOrder,
+  isInstallationViewerAuthorized,
   type InstallationOrderViewer,
 } from '@/lib/installations/access'
 import { installationViewerFromSession } from '@/lib/installations/http-access'
+import { presentInstallerInstallationOrder } from '@/lib/installations/order-presenter'
 import { InstallationOrderValidationError } from '@/lib/installations/schemas'
 import {
   archiveInstallationOrder,
@@ -20,6 +22,9 @@ import {
 type Params = { params: Promise<{ id: string }> }
 
 async function loadAccessibleOrder(id: string, viewer: InstallationOrderViewer) {
+  if (!isInstallationViewerAuthorized(viewer)) {
+    return { response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
+  }
   const order = await getInstallationOrder(prisma, id)
   if (!order) return { response: NextResponse.json({ error: 'Not found' }, { status: 404 }) }
   if (!canViewInstallationOrder(viewer, order)) {
@@ -36,7 +41,9 @@ export async function GET(_req: NextRequest, { params }: Params) {
   const viewer = await installationViewerFromSession(session)
   const loaded = await loadAccessibleOrder(id, viewer)
   if ('response' in loaded) return loaded.response
-  return NextResponse.json(loaded.order)
+  return NextResponse.json(viewer.role === 'INSTALLER'
+    ? presentInstallerInstallationOrder(loaded.order)
+    : loaded.order)
 }
 
 export async function PATCH(req: NextRequest, { params }: Params) {

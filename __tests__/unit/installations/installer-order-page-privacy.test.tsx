@@ -32,10 +32,12 @@ vi.mock('@/lib/installations/access', () => ({
   canViewInstallationOrder: mocks.canView,
   canEditInstallationOrder: mocks.canEdit,
   canArchiveInstallationOrder: mocks.canArchive,
+  isInstallationViewerAuthorized: vi.fn(() => true),
 }))
 vi.mock('@/lib/installations/order-service', () => ({ getInstallationOrder: mocks.getOrder }))
 vi.mock('@/lib/installations/catalog-service', () => ({
   getInstallationOrderRooms: mocks.getRooms,
+  getInstallerInstallationOrderRooms: mocks.getRooms,
   listInstallationCatalog: mocks.listCatalog,
   listInstallationFormTemplates: mocks.listTemplates,
   getInstallationOrderFormSnapshot: mocks.getSnapshot,
@@ -105,7 +107,7 @@ describe('installer installation detail privacy', () => {
 
     const result = await InstallationOrderPage({ params: Promise.resolve({ id: 'order-1' }) })
 
-    expect(mocks.getRooms).toHaveBeenCalledWith(expect.anything(), 'order-1')
+    expect(mocks.getRooms).toHaveBeenCalledWith(expect.anything(), 'order-1', 'installer-employee')
     expect(mocks.listVisits).toHaveBeenCalledWith(expect.anything(), 'order-1')
     expect(mocks.listScopeAssignments).toHaveBeenCalledWith(expect.anything(), 'order-1')
     expect(mocks.listLinks).not.toHaveBeenCalled()
