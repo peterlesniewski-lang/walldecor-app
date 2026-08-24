@@ -88,7 +88,12 @@ export class FakeInstallationCalendarAdapter implements InstallationCalendarAdap
   }
 
   async cancel(input: CalendarCancelInput): Promise<void> {
-    const existing = this.events.get(input.externalId)
+    const expectedEventId = eventIdForVisit(input.visitId)
+    if (input.externalId !== expectedEventId) {
+      throw new CalendarConflictError('Calendar event id does not belong to this WallDecor visit.')
+    }
+
+    const existing = this.events.get(expectedEventId)
     if (!existing) throw new CalendarConflictError('Calendar event does not exist for cancellation.')
 
     // An outbox retry after a successful cancellation keeps its stale etag and is

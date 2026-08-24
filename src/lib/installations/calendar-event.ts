@@ -51,8 +51,8 @@ export type CalendarEventProjectionInput = {
 }
 
 function nonEmpty(value: string | null): string | null {
-  const trimmed = value?.trim() ?? ''
-  return trimmed.length > 0 ? trimmed : null
+  const normalized = value?.normalize('NFC').replace(/\s+/gu, ' ').trim() ?? ''
+  return normalized.length > 0 ? normalized : null
 }
 
 function formatLocation(order: CalendarEventProjectionInput['order']): string {
@@ -81,6 +81,24 @@ function formatScope(scope: CalendarEventScope): string {
   return roomName && scopeName ? `${roomName} — ${scopeName}` : roomName ?? scopeName ?? 'Zakres bez nazwy'
 }
 
+function compareByCodePoint(left: string, right: string): number {
+  const leftCodePoints = Array.from(left)
+  const rightCodePoints = Array.from(right)
+  const length = Math.min(leftCodePoints.length, rightCodePoints.length)
+
+  for (let index = 0; index < length; index += 1) {
+    const leftCodePoint = leftCodePoints[index].codePointAt(0)!
+    const rightCodePoint = rightCodePoints[index].codePointAt(0)!
+    if (leftCodePoint !== rightCodePoint) return leftCodePoint - rightCodePoint
+  }
+
+  return leftCodePoints.length - rightCodePoints.length
+}
+
+function scopeSummary(scopes: readonly CalendarEventScope[]): string {
+  return [...new Set(scopes.map(formatScope))].sort(compareByCodePoint).join('; ')
+}
+
 function attendeeEmails(participants: readonly CalendarEventParticipant[]): string[] {
   return [...new Set(participants
     .filter((participant) => participant.inviteStatus !== 'MISSING_EMAIL')
@@ -96,7 +114,7 @@ function toUtcIso(value: Date, field: 'startsAt' | 'endsAt'): string {
 
 export function buildCalendarEvent(input: CalendarEventProjectionInput): CalendarEvent {
   const location = formatLocation(input.order)
-  const scopeSummary = input.scopes.map(formatScope).join('; ')
+  const renderedScopes = scopeSummary(input.scopes)
 
   return {
     visitId: input.id,
@@ -104,7 +122,7 @@ export function buildCalendarEvent(input: CalendarEventProjectionInput): Calenda
     location,
     description: [
       `Adres montażu: ${location}`,
-      `Zakresy prac: ${scopeSummary}`,
+      `Zakresy prac: ${renderedScopes}`,
       `Karta montażu: ${input.orderUrl}`,
     ].join('\n'),
     start: { dateTime: toUtcIso(input.startsAt, 'startsAt'), timeZone: INSTALLATION_TIMEZONE },

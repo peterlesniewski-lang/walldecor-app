@@ -36,7 +36,7 @@ describe('FakeInstallationCalendarAdapter', () => {
     expect(updated.etag).not.toBe(created.etag)
     expect(adapter.snapshot()).toHaveLength(1)
 
-    await adapter.cancel({ externalId: created.eventId, etag: updated.etag, forceOverwrite: false })
+    await adapter.cancel({ visitId: 'visit-1', externalId: created.eventId, etag: updated.etag, forceOverwrite: false })
 
     expect(adapter.snapshot()).toMatchObject([{
       eventId: created.eventId,
@@ -74,11 +74,32 @@ describe('FakeInstallationCalendarAdapter', () => {
     const adapter = new FakeInstallationCalendarAdapter()
     const created = await adapter.upsert({ event: calendarEvent(), externalId: null, etag: null, forceOverwrite: false })
 
-    await adapter.cancel({ externalId: created.eventId, etag: created.etag, forceOverwrite: false })
+    await adapter.cancel({ visitId: 'visit-1', externalId: created.eventId, etag: created.etag, forceOverwrite: false })
     const afterFirstCancel = adapter.snapshot()
-    await adapter.cancel({ externalId: created.eventId, etag: created.etag, forceOverwrite: false })
+    await adapter.cancel({ visitId: 'visit-1', externalId: created.eventId, etag: created.etag, forceOverwrite: false })
 
     expect(adapter.snapshot()).toEqual(afterFirstCancel)
+  })
+
+  it.each([false, true])('never lets forceOverwrite cancel another visit event: %s', async (forceOverwrite) => {
+    const adapter = new FakeInstallationCalendarAdapter()
+    const createdA = await adapter.upsert({ event: calendarEvent('visit-a'), externalId: null, etag: null, forceOverwrite: false })
+    const createdB = await adapter.upsert({ event: calendarEvent('visit-b'), externalId: null, etag: null, forceOverwrite: false })
+
+    await expect(adapter.cancel({
+      visitId: 'visit-b', externalId: createdA.eventId, etag: createdA.etag, forceOverwrite,
+    })).rejects.toBeInstanceOf(CalendarConflictError)
+
+    expect(adapter.snapshot()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ eventId: createdA.eventId, cancelled: false }),
+      expect.objectContaining({ eventId: createdB.eventId, cancelled: false }),
+    ]))
+
+    await adapter.cancel({ visitId: 'visit-b', externalId: createdB.eventId, etag: createdB.etag, forceOverwrite: false })
+    expect(adapter.snapshot()).toEqual(expect.arrayContaining([
+      expect.objectContaining({ eventId: createdA.eventId, cancelled: false }),
+      expect.objectContaining({ eventId: createdB.eventId, cancelled: true }),
+    ]))
   })
 
   it('never calls fetch and returns defensive, deterministic snapshots', async () => {

@@ -41,7 +41,7 @@ describe('buildCalendarEvent', () => {
       location: 'Puławska 17, 02-515 Warszawa',
       description: [
         'Adres montażu: Puławska 17, 02-515 Warszawa',
-        'Zakresy prac: Salon — Tapety; Korytarz — Sztukateria',
+        'Zakresy prac: Korytarz — Sztukateria; Salon — Tapety',
         'Karta montażu: https://app.walldecor.pl/installations/order-1',
       ].join('\n'),
       start: { dateTime: '2026-08-24T08:00:00.000Z', timeZone: 'Europe/Warsaw' },
@@ -62,6 +62,29 @@ describe('buildCalendarEvent', () => {
     })
 
     expect(event.location).toBe('Puławska 17/4, 02-515 Warszawa')
+  })
+
+  it('renders normalized, deduplicated scopes identically for every input permutation', () => {
+    const fixture = calendarVisitFixture()
+    const first = buildCalendarEvent({
+      ...fixture,
+      scopes: [
+        { roomName: '  Salon  ', name: 'Tapety' },
+        { roomName: 'Korytarz', name: '  Sztukateria  ' },
+        { roomName: 'Salon', name: '  Tapety ' },
+      ],
+    })
+    const second = buildCalendarEvent({
+      ...fixture,
+      scopes: [
+        { roomName: 'Salon', name: 'Tapety' },
+        { roomName: 'Korytarz', name: 'Sztukateria' },
+        { roomName: ' Salon ', name: 'Tapety' },
+      ].reverse(),
+    })
+
+    expect(first).toEqual(second)
+    expect(first.description).toContain('Zakresy prac: Korytarz — Sztukateria; Salon — Tapety')
   })
 
   it('does not project client answers, amounts, or private visit notes', () => {
