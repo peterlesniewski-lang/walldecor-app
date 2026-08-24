@@ -9,6 +9,9 @@ if (!e2eDatabaseUrl.startsWith('file:/tmp/walldecor-installations-e2e-')) {
   throw new Error('E2E_DATABASE_URL musi wskazywać izolowaną SQLite w /tmp.')
 }
 process.env.E2E_DATABASE_URL = e2eDatabaseUrl
+process.env.DATABASE_URL = e2eDatabaseUrl
+process.env.ADMIN_USERNAME ??= 'admin'
+process.env.ADMIN_PASSWORD ??= 'ChangeMe123!'
 
 export default defineConfig({
   testDir: './e2e',

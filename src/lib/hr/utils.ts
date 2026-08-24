@@ -3,6 +3,8 @@ import { getPolishHolidays } from './constants'
 const pad = (n: number) => String(n).padStart(2, '0')
 /** Formats a Date as local "YYYY-MM-DD" (timezone-safe, avoids UTC shift) */
 const localDateStr = (d: Date) => `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+const utcDateStr = (d: Date) =>
+  `${d.getUTCFullYear()}-${pad(d.getUTCMonth() + 1)}-${pad(d.getUTCDate())}`
 
 /** Oblicza liczbę dni roboczych między datami (włącznie), pomijając weekendy i święta */
 export function calculateWorkingDays(
@@ -10,22 +12,28 @@ export function calculateWorkingDays(
   end: Date,
   extraHolidays: string[] = []
 ): number {
-  const year = start.getFullYear()
+  const year = start.getUTCFullYear()
   const holidays = new Set([
     ...getPolishHolidays(year),
     ...getPolishHolidays(year + 1), // w razie przekroczenia roku
     ...extraHolidays,
   ])
   let count = 0
-  const cur = new Date(start)
-  cur.setHours(12, 0, 0, 0) // use noon to avoid DST/midnight edge cases
-  const endDay = new Date(end)
-  endDay.setHours(12, 0, 0, 0)
+  const cur = new Date(Date.UTC(
+    start.getUTCFullYear(),
+    start.getUTCMonth(),
+    start.getUTCDate()
+  ))
+  const endDay = new Date(Date.UTC(
+    end.getUTCFullYear(),
+    end.getUTCMonth(),
+    end.getUTCDate()
+  ))
   while (cur <= endDay) {
-    const dow = cur.getDay()
-    const iso = localDateStr(cur)
+    const dow = cur.getUTCDay()
+    const iso = utcDateStr(cur)
     if (dow !== 0 && dow !== 6 && !holidays.has(iso)) count++
-    cur.setDate(cur.getDate() + 1)
+    cur.setUTCDate(cur.getUTCDate() + 1)
   }
   return count
 }
@@ -109,10 +117,10 @@ export function calcProportionalLeaveDays(
   year: number,
   annualDays: number = 26
 ): number {
-  const startYear = startDate.getFullYear()
+  const startYear = startDate.getUTCFullYear()
   if (startYear > year) return 0
   if (startYear < year) return annualDays
   // zatrudniony w tym samym roku: od miesiąca startowego do grudnia włącznie
-  const monthsLeft = 12 - startDate.getMonth() // getMonth() jest 0-indexed
+  const monthsLeft = 12 - startDate.getUTCMonth() // getUTCMonth() jest 0-indexed
   return Math.ceil(annualDays * monthsLeft / 12)
 }

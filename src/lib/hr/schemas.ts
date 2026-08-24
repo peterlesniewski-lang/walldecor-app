@@ -1,5 +1,6 @@
 import { z } from 'zod'
-import { EMPLOYMENT_TYPES, LEAVE_STATUSES, TIME_ENTRY_STATUSES, TIME_ENTRY_SOURCES, BREAK_TYPES } from './constants'
+import { EMPLOYMENT_TYPES, TIME_ENTRY_SOURCES, BREAK_TYPES } from './constants'
+import { isCanonicalTimeEntryDate } from './time-tracking/batch-policy'
 
 export const employeeCreateSchema = z.object({
   firstName: z.string().min(1).max(100),
@@ -52,6 +53,35 @@ export const timeEntryBulkCreateSchema = z.object({
   projectId: z.string().optional(),
 })
 
+export const timeEntryBatchMutationSchema = z.object({
+  employeeId: z.string().min(1),
+  rows: z.array(z.object({
+    entryId: z.string().min(1).optional(),
+    date: z.string().refine(
+      isCanonicalTimeEntryDate,
+      'date must be a valid canonical YYYY-MM-DD with year 1000 or later'
+    ),
+    clockIn: z.string().datetime(),
+    clockOut: z.string().datetime(),
+    breakMinutes: z.number().int().min(0).max(1440).default(0),
+  })).min(1).max(31),
+})
+
+export const timeEntryFillSchema = z.object({
+  employeeId: z.string().min(1),
+  rows: z.array(z.object({
+    date: z.string().refine(
+      isCanonicalTimeEntryDate,
+      'date must be a valid canonical YYYY-MM-DD with year 1000 or later'
+    ),
+    clockIn: z.string().datetime(),
+    clockOut: z.string().datetime(),
+    breakMinutes: z.number().int().min(0).max(1440).default(0),
+  })).min(1).max(31),
+  overwrite: z.boolean().default(false),
+  preview: z.boolean().default(true),
+})
+
 export const breakSchema = z.object({
   timeEntryId: z.string().min(1),
   startTime: z.coerce.date(),
@@ -91,8 +121,95 @@ export const overtimeRequestSchema = z.object({
   reason: z.string().min(1),
 })
 
-export const leaveBalanceUpdateSchema = z.object({
+export const leaveBalanceCorrectionSchema = z.object({
   totalDays: z.number().min(0).optional(),
   usedDays: z.number().min(0).optional(),
   carriedOver: z.number().min(0).optional(),
+  reason: z.string().trim().min(3).max(1000),
+}).strict().refine(
+  (data) =>
+    data.totalDays !== undefined ||
+    data.usedDays !== undefined ||
+    data.carriedOver !== undefined,
+  { message: 'At least one leave balance field is required' }
+)
+
+const httpDateSchema = z.string()
+  .regex(/^\d{4}-\d{2}-\d{2}$/, 'effectiveFrom must use YYYY-MM-DD')
+  .refine((value) => {
+    const [year, month, day] = value.split('-').map(Number)
+    const date = new Date(Date.UTC(year, month - 1, day))
+    return (
+      date.getUTCFullYear() === year &&
+      date.getUTCMonth() === month - 1 &&
+      date.getUTCDate() === day
+    )
+  }, 'effectiveFrom must be a valid calendar date')
+  .transform((value) => {
+    const [year, month, day] = value.split('-').map(Number)
+    return new Date(Date.UTC(year, month - 1, day))
+  })
+
+export const leaveEntitlementSaveSchema = z.object({
+  mode: z.enum(['DAYS_20', 'DAYS_26', 'CUSTOM']),
+  customAnnualDays: z.number().int().min(1).max(365).nullable().default(null),
+  employmentFraction: z.number().gt(0).max(1),
+  effectiveFrom: httpDateSchema,
+  note: z.string().max(1000).nullable().optional(),
+  year: z.number().int().min(2000).max(2100),
+  preview: z.boolean().default(true),
+  expectedCurrentTotalDays: z.number().nullable().optional(),
+  expectedCurrentCarriedOver: z.number().min(0).nullable().optional(),
+  expectedConfigVersion: z.string().min(1).nullable().optional(),
+  expectedActiveConfigVersion: z.string().min(1).nullable().optional(),
+  correctionReason: z.string().trim().min(3).max(1000).optional(),
+}).superRefine((data, ctx) => {
+  if (data.mode === 'CUSTOM' && data.customAnnualDays === null) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'customAnnualDays is required for CUSTOM mode',
+      path: ['customAnnualDays'],
+    })
+  }
+
+  const targetYearEnd = new Date(Date.UTC(data.year, 11, 31, 23, 59, 59, 999))
+  if (data.effectiveFrom > targetYearEnd) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'effectiveFrom must be no later than the end of the target year',
+      path: ['effectiveFrom'],
+    })
+  }
+
+  if (!data.preview && data.expectedCurrentTotalDays === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'expectedCurrentTotalDays is required when applying',
+      path: ['expectedCurrentTotalDays'],
+    })
+  }
+
+  if (!data.preview && data.expectedCurrentCarriedOver === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'expectedCurrentCarriedOver is required when applying',
+      path: ['expectedCurrentCarriedOver'],
+    })
+  }
+
+  if (!data.preview && data.expectedConfigVersion === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'expectedConfigVersion is required when applying',
+      path: ['expectedConfigVersion'],
+    })
+  }
+
+  if (!data.preview && data.expectedActiveConfigVersion === undefined) {
+    ctx.addIssue({
+      code: 'custom',
+      message: 'expectedActiveConfigVersion is required when applying',
+      path: ['expectedActiveConfigVersion'],
+    })
+  }
 })

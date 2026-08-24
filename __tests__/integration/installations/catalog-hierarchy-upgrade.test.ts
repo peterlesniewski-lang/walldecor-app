@@ -24,8 +24,8 @@ function runMigrate(databaseUrlValue: string, schemaPath?: string) {
   if (result.status !== 0) throw new Error(result.stderr || result.stdout)
 }
 
-function createTwentyMigrationPrismaDirectory() {
-  const root = path.join(databaseDirectory, 'twenty-migration-prisma')
+function createTwentyOneMigrationPrismaDirectory() {
+  const root = path.join(databaseDirectory, 'twenty-one-migration-prisma')
   const migrations = path.join(root, 'migrations')
   mkdirSync(migrations, { recursive: true })
   cpSync(path.join(workspace, 'prisma', 'schema.prisma'), path.join(root, 'schema.prisma'))
@@ -76,7 +76,7 @@ async function seedLegacyInconsistentHierarchy(db: PrismaClient) {
     db.employee.create({ data: { firstName: 'Anna', lastName: 'Legacy', email: 'legacy.primary@example.test', position: 'Koordynatorka', costCenterId: 'LGC', startDate: new Date('2026-01-01T00:00:00.000Z'), active: true } }),
     db.employee.create({ data: { firstName: 'Bartek', lastName: 'Legacy', email: 'legacy.backup@example.test', position: 'Koordynator', costCenterId: 'LGC', startDate: new Date('2026-01-01T00:00:00.000Z'), active: true } }),
   ])
-  // This database intentionally stops at migration 20. Do not use the
+  // This database intentionally stops at migration 21. Do not use the
   // current Prisma InstallationOrder model: Task 4 adds columns which the
   // historic schema legitimately does not have yet.
   const order = { id: 'legacy-upgrade-order' }
@@ -129,11 +129,11 @@ async function assertRecoveredDatabase(db: PrismaClient, history: Awaited<Return
 afterAll(() => rmSync(databaseDirectory, { recursive: true, force: true }))
 
 describe('installation catalog hierarchy migration upgrade', () => {
-  it('repairs a 20-migration legacy database through real deploy without touching snapshots or scope history, then stays stable on a second deploy', async () => {
-    runMigrate(databaseUrl, createTwentyMigrationPrismaDirectory())
+  it('repairs a 21-migration legacy database through real deploy without touching snapshots or scope history, then stays stable on a second deploy', async () => {
+    runMigrate(databaseUrl, createTwentyOneMigrationPrismaDirectory())
     let db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
     const history = await seedLegacyInconsistentHierarchy(db)
-    expect(await db.$queryRawUnsafe<Array<{ migration_name: string }>>('SELECT migration_name FROM _prisma_migrations ORDER BY migration_name')).toHaveLength(20)
+    expect(await db.$queryRawUnsafe<Array<{ migration_name: string }>>('SELECT migration_name FROM _prisma_migrations ORDER BY migration_name')).toHaveLength(21)
     await db.$disconnect()
 
     runMigrate(databaseUrl)
@@ -190,7 +190,7 @@ describe('installation catalog hierarchy migration upgrade', () => {
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM pragma_table_info('InstallationClientLink') WHERE name IN ('sentAt', 'sentById') ORDER BY cid"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type='index' AND name='InstallationClientLink_orderId_sentAt_idx'"),
     ])
-    expect(migrations).toHaveLength(34)
+    expect(migrations).toHaveLength(35)
     expect(migrations.every((migration) => migration.finished_at !== null && migration.rolled_back_at === null)).toBe(true)
     expect(migrations.at(-1)).toMatchObject({ migration_name: '20260823080000_installation_client_link_sent', finished_at: expect.anything(), rolled_back_at: null })
     expect(checksum).toEqual([{ checksum: remoteDeleteMigrationChecksum }])
@@ -221,7 +221,7 @@ describe('installation catalog hierarchy migration upgrade', () => {
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type='index' AND name='InstallationClientLink_orderId_sentAt_idx'"),
       db.$queryRawUnsafe('PRAGMA foreign_key_check'), db.$queryRawUnsafe<Array<{ integrity_check: string }>>('PRAGMA integrity_check'),
     ])
-    expect(migrations).toHaveLength(34)
+    expect(migrations).toHaveLength(35)
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030000_installation_client_form')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030100_installation_submitted_answer_insert_guard')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030200_installation_submitted_revision_guard')

@@ -1,143 +1,130 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
+import { z } from 'zod'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { z } from 'zod'
+import {
+  executeLeaveCarryoverBatch,
+  LeaveCarryoverCanonicalVlError,
+} from '@/lib/hr/leave-carryover'
+import {
+  runSerializableTransactionWithRetry,
+  SerializableTransactionConflictError,
+} from '@/lib/hr/serializable-transaction'
 
 const carryoverSchema = z.object({
   fromYear: z.number().int().min(2000).max(2100),
   toYear: z.number().int().min(2000).max(2100),
-  leaveTypeId: z.string().optional(),
   maxCarryoverDays: z.number().min(0).optional(),
-}).refine((d) => d.toYear > d.fromYear, {
+  reason: z.string().trim().min(3).max(1000),
+}).refine((data) => data.toYear > data.fromYear, {
   message: 'toYear must be greater than fromYear',
   path: ['toYear'],
 })
 
+function invalidInput(details?: unknown) {
+  return NextResponse.json(
+    {
+      error: 'Invalid input',
+      ...(details === undefined ? {} : { details }),
+    },
+    { status: 400 }
+  )
+}
+
+function missingCanonicalVl() {
+  return NextResponse.json(
+    { error: 'Canonical leave type VL is not configured correctly' },
+    { status: 503 }
+  )
+}
+
+function isTargetBalanceUniqueError(error: unknown): boolean {
+  if (
+    typeof error !== 'object' ||
+    error === null ||
+    !('code' in error) ||
+    error.code !== 'P2002' ||
+    !('meta' in error) ||
+    typeof error.meta !== 'object' ||
+    error.meta === null
+  ) {
+    return false
+  }
+
+  const meta = error.meta
+  if (
+    !('modelName' in meta) ||
+    meta.modelName !== 'LeaveBalanceNew'
+  ) {
+    return false
+  }
+  if (!('target' in meta)) return false
+
+  const target = meta.target
+  const targetFields = ['employeeId', 'leaveTypeId', 'year']
+  return (
+    Array.isArray(target) &&
+    target.length === targetFields.length &&
+    targetFields.every((field, index) => target[index] === field)
+  )
+}
+
+function carryoverConflict() {
+  return NextResponse.json(
+    {
+      code: 'CARRYOVER_CONFLICT',
+      error:
+        'Leave balance changed during carryover. Run the operation again.',
+    },
+    { status: 409 }
+  )
+}
+
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (session.user.role !== 'ADMIN') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-
-  const parsed = carryoverSchema.safeParse(await req.json())
-  if (!parsed.success) {
-    return NextResponse.json({ error: 'Invalid input', details: parsed.error.flatten() }, { status: 400 })
+  if (session.user.role !== 'ADMIN') {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const { fromYear, toYear, leaveTypeId, maxCarryoverDays } = parsed.data
+  let rawInput: unknown
+  try {
+    rawInput = await req.json()
+  } catch {
+    return invalidInput('Request body must be valid JSON')
+  }
 
-  // Find all balances for fromYear
-  const fromBalances = await prisma.leaveBalanceNew.findMany({
-    where: {
-      year: fromYear,
-      ...(leaveTypeId ? { leaveTypeId } : {}),
-    },
-    include: {
-      leaveType: true,
-    },
-  })
+  const parsed = carryoverSchema.safeParse(rawInput)
+  if (!parsed.success) return invalidInput(parsed.error.flatten())
 
-  if (fromBalances.length === 0) {
-    return NextResponse.json(
-      { error: `No balances found for year ${fromYear}` },
-      { status: 404 }
+  const { fromYear, toYear, maxCarryoverDays, reason } = parsed.data
+  try {
+    const result = await runSerializableTransactionWithRetry(() =>
+      prisma.$transaction(
+        (tx) =>
+          executeLeaveCarryoverBatch(tx, {
+            fromYear,
+            toYear,
+            maxCarryoverDays,
+            reason,
+            actorId: session.user.id,
+          }),
+        { isolationLevel: 'Serializable' }
+      )
     )
-  }
 
-  const results = {
-    processed: 0,
-    created: 0,
-    updated: 0,
-    skipped: 0,
-    details: [] as Array<{
-      employeeId: string
-      leaveTypeId: string
-      carriedOver: number
-      action: 'created' | 'updated' | 'skipped'
-    }>,
-  }
-
-  for (const balance of fromBalances) {
-    const remainingDays = balance.totalDays - balance.usedDays
-    results.processed++
-
-    if (remainingDays <= 0) {
-      results.skipped++
-      results.details.push({
-        employeeId: balance.employeeId,
-        leaveTypeId: balance.leaveTypeId,
-        carriedOver: 0,
-        action: 'skipped',
-      })
-      continue
+    return NextResponse.json(result)
+  } catch (error) {
+    if (error instanceof LeaveCarryoverCanonicalVlError) {
+      return missingCanonicalVl()
     }
-
-    const carriedOver =
-      maxCarryoverDays !== undefined
-        ? Math.min(remainingDays, maxCarryoverDays)
-        : remainingDays
-
-    if (carriedOver <= 0) {
-      results.skipped++
-      results.details.push({
-        employeeId: balance.employeeId,
-        leaveTypeId: balance.leaveTypeId,
-        carriedOver: 0,
-        action: 'skipped',
-      })
-      continue
+    if (
+      error instanceof SerializableTransactionConflictError ||
+      isTargetBalanceUniqueError(error)
+    ) {
+      return carryoverConflict()
     }
-
-    // Find or create balance in toYear
-    const existingToBalance = await prisma.leaveBalanceNew.findUnique({
-      where: {
-        employeeId_leaveTypeId_year: {
-          employeeId: balance.employeeId,
-          leaveTypeId: balance.leaveTypeId,
-          year: toYear,
-        },
-      },
-    })
-
-    if (existingToBalance) {
-      await prisma.leaveBalanceNew.update({
-        where: { id: existingToBalance.id },
-        data: {
-          totalDays: existingToBalance.totalDays + carriedOver,
-          carriedOver: existingToBalance.carriedOver + carriedOver,
-        },
-      })
-      results.updated++
-      results.details.push({
-        employeeId: balance.employeeId,
-        leaveTypeId: balance.leaveTypeId,
-        carriedOver,
-        action: 'updated',
-      })
-    } else {
-      await prisma.leaveBalanceNew.create({
-        data: {
-          employeeId: balance.employeeId,
-          leaveTypeId: balance.leaveTypeId,
-          year: toYear,
-          totalDays: carriedOver,
-          carriedOver,
-        },
-      })
-      results.created++
-      results.details.push({
-        employeeId: balance.employeeId,
-        leaveTypeId: balance.leaveTypeId,
-        carriedOver,
-        action: 'created',
-      })
-    }
+    throw error
   }
-
-  return NextResponse.json({
-    success: true,
-    fromYear,
-    toYear,
-    ...results,
-  })
 }

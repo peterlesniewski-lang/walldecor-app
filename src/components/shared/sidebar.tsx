@@ -20,9 +20,10 @@ import {
 } from 'lucide-react'
 import { NavItem } from './nav-item'
 import { Separator } from '@/components/ui/separator'
+import { cn } from '@/lib/utils'
 
-type SidebarRole = 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER'
-type NavSectionItem = {
+export type SidebarRole = 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER'
+export type NavSectionItem = {
   href: string
   label: string
   icon: LucideIcon
@@ -30,7 +31,7 @@ type NavSectionItem = {
   roles?: SidebarRole[]
 }
 
-const NAV_SECTIONS: Array<{ label: string | null; items: NavSectionItem[] }> = [
+export const NAV_SECTIONS: Array<{ label: string | null; items: NavSectionItem[] }> = [
   {
     label: null,
     items: [
@@ -81,10 +82,48 @@ const NAV_SECTIONS: Array<{ label: string | null; items: NavSectionItem[] }> = [
   },
 ]
 
+export function SidebarNavigation({
+  userRole,
+  onNavigate,
+  className,
+}: {
+  userRole: SidebarRole
+  onNavigate?: () => void
+  className?: string
+}) {
+  return (
+    <nav aria-label="Główne obszary" className={cn('space-y-4 px-3', className)}>
+      {NAV_SECTIONS.map((section, i) => (
+        <div key={section.label ?? 'start'}>
+          {section.label && (
+            <p
+              className="mb-1 px-3 uppercase"
+              style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--sidebar-text)', opacity: 0.65 }}
+            >
+              {section.label}
+            </p>
+          )}
+          <div className="space-y-0.5">
+            {section.items
+              .filter((item) => !item.roles || item.roles.includes(userRole))
+              .map((item) => (
+                <NavItem key={item.href} {...item} onNavigate={onNavigate} />
+              ))}
+          </div>
+          {i < NAV_SECTIONS.length - 1 && (
+            <Separator className="mt-4" style={{ background: 'var(--sidebar-border)' }} />
+          )}
+        </div>
+      ))}
+    </nav>
+  )
+}
+
 export function Sidebar({ userRole = 'EMPLOYEE' }: { userRole?: SidebarRole }) {
   return (
     <aside
-      className="flex flex-col h-screen w-64 shrink-0 border-r py-4"
+      aria-label="Nawigacja główna"
+      className="hidden h-screen w-64 shrink-0 flex-col border-r py-4 lg:flex"
       style={{
         background: 'var(--sidebar-bg)',
         borderColor: 'var(--sidebar-border)',
@@ -104,28 +143,9 @@ export function Sidebar({ userRole = 'EMPLOYEE' }: { userRole?: SidebarRole }) {
       </div>
 
       {/* Navigation */}
-      <nav className="flex-1 px-3 space-y-4 overflow-y-auto">
-        {NAV_SECTIONS.map((section, i) => (
-          <div key={i}>
-            {section.label && (
-              <p
-                className="px-3 mb-1 uppercase"
-                style={{ fontSize: '10px', fontWeight: 700, letterSpacing: '0.1em', color: 'var(--sidebar-text)', opacity: 0.4 }}
-              >
-                {section.label}
-              </p>
-            )}
-            <div className="space-y-0.5">
-              {section.items.filter((item) => !item.roles || item.roles.includes(userRole)).map((item) => (
-                <NavItem key={item.href} {...item} />
-              ))}
-            </div>
-            {i < NAV_SECTIONS.length - 1 && (
-              <Separator className="mt-4" style={{ background: 'var(--sidebar-border)' }} />
-            )}
-          </div>
-        ))}
-      </nav>
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <SidebarNavigation userRole={userRole} />
+      </div>
     </aside>
   )
 }
