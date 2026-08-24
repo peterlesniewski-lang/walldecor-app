@@ -3,10 +3,12 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 const mocks = vi.hoisted(() => ({
   session: null as { user: { id: string; role: string } } | null,
   readiness: vi.fn(),
+  viewerFromSession: vi.fn(),
 }))
 
 vi.mock('next-auth', () => ({ getServerSession: vi.fn(async () => mocks.session) }))
 vi.mock('@/lib/auth', () => ({ authOptions: {} }))
+vi.mock('@/lib/installations/http-access', () => ({ installationViewerFromSession: mocks.viewerFromSession }))
 vi.mock('@/lib/installations/calendar-server-config', () => ({ getInstallationCalendarReadiness: mocks.readiness }))
 
 import { GET } from '@/app/api/settings/installation-calendar/route'
@@ -14,6 +16,11 @@ import { GET } from '@/app/api/settings/installation-calendar/route'
 describe('installation Calendar settings route', () => {
   beforeEach(() => {
     mocks.session = { user: { id: 'admin-1', role: 'ADMIN' } }
+    mocks.viewerFromSession.mockReset().mockImplementation(async () => ({
+      role: mocks.session!.user.role,
+      employeeId: null,
+      authorized: true,
+    }))
     mocks.readiness.mockReset().mockReturnValue({
       enabled: true,
       adapter: 'google',

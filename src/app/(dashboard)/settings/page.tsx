@@ -10,12 +10,15 @@ import { KsefSettingsForm } from '@/components/shared/ksef-settings-form'
 import { KsefCutoverMaintenance } from '@/components/shared/ksef-cutover-maintenance'
 import { VisitFeeSettingsPanel } from '@/components/installations/visit-fee-settings-panel'
 import { CalendarSettingsPanel } from '@/components/installations/calendar-settings-panel'
+import { canManageInstallationCatalog, isInstallationViewerAuthorized } from '@/lib/installations/access'
+import { installationViewerFromSession } from '@/lib/installations/http-access'
 
 export default async function SettingsPage() {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
-
-  const userRole = session.user.role ?? 'EMPLOYEE'
+  const viewer = await installationViewerFromSession(session)
+  if (!isInstallationViewerAuthorized(viewer)) redirect('/dashboard')
+  const userRole = viewer.role
 
   return (
     <div className="space-y-10 max-w-5xl">
@@ -60,7 +63,7 @@ export default async function SettingsPage() {
         <CsvColumnMapper userRole={userRole} />
       </section>
 
-      {(userRole === 'ADMIN' || userRole === 'MANAGER') && (
+      {canManageInstallationCatalog(viewer) && (
         <section className="space-y-4">
           <div className="border-b border-[var(--wd-border)] pb-3">
             <h2 className="text-base font-semibold" style={{ color: 'var(--wd-dark)' }}>
