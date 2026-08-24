@@ -533,6 +533,7 @@ model Employee {
   installationOrdersBackup  InstallationOrder[]      @relation("InstallationOrderBackupEmployee")
   installationDelegations   InstallationDelegation[]
   installationOrderAssignments InstallationOrderInstaller[]
+  installationScopeAssignments InstallationScopeAssignment[]
 
   createdAt DateTime @default(now())
 }
@@ -576,6 +577,9 @@ model InstallationOrder {
   formSubmissions       InstallationFormSubmission[]
   clarifications        InstallationClarification[]
   rooms                 InstallationRoom[]
+  visits                InstallationVisit[]
+  visitScopes           InstallationVisitScope[]
+  scopeAssignments      InstallationScopeAssignment[]
   visitFeePolicyId      String?
   visitFeePolicy        InstallationVisitFeePolicy? @relation("InstallationOrderVisitFeePolicy", fields: [visitFeePolicyId], references: [id], onDelete: Restrict)
   visitFeeStatus        String   @default("NONE")
@@ -680,6 +684,116 @@ model InstallationOrderInstaller {
 
   @@unique([orderId, employeeId])
   @@index([employeeId])
+}
+
+model InstallationVisit {
+  id          String   @id @default(cuid())
+  orderId     String
+  order       InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  status      String   @default("DRAFT")
+  startsAt    DateTime?
+  endsAt      DateTime?
+  timezone    String   @default("Europe/Warsaw")
+  note        String?
+  revision    Int      @default(1)
+  confirmedAt DateTime?
+  cancelledAt DateTime?
+  completedAt DateTime?
+  scopes      InstallationVisitScope[]
+  syncStates  IntegrationSyncState[]
+  outbox      IntegrationOutbox[]
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([orderId, status, startsAt])
+}
+
+model InstallationVisitScope {
+  id        String   @id @default(cuid())
+  visitId   String
+  visit     InstallationVisit @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  orderId   String
+  order     InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  scopeId   String
+  scope     InstallationScope @relation(fields: [scopeId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+
+  @@unique([visitId, scopeId])
+  @@index([orderId, scopeId])
+}
+
+model InstallationScopeAssignment {
+  id          String   @id @default(cuid())
+  orderId     String
+  order       InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  scopeId     String
+  scope       InstallationScope @relation(fields: [scopeId], references: [id], onDelete: Restrict)
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  createdById String
+  createdAt   DateTime @default(now())
+
+  @@unique([scopeId, employeeId])
+  @@index([orderId, employeeId])
+}
+
+model IntegrationSyncState {
+  id               String   @id @default(cuid())
+  visitId          String
+  visit            InstallationVisit @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  kind             String   @default("GOOGLE_CALENDAR")
+  status           String   @default("NOT_REQUESTED")
+  externalId       String?
+  externalUrl      String?
+  externalEtag     String?
+  lastErrorCode    String?
+  lastErrorMessage String?
+  lastAttemptAt    DateTime?
+  lastSyncedAt     DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([visitId, kind])
+  @@unique([kind, externalId])
+  @@index([status, updatedAt])
+}
+
+model IntegrationOutbox {
+  id               String   @id @default(cuid())
+  visitId          String
+  visit            InstallationVisit @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  operation        String
+  revision         Int
+  idempotencyKey   String   @unique
+  status           String   @default("PENDING")
+  forceOverwrite   Boolean  @default(false)
+  attemptCount     Int      @default(0)
+  availableAt      DateTime @default(now())
+  lockedUntil      DateTime?
+  completedAt      DateTime?
+  lastErrorCode    String?
+  lastErrorMessage String?
+  attempts         IntegrationAttempt[]
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([status, availableAt, lockedUntil])
+  @@index([visitId, revision])
+}
+
+model IntegrationAttempt {
+  id         String   @id @default(cuid())
+  outboxId   String
+  outbox     IntegrationOutbox @relation(fields: [outboxId], references: [id], onDelete: Restrict)
+  number     Int
+  outcome    String
+  errorCode  String?
+  durationMs Int
+  createdAt  DateTime @default(now())
+
+  @@unique([outboxId, number])
+  @@index([outboxId, createdAt])
 }
 
 model InstallationDelegation {
@@ -1050,6 +1164,8 @@ model InstallationScope {
   scopeProducts InstallationScopeProduct[]
   measurements InstallationMeasurement[]
   files        InstallationFile[]          @relation("InstallationFileScope")
+  visitScopes  InstallationVisitScope[]
+  assignments  InstallationScopeAssignment[]
   createdAt    DateTime                   @default(now())
   updatedAt    DateTime                   @updatedAt
 
