@@ -76,7 +76,14 @@ describe('installation visit routes', () => {
     mocks.createVisit.mockReset().mockResolvedValue({ id: 'visit-1' })
     mocks.changeVisit.mockReset().mockResolvedValue({ id: 'visit-1', revision: 2 })
     mocks.requeueCalendar.mockReset().mockResolvedValue({ id: 'visit-1' })
-    mocks.setAssignments.mockReset().mockResolvedValue({ scopeId: 'scope-1', employeeIds: ['installer-1'] })
+    mocks.setAssignments.mockReset().mockResolvedValue({
+      scopeId: 'scope-1',
+      employeeIds: ['installer-1'],
+      visitRevisions: [{ id: 'visit-1', revision: 5 }],
+      clientEmail: 'sekret-klienta@example.test',
+      visitNote: 'sekretna notatka',
+      participantEmail: 'sekret-instalatora@example.test',
+    })
   })
 
   it('returns 401 before loading visits when no server session exists', async () => {
@@ -284,6 +291,11 @@ describe('installation visit routes', () => {
   it('updates scope installers, maps domain validation, and preserves archive conflicts', async () => {
     const success = await putScopeAssignments(request('http://test/api/installations/order-1/scope-assignments/scope-1', 'PUT', { employeeIds: ['installer-1'] }), scopeParams)
     expect(success.status).toBe(200)
+    await expect(success.json()).resolves.toEqual({
+      scopeId: 'scope-1',
+      employeeIds: ['installer-1'],
+      visitRevisions: [{ id: 'visit-1', revision: 5 }],
+    })
     expect(mocks.setAssignments).toHaveBeenCalledWith({}, 'order-1', 'scope-1', ['installer-1'], 'user-1')
 
     mocks.setAssignments.mockRejectedValueOnce(new mocks.ScopeValidation('Nieaktywny pracownik.'))

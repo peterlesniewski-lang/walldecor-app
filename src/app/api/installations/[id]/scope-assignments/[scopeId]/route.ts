@@ -53,7 +53,11 @@ export async function PUT(req: NextRequest, { params }: Params) {
   try {
     const { employeeIds } = scopeAssignmentSchema.parse(await req.json())
     const assignments = await setScopeInstallerAssignments(prisma, id, scopeId, employeeIds, session.user.id)
-    return NextResponse.json(assignments)
+    return NextResponse.json({
+      scopeId: assignments.scopeId,
+      employeeIds: assignments.employeeIds,
+      visitRevisions: assignments.visitRevisions.map(({ id: visitId, revision }) => ({ id: visitId, revision })),
+    })
   } catch (error) {
     return assignmentErrorResponse(error)
   }

@@ -105,7 +105,7 @@ describe('InstallationVisitsPanel', () => {
     expect(screen.getByRole('button', { name: 'Wymuś nadpisanie w Google Calendar' })).toBeTruthy()
   })
 
-  it('blocks stale visit actions after saving a crew until fresh props provide the bumped revision', async () => {
+  it('rebases a changed crew revision without rerendering or losing a dirty visit form', async () => {
     const user = userEvent.setup()
     const confirmed = {
       ...draftVisit,
@@ -116,18 +116,33 @@ describe('InstallationVisitsPanel', () => {
       endsAt: '2026-09-14T14:00:00.000Z',
       scopeIds: ['scope-salon-tapety'],
     }
-    const refreshedVisit = { ...confirmed, revision: 5 }
-    const refreshedScopes = scopes.map((scope) => scope.id === 'scope-salon-tapety' ? { ...scope, installerIds: ['installer-anna'] } : scope)
     const fetchMock = vi.fn()
-      .mockResolvedValueOnce(jsonResponse({ employeeIds: ['installer-anna'] }))
-      .mockResolvedValueOnce(jsonResponse({ ...refreshedVisit, revision: 6 }))
+      .mockResolvedValueOnce(jsonResponse({
+        scopeId: 'scope-salon-tapety',
+        employeeIds: ['installer-anna'],
+        visitRevisions: [{ id: confirmed.id, revision: 5 }],
+      }))
+      .mockResolvedValueOnce(jsonResponse({
+        ...confirmed,
+        revision: 6,
+        startsAt: '2026-09-15T07:30:00.000Z',
+        endsAt: '2026-09-15T13:00:00.000Z',
+        scopeIds: ['scope-salon-tapety', 'scope-sypialnia-sztukateria'],
+      }))
     vi.stubGlobal('fetch', fetchMock)
-    const view = render(createElement(InstallationVisitsPanel, {
+    render(createElement(InstallationVisitsPanel, {
       orderId: 'order-1', scopes, employees, canEdit: true, canForceOverwrite: false,
       visits: [confirmed],
     }))
 
     await user.click(screen.getByRole('button', { name: /Potwierdzona/ }))
+    const startsAt = screen.getByLabelText('Początek wizyty')
+    const endsAt = screen.getByLabelText('Koniec wizyty')
+    await user.clear(startsAt)
+    await user.type(startsAt, '2026-09-15T09:30')
+    await user.clear(endsAt)
+    await user.type(endsAt, '2026-09-15T15:00')
+    await user.click(screen.getByRole('checkbox', { name: 'Sypialnia — Sztukateria' }))
     await user.click(screen.getByRole('checkbox', { name: 'Marek Montaż dla Salon — Tapety' }))
     await user.click(screen.getByRole('button', { name: 'Zapisz ekipę' }))
 
@@ -136,22 +151,24 @@ describe('InstallationVisitsPanel', () => {
       expect.objectContaining({ method: 'PUT' }),
     ))
     const scheduleButton = screen.getByRole('button', { name: 'Zapisz zmianę terminu i wyślij aktualizacje' })
-    expect(scheduleButton).toHaveProperty('disabled', true)
-    expect(screen.getByRole('checkbox', { name: 'Anna Montaż dla Salon — Tapety' })).toHaveProperty('disabled', true)
-    await user.click(scheduleButton)
+    await waitFor(() => expect(scheduleButton).toHaveProperty('disabled', false))
+    expect(startsAt).toHaveProperty('value', '2026-09-15T09:30')
+    expect(endsAt).toHaveProperty('value', '2026-09-15T15:00')
+    expect(screen.getByRole('checkbox', { name: 'Sypialnia — Sztukateria' })).toHaveProperty('checked', true)
+    expect(screen.getByRole('checkbox', { name: 'Anna Montaż dla Salon — Tapety' })).toHaveProperty('disabled', false)
     expect(fetchMock).toHaveBeenCalledTimes(1)
+    expect(mocks.refresh).not.toHaveBeenCalled()
 
-    view.rerender(createElement(InstallationVisitsPanel, {
-      orderId: 'order-1', scopes: refreshedScopes, employees, canEdit: true, canForceOverwrite: false,
-      visits: [refreshedVisit],
-    }))
-    await waitFor(() => expect(screen.getByRole('button', { name: 'Zapisz zmianę terminu i wyślij aktualizacje' })).toHaveProperty('disabled', false))
-    await user.click(screen.getByRole('button', { name: 'Zapisz zmianę terminu i wyślij aktualizacje' }))
+    await user.click(scheduleButton)
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
-    expect(JSON.parse((fetchMock.mock.calls[1]?.[1] as RequestInit).body as string)).toMatchObject({
+    expect(JSON.parse((fetchMock.mock.calls[1]?.[1] as RequestInit).body as string)).toEqual({
       action: 'CHANGE_SCHEDULE',
       expectedRevision: 5,
+      startsAt: '2026-09-15T07:30:00.000Z',
+      endsAt: '2026-09-15T13:00:00.000Z',
+      note: null,
+      scopeIds: ['scope-salon-tapety', 'scope-sypialnia-sztukateria'],
     })
   })
 

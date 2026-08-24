@@ -331,7 +331,7 @@ export async function refreshConfirmedInstallationVisitsAfterScopeAssignment(
   orderId: string,
   scopeId: string,
   actorId: string,
-) {
+): Promise<Array<{ id: string; revision: number }>> {
   const visits = await db.installationVisit.findMany({
     where: {
       orderId,
@@ -343,7 +343,9 @@ export async function refreshConfirmedInstallationVisitsAfterScopeAssignment(
       revision: true,
       scopes: { select: { scopeId: true } },
     },
+    orderBy: { id: 'asc' },
   })
+  const revisions: Array<{ id: string; revision: number }> = []
 
   for (const visit of visits) {
     const scopeIds = visit.scopes.map((scope) => scope.scopeId)
@@ -381,7 +383,10 @@ export async function refreshConfirmedInstallationVisitsAfterScopeAssignment(
         }),
       },
     })
+    revisions.push({ id: visit.id, revision })
   }
+
+  return revisions
 }
 
 function actionAuditName(action: UpdateInstallationVisitActionInput['action']): string {

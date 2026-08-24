@@ -11,6 +11,10 @@ export type ScopeAssignmentView = {
   employeeIds: string[]
 }
 
+export type ScopeAssignmentUpdateView = ScopeAssignmentView & {
+  visitRevisions: Array<{ id: string; revision: number }>
+}
+
 export class InstallationScopeAssignmentValidationError extends Error {
   constructor(message: string) {
     super(message)
@@ -57,13 +61,29 @@ async function assertActiveEmployees(db: InstallationDb, employeeIds: string[]) 
   }
 }
 
+async function currentConfirmedVisitRevisions(
+  db: InstallationDb,
+  orderId: string,
+  scopeId: string,
+): Promise<Array<{ id: string; revision: number }>> {
+  return db.installationVisit.findMany({
+    where: {
+      orderId,
+      status: 'CONFIRMED',
+      scopes: { some: { scopeId } },
+    },
+    select: { id: true, revision: true },
+    orderBy: { id: 'asc' },
+  })
+}
+
 export async function setScopeInstallerAssignments(
   db: PrismaClient,
   orderId: string,
   scopeId: string,
   employeeIds: string[],
   actorId: string,
-): Promise<ScopeAssignmentView> {
+): Promise<ScopeAssignmentUpdateView> {
   const normalizedEmployeeIds = normalizeEmployeeIds(employeeIds)
 
   return db.$transaction(async (tx) => {
@@ -76,7 +96,11 @@ export async function setScopeInstallerAssignments(
     const beforeEmployeeIds = before.map((assignment) => assignment.employeeId)
     if (beforeEmployeeIds.length === normalizedEmployeeIds.length
       && beforeEmployeeIds.every((employeeId, index) => employeeId === normalizedEmployeeIds[index])) {
-      return { scopeId, employeeIds: normalizedEmployeeIds }
+      return {
+        scopeId,
+        employeeIds: normalizedEmployeeIds,
+        visitRevisions: await currentConfirmedVisitRevisions(tx, orderId, scopeId),
+      }
     }
 
     await assertActiveEmployees(tx, normalizedEmployeeIds)
@@ -87,8 +111,9 @@ export async function setScopeInstallerAssignments(
         data: normalizedEmployeeIds.map((employeeId) => ({ orderId, scopeId, employeeId, createdById: actorId })),
       })
     }
+    let visitRevisions: Array<{ id: string; revision: number }>
     try {
-      await refreshConfirmedInstallationVisitsAfterScopeAssignment(tx, orderId, scopeId, actorId)
+      visitRevisions = await refreshConfirmedInstallationVisitsAfterScopeAssignment(tx, orderId, scopeId, actorId)
     } catch (error) {
       if (error instanceof InstallationVisitParticipantsUnavailableError) {
         throw new InstallationScopeAssignmentValidationError(
@@ -107,7 +132,7 @@ export async function setScopeInstallerAssignments(
       },
     })
 
-    return { scopeId, employeeIds: normalizedEmployeeIds }
+    return { scopeId, employeeIds: normalizedEmployeeIds, visitRevisions }
   })
 }
 

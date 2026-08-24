@@ -151,8 +151,8 @@ describe('scope installer assignments', () => {
     const wallpaperAssignment = await setScopeInstallerAssignments(db, orderId, wallpaperScopeId, [installerAId, ` ${installerAId} `, installerAId], 'actor-1')
     const plasterAssignment = await setScopeInstallerAssignments(db, orderId, plasterScopeId, [installerCId, installerBId, installerBId], 'actor-1')
 
-    expect(wallpaperAssignment).toEqual({ scopeId: wallpaperScopeId, employeeIds: [installerAId] })
-    expect(plasterAssignment).toEqual({ scopeId: plasterScopeId, employeeIds: [installerBId, installerCId] })
+    expect(wallpaperAssignment).toEqual({ scopeId: wallpaperScopeId, employeeIds: [installerAId], visitRevisions: [] })
+    expect(plasterAssignment).toEqual({ scopeId: plasterScopeId, employeeIds: [installerBId, installerCId], visitRevisions: [] })
 
     expect(await listScopeInstallerAssignments(db, orderId)).toEqual([
       { scopeId: wallpaperScopeId, employeeIds: [installerAId] },
@@ -202,7 +202,7 @@ describe('scope installer assignments', () => {
     const auditCount = await db.installationAuditEvent.count({ where: { orderId: order.id } })
 
     await expect(setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [` ${inactiveInstallerId} `], 'actor-1'))
-      .resolves.toEqual({ scopeId: wallpaperScope.id, employeeIds: [inactiveInstallerId] })
+      .resolves.toEqual({ scopeId: wallpaperScope.id, employeeIds: [inactiveInstallerId], visitRevisions: [] })
     expect(await listScopeInstallerAssignments(db, order.id))
       .toEqual([{ scopeId: wallpaperScope.id, employeeIds: [inactiveInstallerId] }])
     expect(await db.installationAuditEvent.count({ where: { orderId: order.id } })).toBe(auditCount)
@@ -250,7 +250,12 @@ describe('scope installer assignments', () => {
       data: { status: 'SYNCED', lastSyncedAt: new Date() },
     })
 
-    await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerBId], 'actor-2')
+    const replacement = await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerBId], 'actor-2')
+    expect(replacement).toEqual({
+      scopeId: wallpaperScope.id,
+      employeeIds: [installerBId],
+      visitRevisions: [{ id: confirmed.id, revision: 3 }],
+    })
 
     expect(await db.installationVisit.findUniqueOrThrow({ where: { id: confirmed.id } }))
       .toMatchObject({ status: 'CONFIRMED', revision: 3 })
@@ -269,7 +274,12 @@ describe('scope installer assignments', () => {
     const revisionBeforeNoOp = (await db.installationVisit.findUniqueOrThrow({ where: { id: confirmed.id } })).revision
     const outboxCountBeforeNoOp = await db.integrationOutbox.count({ where: { visitId: confirmed.id } })
     const auditCountBeforeNoOp = await db.installationAuditEvent.count({ where: { orderId: order.id } })
-    await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [` ${installerBId} `, installerBId], 'actor-3')
+    const noOp = await setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [` ${installerBId} `, installerBId], 'actor-3')
+    expect(noOp).toEqual({
+      scopeId: wallpaperScope.id,
+      employeeIds: [installerBId],
+      visitRevisions: [{ id: confirmed.id, revision: 3 }],
+    })
     expect((await db.installationVisit.findUniqueOrThrow({ where: { id: confirmed.id } })).revision).toBe(revisionBeforeNoOp)
     expect(await db.integrationOutbox.count({ where: { visitId: confirmed.id } })).toBe(outboxCountBeforeNoOp)
     expect(await db.installationAuditEvent.count({ where: { orderId: order.id } })).toBe(auditCountBeforeNoOp)
@@ -308,7 +318,11 @@ describe('scope installer assignments', () => {
       data: { status: 'COMPLETED', lockedUntil: null },
     })
     await expect(setScopeInstallerAssignments(db, order.id, wallpaperScope.id, [installerBId], 'actor-3'))
-      .resolves.toEqual({ scopeId: wallpaperScope.id, employeeIds: [installerBId] })
+      .resolves.toEqual({
+        scopeId: wallpaperScope.id,
+        employeeIds: [installerBId],
+        visitRevisions: [{ id: confirmed.id, revision: confirmed.revision + 1 }],
+      })
     expect(await db.installationVisit.findUniqueOrThrow({ where: { id: confirmed.id } }))
       .toMatchObject({ revision: confirmed.revision + 1, status: 'CONFIRMED' })
   })

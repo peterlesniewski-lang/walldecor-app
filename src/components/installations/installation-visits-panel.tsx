@@ -82,13 +82,6 @@ function sameIds(left: string[], right: string[]) {
   return left.length === right.length && [...left].sort().every((id, index) => id === [...right].sort()[index])
 }
 
-function visitCrewSnapshot(visits: InstallationVisitValue[], scopes: InstallationScopeOption[]) {
-  return JSON.stringify({
-    visits: visits.map((visit) => ({ id: visit.id, revision: visit.revision })).sort((left, right) => left.id.localeCompare(right.id)),
-    scopes: scopes.map((scope) => ({ id: scope.id, installerIds: [...scope.installerIds].sort() })).sort((left, right) => left.id.localeCompare(right.id)),
-  })
-}
-
 async function responsePayload(response: Response) {
   try { return await response.json() as { error?: string; fieldErrors?: Record<string, string> } }
   catch { return {} }
@@ -107,10 +100,8 @@ export function InstallationVisitsPanel({ orderId, visits, scopes, employees, ca
   const [persistedScopeTeams, setPersistedScopeTeams] = useState<Record<string, string[]>>(() => Object.fromEntries(scopes.map((scope) => [scope.id, scope.installerIds])))
   const [expandedVisitId, setExpandedVisitId] = useState<string | null>(visits.find((visit) => visit.status === 'DRAFT')?.id ?? null)
   const [pendingAction, setPendingAction] = useState<string | null>(null)
-  const [crewRefreshSnapshot, setCrewRefreshSnapshot] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
-  const propsSnapshot = useMemo(() => visitCrewSnapshot(visits, scopes), [visits, scopes])
 
   useEffect(() => {
     setLocalVisits(visits)
@@ -123,13 +114,9 @@ export function InstallationVisitsPanel({ orderId, visits, scopes, employees, ca
     setPersistedScopeTeams(teams)
   }, [scopes])
 
-  useEffect(() => {
-    if (crewRefreshSnapshot !== null && crewRefreshSnapshot !== propsSnapshot) setCrewRefreshSnapshot(null)
-  }, [crewRefreshSnapshot, propsSnapshot])
-
   const scopesById = useMemo(() => new Map(scopes.map((scope) => [scope.id, scope])), [scopes])
   const employeesById = useMemo(() => new Map(employees.map((employee) => [employee.id, employee])), [employees])
-  const controlsLocked = pendingAction !== null || isRefreshing || crewRefreshSnapshot !== null
+  const controlsLocked = pendingAction !== null || isRefreshing
 
   function refreshCard() {
     startRefresh(() => router.refresh())
@@ -144,7 +131,13 @@ export function InstallationVisitsPanel({ orderId, visits, scopes, employees, ca
     setForms((current) => ({ ...current, [updated.id]: formForVisit(updated) }))
   }
 
-  async function request<T>(action: string, url: string, init: RequestInit, successMessage: string): Promise<T | null> {
+  async function request<T>(
+    action: string,
+    url: string,
+    init: RequestInit,
+    successMessage: string,
+    { refreshOnSuccess = true }: { refreshOnSuccess?: boolean } = {},
+  ): Promise<T | null> {
     setPendingAction(action)
     setError('')
     setMessage(`Trwa: ${successMessage.toLocaleLowerCase('pl-PL')}`)
@@ -162,7 +155,7 @@ export function InstallationVisitsPanel({ orderId, visits, scopes, employees, ca
         return null
       }
       setMessage(successMessage)
-      refreshCard()
+      if (refreshOnSuccess) refreshCard()
       return payload as T
     } catch {
       setError('Nie udało się połączyć z serwerem. Spróbuj ponownie.')
@@ -188,21 +181,25 @@ export function InstallationVisitsPanel({ orderId, visits, scopes, employees, ca
 
   async function saveScopeTeam(scope: InstallationScopeOption) {
     const employeeIds = scopeTeams[scope.id] ?? []
-    const previousEmployeeIds = persistedScopeTeams[scope.id] ?? []
-    const changed = !sameIds(employeeIds, previousEmployeeIds)
-    if (changed) setCrewRefreshSnapshot(propsSnapshot)
-    const saved = await request<{ employeeIds: string[] }>(
+    const saved = await request<{
+      scopeId: string
+      employeeIds: string[]
+      visitRevisions: Array<{ id: string; revision: number }>
+    }>(
       `scope:${scope.id}`,
       `/api/installations/${orderId}/scope-assignments/${scope.id}`,
       { method: 'PUT', body: JSON.stringify({ employeeIds }) },
       `Zapisano ekipę dla ${scopeLabel(scope)}.`,
+      { refreshOnSuccess: false },
     )
     if (saved) {
       setScopeTeams((current) => ({ ...current, [scope.id]: saved.employeeIds }))
       setPersistedScopeTeams((current) => ({ ...current, [scope.id]: saved.employeeIds }))
-      if (sameIds(saved.employeeIds, previousEmployeeIds)) setCrewRefreshSnapshot(null)
-    } else {
-      setCrewRefreshSnapshot(null)
+      const revisions = new Map(saved.visitRevisions.map(({ id, revision }) => [id, revision]))
+      setLocalVisits((current) => current.map((visit) => {
+        const revision = revisions.get(visit.id)
+        return revision === undefined ? visit : { ...visit, revision }
+      }))
     }
   }
 
@@ -310,7 +307,6 @@ export function InstallationVisitsPanel({ orderId, visits, scopes, employees, ca
 
     {message && <p className="mt-4 text-sm font-medium" role="status" aria-live="polite" style={{ color: '#356B43' }}>{message}</p>}
     {error && <p className="mt-4 text-sm font-medium text-red-700" role="alert">{error}</p>}
-    {crewRefreshSnapshot && <p className="mt-4 text-sm" role="status" style={{ color: 'var(--wd-text-muted)' }}>Odświeżamy rewizje wizyt po zmianie ekipy…</p>}
 
     {localVisits.length === 0 ? <div className="mt-5 rounded-xl border border-dashed p-4 text-sm" style={{ borderColor: 'rgba(30, 30, 30, 0.18)', color: 'var(--wd-text-muted)' }}><CalendarDays className="mb-2 h-5 w-5" aria-hidden="true" />Termin nieustalony</div> : <div className="mt-5 space-y-3">
       {localVisits.map((visit) => {
