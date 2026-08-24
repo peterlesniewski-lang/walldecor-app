@@ -26,6 +26,7 @@ RUN npx prisma generate
 # Build Next.js (dummy env values for build time)
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
+ENV NODE_OPTIONS="--max-old-space-size=3072"
 ENV DATABASE_URL="file:/tmp/build.db"
 ENV NEXTAUTH_URL="http://localhost:3000"
 ENV NEXTAUTH_SECRET="build-secret-placeholder-32-chars-xx"
