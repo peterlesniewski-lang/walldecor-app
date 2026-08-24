@@ -69,19 +69,31 @@ niż lease outboxa (5 minut); nie zwiększaj go powyżej lease.
 
 ## Coolify: zadanie cykliczne
 
-1. Użyj tego samego obrazu aplikacji. Nie zmieniaj entrypointu web i nie
-   uruchamiaj workera jako drugiego procesu przy starcie kontenera.
-2. Dodaj osobne **Scheduled Task** uruchamiane **co minutę** z komendą:
+Scheduled Task w Coolify działa **w wybranym działającym kontenerze aplikacji**,
+a nie w osobnym kontenerze. Nie zmieniaj entrypointu web i nie uruchamiaj
+workera jako drugiego procesu przy starcie kontenera.
 
-   ```bash
-   npm run worker:installation-calendar
-   ```
+1. Wybierz zasób aplikacji **WallDecor-App**. Zanim dodasz zadanie, potwierdź,
+   że jej aktualny kontener jest zdrowy, ma podłączony trwały wolumen `/data`
+   oraz że istniejący `DATABASE_URL` wskazuje bazę SQLite właśnie na tym
+   wolumenie.
+2. W sekcji Scheduled Tasks tej aplikacji dodaj zadanie z dokładnymi wartościami:
 
-3. Do zadania zamontuj ten sam trwały wolumen SQLite co do web-app (dla
-   przykładu `/data`) i przekaż identyczne `DATABASE_URL` oraz zmienne Google.
-   Nie używaj efemerycznej bazy z obrazu kontenera. Lease w outboxie chroni
-   przed równoległym wykonaniem, ale nie zastępuje wspólnego wolumenu.
-4. Sprawdź dostępność konfiguracji jako administrator w aplikacji w sekcji
+   - Cron: `* * * * *` (co minutę)
+   - Command: `npm run worker:installation-calendar`
+   - Timeout: 1200 s
+
+3. Nie dodawaj drugiego wolumenu ani osobnych zmiennych dla Scheduled Task.
+   Zadanie korzysta z działającego kontenera WallDecor-App, a więc z jego
+   istniejącego `/data`, `DATABASE_URL` i zmiennych Google. Jeżeli te elementy
+   nie są poprawne w aplikacji, najpierw napraw konfigurację aplikacji i nie
+   uruchamiaj zadania.
+4. Timeout musi obejmować najgorszy czas batcha: `batchSize × 45 s + margines`.
+   Dla domyślnego batcha 20 ustawione 1200 sekund daje 900 sekund na żądania i
+   300 sekund marginesu. Cron może uruchomić kolejny batch, gdy poprzedni jeszcze
+   trwa; lease outboxa zabezpiecza zadania przed podwójnym przejęciem, lecz po
+   obserwacji czasu wykonania trzeba wspólnie dostroić batch i timeout.
+5. Sprawdź dostępność konfiguracji jako administrator w aplikacji w sekcji
    ustawień kalendarza: muszą być zielone wyłącznie flagi enabled, google,
    credentials, calendar i impersonation. Nie oczekuj tam sekretów.
 
