@@ -190,3 +190,61 @@ FOR EACH ROW WHEN NOT EXISTS (
 BEGIN
   SELECT RAISE(ABORT, 'InstallationScopeAssignment must belong to the scope order');
 END;
+
+-- A room or scope can still be reorganized within one order. Crossing an
+-- order boundary is rejected only when it would leave calendar ownership rows
+-- pointing to the old order. This closes the parent-reparenting path that
+-- child INSERT/UPDATE guards cannot observe.
+CREATE TRIGGER "InstallationRoom_calendar_ownership_update_guard"
+BEFORE UPDATE OF "orderId" ON "InstallationRoom"
+FOR EACH ROW WHEN NEW."orderId" IS NOT OLD."orderId"
+  AND (
+    EXISTS (
+      SELECT 1
+      FROM "InstallationScopeAssignment" assignment
+      JOIN "InstallationScope" scope ON scope."id" = assignment."scopeId"
+      WHERE scope."roomId" = OLD."id" AND assignment."orderId" IS NOT NEW."orderId"
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM "InstallationVisitScope" visit_scope
+      JOIN "InstallationScope" scope ON scope."id" = visit_scope."scopeId"
+      WHERE scope."roomId" = OLD."id" AND visit_scope."orderId" IS NOT NEW."orderId"
+    )
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'InstallationRoom cannot change order while calendar ownership rows exist');
+END;
+
+CREATE TRIGGER "InstallationScope_calendar_ownership_update_guard"
+BEFORE UPDATE OF "roomId" ON "InstallationScope"
+FOR EACH ROW WHEN NEW."roomId" IS NOT OLD."roomId"
+  AND (
+    EXISTS (
+      SELECT 1
+      FROM "InstallationScopeAssignment" assignment
+      JOIN "InstallationRoom" destination_room ON destination_room."id" = NEW."roomId"
+      WHERE assignment."scopeId" = OLD."id" AND assignment."orderId" IS NOT destination_room."orderId"
+    )
+    OR EXISTS (
+      SELECT 1
+      FROM "InstallationVisitScope" visit_scope
+      JOIN "InstallationRoom" destination_room ON destination_room."id" = NEW."roomId"
+      WHERE visit_scope."scopeId" = OLD."id" AND visit_scope."orderId" IS NOT destination_room."orderId"
+    )
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'InstallationScope cannot change room while calendar ownership rows exist');
+END;
+
+CREATE TRIGGER "InstallationVisit_calendar_ownership_update_guard"
+BEFORE UPDATE OF "orderId" ON "InstallationVisit"
+FOR EACH ROW WHEN NEW."orderId" IS NOT OLD."orderId"
+  AND EXISTS (
+    SELECT 1
+    FROM "InstallationVisitScope" visit_scope
+    WHERE visit_scope."visitId" = OLD."id" AND visit_scope."orderId" IS NOT NEW."orderId"
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'InstallationVisit cannot change order while visit scopes exist');
+END;
