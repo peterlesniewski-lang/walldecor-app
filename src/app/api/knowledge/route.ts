@@ -9,6 +9,9 @@ import slugify from 'slugify'
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  // Defense in depth: installers use the isolated installation guides, never
+  // the general Business Wiki, even if a future proxy rule changes.
+  if (session.user.role === 'INSTALLER') return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
   const { searchParams } = req.nextUrl
   const q = searchParams.get('q') ?? ''

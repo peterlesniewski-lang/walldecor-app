@@ -658,7 +658,7 @@ describe('installation order controls', () => {
     expect(screen.getByRole('link', { name: 'Otwórz kartę Anna Kowalska' }).getAttribute('href')).toBe('/installations/order-1')
   })
 
-  it('renders the derived client-form and clarification badges alongside the two card links', () => {
+  it('renders the derived client-form and clarification badges alongside the card and guide links', () => {
     render(createElement(InstallationOrderList, { orders: [{
       ...apiOrder,
       clientFormStatus: { code: 'IN_PROGRESS' as const, label: 'Rozpoczęty', requiresClarification: true },
@@ -666,7 +666,8 @@ describe('installation order controls', () => {
 
     expect(screen.getByText('Rozpoczęty')).not.toBeNull()
     expect(screen.getByText('Wymaga ustalenia')).not.toBeNull()
-    expect(screen.getAllByRole('link')).toHaveLength(2)
+    expect(screen.getByRole('link', { name: 'Instrukcje montaży' }).getAttribute('href')).toBe('/installations/instrukcje')
+    expect(screen.getAllByRole('link')).toHaveLength(3)
     expect(screen.queryByRole('button')).toBeNull()
   })
 

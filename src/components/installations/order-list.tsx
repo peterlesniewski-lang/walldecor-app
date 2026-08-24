@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { ArrowRight, CalendarDays, CircleCheck, ClipboardList, Clock3, FileQuestion, PencilLine, Plus, Send, TriangleAlert } from 'lucide-react'
+import { ArrowRight, BookOpen, CalendarDays, CircleCheck, ClipboardList, Clock3, FileQuestion, PencilLine, Plus, Send, TriangleAlert } from 'lucide-react'
 import type { InstallationFormStatus, InstallationFormStatusCode } from '@/lib/installations/form-status'
 import { formatWarsawDateTime } from '@/lib/installations/visit-time'
 
@@ -66,14 +66,24 @@ export function InstallationOrderList({ orders, canCreate = false }: { orders: O
             Klient, adres i odpowiedzialność w jednym miejscu — bez skrótów i bez zgadywania.
           </p>
         </div>
-        {canCreate && <Link
-          href="/installations/new"
-          className="inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-bold transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
-          style={{ background: '#A96A20', color: '#fff', boxShadow: '0 4px 10px rgba(90, 59, 22, 0.16)' }}
-        >
-          <Plus className="h-4 w-4" />
-          Nowa karta
-        </Link>}
+        <div className="flex flex-wrap items-center gap-3">
+          <Link
+            href="/installations/instrukcje"
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg border px-4 text-sm font-bold transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+            style={{ background: 'var(--wd-white)', color: '#7B4D13', borderColor: '#D9C1A0' }}
+          >
+            <BookOpen className="h-4 w-4" aria-hidden="true" />
+            Instrukcje montaży
+          </Link>
+          {canCreate && <Link
+            href="/installations/new"
+            className="inline-flex min-h-11 items-center gap-2 rounded-lg px-4 text-sm font-bold transition hover:-translate-y-0.5 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-2"
+            style={{ background: '#A96A20', color: '#fff', boxShadow: '0 4px 10px rgba(90, 59, 22, 0.16)' }}
+          >
+            <Plus className="h-4 w-4" />
+            Nowa karta
+          </Link>}
+        </div>
       </div>
 
       {orders.length === 0 ? (

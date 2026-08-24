@@ -3,7 +3,7 @@
 import Link from 'next/link'
 import { useState } from 'react'
 import { useRouter } from 'next/navigation'
-import { Archive, ArrowLeft, MapPin, UsersRound } from 'lucide-react'
+import { Archive, ArrowLeft, BookOpen, MapPin, UsersRound } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { InstallationOrderForm, type InstallationEmployeeOption, type InstallationOrderFormValue } from './order-form'
 import { RoomScopeEditor } from './room-scope-editor'
@@ -109,9 +109,14 @@ export function InstallationOrderDetail({
     <div className="mx-auto max-w-4xl">
       <div className="mb-7 flex flex-wrap items-start justify-between gap-4">
         <div>
-          <Link href="/installations" className="inline-flex items-center gap-2 text-sm font-bold underline underline-offset-4" style={{ color: '#8C5718' }}>
-            <ArrowLeft className="h-4 w-4" /> Wróć do kart
-          </Link>
+          <div className="flex flex-wrap items-center gap-x-5 gap-y-2">
+            <Link href="/installations" className="inline-flex items-center gap-2 text-sm font-bold underline underline-offset-4" style={{ color: '#8C5718' }}>
+              <ArrowLeft className="h-4 w-4" /> Wróć do kart
+            </Link>
+            <Link href="/installations/instrukcje" className="inline-flex items-center gap-2 text-sm font-bold underline underline-offset-4" style={{ color: '#8C5718' }}>
+              <BookOpen className="h-4 w-4" aria-hidden="true" /> Instrukcje montaży
+            </Link>
+          </div>
           <p className="num mt-5 text-xs font-bold tracking-wide" style={{ color: '#8C5718' }}>{order.number}</p>
           <h1 className="mt-1 text-3xl font-extrabold tracking-tight" style={{ color: 'var(--wd-dark)' }}>{order.client.name}</h1>
         </div>
