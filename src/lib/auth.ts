@@ -50,6 +50,18 @@ export const authOptions: NextAuthOptions = {
 
         if (!passwordMatch) return null
 
+        if (user.role === 'INSTALLER') {
+          const installerEmployee = user.employeeId
+            ? await prisma.employee.findUnique({
+                where: { id: user.employeeId },
+                select: { id: true, active: true },
+              })
+            : null
+          if (!installerEmployee?.active) {
+            throw new Error('Konto instalatora nie jest poprawnie powiązane z aktywnym pracownikiem. Skontaktuj się z administratorem.')
+          }
+        }
+
         if (!user.username) {
           user = await prisma.user.update({
             where: { id: user.id },
@@ -62,7 +74,7 @@ export const authOptions: NextAuthOptions = {
           username: user.username,
           email: user.email,
           name: user.name,
-          role: user.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE',
+          role: user.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER',
           employeeId: user.employeeId,
           mustChangePassword: user.mustChangePassword,
         }
@@ -93,7 +105,7 @@ export const authOptions: NextAuthOptions = {
 
         if (currentUser) {
           token.username = currentUser.username
-          token.role = currentUser.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+          token.role = currentUser.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER'
           token.employeeId = currentUser.employeeId
           token.mustChangePassword = currentUser.mustChangePassword || !currentUser.isActive
         }

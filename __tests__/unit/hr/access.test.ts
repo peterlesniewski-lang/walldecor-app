@@ -6,7 +6,7 @@ import {
   HR_NO_EMPLOYEE_ACCESS_WHERE,
 } from '@/lib/hr/access'
 
-function session(role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE', employeeId: string | null = null) {
+function session(role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER', employeeId: string | null = null) {
   return {
     user: {
       id: `${role.toLowerCase()}-user`,
@@ -51,5 +51,13 @@ describe('HR access policy', () => {
     expect(canViewEmployeeRecord(session('MANAGER', 'manager-1'), { id: 'employee-1', divisionId: 'JAG' }, manager)).toBe(true)
     expect(canViewEmployeeRecord(session('MANAGER', 'manager-1'), { id: 'employee-2', divisionId: 'PUL' }, manager)).toBe(false)
     expect(canViewEmployeeRecord(session('MANAGER', 'manager-1'), { id: 'employee-3', divisionId: 'JAG', active: false }, manager)).toBe(false)
+  })
+
+  it('fails closed for installers even if a caller supplies a privileged employee record', () => {
+    const suppliedViewer = { id: 'installer-1', divisionId: 'JAG' }
+    const installer = session('INSTALLER', 'installer-1')
+
+    expect(getScopedEmployeeWhere(installer, suppliedViewer)).toEqual(HR_NO_EMPLOYEE_ACCESS_WHERE)
+    expect(canViewEmployeeRecord(installer, { id: 'employee-1', divisionId: 'JAG' }, suppliedViewer)).toBe(false)
   })
 })

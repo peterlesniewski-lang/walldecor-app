@@ -193,6 +193,7 @@ function runAuditCli(databasePath: string) {
     const child = spawn(
       process.execPath,
       [
+        '--no-warnings',
         '--preserve-symlinks',
         '--import',
         'tsx',

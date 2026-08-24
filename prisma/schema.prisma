@@ -529,7 +529,687 @@ model Employee {
   leaveEntitlementConfigs LeaveEntitlementConfig[]
   leaveBalanceCorrections LeaveBalanceCorrection[]
 
+  installationOrdersPrimary InstallationOrder[]      @relation("InstallationOrderPrimaryEmployee")
+  installationOrdersBackup  InstallationOrder[]      @relation("InstallationOrderBackupEmployee")
+  installationDelegations   InstallationDelegation[]
+  installationOrderAssignments InstallationOrderInstaller[]
+  installationScopeAssignments InstallationScopeAssignment[]
+
   createdAt DateTime @default(now())
+}
+
+// ─── Installation Operations ─────────────────────────────────────────────────
+
+model InstallationClient {
+  id        String   @id @default(cuid())
+  name      String
+  email     String
+  phone     String
+  order     InstallationOrder?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model InstallationOrder {
+  id                    String   @id @default(cuid())
+  number                String   @unique
+  status                String   @default("DRAFT")
+  clientId              String   @unique
+  client                InstallationClient @relation(fields: [clientId], references: [id], onDelete: Restrict)
+  addressStreet         String
+  addressBuildingNumber String?
+  addressApartmentNumber String?
+  addressPostalCode     String
+  addressCity           String
+  primaryEmployeeId     String
+  primaryEmployee       Employee @relation("InstallationOrderPrimaryEmployee", fields: [primaryEmployeeId], references: [id], onDelete: Restrict)
+  backupEmployeeId      String
+  backupEmployee        Employee @relation("InstallationOrderBackupEmployee", fields: [backupEmployeeId], references: [id], onDelete: Restrict)
+  scheduledAt           DateTime?
+  externalSystem        String?
+  externalId            String?
+  archivedAt            DateTime?
+  delegations           InstallationDelegation[]
+  installerAssignments  InstallationOrderInstaller[]
+  auditEvents           InstallationAuditEvent[]
+  formSnapshots         InstallationOrderFormSnapshot[]
+  clientLinks           InstallationClientLink[]
+  formSubmissions       InstallationFormSubmission[]
+  clarifications        InstallationClarification[]
+  rooms                 InstallationRoom[]
+  visits                InstallationVisit[]
+  visitScopes           InstallationVisitScope[]
+  scopeAssignments      InstallationScopeAssignment[]
+  visitFeePolicyId      String?
+  visitFeePolicy        InstallationVisitFeePolicy? @relation("InstallationOrderVisitFeePolicy", fields: [visitFeePolicyId], references: [id], onDelete: Restrict)
+  visitFeeStatus        String   @default("NONE")
+  visitFeeGrossAmount   Decimal?
+  visitFeeClauseText    String?
+  visitFeeClauseVersion Int?
+  visitFeeLegalApprovedAt DateTime?
+  visitFeeSelectedById  String?
+  visitFeeSelectedAt    DateTime?
+  visitFeeOverrideReason String?
+  visitFeeApprovedById  String?
+  visitFeeApprovedAt    DateTime?
+  visitFeeClientAcceptedAt DateTime?
+  visitFeeClientIpHash  String?
+  visitFeeClientUserAgent String?
+  mismatches            InstallationMismatch[]
+  billingTasks          InstallationBillingTask[]
+  files                 InstallationFile[]
+  mismatchEvidenceFiles InstallationMismatchEvidence[]
+  mobileUploadHandoffs  MobileUploadHandoff[]
+  fileAuditEvents       InstallationFileAuditEvent[]
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@index([status, archivedAt])
+  @@index([primaryEmployeeId])
+  @@index([backupEmployeeId])
+  @@index([visitFeeStatus])
+}
+
+/// Versioned company wording; rows are retained because every order stores a legal snapshot.
+model InstallationVisitFeePolicy {
+  id              String   @id @default(cuid())
+  version         Int      @unique
+  grossAmount     Decimal
+  clauseText      String
+  legalApprovedAt DateTime?
+  legalApprovedById String?
+  isDefault       Boolean  @default(false)
+  archivedAt      DateTime?
+  createdById     String?
+  orders          InstallationOrder[] @relation("InstallationOrderVisitFeePolicy")
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([isDefault, archivedAt])
+  @@index([legalApprovedAt])
+}
+
+/// A field report is intentionally separate from billing: finance is only enabled by an explicit approval.
+model InstallationMismatch {
+  id                      String   @id @default(cuid())
+  orderId                 String
+  order                   InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  description             String
+  reason                  String
+  evidenceReference       String
+  evidenceStatus          String   @default("PENDING_PRIVATE_FILE")
+  evidenceFileId          String?
+  evidenceVerifiedAt      DateTime?
+  reportedById            String
+  reportedAt              DateTime @default(now())
+  coordinatorApprovedById String?
+  coordinatorApprovedAt   DateTime?
+  approvalNote            String?
+  billingTask             InstallationBillingTask?
+  evidenceAttachment      InstallationMismatchEvidence?
+  createdAt               DateTime @default(now())
+  updatedAt               DateTime @updatedAt
+
+  @@index([orderId, reportedAt])
+  @@index([coordinatorApprovedAt])
+  @@index([evidenceStatus])
+}
+
+/// Foundation for Task 10; creation from a mismatch is DB-guarded and never automatic.
+model InstallationBillingTask {
+  id              String   @id @default(cuid())
+  orderId         String
+  order           InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  mismatchId      String?  @unique
+  mismatch        InstallationMismatch? @relation(fields: [mismatchId], references: [id], onDelete: Restrict)
+  kind            String
+  status          String   @default("PENDING")
+  grossAmount     Decimal
+  description     String
+  createdById     String
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([orderId, status])
+}
+
+model InstallationOrderInstaller {
+  id          String            @id @default(cuid())
+  orderId     String
+  order       InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  employeeId  String
+  employee    Employee          @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  createdById String?
+  createdAt   DateTime          @default(now())
+
+  @@unique([orderId, employeeId])
+  @@index([employeeId])
+}
+
+model InstallationVisit {
+  id          String   @id @default(cuid())
+  orderId     String
+  order       InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  status      String   @default("DRAFT")
+  startsAt    DateTime?
+  endsAt      DateTime?
+  timezone    String   @default("Europe/Warsaw")
+  note        String?
+  revision    Int      @default(1)
+  confirmedAt DateTime?
+  cancelledAt DateTime?
+  completedAt DateTime?
+  scopes      InstallationVisitScope[]
+  syncStates  IntegrationSyncState[]
+  outbox      IntegrationOutbox[]
+  createdById String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([orderId, status, startsAt])
+}
+
+model InstallationVisitScope {
+  id        String   @id @default(cuid())
+  visitId   String
+  visit     InstallationVisit @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  orderId   String
+  order     InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  scopeId   String
+  scope     InstallationScope @relation(fields: [scopeId], references: [id], onDelete: Restrict)
+  createdAt DateTime @default(now())
+
+  @@unique([visitId, scopeId])
+  @@index([orderId, scopeId])
+}
+
+model InstallationScopeAssignment {
+  id          String   @id @default(cuid())
+  orderId     String
+  order       InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  scopeId     String
+  scope       InstallationScope @relation(fields: [scopeId], references: [id], onDelete: Restrict)
+  employeeId  String
+  employee    Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  createdById String
+  createdAt   DateTime @default(now())
+
+  @@unique([scopeId, employeeId])
+  @@index([orderId, employeeId])
+}
+
+model IntegrationSyncState {
+  id               String   @id @default(cuid())
+  visitId          String
+  visit            InstallationVisit @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  kind             String   @default("GOOGLE_CALENDAR")
+  status           String   @default("NOT_REQUESTED")
+  externalId       String?
+  externalUrl      String?
+  externalEtag     String?
+  lastErrorCode    String?
+  lastErrorMessage String?
+  lastAttemptAt    DateTime?
+  lastSyncedAt     DateTime?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@unique([visitId, kind])
+  @@unique([kind, externalId])
+  @@index([status, updatedAt])
+}
+
+model IntegrationOutbox {
+  id               String   @id @default(cuid())
+  visitId          String
+  visit            InstallationVisit @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  operation        String
+  revision         Int
+  idempotencyKey   String   @unique
+  status           String   @default("PENDING")
+  forceOverwrite   Boolean  @default(false)
+  attemptCount     Int      @default(0)
+  availableAt      DateTime @default(now())
+  lockedUntil      DateTime?
+  completedAt      DateTime?
+  lastErrorCode    String?
+  lastErrorMessage String?
+  attempts         IntegrationAttempt[]
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([status, availableAt, lockedUntil])
+  @@index([visitId, revision])
+}
+
+model IntegrationAttempt {
+  id         String   @id @default(cuid())
+  outboxId   String
+  outbox     IntegrationOutbox @relation(fields: [outboxId], references: [id], onDelete: Restrict)
+  number     Int
+  outcome    String
+  errorCode  String?
+  durationMs Int
+  createdAt  DateTime @default(now())
+
+  @@unique([outboxId, number])
+  @@index([outboxId, createdAt])
+}
+
+model InstallationDelegation {
+  id                 String   @id @default(cuid())
+  orderId            String
+  order              InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  delegateEmployeeId String
+  delegateEmployee   Employee @relation(fields: [delegateEmployeeId], references: [id], onDelete: Restrict)
+  startsAt           DateTime
+  endsAt             DateTime?
+  endedAt            DateTime?
+  reason             String
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@index([orderId, startsAt])
+  @@index([delegateEmployeeId])
+}
+
+model InstallationAuditEvent {
+  id           String   @id @default(cuid())
+  orderId      String
+  order        InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actorId      String
+  action       String
+  beforeJson   String?
+  afterJson    String?
+  metadataJson String?
+  createdAt    DateTime @default(now())
+
+  @@index([orderId, createdAt])
+  @@index([actorId])
+}
+
+model InstallationCatalogCategory {
+  id         String                    @id @default(cuid())
+  name       String
+  nameKey    String                    @unique
+  sortOrder  Int                       @default(0)
+  isActive   Boolean                   @default(true)
+  archivedAt DateTime?
+  types      InstallationCatalogType[]
+  createdAt  DateTime                  @default(now())
+  updatedAt  DateTime                  @updatedAt
+
+  @@index([isActive, sortOrder])
+}
+
+model InstallationCatalogType {
+  id         String                       @id @default(cuid())
+  categoryId String
+  category   InstallationCatalogCategory  @relation(fields: [categoryId], references: [id], onDelete: Restrict)
+  name       String
+  nameKey    String
+  sortOrder  Int                          @default(0)
+  isActive   Boolean                      @default(true)
+  archivedAt DateTime?
+  products   InstallationCatalogProduct[]
+  createdAt  DateTime                     @default(now())
+  updatedAt  DateTime                     @updatedAt
+
+  @@unique([categoryId, nameKey])
+  @@index([categoryId, isActive, sortOrder])
+}
+
+model InstallationCatalogProduct {
+  id           String                    @id @default(cuid())
+  typeId       String
+  type         InstallationCatalogType   @relation(fields: [typeId], references: [id], onDelete: Restrict)
+  name         String
+  nameKey      String
+  manufacturer String?
+  collection   String?
+  code         String?
+  sortOrder    Int                       @default(0)
+  isActive     Boolean                   @default(true)
+  archivedAt   DateTime?
+  scopeProducts InstallationScopeProduct[]
+  createdAt    DateTime                  @default(now())
+  updatedAt    DateTime                  @updatedAt
+
+  @@unique([typeId, nameKey])
+  @@index([typeId, isActive, sortOrder])
+}
+
+model InstallationFormTemplate {
+  id                  String                           @id @default(cuid())
+  familyId            String
+  name                String
+  nameKey             String
+  version             Int
+  status              String                           @default("DRAFT")
+  publishedAt         DateTime?
+  createdById         String?
+  questionDefinitions InstallationQuestionDefinition[]
+  formSnapshots       InstallationOrderFormSnapshot[]
+  createdAt           DateTime                         @default(now())
+  updatedAt           DateTime                         @updatedAt
+
+  @@unique([familyId, version])
+  @@index([nameKey, status])
+  @@index([familyId, status])
+}
+
+model InstallationQuestionDefinition {
+  id            String                   @id @default(cuid())
+  templateId    String
+  template      InstallationFormTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  key           String
+  type          String
+  label         String
+  help          String?
+  required      Boolean                  @default(false)
+  riskLevel     String                   @default("LOW")
+  optionsJson   String?
+  conditionJson String?
+  sortOrder     Int                      @default(0)
+  createdAt     DateTime                 @default(now())
+  updatedAt     DateTime                 @updatedAt
+
+  @@unique([templateId, key])
+  @@index([templateId, sortOrder])
+}
+
+model InstallationOrderFormSnapshot {
+  id              String                   @id @default(cuid())
+  orderId         String                   @unique
+  order           InstallationOrder        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  templateId      String
+  template        InstallationFormTemplate @relation(fields: [templateId], references: [id], onDelete: Restrict)
+  templateVersion Int
+  schemaJson      String
+  createdById     String?
+  submissions     InstallationFormSubmission[]
+  createdAt       DateTime                 @default(now())
+
+  @@index([templateId, templateVersion])
+}
+
+model InstallationClientLink {
+  id           String            @id @default(cuid())
+  orderId      String
+  order        InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  tokenHash    String            @unique
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  sentAt       DateTime?
+  sentById     String?
+  createdById  String
+  createdAt    DateTime          @default(now())
+  lastOpenedAt DateTime?
+  files        InstallationFile[] @relation("InstallationFileClientLink")
+  mobileUploadHandoffs MobileUploadHandoff[]
+
+  @@index([orderId, expiresAt])
+  @@index([orderId, revokedAt])
+  @@index([orderId, sentAt])
+}
+
+model InstallationFormSubmission {
+  id             String                          @id @default(cuid())
+  orderId        String
+  order          InstallationOrder               @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  formSnapshotId String
+  formSnapshot   InstallationOrderFormSnapshot   @relation(fields: [formSnapshotId], references: [id], onDelete: Restrict)
+  revisionOfId   String?
+  revisionOf     InstallationFormSubmission?     @relation("InstallationSubmissionCorrections", fields: [revisionOfId], references: [id], onDelete: Restrict)
+  corrections    InstallationFormSubmission[]    @relation("InstallationSubmissionCorrections")
+  revisionNumber Int
+  status         String                          @default("DRAFT")
+  draftKey       String?                         @unique
+  draftVersion   Int                             @default(0)
+  submittedAt    DateTime?
+  answers        InstallationAnswer[]
+  mutations      InstallationFormSubmissionMutation[]
+  clarifications InstallationClarification[]
+  files          InstallationFile[] @relation("InstallationFileSubmission")
+  mobileUploadHandoffs MobileUploadHandoff[]
+  createdAt      DateTime                        @default(now())
+  updatedAt      DateTime                        @updatedAt
+
+  @@unique([orderId, revisionNumber])
+  @@index([orderId, status, createdAt])
+  @@index([revisionOfId])
+}
+
+model InstallationAnswer {
+  id              String                     @id @default(cuid())
+  submissionId    String
+  submission      InstallationFormSubmission @relation(fields: [submissionId], references: [id], onDelete: Restrict)
+  questionKey     String
+  questionType    String
+  valueJson       String
+  normalizedValue String
+  isUnknown       Boolean                    @default(false)
+  createdAt       DateTime                   @default(now())
+  updatedAt       DateTime                   @updatedAt
+
+  @@unique([submissionId, questionKey])
+  @@index([submissionId, isUnknown])
+}
+
+model InstallationFormSubmissionMutation {
+  id               String                     @id @default(cuid())
+  submissionId     String
+  submission       InstallationFormSubmission @relation(fields: [submissionId], references: [id], onDelete: Restrict)
+  draftVersion     Int
+  clientMutationId String
+  operation        String
+  responseJson     String
+  createdAt        DateTime                   @default(now())
+
+  @@unique([submissionId, draftVersion, clientMutationId])
+  @@index([submissionId, createdAt])
+}
+
+model InstallationClarification {
+  id                 String                     @id @default(cuid())
+  orderId            String
+  order              InstallationOrder          @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  sourceSubmissionId String
+  sourceSubmission   InstallationFormSubmission @relation(fields: [sourceSubmissionId], references: [id], onDelete: Restrict)
+  questionKey        String
+  reasonCode         String
+  reason             String
+  isBlocking         Boolean                    @default(true)
+  status             String                     @default("OPEN")
+  resolution         String?
+  resolutionNote     String?
+  evidenceReference  String?
+  resolvedById       String?
+  resolvedAt         DateTime?
+  createdAt          DateTime                   @default(now())
+  updatedAt          DateTime                   @updatedAt
+
+  @@unique([sourceSubmissionId, questionKey, reasonCode])
+  @@index([orderId, status, isBlocking])
+  @@index([sourceSubmissionId])
+}
+
+/// Private-media metadata only. File bytes live exclusively in the separate
+/// media service; this record is the app's authorization and audit boundary.
+model InstallationFile {
+  id                String   @id
+  orderId           String
+  order             InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  roomId            String?
+  room              InstallationRoom? @relation("InstallationFileRoom", fields: [roomId], references: [id], onDelete: Restrict)
+  scopeId           String?
+  scope             InstallationScope? @relation("InstallationFileScope", fields: [scopeId], references: [id], onDelete: Restrict)
+  formSubmissionId  String?
+  formSubmission    InstallationFormSubmission? @relation("InstallationFileSubmission", fields: [formSubmissionId], references: [id], onDelete: Restrict)
+  clientLinkId      String?
+  clientLink        InstallationClientLink? @relation("InstallationFileClientLink", fields: [clientLinkId], references: [id], onDelete: Restrict)
+  mobileHandoffId   String?
+  mobileHandoff     MobileUploadHandoff? @relation(fields: [mobileHandoffId], references: [id], onDelete: Restrict)
+  purpose           String
+  questionKey       String?
+  originalFilename  String
+  contentType       String
+  byteSize          Int?
+  sha256            String?
+  status            String   @default("PENDING")
+  failureReason     String?
+  source            String   @default("WEB")
+  createdById       String?
+  softDeletedAt     DateTime?
+  softDeletedById   String?
+  remoteDeleteStatus       String   @default("NOT_REQUESTED")
+  remoteDeleteAttemptCount Int      @default(0)
+  remoteDeleteLastError    String?
+  remoteDeleteNextAttemptAt DateTime?
+  remoteDeletedAt          DateTime?
+  mismatchEvidence  InstallationMismatchEvidence?
+  auditEvents       InstallationFileAuditEvent[]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([orderId, purpose, questionKey, status, softDeletedAt])
+  @@index([roomId, createdAt])
+  @@index([scopeId, createdAt])
+  @@index([formSubmissionId, questionKey])
+  @@index([clientLinkId, questionKey])
+  @@index([mobileHandoffId])
+  @@index([remoteDeleteStatus, remoteDeleteNextAttemptAt])
+}
+
+/// A single, immutable link between a reported mismatch and the private file
+/// that proves it. Database guards verify order, target and READY state.
+model InstallationMismatchEvidence {
+  id           String   @id @default(cuid())
+  orderId      String
+  order        InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  mismatchId   String   @unique
+  mismatch     InstallationMismatch @relation(fields: [mismatchId], references: [id], onDelete: Restrict)
+  fileId       String   @unique
+  file         InstallationFile @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  attachedById String
+  attachedAt   DateTime @default(now())
+
+  @@index([orderId, fileId])
+}
+
+/// One-time QR handoff. Both QR and mobile-session secrets are stored only as
+/// SHA-256 hashes; the phone can add files but never enumerate or download.
+model MobileUploadHandoff {
+  id                String   @id @default(cuid())
+  orderId           String
+  order             InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  clientLinkId      String
+  clientLink        InstallationClientLink @relation(fields: [clientLinkId], references: [id], onDelete: Restrict)
+  formSubmissionId  String
+  formSubmission    InstallationFormSubmission @relation(fields: [formSubmissionId], references: [id], onDelete: Restrict)
+  questionKey       String
+  codeHash          String   @unique
+  sessionSecretHash String?  @unique
+  allowedMimeJson   String
+  maxFiles          Int      @default(5)
+  usedFiles         Int      @default(0)
+  maxByteSize       Int      @default(10485760)
+  expiresAt         DateTime
+  redeemedAt        DateTime?
+  revokedAt         DateTime?
+  files             InstallationFile[]
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+
+  @@index([clientLinkId, expiresAt, revokedAt])
+  @@index([orderId, questionKey])
+}
+
+model InstallationFileAuditEvent {
+  id           String   @id @default(cuid())
+  fileId       String
+  file         InstallationFile @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  orderId      String
+  order        InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  actorId      String
+  action       String
+  metadataJson String?
+  createdAt    DateTime @default(now())
+
+  @@index([fileId, createdAt])
+  @@index([orderId, createdAt])
+}
+
+model InstallationRoom {
+  id           String                   @id @default(cuid())
+  orderId      String
+  order        InstallationOrder        @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  name         String
+  sortOrder    Int                      @default(0)
+  scopes       InstallationScope[]
+  measurements InstallationMeasurement[]
+  files        InstallationFile[]        @relation("InstallationFileRoom")
+  createdAt    DateTime                 @default(now())
+  updatedAt    DateTime                 @updatedAt
+
+  @@index([orderId, sortOrder])
+}
+
+model InstallationScope {
+  id           String                     @id @default(cuid())
+  roomId       String
+  room         InstallationRoom           @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  name         String
+  sortOrder    Int                        @default(0)
+  scopeProducts InstallationScopeProduct[]
+  measurements InstallationMeasurement[]
+  files        InstallationFile[]          @relation("InstallationFileScope")
+  visitScopes  InstallationVisitScope[]
+  assignments  InstallationScopeAssignment[]
+  createdAt    DateTime                   @default(now())
+  updatedAt    DateTime                   @updatedAt
+
+  @@index([roomId, sortOrder])
+}
+
+model InstallationScopeProduct {
+  id                          String                      @id @default(cuid())
+  scopeId                     String
+  scope                       InstallationScope           @relation(fields: [scopeId], references: [id], onDelete: Cascade)
+  catalogProductId            String
+  catalogProduct              InstallationCatalogProduct  @relation(fields: [catalogProductId], references: [id], onDelete: Restrict)
+  productNameSnapshot         String
+  productCodeSnapshot         String?
+  manufacturerSnapshot        String?
+  collectionSnapshot          String?
+  sortOrder                   Int                         @default(0)
+  createdAt                   DateTime                    @default(now())
+  updatedAt                   DateTime                    @updatedAt
+
+  @@index([scopeId, sortOrder])
+  @@index([catalogProductId])
+}
+
+model InstallationMeasurement {
+  id            String             @id @default(cuid())
+  roomId        String
+  room          InstallationRoom   @relation(fields: [roomId], references: [id], onDelete: Cascade)
+  scopeId       String?
+  scope         InstallationScope? @relation(fields: [scopeId], references: [id], onDelete: Cascade)
+  elementName   String
+  value         Decimal
+  unit          String
+  source        String
+  authorId      String?
+  authorContext String?
+  actorUserId   String?
+  actorRole     String?
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  @@index([roomId, createdAt])
+  @@index([scopeId, createdAt])
+  @@index([actorUserId, createdAt])
 }
 
 // type: UOP | B2B | UZ

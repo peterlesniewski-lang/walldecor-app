@@ -3,7 +3,7 @@
 import { useSession } from 'next-auth/react'
 
 interface RoleGuardProps {
-  roles: ('ADMIN' | 'MANAGER' | 'EMPLOYEE')[]
+  roles: ('ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER')[]
   children: React.ReactNode
   fallback?: React.ReactNode
 }

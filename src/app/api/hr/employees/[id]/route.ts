@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { employeeUpdateSchema } from '@/lib/hr/schemas'
+import { deactivateEmployeeIfNoActiveInstallationOrder } from '@/lib/installations/order-service'
 import {
   canViewConfidentialHrData,
   canViewEmployeeRecord,
@@ -65,19 +66,39 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     return NextResponse.json({ error: 'Invalid input', details: parsed.error.flatten() }, { status: 400 })
   }
 
+  const employeeInclude = {
+    division: true,
+    department: true,
+    team: true,
+    positionRef: true,
+    costCenter: true,
+  }
+
+  if (parsed.data.active === false) {
+    const updatedRows = await deactivateEmployeeIfNoActiveInstallationOrder(prisma, id)
+    if (updatedRows === 0) {
+      const existing = await prisma.employee.findUnique({ where: { id }, select: { id: true } })
+      if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+      return NextResponse.json({
+        error: 'Pracownik jest opiekunem aktywnych kart montaży. Najpierw przypnij karty do innego opiekuna.',
+      }, { status: 409 })
+    }
+
+    const { active: _active, ...otherChanges } = parsed.data
+    const employee = Object.keys(otherChanges).length > 0
+      ? await prisma.employee.update({ where: { id }, data: otherChanges, include: employeeInclude })
+      : await prisma.employee.findUnique({ where: { id }, include: employeeInclude })
+    if (!employee) return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    return NextResponse.json(employee)
+  }
+
   const existing = await prisma.employee.findUnique({ where: { id } })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
   const employee = await prisma.employee.update({
     where: { id },
     data: parsed.data,
-    include: {
-      division: true,
-      department: true,
-      team: true,
-      positionRef: true,
-      costCenter: true,
-    },
+    include: employeeInclude,
   })
 
   return NextResponse.json(employee)
@@ -106,6 +127,9 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     overtimeRequestCount,
     userCount,
     subordinateCount,
+    installationOrderCount,
+    installationDelegationCount,
+    installationOrderInstallerCount,
   ] = await Promise.all([
     prisma.timeEntry.count({ where: { employeeId: id } }),
     prisma.leaveRequestNew.count({ where: { employeeId: id } }),
@@ -118,6 +142,16 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     prisma.overtimeRequest.count({ where: { employeeId: id } }),
     prisma.user.count({ where: { employeeId: id } }),
     prisma.employee.count({ where: { managerId: id } }),
+    prisma.installationOrder.count({
+      where: {
+        OR: [
+          { primaryEmployeeId: id },
+          { backupEmployeeId: id },
+        ],
+      },
+    }),
+    prisma.installationDelegation.count({ where: { delegateEmployeeId: id } }),
+    prisma.installationOrderInstaller.count({ where: { employeeId: id } }),
   ])
 
   const hasRealHistoricalData =
@@ -131,7 +165,10 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     workScheduleCount > 0 ||
     overtimeRequestCount > 0 ||
     userCount > 0 ||
-    subordinateCount > 0
+    subordinateCount > 0 ||
+    installationOrderCount > 0 ||
+    installationDelegationCount > 0 ||
+    installationOrderInstallerCount > 0
 
   if (hasRealHistoricalData) {
     return NextResponse.json(

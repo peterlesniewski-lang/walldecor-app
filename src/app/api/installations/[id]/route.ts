@@ -1,0 +1,112 @@
+import { NextRequest, NextResponse } from 'next/server'
+import { getServerSession } from 'next-auth'
+import { authOptions } from '@/lib/auth'
+import { prisma } from '@/lib/prisma'
+import {
+  canArchiveInstallationOrder,
+  canEditInstallationOrder,
+  canViewInstallationOrder,
+  isInstallationViewerAuthorized,
+  type InstallationOrderViewer,
+} from '@/lib/installations/access'
+import { installationViewerFromSession } from '@/lib/installations/http-access'
+import { presentInstallerInstallationOrder } from '@/lib/installations/order-presenter'
+import { InstallationOrderValidationError } from '@/lib/installations/schemas'
+import {
+  archiveInstallationOrder,
+  getInstallationOrder,
+  InstallationOrderNotFoundError,
+  updateInstallationOrder,
+} from '@/lib/installations/order-service'
+
+type Params = { params: Promise<{ id: string }> }
+
+async function loadAccessibleOrder(id: string, viewer: InstallationOrderViewer) {
+  if (!isInstallationViewerAuthorized(viewer)) {
+    return { response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
+  }
+  const order = await getInstallationOrder(prisma, id)
+  if (!order) return { response: NextResponse.json({ error: 'Not found' }, { status: 404 }) }
+  if (!canViewInstallationOrder(viewer, order)) {
+    return { response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
+  }
+  return { order }
+}
+
+export async function GET(_req: NextRequest, { params }: Params) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { id } = await params
+  const viewer = await installationViewerFromSession(session)
+  const loaded = await loadAccessibleOrder(id, viewer)
+  if ('response' in loaded) return loaded.response
+  return NextResponse.json(viewer.role === 'INSTALLER'
+    ? presentInstallerInstallationOrder(loaded.order)
+    : loaded.order)
+}
+
+export async function PATCH(req: NextRequest, { params }: Params) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { id } = await params
+  const viewer = await installationViewerFromSession(session)
+  const loaded = await loadAccessibleOrder(id, viewer)
+  if ('response' in loaded) return loaded.response
+  if (!canEditInstallationOrder(viewer, loaded.order)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  try {
+    const body = await req.json()
+    const changesOwners = isPlainObject(body) && (
+      Object.hasOwn(body, 'primaryEmployeeId') || Object.hasOwn(body, 'backupEmployeeId')
+    )
+    if (changesOwners) {
+      return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+    const order = await updateInstallationOrder(prisma, id, body, session.user.id)
+    return NextResponse.json(order)
+  } catch (error) {
+    if (error instanceof InstallationOrderValidationError) {
+      return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: 400 })
+    }
+    if (error instanceof InstallationOrderNotFoundError) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+    if (error instanceof SyntaxError) {
+      return NextResponse.json({ error: 'Nieprawidłowy format danych.' }, { status: 400 })
+    }
+    throw error
+  }
+}
+
+export async function DELETE(_req: NextRequest, { params }: Params) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+
+  const { id } = await params
+  const viewer = await installationViewerFromSession(session)
+  const loaded = await loadAccessibleOrder(id, viewer)
+  if ('response' in loaded) return loaded.response
+  if (!canArchiveInstallationOrder(viewer, loaded.order)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  try {
+    const order = await archiveInstallationOrder(prisma, id, session.user.id)
+    return NextResponse.json(order)
+  } catch (error) {
+    if (error instanceof InstallationOrderNotFoundError) {
+      return NextResponse.json({ error: 'Not found' }, { status: 404 })
+    }
+    throw error
+  }
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+  if (typeof value !== 'object' || value === null || Array.isArray(value)) return false
+  const prototype = Object.getPrototypeOf(value)
+  return prototype === Object.prototype || prototype === null
+}

@@ -2,7 +2,7 @@ import { expect, test, type Page } from '@playwright/test'
 import bcrypt from 'bcryptjs'
 import { PrismaClient } from '../src/generated/prisma'
 
-const QA_DATABASE_URL = 'file:/tmp/walldecor-hr-qa.db'
+const QA_DATABASE_PREFIX = 'file:/tmp/walldecor-installations-e2e-'
 const TEST_MONTH = '2026-07'
 const DIVISION_A_ID = 'e2e-division-a'
 const DIVISION_B_ID = 'e2e-division-b'
@@ -22,10 +22,14 @@ function adminUsername(): string {
 }
 
 function assertQaDatabase(): void {
-  if (process.env.DATABASE_URL !== QA_DATABASE_URL) {
+  const databaseUrl = process.env.DATABASE_URL
+  if (
+    !databaseUrl?.startsWith(QA_DATABASE_PREFIX) ||
+    databaseUrl !== process.env.E2E_DATABASE_URL
+  ) {
     throw new Error(
-      `HR E2E tests may only mutate ${QA_DATABASE_URL}; received ` +
-      `${process.env.DATABASE_URL ?? 'no DATABASE_URL'}`
+      `HR E2E tests may only mutate the isolated Playwright database; received ` +
+      `${databaseUrl ?? 'no DATABASE_URL'}`
     )
   }
 }
@@ -302,7 +306,7 @@ test.describe('Monthly time tracking', () => {
 
   test('keeps the weekly scope and renders the complete team month on desktop', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 900 })
-    await page.goto('/hr/time-tracking?view=week&week=2026-W27')
+    await page.goto(`/hr/time-tracking?view=week&week=2026-W27&month=${TEST_MONTH}`)
 
     await expect(page.getByRole('button', { name: 'Tydzień', exact: true })).toHaveAttribute('aria-pressed', 'true')
     const weeklyDivision = page.locator('select').first()

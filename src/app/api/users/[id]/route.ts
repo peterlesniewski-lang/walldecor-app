@@ -4,6 +4,10 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
 import { normalizeUsername } from '@/lib/accounts/security'
+import {
+  installerEmployeeInvariantConflictMessage,
+  isActiveInstallerEmployeeInvariantError,
+} from '@/lib/accounts/installer-invariant'
 
 const userSelect = {
   id: true,
@@ -30,7 +34,7 @@ const patchUserSchema = z.object({
   username: z.string().min(2).optional(),
   email: z.string().email().optional(),
   isActive: z.boolean().optional(),
-  role: z.enum(['ADMIN', 'MANAGER', 'EMPLOYEE']).optional(),
+  role: z.enum(['ADMIN', 'MANAGER', 'EMPLOYEE', 'INSTALLER']).optional(),
   name: z.string().min(1).optional(),
 })
 
@@ -60,6 +64,18 @@ export async function PATCH(
     return NextResponse.json({ error: 'Nie możesz odebrać sobie roli administratora.' }, { status: 400 })
   }
 
+  const effectiveRole = parsed.data.role ?? existing.role
+  const effectiveActive = parsed.data.isActive ?? existing.isActive
+  if (effectiveRole === 'INSTALLER' && effectiveActive) {
+    if (!existing.employeeId) {
+      return NextResponse.json({ error: 'Aby nadać rolę Instalator, konto musi być powiązane z aktywnym pracownikiem.' }, { status: 400 })
+    }
+    const installerEmployee = await prisma.employee.findUnique({ where: { id: existing.employeeId }, select: { id: true, active: true } })
+    if (!installerEmployee?.active) {
+      return NextResponse.json({ error: 'Rola Instalator wymaga aktywnego powiązanego pracownika.' }, { status: 400 })
+    }
+  }
+
   const data = { ...parsed.data }
   if (data.username) {
     data.username = normalizeUsername(data.username)
@@ -79,13 +95,19 @@ export async function PATCH(
     }
   }
 
-  const updated = await prisma.user.update({
-    where: { id },
-    data,
-    select: userSelect,
-  })
-
-  return NextResponse.json(updated)
+  try {
+    const updated = await prisma.user.update({
+      where: { id },
+      data,
+      select: userSelect,
+    })
+    return NextResponse.json(updated)
+  } catch (error) {
+    if (effectiveRole === 'INSTALLER' && effectiveActive && isActiveInstallerEmployeeInvariantError(error)) {
+      return NextResponse.json({ error: installerEmployeeInvariantConflictMessage }, { status: 409 })
+    }
+    throw error
+  }
 }
 
 export async function DELETE(
