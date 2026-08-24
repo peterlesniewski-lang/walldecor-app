@@ -1,5 +1,6 @@
 import { createHash } from 'node:crypto'
 import {
+  CalendarConfigurationError,
   CalendarConflictError,
   type CalendarCancelInput,
   type CalendarUpsertInput,
@@ -46,6 +47,12 @@ function cloneSnapshot(record: FakeCalendarEventSnapshot): FakeCalendarEventSnap
 /** A network-free deterministic adapter for unit, integration, and end-to-end tests. */
 export class FakeInstallationCalendarAdapter implements InstallationCalendarAdapter {
   private readonly events = new Map<string, FakeCalendarEventSnapshot>()
+
+  constructor() {
+    if (process.env.NODE_ENV === 'production') {
+      throw new CalendarConfigurationError('Fake calendar adapter is forbidden in production.')
+    }
+  }
 
   async upsert(input: CalendarUpsertInput): Promise<CalendarWriteResult> {
     const expectedEventId = eventIdForVisit(input.event.visitId)

@@ -9,7 +9,8 @@ import {
   type CalendarWriteResult,
   type InstallationCalendarAdapter,
 } from './calendar-adapter'
-import { getGoogleCalendarConfiguration, type GoogleCalendarConfiguration } from './calendar-config'
+import type { GoogleCalendarConfiguration } from './calendar-config'
+import { getGoogleCalendarConfiguration } from './calendar-server-config'
 import type { CalendarEvent } from './calendar-event'
 
 /** Must remain materially shorter than the five-minute outbox lease. */
@@ -132,7 +133,7 @@ function resultFrom(data: GoogleEventData, fallbackEventId: string): CalendarWri
   return { eventId, htmlLink, etag }
 }
 
-export class GoogleInstallationCalendarAdapter implements InstallationCalendarAdapter {
+class GoogleInstallationCalendarAdapter implements InstallationCalendarAdapter {
   private readonly calendarId: string
   private readonly events: GoogleEventsClient
 
@@ -241,7 +242,7 @@ export class GoogleInstallationCalendarAdapter implements InstallationCalendarAd
   }
 }
 
-/** Production factory. It refuses a disabled/incomplete integration before constructing a Google client. */
-export function createGoogleInstallationCalendarAdapter(configuration = getGoogleCalendarConfiguration()): GoogleInstallationCalendarAdapter {
-  return new GoogleInstallationCalendarAdapter(configuration)
+/** The only construction path: environment guards run before a Google client can exist. */
+export function createGoogleInstallationCalendarAdapter(): InstallationCalendarAdapter {
+  return new GoogleInstallationCalendarAdapter(getGoogleCalendarConfiguration())
 }

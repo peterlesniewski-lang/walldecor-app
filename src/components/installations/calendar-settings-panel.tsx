@@ -1,15 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
-
-type CalendarReadiness = {
-  enabled: boolean
-  adapter: 'disabled' | 'fake' | 'google'
-  credentialsConfigured: boolean
-  calendarConfigured: boolean
-  impersonationConfigured: boolean
-  ready: boolean
-}
+import type { CalendarReadiness } from '@/lib/installations/calendar-config'
 
 export function CalendarSettingsPanel() {
   const [readiness, setReadiness] = useState<CalendarReadiness | null>(null)

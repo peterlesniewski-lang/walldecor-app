@@ -29,10 +29,26 @@ import {
   stableGoogleEventIdForVisit,
 } from '@/lib/installations/google-calendar-adapter'
 import type { CalendarEvent } from '@/lib/installations/calendar-event'
+import * as publicCalendarConfig from '@/lib/installations/calendar-config'
 import {
   assertInstallationCalendarAdapterAllowed,
   getInstallationCalendarReadiness,
-} from '@/lib/installations/calendar-config'
+} from '@/lib/installations/calendar-server-config'
+import type { GoogleCalendarConfiguration } from '@/lib/installations/calendar-config'
+
+const testConfiguration: GoogleCalendarConfiguration = {
+  calendarId: 'test-calendar@group.calendar.google.com',
+  impersonatedUser: 'info@walldecor.pl',
+  credentials: {
+    type: 'service_account',
+    client_email: 'calendar-sync@example.iam.gserviceaccount.com',
+    private_key: '-----BEGIN PRIVATE KEY-----\\nexample\\n-----END PRIVATE KEY-----\\n',
+  },
+}
+
+function testCredentialsBase64(): string {
+  return Buffer.from(JSON.stringify(testConfiguration.credentials)).toString('base64')
+}
 
 function event(visitId = 'visit-1'): CalendarEvent {
   return {
@@ -63,6 +79,11 @@ function errorWithStatus(status: number) {
 describe('GoogleInstallationCalendarAdapter', () => {
   beforeEach(() => {
     vi.clearAllMocks()
+    vi.stubEnv('INSTALLATION_CALENDAR_ENABLED', 'true')
+    vi.stubEnv('INSTALLATION_CALENDAR_ADAPTER', 'google')
+    vi.stubEnv('GOOGLE_CALENDAR_ID', testConfiguration.calendarId)
+    vi.stubEnv('GOOGLE_CALENDAR_IMPERSONATED_USER', testConfiguration.impersonatedUser)
+    vi.stubEnv('GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64', testCredentialsBase64())
     mocks.calendar.mockReturnValue({ events: mocks.events })
     mocks.jwt.mockImplementation(function JwtStub() { return { kind: 'jwt' } })
     mocks.events.get.mockResolvedValue({ data: googleEvent() })
@@ -76,15 +97,7 @@ describe('GoogleInstallationCalendarAdapter', () => {
   })
 
   function adapter() {
-    return createGoogleInstallationCalendarAdapter({
-      calendarId: 'test-calendar@group.calendar.google.com',
-      impersonatedUser: 'info@walldecor.pl',
-      credentials: {
-        type: 'service_account',
-        client_email: 'calendar-sync@example.iam.gserviceaccount.com',
-        private_key: '-----BEGIN PRIVATE KEY-----\\nexample\\n-----END PRIVATE KEY-----\\n',
-      },
-    })
+    return createGoogleInstallationCalendarAdapter()
   }
 
   it('creates an event at a stable Google-compatible id after confirming it does not already exist', async () => {
@@ -168,6 +181,17 @@ describe('GoogleInstallationCalendarAdapter', () => {
     expect(mocks.calendar).not.toHaveBeenCalled()
   })
 
+  it.each([
+    ['disabled feature', { INSTALLATION_CALENDAR_ENABLED: 'false', INSTALLATION_CALENDAR_ADAPTER: 'google' }],
+    ['wrong adapter', { INSTALLATION_CALENDAR_ENABLED: 'true', INSTALLATION_CALENDAR_ADAPTER: 'fake' }],
+    ['invalid credentials', { INSTALLATION_CALENDAR_ENABLED: 'true', INSTALLATION_CALENDAR_ADAPTER: 'google', GOOGLE_CALENDAR_SERVICE_ACCOUNT_JSON_B64: 'not-json' }],
+  ])('cannot bypass the %s guard by supplying a configuration argument', (_label, env) => {
+    for (const [key, value] of Object.entries(env)) vi.stubEnv(key, value)
+    const unsafeFactory = createGoogleInstallationCalendarAdapter as unknown as (configuration: GoogleCalendarConfiguration) => unknown
+
+    expect(() => unsafeFactory(testConfiguration)).toThrow(CalendarConfigurationError)
+  })
+
   it('times out a hanging Google request long before the outbox lease expires', async () => {
     vi.useFakeTimers()
     mocks.events.get.mockReset().mockImplementation(() => new Promise(() => undefined))
@@ -211,5 +235,10 @@ describe('GoogleInstallationCalendarAdapter', () => {
     })
     expect(readiness.calendarConfigured).toBe(false)
     expect(readiness.ready).toBe(false)
+  })
+
+  it('keeps credential parsing outside the client-safe Calendar config module', () => {
+    expect(publicCalendarConfig).not.toHaveProperty('getGoogleCalendarConfiguration')
+    expect(publicCalendarConfig).not.toHaveProperty('getInstallationCalendarReadiness')
   })
 })

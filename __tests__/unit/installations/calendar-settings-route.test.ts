@@ -7,7 +7,7 @@ const mocks = vi.hoisted(() => ({
 
 vi.mock('next-auth', () => ({ getServerSession: vi.fn(async () => mocks.session) }))
 vi.mock('@/lib/auth', () => ({ authOptions: {} }))
-vi.mock('@/lib/installations/calendar-config', () => ({ getInstallationCalendarReadiness: mocks.readiness }))
+vi.mock('@/lib/installations/calendar-server-config', () => ({ getInstallationCalendarReadiness: mocks.readiness }))
 
 import { GET } from '@/app/api/settings/installation-calendar/route'
 

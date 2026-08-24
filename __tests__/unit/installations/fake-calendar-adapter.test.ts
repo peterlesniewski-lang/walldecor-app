@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   CalendarConfigurationError,
   CalendarConflictError,
@@ -21,6 +21,16 @@ function calendarEvent(visitId = 'visit-1', summary = 'Montaż MON-1 — Jan Kow
 }
 
 describe('FakeInstallationCalendarAdapter', () => {
+  afterEach(() => {
+    vi.unstubAllEnvs()
+  })
+
+  it('refuses construction in production before any fake event can be written', () => {
+    vi.stubEnv('NODE_ENV', 'production')
+
+    expect(() => new FakeInstallationCalendarAdapter()).toThrow(CalendarConfigurationError)
+  })
+
   it('creates, updates, and cancels exactly one stable fake event for a visit', async () => {
     const adapter = new FakeInstallationCalendarAdapter()
     const created = await adapter.upsert({ event: calendarEvent(), externalId: null, etag: null, forceOverwrite: false })
