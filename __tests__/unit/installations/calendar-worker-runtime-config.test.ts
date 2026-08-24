@@ -9,6 +9,18 @@ type CalendarRuntimeReader = (env: Record<string, string | undefined>) => {
   batchSize: number
 }
 
+const e2eDatabaseUrl = 'file:/tmp/walldecor-installations-e2e-runtime-config.db'
+
+function isolatedFakeEnvironment(overrides: Record<string, string | undefined> = {}) {
+  return {
+    INSTALLATION_CALENDAR_ENABLED: 'true',
+    INSTALLATION_CALENDAR_ADAPTER: 'fake',
+    DATABASE_URL: e2eDatabaseUrl,
+    E2E_DATABASE_URL: e2eDatabaseUrl,
+    ...overrides,
+  }
+}
+
 describe('installation Calendar worker runtime configuration', () => {
   afterEach(() => {
     vi.unstubAllEnvs()
@@ -20,31 +32,22 @@ describe('installation Calendar worker runtime configuration', () => {
       readInstallationCalendarConfig: CalendarRuntimeReader
     }).readInstallationCalendarConfig
 
-    expect(read({
-      INSTALLATION_CALENDAR_ENABLED: 'true',
-      INSTALLATION_CALENDAR_ADAPTER: 'fake',
-      INSTALLATION_CALENDAR_WORKER_BATCH_SIZE: '20',
-    })).toEqual({ adapter: 'fake', batchSize: 20 })
+    expect(read(isolatedFakeEnvironment({ INSTALLATION_CALENDAR_WORKER_BATCH_SIZE: '20' }))).toEqual({ adapter: 'fake', batchSize: 20 })
 
-    expect(() => read({
-      INSTALLATION_CALENDAR_ENABLED: 'false',
-      INSTALLATION_CALENDAR_ADAPTER: 'fake',
-    })).toThrow(CalendarConfigurationError)
+    expect(() => read(isolatedFakeEnvironment({ INSTALLATION_CALENDAR_ENABLED: 'false' }))).toThrow(CalendarConfigurationError)
     expect(() => read({
       INSTALLATION_CALENDAR_ENABLED: 'true',
       INSTALLATION_CALENDAR_ADAPTER: 'disabled',
     })).toThrow(CalendarConfigurationError)
-    expect(() => read({
-      INSTALLATION_CALENDAR_ENABLED: 'true',
-      INSTALLATION_CALENDAR_ADAPTER: 'fake',
-      INSTALLATION_CALENDAR_WORKER_BATCH_SIZE: '101',
-    })).toThrow(CalendarConfigurationError)
+    expect(() => read(isolatedFakeEnvironment({ INSTALLATION_CALENDAR_WORKER_BATCH_SIZE: '101' }))).toThrow(CalendarConfigurationError)
   })
 
   it('constructs adapters through one guarded factory instead of letting the worker select a class', () => {
     vi.stubEnv('NODE_ENV', 'test')
     vi.stubEnv('INSTALLATION_CALENDAR_ENABLED', 'true')
     vi.stubEnv('INSTALLATION_CALENDAR_ADAPTER', 'fake')
+    vi.stubEnv('DATABASE_URL', e2eDatabaseUrl)
+    vi.stubEnv('E2E_DATABASE_URL', e2eDatabaseUrl)
     expect(createInstallationCalendarAdapter()).toBeInstanceOf(FakeInstallationCalendarAdapter)
 
     vi.stubEnv('NODE_ENV', 'production')
@@ -58,6 +61,8 @@ describe('installation Calendar worker runtime configuration', () => {
   it('uses only the worker process environment for the central adapter factory', () => {
     vi.stubEnv('INSTALLATION_CALENDAR_ENABLED', 'true')
     vi.stubEnv('INSTALLATION_CALENDAR_ADAPTER', 'fake')
+    vi.stubEnv('DATABASE_URL', e2eDatabaseUrl)
+    vi.stubEnv('E2E_DATABASE_URL', e2eDatabaseUrl)
 
     const factory = createInstallationCalendarAdapter as unknown as (ignoredEnvironment?: Record<string, string>) => unknown
     expect(factory({

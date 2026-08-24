@@ -1,5 +1,5 @@
 import { spawnSync } from 'node:child_process'
-import { existsSync, readFileSync, readdirSync, rmSync } from 'node:fs'
+import { existsSync, lstatSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import path from 'node:path'
 import bcrypt from 'bcryptjs'
 import { PrismaClient } from '@/generated/prisma'
@@ -11,10 +11,13 @@ import { PrismaClient } from '@/generated/prisma'
  */
 export default async function globalSetup() {
   const databaseUrl = process.env.E2E_DATABASE_URL
-  if (!databaseUrl?.startsWith('file:/tmp/walldecor-installations-e2e-')) {
+  if (!databaseUrl || !/^file:\/tmp\/walldecor-installations-e2e-[A-Za-z0-9_-]+\.db$/u.test(databaseUrl)) {
     throw new Error('E2E_DATABASE_URL musi wskazywać izolowaną SQLite w /tmp.')
   }
   const databasePath = databaseUrl.replace(/^file:/, '')
+  if (existsSync(databasePath) && lstatSync(databasePath).isSymbolicLink()) {
+    throw new Error('E2E_DATABASE_URL nie może wskazywać na dowiązanie symboliczne.')
+  }
   rmSync(databasePath, { force: true })
 
   const migrationRoot = path.join(process.cwd(), 'prisma', 'migrations')

@@ -1,4 +1,5 @@
 import { Buffer } from 'node:buffer'
+import { existsSync, lstatSync } from 'node:fs'
 import { CalendarConfigurationError } from './calendar-adapter'
 import {
   INSTALLATION_CALENDAR_ADAPTERS,
@@ -12,6 +13,7 @@ import {
 const DEFAULT_IMPERSONATED_USER = 'info@walldecor.pl'
 const DEFAULT_WORKER_BATCH_SIZE = 20
 const MAX_WORKER_BATCH_SIZE = 100
+const ISOLATED_E2E_DATABASE_URL = /^file:\/tmp\/walldecor-installations-e2e-[A-Za-z0-9_-]+\.db$/u
 
 /** Non-secret runtime settings required before a scheduled worker can claim work. */
 export type InstallationCalendarWorkerConfiguration = {
@@ -42,6 +44,25 @@ function adapterFromEnvironment(env: CalendarEnvironment): InstallationCalendarA
 function rawAdapterIsValid(env: CalendarEnvironment): boolean {
   const candidate = nonEmpty(env.INSTALLATION_CALENDAR_ADAPTER) ?? 'disabled'
   return (INSTALLATION_CALENDAR_ADAPTERS as readonly string[]).includes(candidate)
+}
+
+/**
+ * The fake adapter is a test double, never a fallback deployment mode. It may
+ * execute only when the running process is bound to the exact same explicitly
+ * named E2E SQLite file. Keeping the path grammar deliberately narrow also
+ * rules out SQLite query parameters, relative URLs and directory traversal.
+ */
+function hasIsolatedE2eDatabase(env: CalendarEnvironment): boolean {
+  const databaseUrl = env.DATABASE_URL
+  const e2eDatabaseUrl = env.E2E_DATABASE_URL
+  if (!databaseUrl || databaseUrl !== e2eDatabaseUrl || !ISOLATED_E2E_DATABASE_URL.test(databaseUrl)) return false
+
+  const databasePath = databaseUrl.slice('file:'.length)
+  try {
+    return !existsSync(databasePath) || !lstatSync(databasePath).isSymbolicLink()
+  } catch {
+    return false
+  }
 }
 
 function decodeCredentials(value: string | undefined): GoogleServiceAccountCredentials | null {
@@ -112,8 +133,8 @@ export function getGoogleCalendarConfiguration(env: CalendarEnvironment = proces
 export function assertInstallationCalendarAdapterAllowed(env: CalendarEnvironment = process.env): InstallationCalendarAdapterName {
   const raw = rawCalendarConfiguration(env)
   if (!raw.adapterValid) throw new CalendarConfigurationError('Calendar adapter configuration is invalid.')
-  if (raw.adapter === 'fake' && env.NODE_ENV === 'production') {
-    throw new CalendarConfigurationError('Fake calendar adapter is forbidden in production.')
+  if (raw.adapter === 'fake' && !hasIsolatedE2eDatabase(env)) {
+    throw new CalendarConfigurationError('Fake calendar adapter is allowed only for an isolated E2E database.')
   }
   return raw.adapter
 }
