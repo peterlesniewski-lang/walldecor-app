@@ -26,7 +26,7 @@ export const INSTALLATION_GUIDES: readonly InstallationGuide[] = [
   {
     slug: 'opiekun-karty',
     title: 'Opiekun karty montażu',
-    summary: 'Od utworzenia karty, przez formularz klienta i planowanie, po rozliczenie ukończonego zakresu.',
+    summary: 'Od utworzenia karty, przez formularz klienta i planowanie, po kontrolę realizacji ustalonego zakresu.',
     audience: 'COORDINATOR',
     audienceLabel: 'Opiekun karty',
     updatedAt: '2026-08-24',
@@ -62,12 +62,12 @@ export const INSTALLATION_GUIDES: readonly InstallationGuide[] = [
         attention: 'Status „Wymaga uwagi” przy kalendarzu oznacza, że trzeba sprawdzić błąd i świadomie zdecydować o ponowieniu albo nadpisaniu konfliktu.',
       },
       {
-        title: '4. Zamknij wizytę i przekaż sprawę do faktury',
+        title: '4. Czynności poza obecnym modułem',
         steps: [
-          'Przed pracą odnotuj na karcie przekazanie towaru instalatorowi, gdy rzeczywiście nastąpiło.',
-          'Po każdej wizycie instalator sporządza raport i protokół odbioru wykonanego zakresu; to odbiór częściowy, nie zamknięcie całego zlecenia.',
-          'Gdy protokół jest gotowy, traktujemy ten etap jako gotowy do fakturowania. Powiadomienie do zespołu fakturującego jest sygnałem do wystawienia faktury.',
-          'Zamknij kartę dopiero po zakończeniu wszystkich zakresów i rozliczeń. Historia formularza, wizyt i odpowiedzialności pozostaje na karcie.',
+          'Przekazanie towaru, raport z wizyty, zdjęcia, odbiór prac i informację do fakturowania obsługuj obecnie dotychczasowym firmowym kanałem poza tym ekranem.',
+          'Nie oczekuj na karcie przycisków raportu ani odbioru — nie są częścią tej wersji modułu montaży.',
+          'Systemowy moduł protokołów i odbiorów będzie osobnym wdrożeniem. Do tego czasu nie traktuj samego statusu wizyty jako potwierdzenia odbioru albo podstawy faktury.',
+          'Historia formularza, zaplanowanych wizyt i odpowiedzialności pozostaje na karcie; pozostałe dokumenty zachowuj zgodnie z aktualnym procesem firmy.',
         ],
       },
     ],
@@ -101,7 +101,7 @@ export const INSTALLATION_GUIDES: readonly InstallationGuide[] = [
       {
         title: '3. Przekaż kontekst bez zgadywania',
         steps: [
-          'Przed planowaną wizytą sprawdź: zakresy, pomiary, pliki, wymagania klienta, otwarte ustalenia, przypisaną ekipę i status towaru.',
+          'Przed planowaną wizytą sprawdź: zakresy, pomiary, pliki, wymagania klienta, otwarte ustalenia i przypisaną ekipę.',
           'Zmianę terminu wykonaj wyłącznie w aplikacji. Stare wydarzenie Calendar jest aktualizowane przez kolejkę synchronizacji.',
           'Jeżeli kalendarz pokaże konflikt, nie nadpisuj go automatycznie. Najpierw sprawdź stan faktyczny oraz zapis na karcie.',
         ],
@@ -111,8 +111,8 @@ export const INSTALLATION_GUIDES: readonly InstallationGuide[] = [
   },
   {
     slug: 'instalator',
-    title: 'Instalator: zakres, wizyta i odbiór',
-    summary: 'Praca tylko na przypisanych zakresach i wizytach, z jasnym potwierdzeniem materiału oraz odbioru po każdej wizycie.',
+    title: 'Instalator: zakres i termin wizyty',
+    summary: 'Widok tylko do odczytu dla przypisanych zakresów i wizyt, z terminem oraz bez dostępu do prywatnych ustaleń klienta.',
     audience: 'INSTALLER',
     audienceLabel: 'Instalator',
     updatedAt: '2026-08-24',
@@ -121,26 +121,26 @@ export const INSTALLATION_GUIDES: readonly InstallationGuide[] = [
         title: '1. Co widzisz w aplikacji',
         steps: [
           'Po zalogowaniu otwórz Montaże. Widzisz wyłącznie karty, na których przypisano Ci konkretny zakres lub wizytę.',
-          'Na karcie sprawdź adres, nazwę klienta, swoje zakresy, termin wizyty oraz pliki potrzebne do wykonania pracy.',
-          'Jeżeli nie widzisz zlecenia albo zakresu, nie proś o przekazanie danych klienta przez komunikator — poproś opiekuna o prawidłowe przypisanie zakresu w karcie.',
+          'Karta instalatora jest tylko do odczytu. Sprawdź adres, nazwę klienta, przypisane Ci zakresy oraz datę i godziny własnej wizyty.',
+          'Jeżeli przy wizycie jest dostępny link do wydarzenia Google Calendar, możesz go otworzyć. Brak linku nie zmienia terminu zapisanego na karcie.',
+          'Jeżeli nie widzisz zlecenia albo zakresu, skontaktuj się z opiekunem dotychczasowym firmowym kanałem i poproś o prawidłowe przypisanie w karcie.',
         ],
         attention: 'Nie masz dostępu do formularza klienta, jego odpowiedzi, e-maila, telefonu, notatek koordynatora ani danych technicznych synchronizacji. To celowe ograniczenie prywatności.',
       },
       {
         title: '2. Przed wyjazdem i na miejscu',
         steps: [
-          'Potwierdź, że zakres i pomieszczenie odpowiadają temu, co masz wykonać. Sprawdź wymiary oraz pliki projektu przed wyjazdem.',
-          'Odbierz towar tylko zgodnie z faktycznym przekazaniem zapisanym na karcie. Gdy brakuje materiału lub jest niezgodny, zgłoś to opiekunowi przed rozpoczęciem pracy.',
-          'Jeżeli stan na miejscu różni się od zakresu lub bezpieczne wykonanie jest niemożliwe, udokumentuj sytuację zgodnie z procesem i od razu zgłoś ją opiekunowi. Nie rozstrzygaj samodzielnie opłaty za podjazd.',
+          'Przed wyjazdem potwierdź na karcie własny termin, pomieszczenie i zakres wskazany przy Twojej wizycie.',
+          'Ustalenia o materiale i przekazaniu towaru pozostają obecnie poza tym ekranem — sprawdzaj je dotychczasowym firmowym kanałem.',
+          'Jeżeli stan na miejscu różni się od przypisanego zakresu albo bezpieczne wykonanie jest niemożliwe, przerwij decyzję o dalszej pracy i skontaktuj się z opiekunem poza aplikacją. Nie rozstrzygaj samodzielnie opłaty za podjazd.',
         ],
       },
       {
-        title: '3. Po każdej wizycie',
+        title: '3. Czego ten ekran jeszcze nie obsługuje',
         steps: [
-          'Po wykonaniu swojej części uzupełnij raport wizyty i przygotuj protokół odbioru prac dla zrealizowanego zakresu.',
-          'Dodaj wyłącznie potrzebne zdjęcia lub pliki jako dokumentację pracy. Zdjęcie można dodać z telefonu aparatem albo wybrać plik na komputerze.',
-          'Protokół dotyczy tej wizyty i tego zakresu. Jeżeli wracasz na kolejną wizytę, wykonujesz kolejny odbiór zakresu.',
-          'Powiedz opiekunowi, że protokół jest gotowy — po odbiorze etap jest kierowany do fakturowania przez zespół biura.',
+          'Raportowanie wizyty, zdjęcia, potwierdzenie towaru, odbiór prac i informacja do fakturowania pozostają obecnie poza aplikacją i wykonujemy je dotychczasowym firmowym kanałem.',
+          'Systemowy moduł protokołów i odbiorów będzie osobnym wdrożeniem; w tej wersji nie ma przycisku raportu ani formularza odbioru.',
+          'Jeżeli opiekun potrzebuje potwierdzenia po wizycie, przekaż je poza aplikacją zgodnie z aktualnym procesem firmy.',
         ],
       },
     ],

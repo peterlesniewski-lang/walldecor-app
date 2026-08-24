@@ -1,5 +1,5 @@
 import { getServerSession } from 'next-auth'
-import { redirect } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { BookOpenCheck } from 'lucide-react'
 import { authOptions } from '@/lib/auth'
 import { getArticles } from '@/lib/wikipedia/actions'
@@ -8,8 +8,9 @@ import { ArticleList } from '@/components/wikipedia/ArticleList'
 export default async function OperationProceduresPage() {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
+  if (session.user.role === 'INSTALLER') notFound()
 
-  const role = session.user.role === 'INSTALLER' ? 'EMPLOYEE' : session.user.role
+  const role = session.user.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
   const isManager = role === 'ADMIN' || role === 'MANAGER'
   const procedures = await getArticles({ type: 'procedure' }, role, session.user.id)
 
