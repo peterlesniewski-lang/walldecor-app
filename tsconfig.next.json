@@ -2,16 +2,15 @@
   "extends": "./tsconfig.json",
   "include": [
     "next-env.d.ts",
+    ".next/types/**/*.ts",
     "src/**/*.ts",
     "src/**/*.tsx",
-    ".next/types/**/*.ts",
-    ".next/dev/types/**/*.ts"
+    "scripts/run-installation-calendar-worker.ts"
   ],
   "exclude": [
     "node_modules",
     "prisma",
     "__tests__",
-    "e2e",
-    "scripts"
+    "e2e"
   ]
 }

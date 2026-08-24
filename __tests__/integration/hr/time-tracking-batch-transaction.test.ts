@@ -31,17 +31,17 @@ let databaseUrl = ''
 let prisma: PrismaClient
 let postBatch: typeof import('@/app/api/hr/time-tracking/batch/route').POST
 let createTimeEntryBatchHandler:
-  typeof import('@/app/api/hr/time-tracking/batch/route').createTimeEntryBatchHandler
+  typeof import('@/app/api/hr/time-tracking/batch/handler').createTimeEntryBatchHandler
 let createTimeEntryFillHandler:
-  typeof import('@/app/api/hr/time-tracking/monthly/fill/route').createTimeEntryFillHandler
+  typeof import('@/app/api/hr/time-tracking/monthly/fill/handler').createTimeEntryFillHandler
 let createLeaveApprovalHandler:
-  typeof import('@/app/api/hr/leave-requests/[id]/approve/route').createLeaveApprovalHandler
+  typeof import('@/app/api/hr/leave-requests/[id]/approve/handler').createLeaveApprovalHandler
 let createManualTimeEntryHandler:
-  typeof import('@/app/api/hr/time-tracking/route').createManualTimeEntryHandler
+  typeof import('@/app/api/hr/time-tracking/handler').createManualTimeEntryHandler
 let createClockInHandler:
-  typeof import('@/app/api/hr/time-tracking/clock-in/route').createClockInHandler
+  typeof import('@/app/api/hr/time-tracking/clock-in/handler').createClockInHandler
 let createBulkTimeEntryHandler:
-  typeof import('@/app/api/hr/time-tracking/bulk/route').createBulkTimeEntryHandler
+  typeof import('@/app/api/hr/time-tracking/bulk/handler').createBulkTimeEntryHandler
 
 function createClient() {
   return new PrismaClient({
@@ -357,23 +357,25 @@ beforeAll(async () => {
   vi.doMock('@/lib/prisma', () => ({ prisma }))
   ;({
     POST: postBatch,
-    createTimeEntryBatchHandler,
   } = await import('@/app/api/hr/time-tracking/batch/route'))
   ;({
+    createTimeEntryBatchHandler,
+  } = await import('@/app/api/hr/time-tracking/batch/handler'))
+  ;({
     createLeaveApprovalHandler,
-  } = await import('@/app/api/hr/leave-requests/[id]/approve/route'))
+  } = await import('@/app/api/hr/leave-requests/[id]/approve/handler'))
   ;({
     createTimeEntryFillHandler,
-  } = await import('@/app/api/hr/time-tracking/monthly/fill/route'))
+  } = await import('@/app/api/hr/time-tracking/monthly/fill/handler'))
   ;({
     createManualTimeEntryHandler,
-  } = await import('@/app/api/hr/time-tracking/route'))
+  } = await import('@/app/api/hr/time-tracking/handler'))
   ;({
     createClockInHandler,
-  } = await import('@/app/api/hr/time-tracking/clock-in/route'))
+  } = await import('@/app/api/hr/time-tracking/clock-in/handler'))
   ;({
     createBulkTimeEntryHandler,
-  } = await import('@/app/api/hr/time-tracking/bulk/route'))
+  } = await import('@/app/api/hr/time-tracking/bulk/handler'))
 })
 
 beforeEach(async () => {

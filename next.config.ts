@@ -4,10 +4,13 @@ const nextConfig: NextConfig = {
   output: 'standalone',
   serverExternalPackages: ['@prisma/client', 'bcryptjs'],
   typescript: {
-    // Keep Next's production type check focused on application code. The root
-    // config intentionally also covers tests and scripts, which is too large
-    // for the VPS-hosted Docker build.
+    // Docker runs this focused type check in a separate process before the
+    // bundler so both phases do not hold their heaps at the same time.
     tsconfigPath: 'tsconfig.next.json',
+    ignoreBuildErrors: process.env.WALLDECOR_DOCKER_BUILD === '1',
+  },
+  experimental: {
+    webpackMemoryOptimizations: process.env.WALLDECOR_DOCKER_BUILD === '1',
   },
 }
 
