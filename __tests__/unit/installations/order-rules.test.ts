@@ -256,6 +256,7 @@ const apiOrder = {
   backupEmployee: { id: 'backup', firstName: 'Bartek', lastName: 'Zastępca', email: 'bartek@example.pl', active: true },
   delegations: [],
   auditEvents: [],
+  clientFormStatus: { code: 'NO_FORM' as const, label: 'Brak formularza', requiresClarification: false },
 }
 
 function session(role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER', employeeId: string | null = null) {
@@ -584,6 +585,18 @@ describe('installation order controls', () => {
     render(createElement(InstallationOrderList, { orders: [apiOrder] }))
 
     expect(screen.getByRole('link', { name: /MON-20260822-1234/ }).getAttribute('href')).toBe('/installations/order-1')
+  })
+
+  it('renders the derived client-form and clarification badges inside the single card link', () => {
+    render(createElement(InstallationOrderList, { orders: [{
+      ...apiOrder,
+      clientFormStatus: { code: 'IN_PROGRESS' as const, label: 'Rozpoczęty', requiresClarification: true },
+    }] }))
+
+    expect(screen.getByText('Rozpoczęty')).not.toBeNull()
+    expect(screen.getByText('Wymaga ustalenia')).not.toBeNull()
+    expect(screen.getAllByRole('link')).toHaveLength(1)
+    expect(screen.queryByRole('button')).toBeNull()
   })
 
   it('does not render either creation control when the viewer cannot create an installation order', () => {

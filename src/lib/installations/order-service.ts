@@ -6,6 +6,7 @@ import {
   parseUpdateInstallationOrder,
 } from './schemas'
 import { assertInstallationOrderCanUseStatus } from './readiness'
+import { deriveInstallationFormStatus } from './form-status'
 
 type InstallationDb = PrismaClient | Prisma.TransactionClient
 
@@ -19,6 +20,29 @@ const orderInclude = {
 } satisfies Prisma.InstallationOrderInclude
 
 type OrderWithRelations = Prisma.InstallationOrderGetPayload<{ include: typeof orderInclude }>
+
+const orderListSelect = {
+  id: true,
+  number: true,
+  status: true,
+  addressStreet: true,
+  addressCity: true,
+  primaryEmployeeId: true,
+  backupEmployeeId: true,
+  client: { select: { name: true } },
+  primaryEmployee: { select: { firstName: true, lastName: true } },
+  backupEmployee: { select: { firstName: true, lastName: true } },
+  delegations: { select: { delegateEmployeeId: true, startsAt: true, endsAt: true, endedAt: true } },
+  installerAssignments: { select: { employeeId: true } },
+  formSnapshots: { select: { id: true }, take: 1 },
+  clientLinks: {
+    select: { id: true, sentAt: true, lastOpenedAt: true },
+    orderBy: { createdAt: 'desc' },
+    take: 1,
+  },
+  formSubmissions: { select: { status: true, draftKey: true }, orderBy: { revisionNumber: 'desc' } },
+  clarifications: { where: { status: 'OPEN', isBlocking: true }, select: { id: true } },
+} satisfies Prisma.InstallationOrderSelect
 
 export class InstallationOrderNotFoundError extends Error {
   constructor() {
@@ -163,11 +187,28 @@ export async function createInstallationOrder(
 }
 
 export async function listInstallationOrders(db: InstallationDb, options: { includeArchived?: boolean } = {}) {
-  return db.installationOrder.findMany({
+  const now = new Date()
+  const orders = await db.installationOrder.findMany({
     where: options.includeArchived ? {} : { archivedAt: null },
-    include: orderInclude,
+    select: {
+      ...orderListSelect,
+      clientLinks: {
+        ...orderListSelect.clientLinks,
+        where: { revokedAt: null, expiresAt: { gt: now } },
+      },
+    },
     orderBy: { createdAt: 'desc' },
   })
+  return orders.map(({ formSnapshots, clientLinks, formSubmissions, clarifications, ...order }) => ({
+    ...order,
+    clientFormStatus: deriveInstallationFormStatus({
+      hasSnapshot: formSnapshots.length > 0,
+      activeLink: clientLinks[0] ?? null,
+      hasDraft: formSubmissions.some((submission) => submission.status === 'DRAFT' && Boolean(submission.draftKey?.trim())),
+      hasSubmitted: formSubmissions.some((submission) => submission.status === 'SUBMITTED'),
+      openBlockingCount: clarifications.length,
+    }),
+  }))
 }
 
 export async function getInstallationOrder(db: InstallationDb, id: string) {

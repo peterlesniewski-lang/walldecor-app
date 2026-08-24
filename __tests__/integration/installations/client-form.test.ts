@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { PrismaClient } from '@/generated/prisma'
-import { createInstallationOrder, updateInstallationOrder } from '@/lib/installations/order-service'
+import { createInstallationOrder, listInstallationOrders, updateInstallationOrder } from '@/lib/installations/order-service'
 import { createInstallationFormTemplate, createInstallationOrderFormSnapshot, publishInstallationFormTemplate } from '@/lib/installations/catalog-service'
 import {
   createClientLink,
@@ -430,5 +430,59 @@ describe('client form uses a real SQLite revision history', () => {
     expect(sentAudits).toHaveLength(1)
     expect(sentAudits[0]).toMatchObject({ actorId: first.sentById })
     expect(JSON.parse(sentAudits[0].metadataJson)).toEqual({ linkId: link.link.id, sentAt: first.sentAt!.toISOString() })
+  })
+
+  it('derives a private client-form list status across the full client lifecycle', async () => {
+    const backup = await db.employee.findFirstOrThrow({ where: { email: 'form.backup@example.test' } })
+    const order = await createInstallationOrder(db, {
+      client: { name: 'Status klient', email: 'status.client@example.test', phone: '+48 501 444 777' },
+      address: { street: 'Statusowa', buildingNumber: '12', postalCode: '00-012', city: 'Warszawa' },
+      primaryEmployeeId: ownerId,
+      backupEmployeeId: backup.id,
+    }, 'form-admin')
+    const status = async () => {
+      const listed = (await listInstallationOrders(db)).find((candidate) => candidate.id === order.id)
+      expect(listed).toBeDefined()
+      expect(listed).not.toHaveProperty('formSnapshots')
+      expect(listed).not.toHaveProperty('clientLinks')
+      expect(listed).not.toHaveProperty('formSubmissions')
+      expect(listed).not.toHaveProperty('clarifications')
+      expect(JSON.stringify(listed)).not.toContain('answers')
+      return listed!.clientFormStatus
+    }
+
+    expect(await status()).toMatchObject({ code: 'NO_FORM', requiresClarification: false })
+    const draft = await createInstallationFormTemplate(db, {
+      name: 'Status formularza listy', actorId: 'form-admin', questions: [
+        { key: 'status-unknown', type: 'YES_NO_UNKNOWN', label: 'Czy odpowiedź wymaga ustalenia?', required: true },
+      ],
+    })
+    const template = await publishInstallationFormTemplate(db, draft.id, 'form-admin')
+    const snapshot = await createInstallationOrderFormSnapshot(db, { orderId: order.id, templateId: template.id }, 'form-admin')
+    expect(await status()).toMatchObject({ code: 'READY_TO_SEND', requiresClarification: false })
+    await db.installationFormSubmission.create({ data: {
+      orderId: order.id, formSnapshotId: snapshot.id, revisionNumber: 99, status: 'DRAFT',
+    } })
+    expect(await status()).toMatchObject({ code: 'READY_TO_SEND' })
+
+    const link = await createClientLink(db, { orderId: order.id, createdById: 'form-admin', expiresAt: futureDate() })
+    expect(await status()).toMatchObject({ code: 'READY_TO_SEND' })
+    await markClientLinkSent(db, link.link.id, 'form-admin', order.id)
+    expect(await status()).toMatchObject({ code: 'WAITING' })
+
+    const opened = await loadPublicInstallationProjection(db, link.token)
+    expect(await status()).toMatchObject({ code: 'IN_PROGRESS' })
+    const saved = await autosaveClientForm(db, link.token, {
+      revisionNumber: opened.submission.revisionNumber,
+      draftVersion: opened.submission.draftVersion,
+      clientMutationId: 'list-status-unknown-0001',
+      answers: [{ questionKey: 'status-unknown', value: 'UNKNOWN' }],
+    })
+    await submitClientForm(db, link.token, {
+      revisionNumber: saved.revisionNumber,
+      draftVersion: saved.draftVersion,
+      clientMutationId: 'list-status-submit-0001',
+    })
+    expect(await status()).toMatchObject({ code: 'COMPLETED', requiresClarification: true })
   })
 })

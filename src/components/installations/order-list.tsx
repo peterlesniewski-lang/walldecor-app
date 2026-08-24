@@ -1,5 +1,6 @@
 import Link from 'next/link'
-import { ArrowRight, ClipboardList, Plus } from 'lucide-react'
+import { ArrowRight, CircleCheck, ClipboardList, Clock3, FileQuestion, PencilLine, Plus, Send, TriangleAlert } from 'lucide-react'
+import type { InstallationFormStatus, InstallationFormStatusCode } from '@/lib/installations/form-status'
 
 type OrderListItem = {
   id: string
@@ -10,6 +11,7 @@ type OrderListItem = {
   client: { name: string }
   primaryEmployee: { firstName: string; lastName: string }
   backupEmployee: { firstName: string; lastName: string }
+  clientFormStatus: InstallationFormStatus
 }
 
 const STATUS_LABELS: Record<string, string> = {
@@ -20,6 +22,14 @@ const STATUS_LABELS: Record<string, string> = {
   IN_PROGRESS: 'W realizacji',
   ON_HOLD: 'Wstrzymane',
   CLOSED: 'Zamknięte',
+}
+
+const FORM_STATUS_ICONS: Record<InstallationFormStatusCode, typeof FileQuestion> = {
+  NO_FORM: FileQuestion,
+  READY_TO_SEND: Send,
+  WAITING: Clock3,
+  IN_PROGRESS: PencilLine,
+  COMPLETED: CircleCheck,
 }
 
 export function InstallationOrderList({ orders, canCreate = false }: { orders: OrderListItem[]; canCreate?: boolean }) {
@@ -61,7 +71,9 @@ export function InstallationOrderList({ orders, canCreate = false }: { orders: O
         </div>
       ) : (
         <div className="grid gap-3">
-          {orders.map((order) => (
+          {orders.map((order) => {
+            const FormStatusIcon = FORM_STATUS_ICONS[order.clientFormStatus.code]
+            return (
             <Link
               key={order.id}
               href={`/installations/${order.id}`}
@@ -75,6 +87,14 @@ export function InstallationOrderList({ orders, canCreate = false }: { orders: O
                     <span className="rounded-full px-2.5 py-1 text-xs font-semibold" style={{ background: 'var(--wd-sand-light)', color: 'var(--wd-dark)' }}>
                       {STATUS_LABELS[order.status] ?? order.status}
                     </span>
+                    <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold" style={{ background: '#E7F0EA', color: '#29553A' }}>
+                      <FormStatusIcon className="h-3.5 w-3.5" aria-hidden="true" />
+                      {order.clientFormStatus.label}
+                    </span>
+                    {order.clientFormStatus.requiresClarification && <span className="inline-flex items-center gap-1 rounded-full px-2.5 py-1 text-xs font-semibold" style={{ background: '#FFF3D9', color: '#7A4A0B' }}>
+                      <TriangleAlert className="h-3.5 w-3.5" aria-hidden="true" />
+                      Wymaga ustalenia
+                    </span>}
                   </div>
                   <h2 className="mt-3 text-lg font-bold" style={{ color: 'var(--wd-dark)' }}>{order.client.name}</h2>
                   <p className="mt-1 text-sm" style={{ color: 'var(--wd-text-muted)' }}>
@@ -88,7 +108,8 @@ export function InstallationOrderList({ orders, canCreate = false }: { orders: O
                 <p><span className="font-semibold" style={{ color: 'var(--wd-dark)' }}>Zastępca:</span> {order.backupEmployee.firstName} {order.backupEmployee.lastName}</p>
               </div>
             </Link>
-          ))}
+            )
+          })}
         </div>
       )}
     </section>
