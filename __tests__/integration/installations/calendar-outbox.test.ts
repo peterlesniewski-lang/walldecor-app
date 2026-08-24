@@ -472,6 +472,7 @@ describe('installation calendar outbox', () => {
     let visitId: string | null = null
     let processing: Promise<unknown> | null = null
     let releaseAdapter: (() => void) | null = null
+    let restoreExecuteRaw: (() => void) | null = null
     try {
       const fixture = await createOutboxFixture({ availableAt: suppliedNow })
       visitId = fixture.visit.id
@@ -492,9 +493,31 @@ describe('installation calendar outbox', () => {
         cancel: async () => undefined,
       }
 
+      // Fake timers await the interval callback, but not necessarily the
+      // asynchronous SQLite write it starts. Observe the second lease UPDATE
+      // (the first is the immediate pre-I/O fence) through its completion.
+      const rawExecuteClient = dbA as unknown as {
+        $executeRaw: (...args: unknown[]) => Promise<number>
+      }
+      const originalExecuteRaw = rawExecuteClient.$executeRaw
+      const executeRaw = originalExecuteRaw.bind(dbA)
+      let leaseUpdates = 0
+      let resolveHeartbeatWrite!: () => void
+      const heartbeatWriteCommitted = new Promise<void>((resolve) => { resolveHeartbeatWrite = resolve })
+      rawExecuteClient.$executeRaw = async (...args) => {
+        const result = await executeRaw(...args)
+        leaseUpdates += 1
+        if (leaseUpdates === 2) resolveHeartbeatWrite()
+        return result
+      }
+      restoreExecuteRaw = () => { rawExecuteClient.$executeRaw = originalExecuteRaw }
+
       processing = processInstallationCalendarJob(dbA, adapter, job!, suppliedNow)
       await enteredAdapter
       await vi.advanceTimersByTimeAsync(Math.floor(INTEGRATION_OUTBOX_LEASE_MS / 3) + 1)
+      await heartbeatWriteCommitted
+      restoreExecuteRaw()
+      restoreExecuteRaw = null
 
       const renewed = await dbA.integrationOutbox.findUniqueOrThrow({ where: { id: fixture.job.id } })
       expect(renewed.lockedUntil!.getTime()).toBeGreaterThan(suppliedNow.getTime() + INTEGRATION_OUTBOX_LEASE_MS)
@@ -503,6 +526,7 @@ describe('installation calendar outbox', () => {
       expect(await dbA.integrationAttempt.findMany({ where: { outboxId: fixture.job.id } }))
         .toMatchObject([{ number: 1, outcome: 'SUCCESS' }])
     } finally {
+      restoreExecuteRaw?.()
       releaseAdapter?.()
       if (processing) await processing
       if (visitId) {
