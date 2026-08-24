@@ -139,4 +139,31 @@ describe('installer user account API contract', () => {
     expect(mocks.employeeFindUnique).toHaveBeenCalledWith({ where: { id: 'employee-1' }, select: { id: true, active: true } })
     expect(mocks.userUpdate).toHaveBeenCalledWith(expect.objectContaining({ data: { isActive: true } }))
   })
+
+  it('returns a safe conflict when the database installer invariant wins a create race', async () => {
+    mocks.userCreate.mockRejectedValueOnce({
+      code: 'P2003', meta: { modelName: 'User', field_name: 'foreign key' },
+    })
+
+    const response = await POST(createRequest(installerPayload))
+
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toMatchObject({ error: expect.stringMatching(/pracownik/i) })
+  })
+
+  it('returns a safe conflict when the database installer invariant wins a reactivation race', async () => {
+    mocks.userFindUnique.mockResolvedValueOnce({
+      id: 'installer-user', employeeId: 'employee-1', role: 'INSTALLER', isActive: false,
+    })
+    mocks.userUpdate.mockRejectedValueOnce({
+      code: 'P2004', message: 'active installer user requires active employee',
+    })
+
+    const response = await PATCH(new NextRequest('http://test/api/users/installer-user', {
+      method: 'PATCH', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ isActive: true }),
+    }), { params: Promise.resolve({ id: 'installer-user' }) })
+
+    expect(response.status).toBe(409)
+    await expect(response.json()).resolves.toMatchObject({ error: expect.stringMatching(/pracownik/i) })
+  })
 })

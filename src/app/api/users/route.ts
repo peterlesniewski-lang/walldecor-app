@@ -5,6 +5,10 @@ import { prisma } from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import { generateTemporaryPassword, normalizeUsername } from '@/lib/accounts/security'
+import {
+  installerEmployeeInvariantConflictMessage,
+  isActiveInstallerEmployeeInvariantError,
+} from '@/lib/accounts/installer-invariant'
 
 const userSelect = {
   id: true,
@@ -94,20 +98,26 @@ export async function POST(req: NextRequest) {
   const temporaryPassword = generateTemporaryPassword()
   const passwordHash = await bcrypt.hash(temporaryPassword, 12)
 
-  const user = await prisma.user.create({
-    data: {
-      username,
-      email,
-      name,
-      role,
-      passwordHash,
-      mustChangePassword: true,
-      passwordChangedAt: null,
-      isActive: true,
-      ...(employeeId ? { employeeId } : {}),
-    },
-    select: userSelect,
-  })
-
-  return NextResponse.json({ ...user, temporaryPassword }, { status: 201 })
+  try {
+    const user = await prisma.user.create({
+      data: {
+        username,
+        email,
+        name,
+        role,
+        passwordHash,
+        mustChangePassword: true,
+        passwordChangedAt: null,
+        isActive: true,
+        ...(employeeId ? { employeeId } : {}),
+      },
+      select: userSelect,
+    })
+    return NextResponse.json({ ...user, temporaryPassword }, { status: 201 })
+  } catch (error) {
+    if (role === 'INSTALLER' && isActiveInstallerEmployeeInvariantError(error)) {
+      return NextResponse.json({ error: installerEmployeeInvariantConflictMessage }, { status: 409 })
+    }
+    throw error
+  }
 }

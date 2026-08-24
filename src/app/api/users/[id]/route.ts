@@ -4,6 +4,10 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
 import { normalizeUsername } from '@/lib/accounts/security'
+import {
+  installerEmployeeInvariantConflictMessage,
+  isActiveInstallerEmployeeInvariantError,
+} from '@/lib/accounts/installer-invariant'
 
 const userSelect = {
   id: true,
@@ -91,13 +95,19 @@ export async function PATCH(
     }
   }
 
-  const updated = await prisma.user.update({
-    where: { id },
-    data,
-    select: userSelect,
-  })
-
-  return NextResponse.json(updated)
+  try {
+    const updated = await prisma.user.update({
+      where: { id },
+      data,
+      select: userSelect,
+    })
+    return NextResponse.json(updated)
+  } catch (error) {
+    if (effectiveRole === 'INSTALLER' && effectiveActive && isActiveInstallerEmployeeInvariantError(error)) {
+      return NextResponse.json({ error: installerEmployeeInvariantConflictMessage }, { status: 409 })
+    }
+    throw error
+  }
 }
 
 export async function DELETE(
