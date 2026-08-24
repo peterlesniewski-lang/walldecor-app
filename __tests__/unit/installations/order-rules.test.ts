@@ -60,7 +60,7 @@ vi.mock('@/lib/prisma', () => ({
     workTimeRecord: { count: vi.fn() },
     workSchedule: { count: vi.fn() },
     overtimeRequest: { count: vi.fn() },
-    user: { count: vi.fn() },
+    user: { count: vi.fn(), findUnique: vi.fn() },
     leaveBalanceNew: { deleteMany: vi.fn() },
     leaveBalance: { deleteMany: vi.fn() },
     installationOrder: { count: vi.fn() },
@@ -177,6 +177,7 @@ describe('installation order access policy', () => {
     primaryEmployeeId: 'primary',
     backupEmployeeId: 'backup',
     installerAssignments: [{ employeeId: 'installer-a' }],
+    scopeAssignments: [{ employeeId: 'installer-b' }],
     delegations: [
       {
         delegateEmployeeId: 'delegate-active',
@@ -208,8 +209,20 @@ describe('installation order access policy', () => {
   })
 
   it('grants installer access only to their own explicitly assigned installer record', () => {
-    expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-a' }, order, now)).toBe(true)
-    expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-b' }, order, now)).toBe(false)
+    expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-a', employeeActive: true }, order, now)).toBe(true)
+    expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-c', employeeActive: true }, order, now)).toBe(false)
+  })
+
+  it('grants installer access through an installer assignment on a work scope', () => {
+    expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-b', employeeActive: true }, order, now)).toBe(true)
+  })
+
+  it('fails closed for an inactive installer with an explicit assignment', () => {
+    expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-a', employeeActive: false }, order, now)).toBe(false)
+  })
+
+  it('fails closed for an inactive installer with a scope assignment', () => {
+    expect(canAccessInstallationOrder({ role: 'INSTALLER', employeeId: 'installer-b', employeeActive: false }, order, now)).toBe(false)
   })
 
   it('fails closed when an EMPLOYEE account is no longer active', () => {
@@ -246,6 +259,7 @@ const apiOrder = {
   primaryEmployeeId: 'primary',
   backupEmployeeId: 'backup',
   installerAssignments: [],
+  scopeAssignments: [],
   scheduledAt: null,
   externalSystem: null,
   externalId: null,
@@ -257,9 +271,17 @@ const apiOrder = {
   delegations: [],
   auditEvents: [],
   clientFormStatus: { code: 'NO_FORM' as const, label: 'Brak formularza', requiresClarification: false },
+  calendarSummary: { nextVisitAt: null, visitStatus: 'NONE' as const, syncStatus: 'NOT_REQUESTED' as const },
 }
 
 function session(role: 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER', employeeId: string | null = null) {
+  vi.mocked(prisma.user.findUnique).mockResolvedValue({
+    id: `${role.toLowerCase()}-user`,
+    role,
+    isActive: true,
+    employeeId,
+    employee: employeeId ? { active: true } : null,
+  } as never)
   return {
     user: { id: `${role.toLowerCase()}-user`, name: role, email: `${role.toLowerCase()}@example.pl`, role, employeeId },
     expires: '',
@@ -299,8 +321,32 @@ describe('installation order API boundaries', () => {
     expect(response.status).toBe(200)
     expect(body.map((order: { id: string }) => order.id)).toEqual(['order-1'])
     expect(mockListInstallationOrders).toHaveBeenCalledWith(prisma, {
-      viewer: { role: 'EMPLOYEE', employeeId: 'primary', employeeActive: true },
+      viewer: { role: 'EMPLOYEE', employeeId: 'primary', employeeActive: true, authorized: true },
     })
+  })
+
+  it('loads the active installer state before returning their scope-assigned order list', async () => {
+    mockGetServerSession.mockResolvedValue(session('INSTALLER', 'installer-scope') as never)
+    mockListInstallationOrders.mockResolvedValue([{ ...apiOrder, scopeAssignments: [{ employeeId: 'installer-scope' }] }] as never)
+
+    const response = await listOrders(new NextRequest('http://localhost/api/installations'))
+
+    expect(response.status).toBe(200)
+    expect((await response.json()).map((order: { id: string }) => order.id)).toEqual(['order-1'])
+    expect(prisma.user.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'installer-user' } }))
+    expect(mockListInstallationOrders).toHaveBeenCalledWith(prisma, {
+      viewer: { role: 'INSTALLER', employeeId: 'installer-scope', employeeActive: true, authorized: true },
+    })
+  })
+
+  it('denies an installer whose currently linked employee is inactive before listing cards', async () => {
+    mockGetServerSession.mockResolvedValue(session('INSTALLER', 'installer-scope') as never)
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: 'installer-user', role: 'INSTALLER', isActive: true, employeeId: 'installer-scope', employee: { active: false } } as never)
+
+    const response = await listOrders(new NextRequest('http://localhost/api/installations'))
+
+    expect(response.status).toBe(403)
+    expect(mockListInstallationOrders).not.toHaveBeenCalled()
   })
 
   it('returns field-level 400 errors for an invalid create payload', async () => {
@@ -401,7 +447,7 @@ describe('installation order API boundaries', () => {
 
   it('fails closed for an inactive EMPLOYEE even if their id is a card owner', async () => {
     mockGetServerSession.mockResolvedValue(session('EMPLOYEE', 'primary') as never)
-    vi.mocked(prisma.employee.findUnique).mockResolvedValue({ id: 'primary', active: false } as never)
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: 'employee-user', role: 'EMPLOYEE', isActive: true, employeeId: 'primary', employee: { active: false } } as never)
     mockGetInstallationOrder.mockResolvedValue(apiOrder as never)
 
     const response = await getOrder(new NextRequest('http://localhost/api/installations/order-1'), {
@@ -409,6 +455,31 @@ describe('installation order API boundaries', () => {
     })
 
     expect(response.status).toBe(403)
+  })
+
+  it('returns an assigned installation order to an active INSTALLER after looking up their activity', async () => {
+    mockGetServerSession.mockResolvedValue(session('INSTALLER', 'installer-scope') as never)
+    mockGetInstallationOrder.mockResolvedValue({ ...apiOrder, scopeAssignments: [{ employeeId: 'installer-scope' }] } as never)
+
+    const response = await getOrder(new NextRequest('http://localhost/api/installations/order-1'), {
+      params: Promise.resolve({ id: 'order-1' }),
+    })
+
+    expect(response.status).toBe(200)
+    expect(prisma.user.findUnique).toHaveBeenCalledWith(expect.objectContaining({ where: { id: 'installer-user' } }))
+  })
+
+  it('returns 403 to an inactive INSTALLER even when their scope is assigned', async () => {
+    mockGetServerSession.mockResolvedValue(session('INSTALLER', 'installer-scope') as never)
+    vi.mocked(prisma.user.findUnique).mockResolvedValue({ id: 'installer-user', role: 'INSTALLER', isActive: true, employeeId: 'installer-scope', employee: { active: false } } as never)
+    mockGetInstallationOrder.mockResolvedValue({ ...apiOrder, scopeAssignments: [{ employeeId: 'installer-scope' }] } as never)
+
+    const response = await getOrder(new NextRequest('http://localhost/api/installations/order-1'), {
+      params: Promise.resolve({ id: 'order-1' }),
+    })
+
+    expect(response.status).toBe(403)
+    expect(mockGetInstallationOrder).not.toHaveBeenCalled()
   })
 
   it('checks a session independently before patching or archiving', async () => {
@@ -452,7 +523,6 @@ describe('installation order API boundaries', () => {
         }],
       }
       mockGetServerSession.mockResolvedValue(session('EMPLOYEE', 'delegate-active') as never)
-      vi.mocked(prisma.employee.findUnique).mockResolvedValue({ id: 'delegate-active', active: true } as never)
       mockGetInstallationOrder.mockResolvedValue(delegatedOrder as never)
       mockUpdateInstallationOrder.mockResolvedValue(delegatedOrder as never)
 
@@ -584,10 +654,10 @@ describe('installation order controls', () => {
   it('links every listed order to its detail view', () => {
     render(createElement(InstallationOrderList, { orders: [apiOrder] }))
 
-    expect(screen.getByRole('link', { name: /MON-20260822-1234/ }).getAttribute('href')).toBe('/installations/order-1')
+    expect(screen.getByRole('link', { name: 'Otwórz kartę Anna Kowalska' }).getAttribute('href')).toBe('/installations/order-1')
   })
 
-  it('renders the derived client-form and clarification badges inside the single card link', () => {
+  it('renders the derived client-form and clarification badges alongside the card and guide links', () => {
     render(createElement(InstallationOrderList, { orders: [{
       ...apiOrder,
       clientFormStatus: { code: 'IN_PROGRESS' as const, label: 'Rozpoczęty', requiresClarification: true },
@@ -595,7 +665,8 @@ describe('installation order controls', () => {
 
     expect(screen.getByText('Rozpoczęty')).not.toBeNull()
     expect(screen.getByText('Wymaga ustalenia')).not.toBeNull()
-    expect(screen.getAllByRole('link')).toHaveLength(1)
+    expect(screen.getByRole('link', { name: 'Instrukcje montaży' }).getAttribute('href')).toBe('/installations/instrukcje')
+    expect(screen.getAllByRole('link')).toHaveLength(3)
     expect(screen.queryByRole('button')).toBeNull()
   })
 

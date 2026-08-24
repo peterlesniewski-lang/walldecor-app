@@ -6,16 +6,21 @@ import {
   canArchiveInstallationOrder,
   canEditInstallationOrder,
   canViewInstallationOrder,
+  isInstallationViewerAuthorized,
 } from '@/lib/installations/access'
-import { INSTALLATION_ROLES, type InstallationRole } from '@/lib/installations/constants'
+import { installationViewerFromSession } from '@/lib/installations/http-access'
 import { getInstallationOrder } from '@/lib/installations/order-service'
-import { getInstallationOrderFormSnapshot, getInstallationOrderRooms, listInstallationCatalog, listInstallationFormTemplates } from '@/lib/installations/catalog-service'
+import { getInstallationOrderFormSnapshot, getInstallationOrderRooms, getInstallerInstallationOrderRooms, listInstallationCatalog, listInstallationFormTemplates } from '@/lib/installations/catalog-service'
 import { listClientLinkStatuses } from '@/lib/installations/client-link'
 import { listInstallationClarifications, listInstallationFormRevisions } from '@/lib/installations/form-service'
 import { getInstallationReadiness } from '@/lib/installations/readiness'
 import { getInstallationOwnershipView, getInstallationVisitFeeView } from '@/lib/installations/delegation-service'
 import { listInstallationFiles, listInstallationMismatchesForEvidence } from '@/lib/installation-media/service'
+import { listInstallationVisits } from '@/lib/installations/visit-service'
+import { listScopeInstallerAssignments } from '@/lib/installations/scope-assignment-service'
 import { InstallationOrderDetail } from '@/components/installations/order-detail'
+import { presentInstallerInstallationOrder } from '@/lib/installations/order-presenter'
+import { presentInstallerInstallationVisits } from '@/lib/installations/installer-visit-presenter'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -24,32 +29,29 @@ export default async function InstallationOrderPage({ params }: Params) {
   if (!session) redirect('/login')
 
   const { id } = await params
+  const viewer = await installationViewerFromSession(session)
+  if (!isInstallationViewerAuthorized(viewer)) notFound()
   const order = await getInstallationOrder(prisma, id)
   if (!order) notFound()
 
-  const role = INSTALLATION_ROLES.includes(session.user.role as InstallationRole)
-    ? session.user.role as InstallationRole
-    : 'EMPLOYEE'
-  const viewerEmployee = role === 'EMPLOYEE' && session.user.employeeId
-    ? await prisma.employee.findUnique({ where: { id: session.user.employeeId }, select: { active: true } })
-    : null
-  const viewer = {
-    role,
-    employeeId: session.user.employeeId,
-    employeeActive: viewerEmployee?.active === true,
-  }
   if (!canViewInstallationOrder(viewer, order)) notFound()
 
   const canCoordinateClientForm = canEditInstallationOrder(viewer, order)
-  const canManageGovernance = role === 'ADMIN' || role === 'MANAGER'
-  const rooms = await getInstallationOrderRooms(prisma, id)
+  const canManageGovernance = viewer.role === 'ADMIN' || viewer.role === 'MANAGER'
+  const [rooms, visits, scopeAssignments] = await Promise.all([
+    viewer.role === 'INSTALLER'
+      ? getInstallerInstallationOrderRooms(prisma, id, viewer.employeeId!)
+      : getInstallationOrderRooms(prisma, id),
+    listInstallationVisits(prisma, id),
+    listScopeInstallerAssignments(prisma, id),
+  ])
   // An installer gets the limited work-order view. Client answers, their
   // clarification/evidence trail and client-link management are coordinator-only.
   const coordinatorData = canCoordinateClientForm ? await (async () => {
     const [employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches] = await Promise.all([
       prisma.employee.findMany({
         where: { active: true },
-        select: { id: true, firstName: true, lastName: true },
+        select: { id: true, firstName: true, lastName: true, email: true },
         orderBy: [{ firstName: 'asc' }, { lastName: 'asc' }],
       }),
       listInstallationCatalog(prisma),
@@ -67,13 +69,18 @@ export default async function InstallationOrderPage({ params }: Params) {
     return { employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches }
   })() : null
 
-  // Decimal is a Prisma value object and cannot cross the Server/Client
-  // Component boundary. Keep the order model intact in the service layer and
-  // serialize only the Task 4 snapshot exposed to the detail component.
-  const clientOrder = {
-    ...order,
-    visitFeeGrossAmount: order.visitFeeGrossAmount?.toFixed(2) ?? null,
-  }
+  // Cross the Server/Client boundary with a role-specific payload: an explicit
+  // installer allowlist, or the coordinator model with Decimal serialized.
+  const installerView = viewer.role === 'INSTALLER'
+  const clientOrder = installerView
+    ? presentInstallerInstallationOrder(order)
+    : {
+        ...order,
+        visitFeeGrossAmount: order.visitFeeGrossAmount?.toFixed(2) ?? null,
+      }
+  const clientVisits = installerView
+    ? presentInstallerInstallationVisits(visits, viewer)
+    : visits
 
   return <InstallationOrderDetail
     order={clientOrder}
@@ -93,5 +100,7 @@ export default async function InstallationOrderPage({ params }: Params) {
     files={coordinatorData?.files ?? []}
     mismatches={coordinatorData?.mismatches ?? []}
     canManageGovernance={canManageGovernance}
+    visits={clientVisits}
+    scopeAssignments={installerView ? [] : scopeAssignments}
   />
 }

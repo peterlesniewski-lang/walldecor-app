@@ -2,7 +2,9 @@ import { getServerSession } from 'next-auth'
 import { redirect } from 'next/navigation'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { INSTALLATION_ROLES, type InstallationRole } from '@/lib/installations/constants'
+import { installationViewerFromSession } from '@/lib/installations/http-access'
+import { isInstallationViewerAuthorized } from '@/lib/installations/access'
+import { canManageInstallationCatalog } from '@/lib/installations/access'
 import { listInstallationOrders } from '@/lib/installations/order-service'
 import { InstallationOrderList } from '@/components/installations/order-list'
 
@@ -10,19 +12,14 @@ export default async function InstallationsPage() {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
 
-  const role = INSTALLATION_ROLES.includes(session.user.role as InstallationRole)
-    ? session.user.role as InstallationRole
-    : 'EMPLOYEE'
-  const viewerEmployee = role === 'EMPLOYEE' && session.user.employeeId
-    ? await prisma.employee.findUnique({ where: { id: session.user.employeeId }, select: { active: true } })
-    : null
-  const viewer = {
-    role,
-    employeeId: session.user.employeeId,
-    employeeActive: viewerEmployee?.active === true,
-  }
+  const viewer = await installationViewerFromSession(session)
+  if (!isInstallationViewerAuthorized(viewer)) redirect('/login')
   const visibleOrders = await listInstallationOrders(prisma, { viewer })
-  const canCreate = role === 'ADMIN' || role === 'MANAGER' || (role === 'EMPLOYEE' && viewer.employeeActive === true)
+  const canCreate = viewer.role === 'ADMIN' || viewer.role === 'MANAGER' || (viewer.role === 'EMPLOYEE' && viewer.employeeActive === true)
 
-  return <InstallationOrderList orders={visibleOrders} canCreate={canCreate} />
+  return <InstallationOrderList
+    orders={visibleOrders}
+    canCreate={canCreate}
+    canManageCatalog={canManageInstallationCatalog(viewer)}
+  />
 }

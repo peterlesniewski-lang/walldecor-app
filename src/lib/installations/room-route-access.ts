@@ -1,9 +1,9 @@
 import { NextResponse } from 'next/server'
-import { canEditInstallationOrder } from './access'
-import { accessibleInstallationOrder, installationViewerFromSession } from './http-access'
+import { canEditInstallationOrder, type InstallationOrderViewer } from './access'
+import { accessibleInstallationOrder, installationViewerFromSession, type AccessibleInstallationOrderResult } from './http-access'
 import { getInstallationOrderRooms } from './catalog-service'
 import { prisma } from '@/lib/prisma'
-import { INSTALLATION_ROLES, type InstallationRole } from './constants'
+import type { InstallationRole } from './constants'
 
 export type InternalMeasurementActor = {
   userId: string
@@ -11,13 +11,20 @@ export type InternalMeasurementActor = {
   employeeId: string | null
 }
 
-export async function editableInstallationOrder(session: { user: { role: string; employeeId?: string | null } }, orderId: string) {
+export type EditableInstallationOrderResult =
+  | { response: NextResponse; order?: never; viewer?: never }
+  | { order: Extract<AccessibleInstallationOrderResult, { order: unknown }>['order']; viewer: InstallationOrderViewer; response?: never }
+
+export async function editableInstallationOrder(
+  session: { user: { id: string; role: string; employeeId?: string | null } },
+  orderId: string,
+): Promise<EditableInstallationOrderResult> {
   const viewer = await installationViewerFromSession(session)
   const loaded = await accessibleInstallationOrder(orderId, viewer)
-  if ('response' in loaded) return loaded
+  if (loaded.response) return { response: loaded.response }
   if (!canEditInstallationOrder(viewer, loaded.order)) return { response: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) }
   if (loaded.order.archivedAt) return { response: NextResponse.json({ error: 'Archived' }, { status: 409 }) }
-  return loaded
+  return { order: loaded.order, viewer }
 }
 
 export async function roomInInstallationOrder(orderId: string, roomId: string) {
@@ -26,14 +33,13 @@ export async function roomInInstallationOrder(orderId: string, roomId: string) {
 }
 
 /**
- * Provenance comes only from the authenticated server session. An inactive
- * employee is never recorded as the measurement author; ADMIN/MANAGER still
- * retain their user ID and role without impersonating an Employee row.
+ * Provenance is derived from the same current User record that authorized the
+ * write. An inactive or demoted session can never write a stale role into a
+ * measurement audit record.
  */
-export async function measurementActorFromSession(session: { user: { id: string; role: string; employeeId?: string | null } }): Promise<InternalMeasurementActor> {
-  const role = INSTALLATION_ROLES.includes(session.user.role as InstallationRole) ? session.user.role as InstallationRole : 'EMPLOYEE'
-  const employee = session.user.employeeId
-    ? await prisma.employee.findUnique({ where: { id: session.user.employeeId }, select: { active: true } })
+export function measurementActorFromViewer(userId: string, viewer: InstallationOrderViewer): InternalMeasurementActor {
+  const employeeId = viewer.role === 'EMPLOYEE' || viewer.role === 'INSTALLER'
+    ? viewer.employeeId ?? null
     : null
-  return { userId: session.user.id, role, employeeId: employee?.active ? session.user.employeeId ?? null : null }
+  return { userId, role: viewer.role, employeeId }
 }

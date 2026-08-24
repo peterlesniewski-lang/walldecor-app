@@ -7,6 +7,7 @@ import {
   validateInstallationQuestionDefinitions,
 } from './question-schema'
 import { INSTALLATION_ROLES, type InstallationRole } from './constants'
+import { presentInstallerInstallationRooms } from './installer-room-presenter'
 
 type InstallationDb = PrismaClient | Prisma.TransactionClient
 
@@ -662,6 +663,55 @@ export async function deleteInstallationMeasurement(db: PrismaClient, id: string
 
 export async function getInstallationOrderRooms(db: InstallationDb, orderId: string) {
   return db.installationRoom.findMany({ where: { orderId }, include: roomInclude, orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }] })
+}
+
+/**
+ * One constrained source for every installer-facing room response. The query
+ * filters at the scope-assignment boundary first; the presenter then strips
+ * all non-work data before API/Flight serialization.
+ */
+export async function getInstallerInstallationOrderRooms(
+  db: InstallationDb,
+  orderId: string,
+  employeeId: string,
+) {
+  const rooms = await db.installationRoom.findMany({
+    where: {
+      orderId,
+      scopes: { some: { assignments: { some: { employeeId } } } },
+    },
+    select: {
+      id: true,
+      name: true,
+      sortOrder: true,
+      scopes: {
+        where: { assignments: { some: { employeeId } } },
+        orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+        select: {
+          id: true,
+          name: true,
+          sortOrder: true,
+          scopeProducts: {
+            orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+            select: {
+              id: true,
+              productNameSnapshot: true,
+              productCodeSnapshot: true,
+              manufacturerSnapshot: true,
+              collectionSnapshot: true,
+              sortOrder: true,
+            },
+          },
+          measurements: {
+            orderBy: { createdAt: 'asc' },
+            select: { id: true, elementName: true, value: true, unit: true },
+          },
+        },
+      },
+    },
+    orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],
+  })
+  return presentInstallerInstallationRooms(rooms)
 }
 
 export async function reorderInstallationRooms(db: PrismaClient, orderId: string, orderedIds: string[]) {

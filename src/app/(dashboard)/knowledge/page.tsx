@@ -1,5 +1,5 @@
 import { getServerSession } from 'next-auth'
-import { redirect } from 'next/navigation'
+import { notFound, redirect } from 'next/navigation'
 import { BookOpen } from 'lucide-react'
 import { authOptions } from '@/lib/auth'
 import { getArticles } from '@/lib/wikipedia/actions'
@@ -8,6 +8,9 @@ import { ArticleList } from '@/components/wikipedia/ArticleList'
 export default async function KnowledgePage() {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
+  // Keep the generic Wiki sealed for installers independently of proxy rules.
+  // Their least-privilege operational knowledge lives under /installations.
+  if (session.user.role === 'INSTALLER') notFound()
 
   const role = session.user.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
   const isManager = role === 'ADMIN' || role === 'MANAGER'

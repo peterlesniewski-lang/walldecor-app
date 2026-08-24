@@ -531,7 +531,7 @@ describe('client form uses a real SQLite revision history', () => {
       orderId: assigned.id, sourceSubmissionId: submission.id, questionKey: 'private-question', reasonCode: 'UNKNOWN_ANSWER', reason: 'Prywatna treść ustalenia', isBlocking: true,
     } })
 
-    const visible = await listInstallationOrders(db, { viewer: { role: 'INSTALLER', employeeId: installer.id } })
+    const visible = await listInstallationOrders(db, { viewer: { role: 'INSTALLER', employeeId: installer.id, employeeActive: true } })
 
     expect(visible.map((order) => order.id)).toEqual([assigned.id])
     expect(visible[0]).toMatchObject({ clientFormStatus: { code: 'IN_PROGRESS', requiresClarification: true } })

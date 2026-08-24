@@ -11,6 +11,11 @@ import { canViewInstallationOrder, type InstallationOrderViewer } from './access
 
 type InstallationDb = PrismaClient | Prisma.TransactionClient
 type InstallationOrderListOptions = { includeArchived?: boolean; viewer?: InstallationOrderViewer }
+type InstallationCalendarSummary = {
+  nextVisitAt: string | null
+  visitStatus: 'NONE' | 'DRAFT' | 'CONFIRMED'
+  syncStatus: 'NOT_REQUESTED' | 'PENDING' | 'SYNCED' | 'ATTENTION'
+}
 
 const orderInclude = {
   client: true,
@@ -18,6 +23,7 @@ const orderInclude = {
   backupEmployee: { select: { id: true, firstName: true, lastName: true, active: true } },
   delegations: { orderBy: { createdAt: 'desc' } },
   installerAssignments: { select: { employeeId: true } },
+  scopeAssignments: { select: { employeeId: true } },
   auditEvents: { orderBy: { createdAt: 'desc' } },
 } satisfies Prisma.InstallationOrderInclude
 
@@ -36,6 +42,7 @@ const orderListSelect = {
   backupEmployee: { select: { firstName: true, lastName: true } },
   delegations: { select: { delegateEmployeeId: true, startsAt: true, endsAt: true, endedAt: true } },
   installerAssignments: { select: { employeeId: true } },
+  scopeAssignments: { select: { employeeId: true } },
   formSnapshots: { select: { id: true }, take: 1 },
   clientLinks: {
     select: { id: true, sentAt: true, lastOpenedAt: true },
@@ -44,7 +51,41 @@ const orderListSelect = {
   },
   formSubmissions: { select: { status: true, draftKey: true }, orderBy: { revisionNumber: 'desc' } },
   clarifications: { where: { status: 'OPEN', isBlocking: true }, select: { id: true } },
+  visits: {
+    where: { status: { in: ['DRAFT', 'CONFIRMED'] } },
+    orderBy: [
+      { startsAt: { sort: 'asc', nulls: 'last' } },
+      { createdAt: 'asc' },
+      { id: 'asc' },
+    ],
+    take: 1,
+    select: {
+      startsAt: true,
+      status: true,
+      syncStates: {
+        where: { kind: 'GOOGLE_CALENDAR' },
+        select: { status: true },
+        take: 1,
+      },
+    },
+  },
 } satisfies Prisma.InstallationOrderSelect
+
+function summarizeNextInstallationVisit(
+  visit: { startsAt: Date | null; status: string; syncStates: Array<{ status: string }> } | undefined,
+): InstallationCalendarSummary {
+  if (visit?.status !== 'DRAFT' && visit?.status !== 'CONFIRMED') {
+    return { nextVisitAt: null, visitStatus: 'NONE', syncStatus: 'NOT_REQUESTED' }
+  }
+  const syncStatus = visit?.syncStates[0]?.status
+  return {
+    nextVisitAt: visit?.startsAt?.toISOString() ?? null,
+    visitStatus: visit?.status === 'DRAFT' ? 'DRAFT' : visit?.status === 'CONFIRMED' ? 'CONFIRMED' : 'NONE',
+    syncStatus: syncStatus === 'PENDING' || syncStatus === 'SYNCED' || syncStatus === 'ATTENTION'
+      ? syncStatus
+      : 'NOT_REQUESTED',
+  }
+}
 
 export class InstallationOrderNotFoundError extends Error {
   constructor() {
@@ -104,17 +145,28 @@ async function assertActiveOwners(db: InstallationDb, primaryEmployeeId: string,
  * update: that would reopen the ownership race.
  */
 export async function deactivateEmployeeIfNoActiveInstallationOrder(db: PrismaClient, employeeId: string) {
-  return db.$executeRaw`
-    UPDATE "Employee"
-    SET "active" = ${false}
-    WHERE "id" = ${employeeId}
-      AND NOT EXISTS (
-        SELECT 1
-        FROM "InstallationOrder"
-        WHERE "archivedAt" IS NULL
-          AND ("primaryEmployeeId" = ${employeeId} OR "backupEmployeeId" = ${employeeId})
-      )
-  `
+  return db.$transaction(async (transaction) => {
+    const updatedRows = await transaction.$executeRaw`
+      UPDATE "Employee"
+      SET "active" = ${false}
+      WHERE "id" = ${employeeId}
+        AND NOT EXISTS (
+          SELECT 1
+          FROM "InstallationOrder"
+          WHERE "archivedAt" IS NULL
+            AND ("primaryEmployeeId" = ${employeeId} OR "backupEmployeeId" = ${employeeId})
+        )
+    `
+
+    if (updatedRows === 0) return updatedRows
+
+    await transaction.user.updateMany({
+      where: { employeeId, role: 'INSTALLER' },
+      data: { isActive: false },
+    })
+
+    return updatedRows
+  })
 }
 
 async function nextInstallationNumber(db: InstallationDb) {
@@ -207,6 +259,7 @@ export async function listInstallationOrders(db: InstallationDb, options: Instal
     : orders
 
   return visibleOrders.map((order) => ({
+    calendarSummary: summarizeNextInstallationVisit(order.visits[0]),
     id: order.id,
     number: order.number,
     status: order.status,

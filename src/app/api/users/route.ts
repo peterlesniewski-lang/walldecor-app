@@ -5,6 +5,10 @@ import { prisma } from '@/lib/prisma'
 import bcrypt from 'bcryptjs'
 import { z } from 'zod'
 import { generateTemporaryPassword, normalizeUsername } from '@/lib/accounts/security'
+import {
+  installerEmployeeInvariantConflictMessage,
+  isActiveInstallerEmployeeInvariantError,
+} from '@/lib/accounts/installer-invariant'
 
 const userSelect = {
   id: true,
@@ -44,7 +48,7 @@ const createUserSchema = z.object({
   username: z.string().min(2),
   email: z.string().email(),
   name: z.string().min(1),
-  role: z.enum(['ADMIN', 'MANAGER', 'EMPLOYEE']).default('EMPLOYEE'),
+  role: z.enum(['ADMIN', 'MANAGER', 'EMPLOYEE', 'INSTALLER']).default('EMPLOYEE'),
   employeeId: z.string().optional(),
 })
 
@@ -74,6 +78,16 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Email już istnieje w systemie.' }, { status: 409 })
   }
 
+  if (role === 'INSTALLER') {
+    if (!employeeId) {
+      return NextResponse.json({ error: 'Konto instalatora musi być powiązane z aktywnym pracownikiem.' }, { status: 400 })
+    }
+    const installerEmployee = await prisma.employee.findUnique({ where: { id: employeeId }, select: { id: true, active: true } })
+    if (!installerEmployee?.active) {
+      return NextResponse.json({ error: 'Konto instalatora wymaga istniejącego aktywnego pracownika.' }, { status: 400 })
+    }
+  }
+
   if (employeeId) {
     const empUser = await prisma.user.findUnique({ where: { employeeId } })
     if (empUser) {
@@ -84,20 +98,26 @@ export async function POST(req: NextRequest) {
   const temporaryPassword = generateTemporaryPassword()
   const passwordHash = await bcrypt.hash(temporaryPassword, 12)
 
-  const user = await prisma.user.create({
-    data: {
-      username,
-      email,
-      name,
-      role,
-      passwordHash,
-      mustChangePassword: true,
-      passwordChangedAt: null,
-      isActive: true,
-      ...(employeeId ? { employeeId } : {}),
-    },
-    select: userSelect,
-  })
-
-  return NextResponse.json({ ...user, temporaryPassword }, { status: 201 })
+  try {
+    const user = await prisma.user.create({
+      data: {
+        username,
+        email,
+        name,
+        role,
+        passwordHash,
+        mustChangePassword: true,
+        passwordChangedAt: null,
+        isActive: true,
+        ...(employeeId ? { employeeId } : {}),
+      },
+      select: userSelect,
+    })
+    return NextResponse.json({ ...user, temporaryPassword }, { status: 201 })
+  } catch (error) {
+    if (role === 'INSTALLER' && isActiveInstallerEmployeeInvariantError(error)) {
+      return NextResponse.json({ error: installerEmployeeInvariantConflictMessage }, { status: 409 })
+    }
+    throw error
+  }
 }

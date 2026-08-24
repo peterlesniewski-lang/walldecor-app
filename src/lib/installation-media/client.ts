@@ -1,6 +1,8 @@
 import { createHash } from 'node:crypto'
+import { lstatSync, mkdirSync, realpathSync } from 'node:fs'
 import { mkdir, readFile, rename, rm, writeFile } from 'node:fs/promises'
 import path from 'node:path'
+import { validateInstallationCalendarE2eDatabase } from '../installations/calendar-e2e-database'
 import { INSTALLATION_MAX_FILE_BYTES } from './limits'
 
 export class InstallationMediaClientError extends Error {
@@ -40,6 +42,50 @@ type ExpectedPrivateMediaFile = {
 const DEFAULT_PRIVATE_MEDIA_TIMEOUT_MS = 15_000
 const MAX_PRIVATE_MEDIA_TIMEOUT_MS = 120_000
 const MAX_PRIVATE_MEDIA_DELETE_RESPONSE_BYTES = 64 * 1024
+
+function isolatedFilesystemTestRoot(
+  root: string | undefined,
+  calendarDatabase: ReturnType<typeof validateInstallationCalendarE2eDatabase>,
+) {
+  if (!root || !path.isAbsolute(root)) throw new InstallationMediaClientError('Testowy katalog mediów musi być izolowany w /tmp.')
+  const resolvedRoot = path.resolve(root)
+  const rootName = path.basename(resolvedRoot)
+  const isLegacyIsolatedRoot = path.dirname(resolvedRoot) === '/tmp'
+    && rootName.startsWith('walldecor-installations-e2e-media-')
+    && rootName.length > 'walldecor-installations-e2e-media-'.length
+  const isCalendarOwnedRoot = calendarDatabase !== null
+    && resolvedRoot === path.join(calendarDatabase.directoryPath, 'media')
+  if (!isLegacyIsolatedRoot && !isCalendarOwnedRoot) throw new InstallationMediaClientError('Testowy katalog mediów musi być izolowany w /tmp.')
+
+  try {
+    mkdirSync(resolvedRoot, { mode: 0o700 })
+  } catch (error) {
+    if (!(error instanceof Error && 'code' in error && error.code === 'EEXIST')) {
+      throw new InstallationMediaClientError('Nie można utworzyć izolowanego katalogu mediów E2E.')
+    }
+  }
+
+  try {
+    const rootStat = lstatSync(resolvedRoot)
+    if (rootStat.isSymbolicLink() || !rootStat.isDirectory() || (rootStat.mode & 0o077) !== 0) {
+      throw new InstallationMediaClientError('Testowy katalog mediów nie jest prywatnym katalogiem E2E.')
+    }
+    if (typeof process.getuid === 'function' && rootStat.uid !== process.getuid()) {
+      throw new InstallationMediaClientError('Testowy katalog mediów ma niewłaściwego właściciela.')
+    }
+    const expectedRealRoot = isCalendarOwnedRoot
+      ? path.join(realpathSync(calendarDatabase!.directoryPath), 'media')
+      : path.join(realpathSync('/tmp'), rootName)
+    if (realpathSync(resolvedRoot) !== expectedRealRoot) {
+      throw new InstallationMediaClientError('Testowy katalog mediów wychodzi poza prywatny katalog E2E.')
+    }
+  } catch (error) {
+    if (error instanceof InstallationMediaClientError) throw error
+    throw new InstallationMediaClientError('Nie można zweryfikować izolowanego katalogu mediów E2E.')
+  }
+
+  return resolvedRoot
+}
 
 function privateHeaders(token: string) {
   return { Authorization: `Bearer ${token}` }
@@ -246,9 +292,10 @@ export function privateMediaClientFromEnvironment() {
   }
   if (process.env.INSTALLATION_MEDIA_TEST_ADAPTER === 'filesystem') {
     if (process.env.NODE_ENV === 'production') throw new InstallationMediaClientError('Testowy adapter plików nie może działać produkcyjnie.')
-    const root = process.env.INSTALLATION_MEDIA_TEST_ROOT
-    const resolvedRoot = root ? path.resolve(root) : ''
-    if (!root || !path.isAbsolute(root) || !resolvedRoot.startsWith('/tmp/walldecor-installations-e2e-media-')) throw new InstallationMediaClientError('Testowy katalog mediów musi być izolowany w /tmp.')
+    const calendarDatabase = process.env.WALLDECOR_E2E_PRIVATE_DIRECTORY_OWNED === 'true'
+      ? validateInstallationCalendarE2eDatabase(process.env)
+      : null
+    const resolvedRoot = isolatedFilesystemTestRoot(process.env.INSTALLATION_MEDIA_TEST_ROOT, calendarDatabase)
     return filesystemPrivateMediaClient(resolvedRoot)
   }
   return createPrivateMediaClient({

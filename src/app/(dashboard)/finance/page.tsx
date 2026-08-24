@@ -100,7 +100,7 @@ export default async function FinancePage({ searchParams }: PageProps) {
 
   return (
     <CompanyHealthView
-      role={role}
+      role={role === 'INSTALLER' ? 'EMPLOYEE' : role}
       health={health}
       cashByCurrency={cashByCurrency}
       ksefInboxCount={ksefInboxCount}

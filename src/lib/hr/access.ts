@@ -1,4 +1,4 @@
-export type HrRole = 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+export type HrRole = 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER'
 
 export type HrSessionLike = {
   user: {
@@ -30,7 +30,7 @@ export function getScopedEmployeeWhere(
     return session.user.employeeId ? { id: session.user.employeeId } : HR_NO_EMPLOYEE_ACCESS_WHERE
   }
 
-  if (viewerEmployee?.divisionId) {
+  if (session.user.role === 'MANAGER' && viewerEmployee?.divisionId) {
     return { active: true, divisionId: viewerEmployee.divisionId }
   }
 
@@ -48,20 +48,28 @@ export function canViewEmployeeRecord(
     return Boolean(session.user.employeeId) && employee.id === session.user.employeeId
   }
 
-  return Boolean(
-    viewerEmployee?.divisionId &&
-      employee.active !== false &&
-      employee.divisionId === viewerEmployee.divisionId
-  )
+  if (session.user.role === 'MANAGER') {
+    return Boolean(
+      viewerEmployee?.divisionId &&
+        employee.active !== false &&
+        employee.divisionId === viewerEmployee.divisionId
+    )
+  }
+
+  return false
 }
 
 export function stripConfidentialEmployeeRelations<T extends Record<string, unknown>>(employee: T) {
   const {
-    contracts: _contracts,
-    additionalContracts: _additionalContracts,
-    salaryHistory: _salaryHistory,
+    contracts,
+    additionalContracts,
+    salaryHistory,
     ...safeEmployee
   } = employee
+
+  void contracts
+  void additionalContracts
+  void salaryHistory
 
   return safeEmployee
 }

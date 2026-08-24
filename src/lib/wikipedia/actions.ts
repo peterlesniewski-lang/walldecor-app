@@ -2,7 +2,7 @@ import { prisma } from '@/lib/prisma'
 import type { ArticleCreateInput, ArticleUpdateInput, ArticleQuery } from '@/lib/validations/wikipedia'
 import { getGrantedResourceIds, hasOperationGrant } from '@/lib/operations/visibility'
 
-type Role = 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+type Role = 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER'
 
 async function visibilityFilter(role: Role, viewerId?: string) {
   if (role !== 'EMPLOYEE') return {}
@@ -26,6 +26,11 @@ async function canEmployeeViewArticle(article: { id: string; visibility: string;
 }
 
 export async function getArticles(filters: ArticleQuery, role: Role, viewerId?: string) {
+  // The installer portal has its own source-controlled, least-privilege
+  // instructions under /installations/instrukcje. Never expose the general
+  // Business Wiki as a fallback if the proxy boundary changes.
+  if (role === 'INSTALLER') return []
+
   const where: Record<string, unknown> = { ...(await visibilityFilter(role, viewerId)) }
 
   if (filters.category && filters.category !== 'all') {
@@ -53,6 +58,8 @@ export async function getArticles(filters: ArticleQuery, role: Role, viewerId?: 
 }
 
 export async function getArticle(slug: string, role: Role, viewerId?: string) {
+  if (role === 'INSTALLER') return null
+
   const article = await prisma.article.findUnique({ where: { slug } })
   if (!article) return null
   if (role === 'EMPLOYEE' && !(await canEmployeeViewArticle(article, viewerId))) return null

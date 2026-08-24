@@ -13,6 +13,8 @@
     "test:coverage": "node --preserve-symlinks node_modules/vitest/dist/cli.js run --coverage",
     "test:e2e": "playwright test",
     "test:e2e:ui": "playwright test --ui",
+    "worker:installation-calendar": "node --no-warnings --preserve-symlinks --import tsx scripts/run-installation-calendar-worker.ts",
+    "validate:installation-calendar": "node scripts/validate-installation-calendar.mjs",
     "validate:installation-media": "node scripts/validate-installation-media.mjs",
     "pilot:installations": "tsx scripts/pilot-installations.ts"
   },
@@ -39,6 +41,9 @@
     "busboy": "^1.6.0",
     "class-variance-authority": "^0.7.1",
     "clsx": "^2.1.1",
+    "date-fns": "^4.4.0",
+    "date-fns-tz": "^3.2.0",
+    "googleapis": "^176.0.0",
     "jspdf": "^4.2.1",
     "jspdf-autotable": "^5.0.7",
     "lucide-react": "^0.575.0",

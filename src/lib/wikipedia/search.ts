@@ -1,7 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { Prisma } from '@/generated/prisma'
 
-type Role = 'ADMIN' | 'MANAGER' | 'EMPLOYEE'
+type Role = 'ADMIN' | 'MANAGER' | 'EMPLOYEE' | 'INSTALLER'
 
 interface SearchResult {
   id: string
@@ -16,6 +16,8 @@ interface SearchResult {
 }
 
 export async function searchArticles(query: string, role: Role, viewerId?: string): Promise<SearchResult[]> {
+  if (role === 'INSTALLER') return []
+
   const visibilityCondition = role === 'EMPLOYEE'
     ? viewerId
       ? Prisma.sql`AND (a.visibility = 'public' OR (a.type = 'procedure' AND a.id IN (SELECT resourceId FROM ContentVisibilityGrant WHERE resourceType = 'procedure' AND userId = ${viewerId})))`

@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth'
 import { notFound, redirect } from 'next/navigation'
 import Link from 'next/link'
-import { ChevronRight, Clock, Edit, Eye, EyeOff, Tag, Trash2 } from 'lucide-react'
+import { ChevronRight, Clock, Tag } from 'lucide-react'
 import { authOptions } from '@/lib/auth'
 import { getArticle, getReadingTime, parseTags } from '@/lib/wikipedia/actions'
 import { ArticleViewer } from '@/components/wikipedia/ArticleViewer'
@@ -13,6 +13,7 @@ import { AiAssistant } from '@/components/wikipedia/AiAssistant/AiPanel'
 export default async function ArticlePage({ params }: { params: Promise<{ slug: string }> }) {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
+  if (session.user.role === 'INSTALLER') notFound()
 
   const { slug } = await params
   const role = session.user.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE'

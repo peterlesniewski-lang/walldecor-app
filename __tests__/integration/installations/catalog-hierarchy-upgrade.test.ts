@@ -16,6 +16,9 @@ const remoteDeleteUpgradeDatabasePath = path.join(databaseDirectory, 'remote-del
 const remoteDeleteUpgradeDatabaseUrl = `file:${remoteDeleteUpgradeDatabasePath}`
 const remoteDeleteMigration = '20260823060000_installation_remote_delete_lifecycle'
 const remoteDeleteMigrationChecksum = '4c6a561d580d306a10773121e9c5e610fe3428a8bb8699ee6132aa8738248f1e'
+const completeMigrationNames = readdirSync(path.join(workspace, 'prisma', 'migrations'))
+  .sort()
+  .filter((name) => existsSync(path.join(workspace, 'prisma', 'migrations', name, 'migration.sql')))
 
 function runMigrate(databaseUrlValue: string, schemaPath?: string) {
   const args = [path.join(workspace, 'node_modules/prisma/build/index.js'), 'migrate', 'deploy']
@@ -190,9 +193,9 @@ describe('installation catalog hierarchy migration upgrade', () => {
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM pragma_table_info('InstallationClientLink') WHERE name IN ('sentAt', 'sentById') ORDER BY cid"),
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type='index' AND name='InstallationClientLink_orderId_sentAt_idx'"),
     ])
-    expect(migrations).toHaveLength(35)
+    expect(migrations.map((migration) => migration.migration_name)).toEqual(completeMigrationNames)
     expect(migrations.every((migration) => migration.finished_at !== null && migration.rolled_back_at === null)).toBe(true)
-    expect(migrations.at(-1)).toMatchObject({ migration_name: '20260823080000_installation_client_link_sent', finished_at: expect.anything(), rolled_back_at: null })
+    expect(migrations.at(-1)).toMatchObject({ migration_name: completeMigrationNames.at(-1), finished_at: expect.anything(), rolled_back_at: null })
     expect(checksum).toEqual([{ checksum: remoteDeleteMigrationChecksum }])
     expect(migratedClientLink).toEqual([{ sentAt: null, sentById: null }])
     expect(clientLinkColumns).toEqual([{ name: 'sentAt' }, { name: 'sentById' }])
@@ -221,7 +224,7 @@ describe('installation catalog hierarchy migration upgrade', () => {
       db.$queryRawUnsafe<Array<{ name: string }>>("SELECT name FROM sqlite_master WHERE type='index' AND name='InstallationClientLink_orderId_sentAt_idx'"),
       db.$queryRawUnsafe('PRAGMA foreign_key_check'), db.$queryRawUnsafe<Array<{ integrity_check: string }>>('PRAGMA integrity_check'),
     ])
-    expect(migrations).toHaveLength(35)
+    expect(migrations.map((migration) => migration.migration_name)).toEqual(completeMigrationNames)
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030000_installation_client_form')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030100_installation_submitted_answer_insert_guard')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260822030200_installation_submitted_revision_guard')
@@ -234,7 +237,7 @@ describe('installation catalog hierarchy migration upgrade', () => {
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260823060000_installation_remote_delete_lifecycle')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260823070000_installation_soft_delete_remote_guard')
     expect(migrations.map((migration) => migration.migration_name)).toContain('20260823080000_installation_client_link_sent')
-    expect(migrations.at(-1)).toMatchObject({ migration_name: '20260823080000_installation_client_link_sent' })
+    expect(migrations.at(-1)).toMatchObject({ migration_name: completeMigrationNames.at(-1) })
     expect(triggers).toHaveLength(6)
     expect(clientFormTriggers).toEqual([
       { name: 'InstallationAnswer_submitted_delete_guard' },

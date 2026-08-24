@@ -3,6 +3,8 @@ import { getServerSession } from 'next-auth'
 import { z } from 'zod'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { canManageInstallationCatalog } from '@/lib/installations/access'
+import { installationViewerFromSession } from '@/lib/installations/http-access'
 import {
   createInstallationVisitFeePolicy,
   InstallationGovernanceValidationError,
@@ -15,21 +17,19 @@ const policySchema = z.object({
   legalApprovedAt: z.preprocess((value) => value === '' ? null : value, z.union([z.string().trim().min(1), z.date()]).nullable().optional()),
 }).strict()
 
-function canManagePolicy(role: string) {
-  return role === 'ADMIN' || role === 'MANAGER'
-}
-
 export async function GET() {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!canManagePolicy(session.user.role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const viewer = await installationViewerFromSession(session)
+  if (!canManageInstallationCatalog(viewer)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   return NextResponse.json({ policies: await listInstallationVisitFeePolicies(prisma) }, { headers: { 'Cache-Control': 'no-store' } })
 }
 
 export async function POST(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
-  if (!canManagePolicy(session.user.role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  const viewer = await installationViewerFromSession(session)
+  if (!canManageInstallationCatalog(viewer)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   try {
     const parsed = policySchema.safeParse(await req.json())
     if (!parsed.success) return NextResponse.json({ error: 'Podaj kwotę i pełną treść wersji klauzuli.' }, { status: 400 })

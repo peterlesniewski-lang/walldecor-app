@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { z } from 'zod'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { canManageInstallationCatalog } from '@/lib/installations/access'
 import { editableInstallationOrder } from '@/lib/installations/room-route-access'
 import {
   approveInstallationVisitFeeOverride,
@@ -20,10 +21,6 @@ const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('APPROVE_OVERRIDE') }).strict(),
   z.object({ action: z.literal('REJECT_OVERRIDE'), reason: z.string().trim().min(1) }).strict(),
 ])
-
-function isAdminOrManager(role: string) {
-  return role === 'ADMIN' || role === 'MANAGER'
-}
 
 export async function POST(req: NextRequest, { params }: Params) {
   const session = await getServerSession(authOptions)
@@ -43,7 +40,7 @@ export async function POST(req: NextRequest, { params }: Params) {
         reason: parsed.data.reason,
       }, session.user.id) }, { status: 202 })
     }
-    if (!isAdminOrManager(session.user.role)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    if (!canManageInstallationCatalog(access.viewer)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
     if (parsed.data.action === 'APPROVE_OVERRIDE') {
       return NextResponse.json({ order: await approveInstallationVisitFeeOverride(prisma, id, session.user.id) })
     }

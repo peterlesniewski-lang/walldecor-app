@@ -22,6 +22,9 @@ let primaryEmployeeId: string
 let backupEmployeeId: string
 let installerEmployeeId: string
 let inactiveEmployeeId: string
+let installerAccountEmployeeId: string
+let regularAccountEmployeeId: string
+let blockedInstallerEmployeeId: string
 
 function createClient() {
   return new PrismaClient({ datasources: { db: { url: databaseUrl } } })
@@ -63,11 +66,32 @@ async function seedEmployees() {
         position: 'Koordynatorka', costCenterId: 'JAG', startDate: new Date('2025-01-01T12:00:00.000Z'), active: false,
       },
     }),
+    db.employee.create({
+      data: {
+        firstName: 'Igor', lastName: 'Konto Instalatora', email: 'igor.instalator@example.pl',
+        position: 'Instalator', costCenterId: 'JAG', startDate: new Date('2025-01-01T12:00:00.000Z'), active: true,
+      },
+    }),
+    db.employee.create({
+      data: {
+        firstName: 'Marta', lastName: 'Zwykłe Konto', email: 'marta.zwykle@example.pl',
+        position: 'Koordynatorka', costCenterId: 'JAG', startDate: new Date('2025-01-01T12:00:00.000Z'), active: true,
+      },
+    }),
+    db.employee.create({
+      data: {
+        firstName: 'Olaf', lastName: 'Zablokowany Instalator', email: 'olaf.zablokowany@example.pl',
+        position: 'Instalator', costCenterId: 'JAG', startDate: new Date('2025-01-01T12:00:00.000Z'), active: true,
+      },
+    }),
   ])
   primaryEmployeeId = employees[0].id
   backupEmployeeId = employees[1].id
   installerEmployeeId = employees[2].id
   inactiveEmployeeId = employees[3].id
+  installerAccountEmployeeId = employees[4].id
+  regularAccountEmployeeId = employees[5].id
+  blockedInstallerEmployeeId = employees[6].id
 }
 
 function committedMigrationSqlPaths() {
@@ -150,6 +174,50 @@ describe('installation order CRUD persists in a real SQLite database', () => {
       status: 'ARCHIVED',
       addressBuildingNumber: '17A',
       client: { phone: '+48 511 000 111' },
+    })
+  })
+
+  it('deterministically selects the lower visit id when active visits have identical dates', async () => {
+    const order = await createInstallationOrder(db, {
+      client: { name: 'Remis Terminów', email: 'calendar-tie@example.pl', phone: '+48 504 000 001' },
+      address: { street: 'Kalendarzowa', buildingNumber: '10', postalCode: '00-001', city: 'Warszawa' },
+      primaryEmployeeId,
+      backupEmployeeId,
+    }, 'admin-user')
+    const startsAt = new Date('2026-10-10T06:00:00.000Z')
+    const endsAt = new Date('2026-10-10T14:00:00.000Z')
+    const createdAt = new Date('2026-08-24T10:00:00.000Z')
+
+    await db.installationVisit.create({
+      data: {
+        id: 'order-list-tie-z',
+        orderId: order.id,
+        status: 'CONFIRMED',
+        startsAt,
+        endsAt,
+        createdAt,
+        createdById: 'admin-user',
+        syncStates: { create: { status: 'SYNCED' } },
+      },
+    })
+    await db.installationVisit.create({
+      data: {
+        id: 'order-list-tie-a',
+        orderId: order.id,
+        status: 'DRAFT',
+        startsAt,
+        endsAt,
+        createdAt,
+        createdById: 'admin-user',
+        syncStates: { create: { status: 'PENDING' } },
+      },
+    })
+
+    const listed = (await listInstallationOrders(db)).find((candidate) => candidate.id === order.id)
+    expect(listed?.calendarSummary).toEqual({
+      nextVisitAt: startsAt.toISOString(),
+      visitStatus: 'DRAFT',
+      syncStatus: 'PENDING',
     })
   })
 
@@ -331,5 +399,57 @@ describe('installation order CRUD persists in a real SQLite database', () => {
       archivedAt: null,
       primaryEmployeeId: installerEmployeeId,
     })
+  })
+
+  it('deactivates linked INSTALLER accounts only after a successful guarded employee deactivation', async () => {
+    const installerAccount = await db.user.create({
+      data: {
+        username: 'igor.instalator', name: 'Igor Konto Instalatora', email: 'igor.account@example.test',
+        role: 'INSTALLER', passwordHash: 'test-only-hash', isActive: true, employeeId: installerAccountEmployeeId,
+      },
+    })
+    const regularAccount = await db.user.create({
+      data: {
+        username: 'marta.employee', name: 'Marta Zwykłe Konto', email: 'marta.account@example.test',
+        role: 'EMPLOYEE', passwordHash: 'test-only-hash', isActive: true, employeeId: regularAccountEmployeeId,
+      },
+    })
+    const blockedInstallerAccount = await db.user.create({
+      data: {
+        username: 'olaf.instalator', name: 'Olaf Zablokowany Instalator', email: 'olaf.account@example.test',
+        role: 'INSTALLER', passwordHash: 'test-only-hash', isActive: true, employeeId: blockedInstallerEmployeeId,
+      },
+    })
+
+    const installerRows = await deactivateEmployeeIfNoActiveInstallationOrder(db, installerAccountEmployeeId)
+    const regularRows = await deactivateEmployeeIfNoActiveInstallationOrder(db, regularAccountEmployeeId)
+
+    const blockedOrder = await createInstallationOrder(db, {
+      client: { name: 'Blokada konta', email: 'blocked-account@example.pl', phone: '+48 504 222 222' },
+      address: { street: 'Strażacka', buildingNumber: '8', postalCode: '00-951', city: 'Warszawa' },
+      primaryEmployeeId: blockedInstallerEmployeeId,
+      backupEmployeeId: primaryEmployeeId,
+    }, 'admin-user')
+    const blockedRows = await deactivateEmployeeIfNoActiveInstallationOrder(db, blockedInstallerEmployeeId)
+
+    const [installerEmployee, installerAfter, regularEmployee, regularAfter, blockedEmployee, blockedAfter] = await Promise.all([
+      db.employee.findUnique({ where: { id: installerAccountEmployeeId }, select: { active: true } }),
+      db.user.findUnique({ where: { id: installerAccount.id }, select: { isActive: true } }),
+      db.employee.findUnique({ where: { id: regularAccountEmployeeId }, select: { active: true } }),
+      db.user.findUnique({ where: { id: regularAccount.id }, select: { isActive: true } }),
+      db.employee.findUnique({ where: { id: blockedInstallerEmployeeId }, select: { active: true } }),
+      db.user.findUnique({ where: { id: blockedInstallerAccount.id }, select: { isActive: true } }),
+    ])
+
+    expect(installerRows).toBe(1)
+    expect(installerEmployee?.active).toBe(false)
+    expect(installerAfter?.isActive).toBe(false)
+    expect(regularRows).toBe(1)
+    expect(regularEmployee?.active).toBe(false)
+    expect(regularAfter?.isActive).toBe(true)
+    expect(blockedRows).toBe(0)
+    expect(blockedOrder.archivedAt).toBeNull()
+    expect(blockedEmployee?.active).toBe(true)
+    expect(blockedAfter?.isActive).toBe(true)
   })
 })

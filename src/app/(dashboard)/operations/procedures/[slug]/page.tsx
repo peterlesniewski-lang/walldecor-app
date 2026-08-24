@@ -11,6 +11,7 @@ import { CATEGORY_COLORS, CATEGORY_LABELS } from '@/components/wikipedia/constan
 export default async function OperationProcedurePage({ params }: { params: Promise<{ slug: string }> }) {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
+  if (session.user.role === 'INSTALLER') notFound()
 
   const { slug } = await params
   const role = session.user.role as 'ADMIN' | 'MANAGER' | 'EMPLOYEE'

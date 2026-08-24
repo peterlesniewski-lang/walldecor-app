@@ -16,6 +16,7 @@ const ROLE_LABELS: Record<string, string> = {
   ADMIN: 'Administrator',
   MANAGER: 'Menedżer',
   EMPLOYEE: 'Pracownik',
+  INSTALLER: 'Instalator',
 }
 
 function getInitials(name: string): string {
@@ -34,7 +35,7 @@ interface HeaderUser {
 }
 
 function normalizeRole(role: string | null | undefined): SidebarRole {
-  return role === 'ADMIN' || role === 'MANAGER' ? role : 'EMPLOYEE'
+  return role === 'ADMIN' || role === 'MANAGER' || role === 'INSTALLER' ? role : 'EMPLOYEE'
 }
 
 export function Header({ user }: { user: HeaderUser }) {
@@ -50,7 +51,7 @@ export function Header({ user }: { user: HeaderUser }) {
       </div>
 
       <div className="flex items-center gap-3">
-        <NotificationBell />
+        {userRole !== 'INSTALLER' && <NotificationBell />}
 
         <DropdownMenu>
           <DropdownMenuTrigger className="flex items-center gap-2.5 outline-none">

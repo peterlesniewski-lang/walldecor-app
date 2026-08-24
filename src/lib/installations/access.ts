@@ -3,8 +3,15 @@ import type { InstallationRole } from './constants'
 export type InstallationOrderViewer = {
   role: InstallationRole
   employeeId: string | null | undefined
-  /** Verified against Employee.active before an EMPLOYEE policy is evaluated. */
+  /** Set by the session-to-user lookup. Omitted only by legacy pure-policy callers. */
+  authorized?: boolean
+  /** Verified against Employee.active before EMPLOYEE or INSTALLER policy is evaluated. */
   employeeActive?: boolean
+}
+
+/** A session is only a hint; all module policy depends on a current User row. */
+export function isInstallationViewerAuthorized(viewer: InstallationOrderViewer): boolean {
+  return viewer.authorized !== false
 }
 
 export type InstallationOrderAccessRecord = {
@@ -13,6 +20,9 @@ export type InstallationOrderAccessRecord = {
   primaryEmployeeId: string
   backupEmployeeId: string
   installerAssignments: Array<{
+    employeeId: string
+  }>
+  scopeAssignments: Array<{
     employeeId: string
   }>
   delegations: Array<{
@@ -41,10 +51,12 @@ export function canViewInstallationOrder(
   order: InstallationOrderAccessRecord,
   now = new Date(),
 ): boolean {
+  if (!isInstallationViewerAuthorized(viewer)) return false
   if (viewer.role === 'ADMIN' || viewer.role === 'MANAGER') return true
   if (viewer.role === 'INSTALLER') {
-    return Boolean(viewer.employeeId && order.installerAssignments.some(
-      (assignment) => assignment.employeeId === viewer.employeeId,
+    return Boolean(viewer.employeeId && viewer.employeeActive === true && (
+      order.installerAssignments.some((assignment) => assignment.employeeId === viewer.employeeId) ||
+      order.scopeAssignments.some((assignment) => assignment.employeeId === viewer.employeeId)
     ))
   }
   if (viewer.role !== 'EMPLOYEE' || !viewer.employeeId || viewer.employeeActive !== true) return false
@@ -58,7 +70,7 @@ export const canAccessInstallationOrder = canViewInstallationOrder
 
 /** Catalog and form publication are global configuration, never field work. */
 export function canManageInstallationCatalog(viewer: InstallationOrderViewer): boolean {
-  return viewer.role === 'ADMIN' || viewer.role === 'MANAGER'
+  return isInstallationViewerAuthorized(viewer) && (viewer.role === 'ADMIN' || viewer.role === 'MANAGER')
 }
 
 export function canEditInstallationOrder(
@@ -66,6 +78,7 @@ export function canEditInstallationOrder(
   order: InstallationOrderAccessRecord,
   now = new Date(),
 ): boolean {
+  if (!isInstallationViewerAuthorized(viewer)) return false
   if (order.archivedAt || order.status === 'ARCHIVED') return false
   if (viewer.role === 'ADMIN' || viewer.role === 'MANAGER') return true
   if (viewer.role !== 'EMPLOYEE' || !viewer.employeeId || viewer.employeeActive !== true) return false
@@ -78,6 +91,7 @@ export function canArchiveInstallationOrder(
   viewer: InstallationOrderViewer,
   order: InstallationOrderAccessRecord,
 ): boolean {
+  if (!isInstallationViewerAuthorized(viewer)) return false
   if (order.archivedAt || order.status === 'ARCHIVED') return false
   if (viewer.role === 'ADMIN' || viewer.role === 'MANAGER') return true
   return viewer.role === 'EMPLOYEE' &&

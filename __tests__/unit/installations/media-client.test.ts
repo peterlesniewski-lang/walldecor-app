@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto'
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, rmSync, symlinkSync } from 'node:fs'
+import path from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import { createPrivateMediaClient, InstallationMediaClientError, privateMediaClientFromEnvironment } from '@/lib/installation-media/client'
 
@@ -159,6 +160,93 @@ describe('private media client', () => {
     vi.stubEnv('NODE_ENV', 'test')
     expect(() => privateMediaClientFromEnvironment()).toThrow(InstallationMediaClientError)
     vi.unstubAllEnvs()
+  })
+
+  it('persists media only inside the same verified private directory as the Calendar E2E database', async () => {
+    const directory = mkdtempSync('/tmp/walldecor-installations-e2e-')
+    const databaseUrl = `file:${path.join(directory, 'calendar.db')}`
+    const mediaRoot = path.join(directory, 'media')
+    const fileId = 'de3d9ad1-2ffc-44dd-b77c-a7ec338aee50'
+    const bytes = new Uint8Array([4, 5, 6])
+    vi.stubEnv('INSTALLATION_MEDIA_TEST_ADAPTER', 'filesystem')
+    vi.stubEnv('INSTALLATION_MEDIA_TEST_ROOT', mediaRoot)
+    vi.stubEnv('WALLDECOR_E2E_PRIVATE_DIRECTORY_OWNED', 'true')
+    vi.stubEnv('DATABASE_URL', databaseUrl)
+    vi.stubEnv('E2E_DATABASE_URL', databaseUrl)
+    vi.stubEnv('NODE_ENV', 'test')
+
+    try {
+      const client = privateMediaClientFromEnvironment()
+      await client.upload({ fileId, jobId: 'calendar-order', contentType: 'image/png', bytes })
+      expect(new Uint8Array(await (await client.download(fileId)).arrayBuffer())).toEqual(bytes)
+      expect(existsSync(path.join(mediaRoot, `${fileId}.bin`))).toBe(true)
+      await client.remove(fileId)
+      expect(existsSync(path.join(mediaRoot, `${fileId}.bin`))).toBe(false)
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects a symlinked Calendar E2E media root that points outside its private directory', () => {
+    const directory = mkdtempSync('/tmp/walldecor-installations-e2e-')
+    const outside = mkdtempSync('/tmp/walldecor-installations-media-outside-')
+    const databaseUrl = `file:${path.join(directory, 'calendar.db')}`
+    symlinkSync(outside, path.join(directory, 'media'), 'dir')
+    vi.stubEnv('INSTALLATION_MEDIA_TEST_ADAPTER', 'filesystem')
+    vi.stubEnv('INSTALLATION_MEDIA_TEST_ROOT', path.join(directory, 'media'))
+    vi.stubEnv('WALLDECOR_E2E_PRIVATE_DIRECTORY_OWNED', 'true')
+    vi.stubEnv('DATABASE_URL', databaseUrl)
+    vi.stubEnv('E2E_DATABASE_URL', databaseUrl)
+    vi.stubEnv('NODE_ENV', 'test')
+
+    try {
+      expect(() => privateMediaClientFromEnvironment()).toThrow(InstallationMediaClientError)
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(directory, { recursive: true, force: true })
+      rmSync(outside, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects the Calendar E2E filesystem adapter in production', () => {
+    const directory = mkdtempSync('/tmp/walldecor-installations-e2e-')
+    const databaseUrl = `file:${path.join(directory, 'calendar.db')}`
+    vi.stubEnv('INSTALLATION_MEDIA_TEST_ADAPTER', 'filesystem')
+    vi.stubEnv('INSTALLATION_MEDIA_TEST_ROOT', path.join(directory, 'media'))
+    vi.stubEnv('WALLDECOR_E2E_PRIVATE_DIRECTORY_OWNED', 'true')
+    vi.stubEnv('DATABASE_URL', databaseUrl)
+    vi.stubEnv('E2E_DATABASE_URL', databaseUrl)
+    vi.stubEnv('NODE_ENV', 'production')
+
+    try {
+      expect(() => privateMediaClientFromEnvironment()).toThrow('nie może działać produkcyjnie')
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(directory, { recursive: true, force: true })
+    }
+  })
+
+  it('rejects an unbound or non-private Calendar E2E media directory', () => {
+    const directory = mkdtempSync('/tmp/walldecor-installations-e2e-')
+    const databaseUrl = `file:${path.join(directory, 'calendar.db')}`
+    const mediaRoot = path.join(directory, 'media')
+    mkdirSync(mediaRoot, { mode: 0o700 })
+    vi.stubEnv('INSTALLATION_MEDIA_TEST_ADAPTER', 'filesystem')
+    vi.stubEnv('INSTALLATION_MEDIA_TEST_ROOT', mediaRoot)
+    vi.stubEnv('DATABASE_URL', databaseUrl)
+    vi.stubEnv('E2E_DATABASE_URL', databaseUrl)
+    vi.stubEnv('NODE_ENV', 'test')
+
+    try {
+      expect(() => privateMediaClientFromEnvironment()).toThrow(InstallationMediaClientError)
+      vi.stubEnv('WALLDECOR_E2E_PRIVATE_DIRECTORY_OWNED', 'true')
+      chmodSync(mediaRoot, 0o755)
+      expect(() => privateMediaClientFromEnvironment()).toThrow('nie jest prywatnym katalogiem E2E')
+    } finally {
+      vi.unstubAllEnvs()
+      rmSync(directory, { recursive: true, force: true })
+    }
   })
 
   it('persists the explicitly injected E2E adapter across a fresh Node process', async () => {
