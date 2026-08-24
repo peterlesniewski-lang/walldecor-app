@@ -23,14 +23,18 @@ COPY . .
 # Generate Prisma client
 RUN npx prisma generate
 
+# Type-check in its own bounded process so its heap is released before bundling.
+RUN NODE_OPTIONS=--max-old-space-size=2560 npm run typecheck:app
+
 # Build Next.js (dummy env values for build time)
 ENV NEXT_TELEMETRY_DISABLED=1
 ENV NODE_ENV=production
+ENV WALLDECOR_DOCKER_BUILD=1
 ENV DATABASE_URL="file:/tmp/build.db"
 ENV NEXTAUTH_URL="http://localhost:3000"
 ENV NEXTAUTH_SECRET="build-secret-placeholder-32-chars-xx"
 
-RUN npm run build
+RUN npm run build -- --webpack
 
 # Stage 3: Runner
 FROM base AS runner

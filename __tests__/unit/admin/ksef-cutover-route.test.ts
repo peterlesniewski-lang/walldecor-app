@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
+import { KSEF_CUTOVER_CONFIRMATION } from '@/lib/finance/ksef-cutover'
 import { GET, POST } from '@/app/api/admin/finance/ksef-cutover/route'
 
 vi.mock('next-auth', () => ({
@@ -77,14 +78,14 @@ describe('/api/admin/finance/ksef-cutover', () => {
       cutoff: { year: 2026, month: 4 },
       preservedActualEntriesBeforeCutover: 18,
       removableActualEntriesFromCutover: 42,
-      confirmation: 'DELETE_ACTUALS_FROM_2026_04',
+      confirmation: KSEF_CUTOVER_CONFIRMATION,
     })
   })
 
   it('blocks non-admin users from deleting post-cutover manual actuals', async () => {
     mockGetServerSession.mockResolvedValue(session('MANAGER'))
 
-    const response = await POST(postRequest({ confirm: 'DELETE_ACTUALS_FROM_2026_04' }))
+    const response = await POST(postRequest({ confirm: KSEF_CUTOVER_CONFIRMATION }))
 
     expect(response.status).toBe(403)
     expect(mockDeleteMany).not.toHaveBeenCalled()
@@ -103,7 +104,7 @@ describe('/api/admin/finance/ksef-cutover', () => {
     mockGetServerSession.mockResolvedValue(session('ADMIN'))
     mockDeleteMany.mockResolvedValue({ count: 42 })
 
-    const response = await POST(postRequest({ confirm: 'DELETE_ACTUALS_FROM_2026_04' }))
+    const response = await POST(postRequest({ confirm: KSEF_CUTOVER_CONFIRMATION }))
     const body = await response.json()
 
     expect(response.status).toBe(200)

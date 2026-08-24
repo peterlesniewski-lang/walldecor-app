@@ -5,6 +5,7 @@
   "scripts": {
     "dev": "node --preserve-symlinks node_modules/next/dist/bin/next dev",
     "build": "node --preserve-symlinks node_modules/next/dist/bin/next build",
+    "typecheck:app": "next typegen && tsc --noEmit -p tsconfig.next.json",
     "audit:hr-leave-migration": "node --no-warnings --preserve-symlinks --import tsx scripts/audit-hr-leave-migration.ts",
     "start": "node --preserve-symlinks node_modules/next/dist/bin/next start",
     "lint": "eslint",

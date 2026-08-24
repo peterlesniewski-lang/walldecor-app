@@ -6,8 +6,7 @@ import {
   KSEF_COST_EVENT_START_MONTH,
   KSEF_COST_EVENT_START_YEAR,
 } from '@/lib/finance/realized-costs'
-
-export const KSEF_CUTOVER_CONFIRMATION = 'DELETE_ACTUALS_FROM_2026_04'
+import { KSEF_CUTOVER_CONFIRMATION } from '@/lib/finance/ksef-cutover'
 
 const removableActualEntryWhere = {
   OR: [

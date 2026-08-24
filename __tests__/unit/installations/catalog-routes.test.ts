@@ -64,7 +64,7 @@ describe('installation catalog and room routes', () => {
   })
 
   it('keeps catalog reads authenticated but limits catalog mutation to ADMIN/MANAGER', async () => {
-    expect((await getCatalog()).status).toBe(401)
+    expect((await getCatalog(new NextRequest('http://test/api/installations/catalog'))).status).toBe(401)
 
     mocks.session = { user: { id: 'employee-user', role: 'EMPLOYEE', employeeId: 'employee-1' } }
     expect((await postCatalog(new NextRequest('http://test/api/installations/catalog', { method: 'POST', body: JSON.stringify({ kind: 'category', name: 'Tapety' }) }))).status).toBe(403)

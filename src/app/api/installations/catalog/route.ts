@@ -20,12 +20,12 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === 'object' && value !== null && !Array.isArray(value)
 }
 
-export async function GET(req?: NextRequest) {
+export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
   if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
   const viewer = await installationViewerFromSession(session)
   if (!isInstallationViewerAuthorized(viewer)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
-  const includeInactive = req?.nextUrl.searchParams.get('includeInactive') === 'true'
+  const includeInactive = req.nextUrl.searchParams.get('includeInactive') === 'true'
   if (includeInactive && !canManageInstallationCatalog(viewer)) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   return NextResponse.json(await listInstallationCatalog(prisma, { includeInactive }))
 }
