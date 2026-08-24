@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { cpSync, existsSync, mkdtempSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterAll, describe, expect, it } from 'vitest'
+import { describe, expect, it } from 'vitest'
 import { PrismaClient } from '@/generated/prisma'
 
 const workspace = process.cwd()
@@ -37,7 +37,10 @@ function runMigrate(databaseUrlValue: string, schemaPath?: string) {
     cwd: workspace,
     env: { ...process.env, DATABASE_URL: databaseUrlValue, RUST_LOG: 'debug' },
     encoding: 'utf8',
+    timeout: 60_000,
   })
+
+  if (result.error) throw result.error
 
   if (result.status !== 0) {
     throw new Error(
@@ -225,153 +228,165 @@ async function seedLegacyRecords(db: PrismaClient) {
   return { catalogProduct, createdAt, scopeCategory, updatedAt }
 }
 
-afterAll(() => rmSync(databaseDirectory, { recursive: true, force: true }))
-
 describe('installation order-owned products migration', () => {
   it('upgrades a real legacy migration chain without losing scope product or measurement history', async () => {
-    runMigrate(databaseUrl, createLegacyPrismaDirectory())
-    let db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
-    const history = await seedLegacyRecords(db)
+    let db: PrismaClient | undefined
 
-    expect(
-      await db.$queryRawUnsafe<Array<{ migration_name: string }>>(
-        'SELECT migration_name FROM _prisma_migrations ORDER BY migration_name'
-      )
-    ).toEqual(legacyMigrationNames.map((migration_name) => ({ migration_name })))
-    await db.$disconnect()
+    try {
+      runMigrate(databaseUrl, createLegacyPrismaDirectory())
+      db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
+      const history = await seedLegacyRecords(db)
 
-    runMigrate(databaseUrl)
-    db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
-
-    const [scopeCount, scopeProductCount, measurementCount, scopes, scopeProducts, measurements, migrations] =
-      await Promise.all([
-        db.installationScope.count(),
-        db.installationScopeProduct.count(),
-        db.installationMeasurement.count(),
-        db.installationScope.findMany({
-          select: {
-            id: true,
-            roomId: true,
-            name: true,
-            sortOrder: true,
-            createdAt: true,
-            updatedAt: true,
-            catalogCategoryId: true,
-          },
-          orderBy: { id: 'asc' },
-        }),
-        db.installationScopeProduct.findMany({ orderBy: { id: 'asc' } }),
-        db.installationMeasurement.findMany({ orderBy: { id: 'asc' } }),
-        db.$queryRawUnsafe<Array<{ migration_name: string }>>(
+      expect(
+        await db.$queryRawUnsafe<Array<{ migration_name: string }>>(
           'SELECT migration_name FROM _prisma_migrations ORDER BY migration_name'
-        ),
+        )
+      ).toEqual(legacyMigrationNames.map((migration_name) => ({ migration_name })))
+      await db.$disconnect()
+      db = undefined
+
+      runMigrate(databaseUrl)
+      db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
+
+      const [scopeCount, scopeProductCount, measurementCount, scopes, scopeProducts, measurements, migrations] =
+        await Promise.all([
+          db.installationScope.count(),
+          db.installationScopeProduct.count(),
+          db.installationMeasurement.count(),
+          db.installationScope.findMany({
+            select: {
+              id: true,
+              roomId: true,
+              name: true,
+              sortOrder: true,
+              createdAt: true,
+              updatedAt: true,
+              catalogCategoryId: true,
+            },
+            orderBy: { id: 'asc' },
+          }),
+          db.installationScopeProduct.findMany({ orderBy: { id: 'asc' } }),
+          db.installationMeasurement.findMany({ orderBy: { id: 'asc' } }),
+          db.$queryRawUnsafe<Array<{ migration_name: string }>>(
+            'SELECT migration_name FROM _prisma_migrations ORDER BY migration_name'
+          ),
+        ])
+
+      expect({ scopeCount, scopeProductCount, measurementCount }).toEqual({
+        scopeCount: 1,
+        scopeProductCount: 1,
+        measurementCount: 1,
+      })
+      expect(scopes).toEqual([
+        {
+          id: 'legacy-scope',
+          roomId: 'legacy-room',
+          name: 'Ściana historyczna',
+          sortOrder: 3,
+          createdAt: history.createdAt,
+          updatedAt: history.updatedAt,
+          catalogCategoryId: null,
+        },
       ])
+      expect(
+        scopeProducts.map((product) => ({
+          id: product.id,
+          scopeId: product.scopeId,
+          catalogProductId: product.catalogProductId,
+          productNameSnapshot: product.productNameSnapshot,
+          productCodeSnapshot: product.productCodeSnapshot,
+          manufacturerSnapshot: product.manufacturerSnapshot,
+          collectionSnapshot: product.collectionSnapshot,
+          batchSnapshot: product.batchSnapshot,
+          sortOrder: product.sortOrder,
+          createdAt: product.createdAt.toISOString(),
+          updatedAt: product.updatedAt.toISOString(),
+        }))
+      ).toEqual([
+        {
+          id: 'legacy-scope-product',
+          scopeId: 'legacy-scope',
+          catalogProductId: history.catalogProduct.id,
+          productNameSnapshot: 'Nazwa ze zlecenia',
+          productCodeSnapshot: 'ZLEC-001',
+          manufacturerSnapshot: 'Producent ze zlecenia',
+          collectionSnapshot: 'Kolekcja ze zlecenia',
+          batchSnapshot: null,
+          sortOrder: 5,
+          createdAt: history.createdAt.toISOString(),
+          updatedAt: history.updatedAt.toISOString(),
+        },
+      ])
+      expect(
+        measurements.map((measurement) => ({
+          id: measurement.id,
+          roomId: measurement.roomId,
+          scopeId: measurement.scopeId,
+          elementName: measurement.elementName,
+          kind: measurement.kind,
+          value: measurement.value.toString(),
+          secondaryValue: measurement.secondaryValue,
+          unit: measurement.unit,
+          source: measurement.source,
+          authorId: measurement.authorId,
+          authorContext: measurement.authorContext,
+          actorUserId: measurement.actorUserId,
+          actorRole: measurement.actorRole,
+          createdAt: measurement.createdAt.toISOString(),
+          updatedAt: measurement.updatedAt.toISOString(),
+        }))
+      ).toEqual([
+        {
+          id: 'legacy-measurement',
+          roomId: 'legacy-room',
+          scopeId: 'legacy-scope',
+          elementName: 'Szerokość ściany',
+          kind: 'SINGLE',
+          value: '321.5',
+          secondaryValue: null,
+          unit: 'CM',
+          source: 'EMPLOYEE',
+          authorId: 'legacy-author',
+          authorContext: 'HISTORY_IMPORT',
+          actorUserId: 'legacy-user',
+          actorRole: 'ADMIN',
+          createdAt: history.createdAt.toISOString(),
+          updatedAt: history.updatedAt.toISOString(),
+        },
+      ])
+      expect(migrations.map((migration) => migration.migration_name)).toEqual(
+        completeMigrationNames
+      )
+      expect(migrations.map((migration) => migration.migration_name)).toContain(
+        orderProductsMigration
+      )
 
-    expect({ scopeCount, scopeProductCount, measurementCount }).toEqual({
-      scopeCount: 1,
-      scopeProductCount: 1,
-      measurementCount: 1,
-    })
-    expect(scopes).toEqual([
-      {
-        id: 'legacy-scope',
-        roomId: 'legacy-room',
-        name: 'Ściana historyczna',
-        sortOrder: 3,
-        createdAt: history.createdAt,
-        updatedAt: history.updatedAt,
-        catalogCategoryId: null,
-      },
-    ])
-    expect(
-      scopeProducts.map((product) => ({
-        id: product.id,
-        scopeId: product.scopeId,
-        catalogProductId: product.catalogProductId,
-        productNameSnapshot: product.productNameSnapshot,
-        productCodeSnapshot: product.productCodeSnapshot,
-        manufacturerSnapshot: product.manufacturerSnapshot,
-        collectionSnapshot: product.collectionSnapshot,
-        batchSnapshot: product.batchSnapshot,
-        sortOrder: product.sortOrder,
-        createdAt: product.createdAt.toISOString(),
-        updatedAt: product.updatedAt.toISOString(),
-      }))
-    ).toEqual([
-      {
-        id: 'legacy-scope-product',
-        scopeId: 'legacy-scope',
-        catalogProductId: history.catalogProduct.id,
-        productNameSnapshot: 'Nazwa ze zlecenia',
-        productCodeSnapshot: 'ZLEC-001',
-        manufacturerSnapshot: 'Producent ze zlecenia',
-        collectionSnapshot: 'Kolekcja ze zlecenia',
-        batchSnapshot: null,
-        sortOrder: 5,
-        createdAt: history.createdAt.toISOString(),
-        updatedAt: history.updatedAt.toISOString(),
-      },
-    ])
-    expect(
-      measurements.map((measurement) => ({
-        id: measurement.id,
-        roomId: measurement.roomId,
-        scopeId: measurement.scopeId,
-        elementName: measurement.elementName,
-        kind: measurement.kind,
-        value: measurement.value.toString(),
-        secondaryValue: measurement.secondaryValue,
-        unit: measurement.unit,
-        source: measurement.source,
-        authorId: measurement.authorId,
-        authorContext: measurement.authorContext,
-        actorUserId: measurement.actorUserId,
-        actorRole: measurement.actorRole,
-        createdAt: measurement.createdAt.toISOString(),
-        updatedAt: measurement.updatedAt.toISOString(),
-      }))
-    ).toEqual([
-      {
-        id: 'legacy-measurement',
-        roomId: 'legacy-room',
-        scopeId: 'legacy-scope',
-        elementName: 'Szerokość ściany',
-        kind: 'SINGLE',
-        value: '321.5',
-        secondaryValue: null,
-        unit: 'CM',
-        source: 'EMPLOYEE',
-        authorId: 'legacy-author',
-        authorContext: 'HISTORY_IMPORT',
-        actorUserId: 'legacy-user',
-        actorRole: 'ADMIN',
-        createdAt: history.createdAt.toISOString(),
-        updatedAt: history.updatedAt.toISOString(),
-      },
-    ])
-    expect(migrations.map((migration) => migration.migration_name)).toEqual(
-      completeMigrationNames
-    )
-    expect(migrations.map((migration) => migration.migration_name)).toContain(
-      orderProductsMigration
-    )
-
-    await db.installationScope.update({
+      await db.installationScope.update({
       where: { id: 'legacy-scope' },
       data: { catalogCategoryId: history.scopeCategory.id },
     })
-    await db.installationScopeProduct.create({
+      await db.installationScopeProduct.create({
       data: {
         id: 'order-owned-scope-product',
         scopeId: 'legacy-scope',
         batchSnapshot: 'PARTIA-24',
       },
     })
-    await db.installationCatalogCategory.delete({
+      await expect(
+        db.installationScopeProduct.create({
+          data: {
+            id: 'invalid-catalog-scope-product',
+            scopeId: 'legacy-scope',
+            catalogProductId: history.catalogProduct.id,
+            productNameSnapshot: null,
+          },
+        })
+      ).rejects.toThrow()
+      await db.installationCatalogCategory.delete({
       where: { id: history.scopeCategory.id },
     })
 
-    const [scopeAfterCategoryDelete, orderOwnedProduct, scopeIndexes, scopeProductIndexes, measurementIndexes, foreignKeys, integrity] =
+      const [scopeAfterCategoryDelete, orderOwnedProduct, scopeIndexes, scopeProductIndexes, measurementIndexes, foreignKeys, integrity] =
       await Promise.all([
         db.installationScope.findUniqueOrThrow({
           where: { id: 'legacy-scope' },
@@ -400,7 +415,7 @@ describe('installation order-owned products migration', () => {
         ),
       ])
 
-    expect(scopeAfterCategoryDelete).toEqual({ catalogCategoryId: null })
+      expect(scopeAfterCategoryDelete).toEqual({ catalogCategoryId: null })
     expect(orderOwnedProduct).toEqual({
       catalogProductId: null,
       productNameSnapshot: null,
@@ -422,6 +437,9 @@ describe('installation order-owned products migration', () => {
     expect(foreignKeys).toEqual([])
     expect(integrity).toEqual([{ integrity_check: 'ok' }])
 
-    await db.$disconnect()
+    } finally {
+      await db?.$disconnect()
+      rmSync(databaseDirectory, { recursive: true, force: true })
+    }
   })
 })

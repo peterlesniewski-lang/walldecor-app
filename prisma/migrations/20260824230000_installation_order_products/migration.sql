@@ -22,7 +22,15 @@ CREATE TABLE "new_InstallationScopeProduct" (
     CONSTRAINT "InstallationScopeProduct_scopeId_fkey"
       FOREIGN KEY ("scopeId") REFERENCES "InstallationScope" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
     CONSTRAINT "InstallationScopeProduct_catalogProductId_fkey"
-      FOREIGN KEY ("catalogProductId") REFERENCES "InstallationCatalogProduct" ("id") ON DELETE RESTRICT ON UPDATE CASCADE
+      FOREIGN KEY ("catalogProductId") REFERENCES "InstallationCatalogProduct" ("id") ON DELETE RESTRICT ON UPDATE CASCADE,
+    CONSTRAINT "InstallationScopeProduct_catalogProduct_snapshot_check"
+      CHECK (
+        "catalogProductId" IS NULL
+        OR (
+          "productNameSnapshot" IS NOT NULL
+          AND length(trim("productNameSnapshot")) > 0
+        )
+      )
 );
 
 INSERT INTO "new_InstallationScopeProduct" (
