@@ -17,6 +17,7 @@ const mocks = vi.hoisted(() => ({
   canEdit: vi.fn(),
   canArchive: vi.fn(),
   employeeFindUnique: vi.fn(),
+  viewerFromSession: vi.fn(),
 }))
 
 vi.mock('next-auth', () => ({ getServerSession: vi.fn(async () => mocks.session) }))
@@ -24,6 +25,7 @@ vi.mock('next/navigation', () => ({ notFound: vi.fn(), redirect: vi.fn() }))
 vi.mock('@/lib/auth', () => ({ authOptions: {} }))
 vi.mock('@/lib/prisma', () => ({ prisma: { employee: { findUnique: mocks.employeeFindUnique } } }))
 vi.mock('@/lib/installations/constants', () => ({ INSTALLATION_ROLES: ['ADMIN', 'MANAGER', 'EMPLOYEE', 'INSTALLER'] }))
+vi.mock('@/lib/installations/http-access', () => ({ installationViewerFromSession: mocks.viewerFromSession }))
 vi.mock('@/lib/installations/access', () => ({
   canViewInstallationOrder: mocks.canView,
   canEditInstallationOrder: mocks.canEdit,
@@ -64,6 +66,11 @@ describe('installer installation detail privacy', () => {
     mocks.canView.mockReturnValue(true)
     mocks.canEdit.mockReturnValue(false)
     mocks.canArchive.mockReturnValue(false)
+    mocks.viewerFromSession.mockResolvedValue({
+      role: 'INSTALLER',
+      employeeId: 'installer-employee',
+      employeeActive: true,
+    })
 
     const result = await InstallationOrderPage({ params: Promise.resolve({ id: 'order-1' }) })
 

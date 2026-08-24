@@ -7,7 +7,7 @@ import {
   canEditInstallationOrder,
   canViewInstallationOrder,
 } from '@/lib/installations/access'
-import { INSTALLATION_ROLES, type InstallationRole } from '@/lib/installations/constants'
+import { installationViewerFromSession } from '@/lib/installations/http-access'
 import { getInstallationOrder } from '@/lib/installations/order-service'
 import { getInstallationOrderFormSnapshot, getInstallationOrderRooms, listInstallationCatalog, listInstallationFormTemplates } from '@/lib/installations/catalog-service'
 import { listClientLinkStatuses } from '@/lib/installations/client-link'
@@ -27,21 +27,11 @@ export default async function InstallationOrderPage({ params }: Params) {
   const order = await getInstallationOrder(prisma, id)
   if (!order) notFound()
 
-  const role = INSTALLATION_ROLES.includes(session.user.role as InstallationRole)
-    ? session.user.role as InstallationRole
-    : 'EMPLOYEE'
-  const viewerEmployee = role === 'EMPLOYEE' && session.user.employeeId
-    ? await prisma.employee.findUnique({ where: { id: session.user.employeeId }, select: { active: true } })
-    : null
-  const viewer = {
-    role,
-    employeeId: session.user.employeeId,
-    employeeActive: viewerEmployee?.active === true,
-  }
+  const viewer = await installationViewerFromSession(session)
   if (!canViewInstallationOrder(viewer, order)) notFound()
 
   const canCoordinateClientForm = canEditInstallationOrder(viewer, order)
-  const canManageGovernance = role === 'ADMIN' || role === 'MANAGER'
+  const canManageGovernance = viewer.role === 'ADMIN' || viewer.role === 'MANAGER'
   const rooms = await getInstallationOrderRooms(prisma, id)
   // An installer gets the limited work-order view. Client answers, their
   // clarification/evidence trail and client-link management are coordinator-only.
