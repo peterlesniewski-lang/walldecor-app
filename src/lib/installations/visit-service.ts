@@ -531,7 +531,6 @@ export async function requeueInstallationCalendar(
       data: {
         status: 'PENDING',
         forceOverwrite,
-        attemptCount: 0,
         availableAt: now,
         lockedUntil: null,
         completedAt: null,

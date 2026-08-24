@@ -372,12 +372,16 @@ describe('installation visit lifecycle', () => {
     const original = await db.integrationOutbox.findFirstOrThrow({ where: { visitId: draft.id } })
 
     await db.$transaction([
-      db.integrationOutbox.update({ where: { id: original.id }, data: { status: 'DEAD', lastErrorCode: 'ETAG_CONFLICT' } }),
+      db.integrationOutbox.update({ where: { id: original.id }, data: { status: 'DEAD', attemptCount: 2, lastErrorCode: 'ETAG_CONFLICT' } }),
+      db.integrationAttempt.createMany({ data: [
+        { outboxId: original.id, number: 1, outcome: 'ATTENTION', errorCode: 'ETAG_CONFLICT', durationMs: 1 },
+        { outboxId: original.id, number: 2, outcome: 'ATTENTION', errorCode: 'ETAG_CONFLICT', durationMs: 1 },
+      ] }),
       db.integrationSyncState.update({ where: { visitId_kind: { visitId: draft.id, kind: 'GOOGLE_CALENDAR' } }, data: { status: 'ATTENTION', lastErrorCode: 'ETAG_CONFLICT' } }),
     ])
     await requeueInstallationCalendar(db, order.id, draft.id, false, 'owner-user')
     expect(await db.integrationOutbox.findUniqueOrThrow({ where: { id: original.id } }))
-      .toMatchObject({ status: 'PENDING', forceOverwrite: false, lastErrorCode: null, lastErrorMessage: null })
+      .toMatchObject({ status: 'PENDING', forceOverwrite: false, attemptCount: 2, lastErrorCode: null, lastErrorMessage: null })
 
     await db.$transaction([
       db.integrationOutbox.update({ where: { id: original.id }, data: { status: 'DEAD', lastErrorCode: 'ETAG_CONFLICT' } }),
@@ -387,7 +391,7 @@ describe('installation visit lifecycle', () => {
     expect(result).toMatchObject({ id: draft.id, revision: 2 })
     expect(await db.integrationOutbox.findMany({ where: { visitId: draft.id } })).toHaveLength(1)
     expect(await db.integrationOutbox.findUniqueOrThrow({ where: { id: original.id } }))
-      .toMatchObject({ status: 'PENDING', forceOverwrite: true, lastErrorCode: null, lastErrorMessage: null })
+      .toMatchObject({ status: 'PENDING', forceOverwrite: true, attemptCount: 2, lastErrorCode: null, lastErrorMessage: null })
     expect(await db.integrationSyncState.findUniqueOrThrow({ where: { visitId_kind: { visitId: draft.id, kind: 'GOOGLE_CALENDAR' } } }))
       .toMatchObject({ status: 'PENDING', lastErrorCode: null, lastErrorMessage: null })
   })
