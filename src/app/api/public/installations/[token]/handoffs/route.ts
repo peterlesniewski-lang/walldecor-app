@@ -3,6 +3,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { publicClientLinkNotFound } from '@/lib/installations/client-link'
 import { createMobileUploadHandoff, InstallationMediaAccessError, InstallationMediaValidationError } from '@/lib/installation-media/service'
 import { prisma } from '@/lib/prisma'
+import { installationPublicUrl } from '@/lib/installations/public-url'
 
 type Params = { params: Promise<{ token: string }> }
 const noStore = { 'Cache-Control': 'no-store' }
@@ -15,7 +16,7 @@ export async function POST(req: NextRequest, { params }: Params) {
       return NextResponse.json({ error: 'Wskaż pytanie, którego dotyczy zdjęcie.' }, { status: 400, headers: noStore })
     }
     const handoff = await createMobileUploadHandoff(prisma, token, { questionKey: body.questionKey.trim() })
-    const handoffUrl = new URL(`/m/u/${handoff.code}`, req.nextUrl.origin).toString()
+    const handoffUrl = installationPublicUrl(`/m/u/${handoff.code}`, req.nextUrl.origin)
     const qrSvg = await QRCode.toString(handoffUrl, { type: 'svg', margin: 1, errorCorrectionLevel: 'M' })
     return NextResponse.json({ handoffId: handoff.handoffId, handoffUrl, qrSvg, expiresAt: handoff.expiresAt.toISOString() }, { status: 201, headers: noStore })
   } catch (error) {
