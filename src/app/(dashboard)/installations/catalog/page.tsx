@@ -21,7 +21,7 @@ export default async function InstallationCatalogPage() {
       <div>
         <p className="data-label">Konfiguracja montaży</p>
         <h1 className="mt-1 text-3xl font-extrabold tracking-tight" style={{ color: 'var(--wd-dark)' }}>Katalog i formularze</h1>
-        <p className="mt-2 max-w-2xl text-sm" style={{ color: 'var(--wd-text-muted)' }}>Zmiany są od razu zapisywane w bazie. Zarchiwizowany produkt zostaje w historii zakresu, ale nie trafia do nowych wyborów.</p>
+        <p className="mt-2 max-w-2xl text-sm" style={{ color: 'var(--wd-text-muted)' }}>Zmiany są od razu zapisywane w bazie. Rodzaje prac są płaskimi kategoriami wybieranymi przy budowie zakresu, a archiwizacja zachowuje historyczne zakresy i ich migawki.</p>
       </div>
       <CatalogManager initialCatalog={catalog} />
       <TemplateBuilder initialTemplates={templates} />

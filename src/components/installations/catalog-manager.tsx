@@ -1,10 +1,18 @@
 'use client'
 
-import { FormEvent, useMemo, useState } from 'react'
+import { FormEvent, useMemo, useState, type ComponentProps } from 'react'
 import { Archive, ChevronDown, ChevronUp, Pencil, Plus, Save, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Button as UiButton, type ButtonProps } from '@/components/ui/button'
+import { Input as UiInput } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+
+function Button({ className, ...props }: ButtonProps) {
+  return <UiButton {...props} className={`min-h-11 min-w-11 ${className ?? ''}`} />
+}
+
+function Input({ className, ...props }: ComponentProps<typeof UiInput>) {
+  return <UiInput {...props} className={`min-h-11 ${className ?? ''}`} />
+}
 
 type CatalogCategory = {
   id: string

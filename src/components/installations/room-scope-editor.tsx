@@ -1,10 +1,18 @@
 'use client'
 
-import { FormEvent, useMemo, useState } from 'react'
+import { FormEvent, useMemo, useState, type ComponentProps } from 'react'
 import { ChevronDown, ChevronUp, Pencil, Plus, Ruler, Save, Trash2, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Button as UiButton, type ButtonProps } from '@/components/ui/button'
+import { Input as UiInput } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+
+function Button({ className, ...props }: ButtonProps) {
+  return <UiButton {...props} className={`min-h-11 min-w-11 ${className ?? ''}`} />
+}
+
+function Input({ className, ...props }: ComponentProps<typeof UiInput>) {
+  return <UiInput {...props} className={`min-h-11 ${className ?? ''}`} />
+}
 
 type ScopeProduct = {
   id: string
@@ -127,11 +135,12 @@ export function RoomScopeEditor({ orderId, initialRooms, catalog, canEdit }: { o
     const draft = measurementForms[key]
     if (!draft || !draft.elementName.trim() || !draft.value.trim() || (draft.kind === 'RECTANGLE' && !draft.secondaryValue.trim())) return
     await run(`add-measurement-${key}`, async () => {
+      const targetScopeId = (scopeId ?? draft.scopeId) || null
       const body = draft.kind === 'RECTANGLE'
-        ? { kind: draft.kind, elementName: draft.elementName, value: draft.value, secondaryValue: draft.secondaryValue, unit: draft.unit, scopeId }
-        : { kind: draft.kind, elementName: draft.elementName, value: draft.value, unit: draft.unit, scopeId }
+        ? { kind: draft.kind, elementName: draft.elementName, value: draft.value, secondaryValue: draft.secondaryValue, unit: draft.unit, scopeId: targetScopeId }
+        : { kind: draft.kind, elementName: draft.elementName, value: draft.value, unit: draft.unit, scopeId: targetScopeId }
       await requestJson(`/api/installations/${orderId}/rooms/${room.id}/measurements`, { method: 'POST', body: JSON.stringify(body) })
-      setMeasurementForms((current) => ({ ...current, [key]: emptyMeasurementDraft(scopeId ?? '', draft.kind) })); await reload()
+      setMeasurementForms((current) => ({ ...current, [key]: emptyMeasurementDraft(targetScopeId ?? '', draft.kind) })); await reload()
     })
   }
 

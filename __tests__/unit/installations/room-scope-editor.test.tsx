@@ -91,6 +91,23 @@ describe('room scope editor order products and measurements UI', () => {
     expect(JSON.parse((fetchMock.mock.calls[2]?.[1] as RequestInit).body as string)).toEqual({ kind: 'SINGLE', elementName: 'Listwa', value: '3', unit: 'MB', scopeId: 'scope-1' })
   })
 
+  it('uses the selected scope when creating a measurement from the general room section', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce({ ok: true, json: async () => ({ id: 'measurement-assigned' }) })
+      .mockResolvedValueOnce({ ok: true, json: async () => baseRooms })
+    vi.stubGlobal('fetch', fetchMock)
+    render(createElement(RoomScopeEditor, { orderId: 'order-1', initialRooms: baseRooms, catalog, canEdit: true }))
+
+    await user.type(screen.getByLabelText('Nazwa pomiaru w Salon'), 'Pomiar przeniesiony')
+    await user.type(screen.getByLabelText('Wartość pomiaru w Salon'), '18')
+    await user.selectOptions(screen.getByLabelText('Zakres pomiaru w Salon'), 'scope-1')
+    await user.click(screen.getByRole('button', { name: 'Dodaj pomiar' }))
+
+    await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
+    expect(JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({ kind: 'SINGLE', elementName: 'Pomiar przeniesiony', value: '18', unit: 'CM', scopeId: 'scope-1' })
+  })
+
   it('keeps local product edits after a 409 and sends updatedAt', async () => {
     const user = userEvent.setup()
     const product = { id: 'scope-product-1', catalogProductId: null, productNameSnapshot: 'Tapeta', productCodeSnapshot: 'WD-01', manufacturerSnapshot: 'WallDecor', collectionSnapshot: 'Misty', batchSnapshot: 'STARA', sortOrder: 0, updatedAt: '2026-08-25T10:00:00.000Z' }
