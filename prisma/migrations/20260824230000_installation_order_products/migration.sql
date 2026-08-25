@@ -53,5 +53,59 @@ ON "InstallationScopeProduct"("scopeId", "sortOrder");
 CREATE INDEX "InstallationScopeProduct_catalogProductId_idx"
 ON "InstallationScopeProduct"("catalogProductId");
 
-ALTER TABLE "InstallationMeasurement" ADD COLUMN "kind" TEXT NOT NULL DEFAULT 'SINGLE';
-ALTER TABLE "InstallationMeasurement" ADD COLUMN "secondaryValue" DECIMAL;
+-- SQLite cannot alter an existing CHECK constraint. Rebuild the table so the
+-- new units are accepted without losing historical measurements or their
+-- provenance. Zero remains valid for historical imports; new-value positivity
+-- is enforced by the application service.
+CREATE TABLE "new_InstallationMeasurement" (
+    "id" TEXT NOT NULL PRIMARY KEY,
+    "roomId" TEXT NOT NULL,
+    "scopeId" TEXT,
+    "elementName" TEXT NOT NULL,
+    "kind" TEXT NOT NULL DEFAULT 'SINGLE',
+    "value" DECIMAL NOT NULL,
+    "secondaryValue" DECIMAL,
+    "unit" TEXT NOT NULL,
+    "source" TEXT NOT NULL,
+    "authorId" TEXT,
+    "authorContext" TEXT,
+    "actorUserId" TEXT,
+    "actorRole" TEXT,
+    "createdAt" DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    "updatedAt" DATETIME NOT NULL,
+    CONSTRAINT "InstallationMeasurement_roomId_fkey"
+      FOREIGN KEY ("roomId") REFERENCES "InstallationRoom" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "InstallationMeasurement_scopeId_fkey"
+      FOREIGN KEY ("scopeId") REFERENCES "InstallationScope" ("id") ON DELETE CASCADE ON UPDATE CASCADE,
+    CONSTRAINT "InstallationMeasurement_value_check"
+      CHECK (CAST("value" AS REAL) >= 0),
+    CONSTRAINT "InstallationMeasurement_unit_check"
+      CHECK ("unit" IN ('MM', 'CM', 'M', 'M2', 'MB', 'SZT')),
+    CONSTRAINT "InstallationMeasurement_source_check"
+      CHECK ("source" IN ('CLIENT', 'EMPLOYEE', 'INSTALLER')),
+    CONSTRAINT "InstallationMeasurement_element_check"
+      CHECK (length(trim("elementName")) > 0)
+);
+
+INSERT INTO "new_InstallationMeasurement" (
+  "id", "roomId", "scopeId", "elementName", "kind", "value",
+  "secondaryValue", "unit", "source", "authorId", "authorContext",
+  "actorUserId", "actorRole", "createdAt", "updatedAt"
+)
+SELECT
+  "id", "roomId", "scopeId", "elementName", 'SINGLE', "value",
+  NULL, "unit", "source", "authorId", "authorContext", "actorUserId",
+  "actorRole", "createdAt", "updatedAt"
+FROM "InstallationMeasurement";
+
+DROP TABLE "InstallationMeasurement";
+ALTER TABLE "new_InstallationMeasurement" RENAME TO "InstallationMeasurement";
+
+CREATE INDEX "InstallationMeasurement_roomId_createdAt_idx"
+ON "InstallationMeasurement"("roomId", "createdAt");
+
+CREATE INDEX "InstallationMeasurement_scopeId_createdAt_idx"
+ON "InstallationMeasurement"("scopeId", "createdAt");
+
+CREATE INDEX "InstallationMeasurement_actorUserId_createdAt_idx"
+ON "InstallationMeasurement"("actorUserId", "createdAt");

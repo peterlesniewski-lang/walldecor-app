@@ -382,6 +382,79 @@ describe('installation order-owned products migration', () => {
           },
         })
       ).rejects.toThrow()
+      const [linearMeasurement, pieceMeasurement, rectangleMeasurement] =
+        await Promise.all([
+          db.installationMeasurement.create({
+            data: {
+              id: 'measurement-linear-mb',
+              roomId: 'legacy-room',
+              scopeId: 'legacy-scope',
+              elementName: 'Listwa',
+              kind: 'SINGLE',
+              value: 18,
+              unit: 'MB',
+              source: 'EMPLOYEE',
+            },
+          }),
+          db.installationMeasurement.create({
+            data: {
+              id: 'measurement-piece-szt',
+              roomId: 'legacy-room',
+              scopeId: 'legacy-scope',
+              elementName: 'Gniazda',
+              kind: 'SINGLE',
+              value: 6,
+              unit: 'SZT',
+              source: 'EMPLOYEE',
+            },
+          }),
+          db.installationMeasurement.create({
+            data: {
+              id: 'measurement-rectangle-cm',
+              roomId: 'legacy-room',
+              scopeId: 'legacy-scope',
+              elementName: 'Okno',
+              kind: 'RECTANGLE',
+              value: 400,
+              secondaryValue: 320,
+              unit: 'CM',
+              source: 'EMPLOYEE',
+            },
+          }),
+        ])
+      expect(
+        [linearMeasurement, pieceMeasurement, rectangleMeasurement].map(
+          (measurement) => ({
+            kind: measurement.kind,
+            value: measurement.value.toString(),
+            secondaryValue: measurement.secondaryValue?.toString() ?? null,
+            unit: measurement.unit,
+          })
+        )
+      ).toEqual([
+        { kind: 'SINGLE', value: '18', secondaryValue: null, unit: 'MB' },
+        { kind: 'SINGLE', value: '6', secondaryValue: null, unit: 'SZT' },
+        {
+          kind: 'RECTANGLE',
+          value: '400',
+          secondaryValue: '320',
+          unit: 'CM',
+        },
+      ])
+      await expect(
+        db.installationMeasurement.create({
+          data: {
+            id: 'measurement-invalid-unit',
+            roomId: 'legacy-room',
+            scopeId: 'legacy-scope',
+            elementName: 'Błędna jednostka',
+            kind: 'SINGLE',
+            value: 1,
+            unit: 'KG',
+            source: 'EMPLOYEE',
+          },
+        })
+      ).rejects.toThrow()
       await db.installationCatalogCategory.delete({
       where: { id: history.scopeCategory.id },
     })
