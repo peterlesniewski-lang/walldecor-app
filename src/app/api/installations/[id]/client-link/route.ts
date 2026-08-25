@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { editableInstallationOrder } from '@/lib/installations/room-route-access'
+import { installationPublicUrl } from '@/lib/installations/public-url'
 import {
   createClientLink,
   extendClientLink,
@@ -58,7 +59,7 @@ export async function POST(req: NextRequest, { params }: Params) {
     // This is intentionally the only route response containing the plaintext URL.
     return NextResponse.json({
       link: safeLink(created.link),
-      url: new URL(`/m/${created.token}`, req.nextUrl.origin).toString(),
+      url: installationPublicUrl(`/m/${created.token}`, req.nextUrl.origin),
     }, { status: 201, headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     if (error instanceof InstallationClientLinkPrerequisiteError) return NextResponse.json({ error: 'Najpierw przypnij dokładnie jeden formularz klienta do zlecenia.' }, { status: 409 })
@@ -87,7 +88,7 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     const created = await createClientLink(prisma, { orderId: id, createdById: access.session.user.id, expiresAt: parsed.data.expiresAt })
     return NextResponse.json({
       link: safeLink(created.link),
-      url: new URL(`/m/${created.token}`, req.nextUrl.origin).toString(),
+      url: installationPublicUrl(`/m/${created.token}`, req.nextUrl.origin),
     }, { status: 201, headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
     if (error instanceof InstallationClientLinkPrerequisiteError) return NextResponse.json({ error: 'Najpierw przypnij dokładnie jeden formularz klienta do zlecenia.' }, { status: 409 })
