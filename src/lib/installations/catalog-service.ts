@@ -318,7 +318,7 @@ async function reorderRows<T extends { id: string }>(rows: T[], orderedIds: stri
 }
 
 export async function reorderCatalogCategories(db: InstallationDb, orderedIds: string[]) {
-  const rows = await db.installationCatalogCategory.findMany({ select: { id: true } })
+  const rows = await db.installationCatalogCategory.findMany({ where: { isActive: true }, select: { id: true } })
   return reorderRows(rows, orderedIds, (id, sortOrder) => db.installationCatalogCategory.update({ where: { id }, data: { sortOrder } }))
 }
 

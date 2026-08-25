@@ -19,6 +19,7 @@ import {
   deleteInstallationScopeProduct,
   InstallationCatalogValidationError,
   publishInstallationFormTemplate,
+  reorderCatalogCategories,
   updateInstallationMeasurement,
   updateInstallationScopeProduct,
 } from '@/lib/installations/catalog-service'
@@ -81,6 +82,22 @@ describe('installation order-owned categories and products', () => {
     await archiveCatalogCategory(db, activeCategory.id)
     await expect(createInstallationScope(db, room.id, { catalogCategoryId: activeCategory.id }, 'order-products-admin'))
       .rejects.toMatchObject({ fieldErrors: { catalogCategoryId: expect.any(String) } })
+  })
+
+  it('reorders the remaining active categories after archiving one without rewriting its history', async () => {
+    const archived = await createCatalogCategory(db, { name: 'Archiwizowany rodzaj do reorderu' })
+    const firstActive = await createCatalogCategory(db, { name: 'Aktywny rodzaj pierwszy do reorderu' })
+    const secondActive = await createCatalogCategory(db, { name: 'Aktywny rodzaj drugi do reorderu' })
+    await archiveCatalogCategory(db, archived.id)
+    const archivedAfterArchive = await db.installationCatalogCategory.findUniqueOrThrow({ where: { id: archived.id }, select: { sortOrder: true, archivedAt: true } })
+
+    const activeRows = await db.installationCatalogCategory.findMany({ where: { isActive: true }, select: { id: true }, orderBy: { sortOrder: 'asc' } })
+    const orderedIds = [secondActive.id, firstActive.id, ...activeRows.map((row) => row.id).filter((id) => id !== firstActive.id && id !== secondActive.id)]
+    await expect(reorderCatalogCategories(db, orderedIds)).resolves.toBeUndefined()
+
+    const orderedActive = await db.installationCatalogCategory.findMany({ where: { isActive: true }, orderBy: { sortOrder: 'asc' }, select: { id: true } })
+    expect(orderedActive.slice(0, 2).map((row) => row.id)).toEqual([secondActive.id, firstActive.id])
+    await expect(db.installationCatalogCategory.findUniqueOrThrow({ where: { id: archived.id }, select: { sortOrder: true, archivedAt: true } })).resolves.toEqual(archivedAfterArchive)
   })
 
   it('accepts catalog and order-owned products but does not create an empty order-owned record or audit', async () => {
