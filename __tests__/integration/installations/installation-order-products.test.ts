@@ -108,6 +108,30 @@ describe('installation order-owned categories and products', () => {
     expect(await db.installationAuditEvent.count({ where: { orderId } })).toBe(auditsBefore)
   })
 
+  it.each([null, '', '   '])('treats %j catalogProductId as absent for an order-owned snapshot', async (catalogProductId) => {
+    const room = await createInstallationRoom(db, orderId, { name: `Pusty katalog ${String(catalogProductId)}` }, 'order-products-admin')
+    const scope = await createInstallationScope(db, room.id, { name: 'Ściana bez katalogu' }, 'order-products-admin')
+
+    const product = await addInstallationScopeProduct(db, scope.id, { catalogProductId, productNameSnapshot: 'Własny produkt' }, 'order-products-admin')
+
+    expect(product).toMatchObject({ catalogProductId: null, productNameSnapshot: 'Własny produkt' })
+  })
+
+  it.each([
+    ['productNameSnapshot', 'Nazwa własna'],
+    ['productCodeSnapshot', 'KOD-WŁASNY'],
+    ['manufacturerSnapshot', 'Producent własny'],
+    ['collectionSnapshot', 'Kolekcja własna'],
+    ['batchSnapshot', 'PARTIA-WŁASNA'],
+  ] as const)('creates an order-owned product when only %s is supplied', async (field, snapshot) => {
+    const room = await createInstallationRoom(db, orderId, { name: `Pojedyncze pole ${field}` }, 'order-products-admin')
+    const scope = await createInstallationScope(db, room.id, { name: 'Ściana pojedynczego pola' }, 'order-products-admin')
+
+    const product = await addInstallationScopeProduct(db, scope.id, { [field]: `  ${snapshot}  ` }, 'order-products-admin')
+
+    expect(product).toMatchObject({ catalogProductId: null, [field]: snapshot })
+  })
+
   it('updates snapshot fields atomically, retains the legacy catalog-name invariant, and rejects stale writes', async () => {
     const room = await createInstallationRoom(db, orderId, { name: 'Aktualizacja produktów' }, 'order-products-admin')
     const scope = await createInstallationScope(db, room.id, { name: 'Ściana aktualizowana' }, 'order-products-admin')
@@ -154,7 +178,10 @@ describe('installation measurements use final-record validation', () => {
     for (const input of [
       { elementName: 'Zero', value: '0', unit: 'CM' },
       { elementName: 'Notacja', value: '1e2', unit: 'CM' },
+      { elementName: 'Nie-liczba', value: 'nie-jest-liczbą', unit: 'CM' },
       { elementName: 'Pole prostokąta', kind: 'RECTANGLE', value: '10', secondaryValue: '10', unit: 'M2' },
+      { elementName: 'Metry bieżące prostokąta', kind: 'RECTANGLE', value: '10', secondaryValue: '10', unit: 'MB' },
+      { elementName: 'Sztuki prostokąta', kind: 'RECTANGLE', value: '10', secondaryValue: '10', unit: 'SZT' },
       { elementName: 'Brak boku', kind: 'RECTANGLE', value: '10', unit: 'CM' },
     ]) await expect(addInstallationMeasurement(db, room.id, input, employeeActor())).rejects.toBeInstanceOf(InstallationCatalogValidationError)
 
@@ -169,6 +196,28 @@ describe('installation measurements use final-record validation', () => {
     const foreignScope = await createInstallationScope(db, anotherRoom.id, { name: 'Obcy zakres' }, 'order-products-admin')
     await expect(updateInstallationMeasurement(db, corrected.id, { scopeId: foreignScope.id }, employeeActor()))
       .rejects.toMatchObject({ fieldErrors: { scopeId: expect.any(String) } })
+
+    const roomLevel = await addInstallationMeasurement(db, room.id, { elementName: 'Pomiar pomieszczenia', value: '45', unit: 'CM' }, employeeActor())
+    const movedToScope = await updateInstallationMeasurement(db, roomLevel.id, { scopeId: scope.id }, employeeActor())
+    expect(movedToScope).toMatchObject({ roomId: room.id, scopeId: scope.id })
+  })
+
+  it('rejects historical zero dimensions inherited by a PATCH until the final record is corrected', async () => {
+    const room = await createInstallationRoom(db, orderId, { name: 'Pomiary historyczne' }, 'order-products-admin')
+    const [historicalSingle, historicalRectangle] = await Promise.all([
+      db.installationMeasurement.create({ data: { roomId: room.id, elementName: 'Historyczne zero', kind: 'SINGLE', value: '0', unit: 'CM', source: 'EMPLOYEE', authorContext: 'HISTORY_IMPORT' } }),
+      db.installationMeasurement.create({ data: { roomId: room.id, elementName: 'Historyczny prostokąt', kind: 'RECTANGLE', value: '12', secondaryValue: '0', unit: 'CM', source: 'EMPLOYEE', authorContext: 'HISTORY_IMPORT' } }),
+    ])
+
+    await expect(updateInstallationMeasurement(db, historicalSingle.id, { elementName: 'Nadal zero' }, employeeActor()))
+      .rejects.toMatchObject({ fieldErrors: { value: expect.any(String) } })
+    await expect(updateInstallationMeasurement(db, historicalRectangle.id, { elementName: 'Nadal brak boku' }, employeeActor()))
+      .rejects.toMatchObject({ fieldErrors: { secondaryValue: expect.any(String) } })
+
+    await expect(updateInstallationMeasurement(db, historicalSingle.id, { value: '1' }, employeeActor()))
+      .resolves.toMatchObject({ value: expect.objectContaining({ toString: expect.any(Function) }) })
+    await expect(updateInstallationMeasurement(db, historicalRectangle.id, { secondaryValue: '8' }, employeeActor()))
+      .resolves.toMatchObject({ secondaryValue: expect.objectContaining({ toString: expect.any(Function) }) })
   })
 })
 

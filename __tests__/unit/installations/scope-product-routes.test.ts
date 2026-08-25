@@ -67,4 +67,21 @@ describe('scope-product patch route', () => {
     expect(conflict.status).toBe(409)
     expect(await conflict.json()).toEqual(expect.objectContaining({ fieldErrors: { updatedAt: 'Karta została zmieniona.' } }))
   })
+
+  it('returns 404 without calling the service when the product belongs to a different nested scope', async () => {
+    mocks.room.mockResolvedValueOnce({
+      id: 'room-1',
+      scopes: [
+        { id: 'scope-1', scopeProducts: [] },
+        { id: 'scope-2', scopeProducts: [{ id: 'product-1' }] },
+      ],
+    })
+
+    const response = await PATCH(new NextRequest('http://test/api/installations/order-1/rooms/room-1/scopes/scope-1/products/product-1', {
+      method: 'PATCH', body: JSON.stringify({ batchSnapshot: 'PARTIA-24', updatedAt: '2026-08-25T10:00:00.000Z' }),
+    }), params)
+
+    expect(response.status).toBe(404)
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
 })

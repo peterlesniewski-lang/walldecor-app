@@ -27,9 +27,20 @@ const optionalText = z.preprocess(
   z.string().trim().min(1).max(160).nullish(),
 )
 const optionalSortOrder = z.number().int().min(0).optional()
+const decimalTextPattern = /^(?:0|[1-9]\d*)(?:\.\d+)?$/
+
+function isPositiveDecimalText(value: string) {
+  if (!decimalTextPattern.test(value)) return false
+  try {
+    return new Prisma.Decimal(value).greaterThan(0)
+  } catch {
+    return false
+  }
+}
+
 const decimalText = z.string().trim()
-  .regex(/^(?:0|[1-9]\d*)(?:\.\d+)?$/, 'Wartość musi być dziesiętnym tekstem bez notacji float.')
-  .refine((value) => new Prisma.Decimal(value).greaterThan(0), 'Wartość musi być dodatnia.')
+  .regex(decimalTextPattern, 'Wartość musi być dziesiętnym tekstem bez notacji float.')
+  .refine(isPositiveDecimalText, 'Wartość musi być dodatnia.')
 const optionalDecimalText = z.preprocess(
   (value) => typeof value === 'string' && value.trim() === '' ? null : value,
   decimalText.nullish(),
@@ -60,8 +71,12 @@ const scopeCreateSchema = z.object({
   sortOrder: optionalSortOrder,
 }).strict()
 const scopeUpdateSchema = z.object({ name: requiredName.optional(), sortOrder: optionalSortOrder }).strict()
+const optionalCatalogProductId = z.preprocess(
+  (value) => value === null || (typeof value === 'string' && value.trim() === '') ? undefined : value,
+  z.string().trim().min(1).optional(),
+)
 const scopeProductCreateSchema = z.object({
-  catalogProductId: z.string().trim().min(1).optional(),
+  catalogProductId: optionalCatalogProductId,
   productNameSnapshot: optionalText,
   productCodeSnapshot: optionalText,
   manufacturerSnapshot: optionalText,
@@ -753,8 +768,9 @@ const singleMeasurementUnits = new Set(['MM', 'CM', 'M', 'M2', 'MB', 'SZT'])
 
 function validateMeasurementShape(shape: { kind: 'SINGLE' | 'RECTANGLE'; value: string; secondaryValue: string | null; unit: string }) {
   const errors: Record<string, string> = {}
+  if (!isPositiveDecimalText(shape.value)) errors.value = 'Wartość musi być dodatnim tekstem dziesiętnym.'
   if (shape.kind === 'RECTANGLE') {
-    if (!shape.secondaryValue) errors.secondaryValue = 'Prostokąt wymaga drugiego dodatniego wymiaru.'
+    if (!shape.secondaryValue || !isPositiveDecimalText(shape.secondaryValue)) errors.secondaryValue = 'Prostokąt wymaga drugiego dodatniego wymiaru.'
     if (!rectangleMeasurementUnits.has(shape.unit)) errors.unit = 'Prostokąt obsługuje tylko MM, CM lub M.'
   } else if (!singleMeasurementUnits.has(shape.unit)) {
     errors.unit = 'Pomiar pojedynczy obsługuje MM, CM, M, M2, MB lub SZT.'
