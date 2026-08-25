@@ -16,6 +16,7 @@ import {
   createInstallationOrderFormSnapshot,
   createInstallationRoom,
   createInstallationScope,
+  deleteInstallationScopeProduct,
   InstallationCatalogValidationError,
   publishInstallationFormTemplate,
   updateInstallationMeasurement,
@@ -155,6 +156,53 @@ describe('installation order-owned categories and products', () => {
     await db.installationScopeProduct.update({ where: { id: updated.id }, data: { batchSnapshot: 'BATCH-WYŚCIG', updatedAt: new Date('2026-08-24T12:00:00.000Z') } })
     await expect(updateInstallationScopeProduct(db, updated.id, { batchSnapshot: 'BATCH-PRZETERMINOWANY', updatedAt: updated.updatedAt.toISOString() }, 'order-products-admin'))
       .rejects.toMatchObject({ status: 409, message: 'Karta została zmieniona. Odśwież dane i spróbuj ponownie.' })
+  })
+
+  it('allows exactly one concurrent scope-product PATCH for a shared updatedAt token', async () => {
+    const room = await createInstallationRoom(db, orderId, { name: 'Wyścig produktów' }, 'order-products-admin')
+    const scope = await createInstallationScope(db, room.id, { name: 'Ściana wyścigu' }, 'order-products-admin')
+    const product = await addInstallationScopeProduct(db, scope.id, { productNameSnapshot: 'Przed wyścigiem' }, 'order-products-admin')
+    const updatedAt = product.updatedAt.toISOString()
+
+    const results = await Promise.allSettled([
+      updateInstallationScopeProduct(db, product.id, { productNameSnapshot: 'Pierwsza korekta', updatedAt }, 'order-products-admin'),
+      updateInstallationScopeProduct(db, product.id, { productNameSnapshot: 'Druga korekta', updatedAt }, 'order-products-admin'),
+    ])
+
+    expect(results.filter((result) => result.status === 'fulfilled')).toHaveLength(1)
+    const rejected = results.filter((result): result is PromiseRejectedResult => result.status === 'rejected')
+    expect(rejected).toHaveLength(1)
+    expect(rejected[0].reason).toMatchObject({ status: 409, fieldErrors: { updatedAt: 'Karta została zmieniona. Odśwież dane i spróbuj ponownie.' } })
+  })
+
+  it('writes every persisted scope-product field into the delete audit beforeJson', async () => {
+    const room = await createInstallationRoom(db, orderId, { name: 'Audit usunięcia produktu' }, 'order-products-admin')
+    const scope = await createInstallationScope(db, room.id, { name: 'Ściana audytu usunięcia' }, 'order-products-admin')
+    const category = await createCatalogCategory(db, { name: 'Katalog audytu usunięcia' })
+    const type = await createCatalogType(db, { categoryId: category.id, name: 'Typ audytu usunięcia' })
+    const catalogProduct = await createCatalogProduct(db, {
+      typeId: type.id, name: 'Nazwa katalogowa', code: 'KOD-AUDYT', manufacturer: 'Producent audytu', collection: 'Kolekcja audytu',
+    })
+    const scopeProduct = await addInstallationScopeProduct(db, scope.id, { catalogProductId: catalogProduct.id, batchSnapshot: 'PARTIA-AUDYT' }, 'order-products-admin')
+
+    await deleteInstallationScopeProduct(db, scopeProduct.id, 'order-products-admin')
+
+    const audit = await db.installationAuditEvent.findFirstOrThrow({
+      where: { orderId, action: 'INSTALLATION_SCOPE_PRODUCT_DELETED' }, orderBy: { createdAt: 'desc' },
+    })
+    expect(JSON.parse(audit.beforeJson!)).toEqual({
+      id: scopeProduct.id,
+      scopeId: scope.id,
+      catalogProductId: catalogProduct.id,
+      productNameSnapshot: 'Nazwa katalogowa',
+      productCodeSnapshot: 'KOD-AUDYT',
+      manufacturerSnapshot: 'Producent audytu',
+      collectionSnapshot: 'Kolekcja audytu',
+      batchSnapshot: 'PARTIA-AUDYT',
+      sortOrder: scopeProduct.sortOrder,
+      createdAt: scopeProduct.createdAt.toISOString(),
+      updatedAt: scopeProduct.updatedAt.toISOString(),
+    })
   })
 })
 

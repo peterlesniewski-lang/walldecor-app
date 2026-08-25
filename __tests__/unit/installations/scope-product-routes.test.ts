@@ -84,4 +84,14 @@ describe('scope-product patch route', () => {
     expect(response.status).toBe(404)
     expect(mocks.update).not.toHaveBeenCalled()
   })
+
+  it('returns 400 for malformed PATCH JSON without invoking the service', async () => {
+    const response = await PATCH(new NextRequest('http://test/api/installations/order-1/rooms/room-1/scopes/scope-1/products/product-1', {
+      method: 'PATCH', body: '{"batchSnapshot":',
+    }), params)
+
+    expect(response.status).toBe(400)
+    expect(await response.json()).toEqual({ error: 'Nieprawidłowy format danych.' })
+    expect(mocks.update).not.toHaveBeenCalled()
+  })
 })

@@ -737,7 +737,7 @@ export async function deleteInstallationScopeProduct(db: PrismaClient, id: strin
     if (!current) validationError('scopeProductId', 'Produkt zakresu nie istnieje.')
     await assertActiveInstallationOrder(tx, current.scope.room.orderId)
     await tx.installationScopeProduct.delete({ where: { id } })
-    await audit(tx, current.scope.room.orderId, actorId, 'INSTALLATION_SCOPE_PRODUCT_DELETED', JSON.stringify({ id: current.id, productNameSnapshot: current.productNameSnapshot }), null)
+    await audit(tx, current.scope.room.orderId, actorId, 'INSTALLATION_SCOPE_PRODUCT_DELETED', JSON.stringify(scopeProductAuditSnapshot(current)), null)
   })
 }
 
