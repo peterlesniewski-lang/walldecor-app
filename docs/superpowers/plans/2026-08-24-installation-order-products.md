@@ -317,13 +317,11 @@ Do not expose catalog IDs, provenance, actors, prices, CRM data, or unrelated
 room data. Update only tests whose typed fixtures need these fields.
 
 In `loadPublicInstallationProjection`, keep the existing read-only product
-context but guarantee its public `name` remains a string:
+context but do not promote SKU or manufacturer into the public label. Guarantee
+the public `name` remains a string with a neutral fallback:
 
 ```ts
-name: product.productNameSnapshot
-  ?? product.productCodeSnapshot
-  ?? product.manufacturerSnapshot
-  ?? 'Produkt bez nazwy',
+name: product.productNameSnapshot ?? 'Produkt bez nazwy',
 ```
 
 - [ ] **Step 7: Run focused backend tests**
