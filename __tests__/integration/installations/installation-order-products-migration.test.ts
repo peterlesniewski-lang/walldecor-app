@@ -224,6 +224,25 @@ async function seedLegacyRecords(db: PrismaClient) {
     createdAt,
     updatedAt
   )
+  await db.$executeRawUnsafe(
+    `INSERT INTO "InstallationMeasurement" (
+      "id", "roomId", "scopeId", "elementName", "value", "unit", "source",
+      "authorId", "authorContext", "actorUserId", "actorRole", "createdAt", "updatedAt"
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    'legacy-zero-measurement',
+    room.id,
+    'legacy-scope',
+    'Historyczny punkt odniesienia',
+    0,
+    'MM',
+    'INSTALLER',
+    'legacy-zero-author',
+    'HISTORY_IMPORT_ZERO',
+    'legacy-zero-user',
+    'EMPLOYEE',
+    createdAt,
+    updatedAt
+  )
 
   return { catalogProduct, createdAt, scopeCategory, updatedAt }
 }
@@ -275,7 +294,7 @@ describe('installation order-owned products migration', () => {
       expect({ scopeCount, scopeProductCount, measurementCount }).toEqual({
         scopeCount: 1,
         scopeProductCount: 1,
-        measurementCount: 1,
+        measurementCount: 2,
       })
       expect(scopes).toEqual([
         {
@@ -350,6 +369,23 @@ describe('installation order-owned products migration', () => {
           authorContext: 'HISTORY_IMPORT',
           actorUserId: 'legacy-user',
           actorRole: 'ADMIN',
+          createdAt: history.createdAt.toISOString(),
+          updatedAt: history.updatedAt.toISOString(),
+        },
+        {
+          id: 'legacy-zero-measurement',
+          roomId: 'legacy-room',
+          scopeId: 'legacy-scope',
+          elementName: 'Historyczny punkt odniesienia',
+          kind: 'SINGLE',
+          value: '0',
+          secondaryValue: null,
+          unit: 'MM',
+          source: 'INSTALLER',
+          authorId: 'legacy-zero-author',
+          authorContext: 'HISTORY_IMPORT_ZERO',
+          actorUserId: 'legacy-zero-user',
+          actorRole: 'EMPLOYEE',
           createdAt: history.createdAt.toISOString(),
           updatedAt: history.updatedAt.toISOString(),
         },
