@@ -5,6 +5,8 @@ import { PrismaClient } from '@/generated/prisma'
 
 const databaseUrl = process.env.E2E_DATABASE_URL
 const password = 'E2E-Client-Form-2026!'
+const surfacePreparationQuestion = 'Czy osoba przygotowująca powierzchnię potwierdziła, że została ona zagruntowana pod tapetę?'
+const surfacePreparationHelp = 'Gruntowanie to przygotowanie podłoża odpowiednim preparatem przed montażem tapety. Zwykłe pomalowanie ściany nie zawsze oznacza, że została prawidłowo zagruntowana. Zalecane jest gruntowanie preparatem głęboko penetrującym.'
 if (!databaseUrl?.startsWith('file:/tmp/walldecor-installations-e2e-')) throw new Error('E2E_DATABASE_URL musi wskazywać izolowaną SQLite montaży.')
 let db: PrismaClient
 let templateId: string
@@ -79,6 +81,37 @@ async function expectNoHorizontalOverflow(page: import('@playwright/test').Page)
   expect(viewport.bodyWidth).toBeLessThanOrEqual(viewport.innerWidth + 1)
 }
 
+async function expectResponsiveQuestionCard(
+  page: import('@playwright/test').Page,
+  question: string,
+) {
+  await expectNoHorizontalOverflow(page)
+  const card = page.getByRole('group', { name: question })
+  const title = card.locator('legend')
+  const clear = card.getByRole('button', { name: `Wyczyść wybór: ${question}` })
+  const lastChoice = card.getByRole('button', { name: 'Nie wiem', exact: true })
+  await expect(card).toBeVisible()
+  await expect(clear).toBeVisible()
+
+  const [cardBox, titleBox, clearBox, lastChoiceBox] = await Promise.all([
+    card.boundingBox(), title.boundingBox(), clear.boundingBox(), lastChoice.boundingBox(),
+  ])
+  if (!cardBox || !titleBox || !clearBox || !lastChoiceBox) throw new Error('Nie udało się odczytać geometrii pytania formularza klienta.')
+
+  expect(titleBox.y).toBeGreaterThanOrEqual(cardBox.y + 8)
+  expect(titleBox.x).toBeGreaterThanOrEqual(cardBox.x + 8)
+  expect(titleBox.x + titleBox.width).toBeLessThanOrEqual(cardBox.x + cardBox.width - 8)
+  expect(clearBox.y).toBeGreaterThanOrEqual(lastChoiceBox.y + lastChoiceBox.height + 7)
+  expect(clearBox.x + clearBox.width).toBeLessThanOrEqual(cardBox.x + cardBox.width - 8)
+
+  const clearStyle = await clear.evaluate((element) => {
+    const style = window.getComputedStyle(element)
+    return { borderTopWidth: Number.parseFloat(style.borderTopWidth), backgroundColor: style.backgroundColor }
+  })
+  expect(clearStyle.borderTopWidth).toBe(0)
+  expect(['rgba(0, 0, 0, 0)', 'transparent']).toContain(clearStyle.backgroundColor)
+}
+
 test.beforeAll(async () => {
   db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
   await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
@@ -97,7 +130,7 @@ test.beforeAll(async () => {
   const template = await db.installationFormTemplate.create({ data: {
     familyId: 'e2e-client-form', name: 'E2E klient', nameKey: 'e2e-klient', version: 1, status: 'PUBLISHED', publishedAt: new Date(), createdById: 'e2e',
     questionDefinitions: { create: [
-      { key: 'e2e_okna', type: 'YES_NO_UNKNOWN', label: 'Czy na tapetowanej ścianie znajdują się okna?', sortOrder: 0 },
+      { key: 'e2e_okna', type: 'YES_NO_UNKNOWN', label: surfacePreparationQuestion, help: surfacePreparationHelp, sortOrder: 0 },
       { key: 'e2e_glify', type: 'YES_NO_UNKNOWN', label: 'Czy tapetujemy glify?', riskLevel: 'HIGH', conditionJson: JSON.stringify({ questionKey: 'e2e_okna', equals: 'YES' }), sortOrder: 1 },
       { key: 'e2e_glify_cm', type: 'DIMENSION', label: 'Podaj głębokość glifów', conditionJson: JSON.stringify({ questionKey: 'e2e_glify', equals: 'YES' }), sortOrder: 2 },
       { key: 'e2e_kolor', type: 'SINGLE', label: 'Kolor ściany', optionsJson: JSON.stringify(['biały', 'beżowy']), sortOrder: 3 },
@@ -182,10 +215,15 @@ test('admin sends an anonymous client link through autosave, clarification and i
   expect(publicProjection.projection.submission).not.toHaveProperty('id')
   await expectOrderFormStatus(page, orderId, 'Rozpoczęty')
 
-  const rootYes = client.getByRole('group', { name: 'Czy na tapetowanej ścianie znajdują się okna?' }).getByRole('button', { name: 'Tak', exact: true })
+  const rootYes = client.getByRole('group', { name: surfacePreparationQuestion }).getByRole('button', { name: 'Tak', exact: true })
   await rootYes.focus()
   await expect(rootYes).toBeFocused()
-  await chooseAnswer(client, 'Czy na tapetowanej ścianie znajdują się okna?', 'Tak')
+  await chooseAnswer(client, surfacePreparationQuestion, 'Tak')
+  for (const width of [360, 430, 768, 1280]) {
+    await client.setViewportSize({ width, height: width <= 430 ? 812 : 900 })
+    await expectResponsiveQuestionCard(client, surfacePreparationQuestion)
+  }
+  await client.setViewportSize({ width: 375, height: 812 })
   await expect(client.getByRole('group', { name: 'Czy tapetujemy glify?' })).toBeVisible()
   await chooseAnswer(client, 'Czy tapetujemy glify?', 'Tak')
   const depth = client.getByLabel('Podaj głębokość glifów')
@@ -195,7 +233,7 @@ test('admin sends an anonymous client link through autosave, clarification and i
   await depthAutosave
   await expect(client.getByRole('status')).toContainText('Wszystko zapisane', { timeout: 5000 })
 
-  await chooseAnswer(client, 'Czy na tapetowanej ścianie znajdują się okna?', 'Nie')
+  await chooseAnswer(client, surfacePreparationQuestion, 'Nie')
   await expect(client.getByRole('group', { name: 'Czy tapetujemy glify?' })).toHaveCount(0)
   await expect(client.getByLabel('Podaj głębokość glifów')).toHaveCount(0)
   await expect.poll(async () => client.evaluate(async () => {
@@ -210,7 +248,7 @@ test('admin sends an anonymous client link through autosave, clarification and i
   })
   expect(prunedKeys).not.toContain('e2e_glify_cm')
 
-  await chooseAnswer(client, 'Czy na tapetowanej ścianie znajdują się okna?', 'Tak')
+  await chooseAnswer(client, surfacePreparationQuestion, 'Tak')
   await expect(client.getByRole('group', { name: 'Czy tapetujemy glify?' })).toBeVisible()
   await expect(client.getByLabel('Podaj głębokość glifów')).toHaveCount(0)
   const acceptedAutosaveBody = await chooseAnswer(client, 'Czy tapetujemy glify?', 'Nie wiem')
@@ -235,7 +273,7 @@ test('admin sends an anonymous client link through autosave, clarification and i
   await page.goto(`/installations/${orderId}`)
   await expect(page.getByText('Wymaga ustalenia przed terminem montażu')).toBeVisible()
   const revisionPanel = page.getByRole('region', { name: 'Wersje odpowiedzi klienta' })
-  await expect(revisionPanel).toContainText('Czy na tapetowanej ścianie znajdują się okna?')
+  await expect(revisionPanel).toContainText(surfacePreparationQuestion)
   await expect(revisionPanel).toContainText('Czy tapetujemy glify?')
   await expect(revisionPanel).toContainText('Nie wiem')
   await expect(revisionPanel).not.toContainText('e2e_glify_cm')

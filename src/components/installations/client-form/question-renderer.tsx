@@ -24,18 +24,23 @@ function RequiredMark({ question }: { question: FormQuestion }) {
   return question.required ? <span className={styles.required}>*</span> : null
 }
 
-function OptionalClear({ question, value, onChange }: { question: FormQuestion; value: FormAnswerValue | undefined; onChange: (value: FormAnswerValue | null) => void }) {
+function OptionalClear({ question, value, onChange, kind }: { question: FormQuestion; value: FormAnswerValue | undefined; onChange: (value: FormAnswerValue | null) => void; kind: 'choice' | 'answer' }) {
   if (question.required || value === undefined) return null
-  return <button type="button" className={styles.secondary} aria-label={'Wyczyść odpowiedź: ' + question.label} onClick={() => onChange(null)}>Wyczyść odpowiedź</button>
+  const label = kind === 'choice' ? 'Wyczyść wybór' : 'Wyczyść odpowiedź'
+  return <div className={styles.clearRow}>
+    <button type="button" className={styles.clearAnswer} aria-label={`${label}: ${question.label}`} onClick={() => onChange(null)}>{label}</button>
+  </div>
 }
 
 function ReadonlyQuestion({ question, value, fileContent }: Pick<ClientQuestionRendererBaseProps, 'question' | 'value' | 'fileContent'>) {
   return <article className={styles.question}>
-    <strong className={styles.readonlyLabel}>{question.label}<RequiredMark question={question} /></strong>
-    {question.help && <p className={styles.help}>{question.help}</p>}
-    {question.type === 'FILE' && fileContent !== undefined
-      ? fileContent
-      : <output className={styles.answerOutput}>{displayFormAnswer(value, question.type)}</output>}
+    <strong className={styles.questionTitle}>{question.label}<RequiredMark question={question} /></strong>
+    <div className={styles.questionBody}>
+      {question.help && <p className={styles.help}>{question.help}</p>}
+      {question.type === 'FILE' && fileContent !== undefined
+        ? fileContent
+        : <output className={styles.answerOutput}>{displayFormAnswer(value, question.type)}</output>}
+    </div>
   </article>
 }
 
@@ -51,34 +56,42 @@ export function ClientQuestionRenderer(props: ClientQuestionRendererProps) {
   if (question.type === 'FILE') return <>{fileContent}</>
 
   if (question.type === 'YES_NO_UNKNOWN') return <fieldset className={styles.question}>
-    <legend>{question.label}<RequiredMark question={question} /></legend>
-    {question.help && <p className={styles.help}>{question.help}</p>}
-    <div className={styles.choiceGrid}>{([['YES', 'Tak'], ['NO', 'Nie'], ['UNKNOWN', 'Nie wiem']] as const).map(([choice, label]) => <button type="button" key={choice} className={styles.choice} aria-pressed={value === choice} onClick={() => change(choice)}>{label}</button>)}</div>
-    <OptionalClear question={question} value={value} onChange={change} />
+    <legend className={styles.questionTitle}>{question.label}<RequiredMark question={question} /></legend>
+    <div className={styles.questionBody}>
+      {question.help && <p className={styles.help}>{question.help}</p>}
+      <div className={styles.choiceGrid}>{([['YES', 'Tak'], ['NO', 'Nie'], ['UNKNOWN', 'Nie wiem']] as const).map(([choice, label]) => <button type="button" key={choice} className={styles.choice} aria-pressed={value === choice} onClick={() => change(choice)}>{label}</button>)}</div>
+      <OptionalClear question={question} value={value} onChange={change} kind="choice" />
+    </div>
   </fieldset>
 
   if (question.type === 'MULTI') {
     const selected = Array.isArray(value) ? value : []
     return <fieldset className={styles.question}>
-      <legend>{question.label}<RequiredMark question={question} /></legend>
-      {question.help && <p className={styles.help}>{question.help}</p>}
-      <div className={styles.checkList}>{(question.options ?? []).map((option) => <label className={styles.check} key={option}><input type="checkbox" checked={selected.includes(option)} onChange={() => change(selected.includes(option) ? selected.filter((item) => item !== option) : [...selected, option])} />{option}</label>)}</div>
-      <OptionalClear question={question} value={value} onChange={change} />
+      <legend className={styles.questionTitle}>{question.label}<RequiredMark question={question} /></legend>
+      <div className={styles.questionBody}>
+        {question.help && <p className={styles.help}>{question.help}</p>}
+        <div className={styles.checkList}>{(question.options ?? []).map((option) => <label className={styles.check} key={option}><input type="checkbox" checked={selected.includes(option)} onChange={() => change(selected.includes(option) ? selected.filter((item) => item !== option) : [...selected, option])} />{option}</label>)}</div>
+        <OptionalClear question={question} value={value} onChange={change} kind="choice" />
+      </div>
     </fieldset>
   }
 
   if (question.type === 'SINGLE') return <div className={styles.question}>
-    <label htmlFor={inputId}>{question.label}<RequiredMark question={question} /></label>
-    <select id={inputId} className={styles.field} value={typeof value === 'string' ? value : ''} onChange={(event) => change(event.target.value || null)}><option value="">Wybierz odpowiedź</option>{(question.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}</select>
-    <OptionalClear question={question} value={value} onChange={change} />
+    <label className={styles.questionTitle} htmlFor={inputId}>{question.label}<RequiredMark question={question} /></label>
+    <div className={styles.questionBody}>
+      <select id={inputId} className={styles.field} value={typeof value === 'string' ? value : ''} onChange={(event) => change(event.target.value || null)}><option value="">Wybierz odpowiedź</option>{(question.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}</select>
+      <OptionalClear question={question} value={value} onChange={change} kind="choice" />
+    </div>
   </div>
 
   const multiline = question.type === 'TEXT'
   return <div className={styles.question}>
-    <label htmlFor={inputId}>{question.label}<RequiredMark question={question} /></label>
-    {multiline
-      ? <textarea id={inputId} className={styles.field} value={typeof value === 'string' ? value : ''} onChange={(event) => change(event.target.value || null)} />
-      : <input id={inputId} className={styles.field} inputMode="decimal" value={typeof value === 'string' ? value : ''} onChange={(event) => change(event.target.value || null)} />}
-    <OptionalClear question={question} value={value} onChange={change} />
+    <label className={styles.questionTitle} htmlFor={inputId}>{question.label}<RequiredMark question={question} /></label>
+    <div className={styles.questionBody}>
+      {multiline
+        ? <textarea id={inputId} className={styles.field} value={typeof value === 'string' ? value : ''} onChange={(event) => change(event.target.value || null)} />
+        : <input id={inputId} className={styles.field} inputMode="decimal" value={typeof value === 'string' ? value : ''} onChange={(event) => change(event.target.value || null)} />}
+      <OptionalClear question={question} value={value} onChange={change} kind="answer" />
+    </div>
   </div>
 }

@@ -46,18 +46,18 @@
 .sectionHelp { color: #655e55; margin: 0 0 16px; }
 .questions { display: grid; gap: 12px; }
 .questionGroup { display: grid; gap: 12px; padding: 2px 0 4px; }
-.question { background: var(--paper); border: 1px solid rgba(39,37,34,.14); border-radius: 16px; padding: 16px; box-shadow: 0 2px 5px rgba(39,37,34,.035); }
-.question label, .question legend { display: block; font-size: 16px; font-weight: 650; line-height: 1.35; }
-.readonlyLabel { display: block; font-size: 16px; font-weight: 650; line-height: 1.35; }
+.question { min-inline-size: 0; background: var(--paper); border: 1px solid rgba(39,37,34,.14); border-radius: 16px; padding: 16px; box-shadow: 0 2px 5px rgba(39,37,34,.035); }
+.questionTitle { box-sizing: border-box; display: block; float: left; inline-size: 100%; max-inline-size: 100%; margin: 0; padding: 0; font-size: 16px; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; text-wrap: pretty; }
+.questionBody { clear: both; min-inline-size: 0; }
 .answerOutput { color: var(--graphite); display: block; font-size: 16px; line-height: 1.45; margin-top: 12px; min-height: 24px; }
 .required { color: var(--site-red); margin-left: 3px; }
-.help { color: #655e55; font-size: 14px; line-height: 1.45; margin: 6px 0 0; }
+.help { color: #655e55; font-size: 14px; line-height: 1.45; margin: 8px 0 0; }
 .choiceGrid { display: grid; gap: 8px; grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top: 14px; }
 .choice, .submit, .secondary { min-height: 48px; border: 1px solid rgba(39,37,34,.22); border-radius: 10px; cursor: pointer; font: inherit; font-weight: 700; transition: transform .15s ease, background .15s ease, border-color .15s ease; }
 .choice { background: #f0e7d8; color: var(--graphite); padding: 8px 5px; }
 .choice[aria-pressed="true"] { background: var(--masking-tape); border-color: var(--masking-tape); color: #1d160b; }
 .choice:hover, .submit:hover, .secondary:hover { transform: translateY(-1px); }
-.choice:focus-visible, .submit:focus-visible, .secondary:focus-visible, .field:focus-visible, .check input:focus-visible { outline: 3px solid rgba(189,116,24,.45); outline-offset: 2px; }
+.choice:focus-visible, .submit:focus-visible, .secondary:focus-visible, .clearAnswer:focus-visible, .field:focus-visible, .check input:focus-visible { outline: 3px solid rgba(189,116,24,.45); outline-offset: 2px; }
 .field { box-sizing: border-box; min-height: 48px; width: 100%; border: 1px solid rgba(39,37,34,.25); border-radius: 9px; background: var(--sand); color: var(--graphite); font: inherit; margin-top: 12px; padding: 10px 12px; }
 .checkList { display: grid; gap: 8px; margin-top: 12px; }
 .check { align-items: center; display: flex; gap: 9px; min-height: 44px; }
@@ -79,6 +79,9 @@
 .submit { background: var(--masking-tape); border-color: var(--masking-tape); color: #1e170b; margin-top: 4px; padding: 10px 16px; width: 100%; }
 .submit:disabled, .secondary:disabled { cursor: wait; opacity: .6; transform: none; }
 .secondary { background: transparent; color: var(--graphite); padding: 8px 12px; }
+.clearRow { display: flex; justify-content: flex-end; margin-top: 8px; }
+.clearAnswer { align-items: center; min-height: 44px; border: 0; border-radius: 6px; background: transparent; color: #655e55; cursor: pointer; display: inline-flex; font: inherit; font-size: 14px; font-weight: 700; padding: 4px 2px; text-decoration: underline; text-decoration-thickness: 1px; text-underline-offset: 3px; }
+.clearAnswer:hover { color: var(--graphite); }
 .confirmation { background: #e1eee3; border-left: 4px solid var(--site-green); margin-top: 22px; }
 @keyframes reveal { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .section { animation: none; } .choice, .submit, .secondary { transition: none; } }

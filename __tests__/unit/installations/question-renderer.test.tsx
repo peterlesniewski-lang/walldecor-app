@@ -37,6 +37,36 @@ describe('ClientQuestionRenderer', () => {
     expect(onChange).toHaveBeenCalledWith('YES')
   })
 
+  it('clears an optional selected choice through a choice-specific action', async () => {
+    const user = userEvent.setup()
+    const onChange = vi.fn()
+
+    render(<ClientQuestionRenderer question={yesNoQuestion} value="YES" mode="interactive" onChange={onChange} />)
+
+    expect(screen.getByRole('group', { name: 'Czy są glify?' })).not.toBeNull()
+    const clear = screen.getByRole('button', { name: 'Wyczyść wybór: Czy są glify?' })
+    expect(clear.textContent).toBe('Wyczyść wybór')
+    await user.click(clear)
+    expect(onChange).toHaveBeenCalledWith(null)
+  })
+
+  it('keeps the answer-specific clear label for text fields', () => {
+    const textQuestion: FormQuestion = { key: 'opis', type: 'TEXT', label: 'Opis dodatkowy' }
+
+    render(<ClientQuestionRenderer question={textQuestion} value="Opis klienta" mode="interactive" onChange={vi.fn()} />)
+
+    const clear = screen.getByRole('button', { name: 'Wyczyść odpowiedź: Opis dodatkowy' })
+    expect(clear.textContent).toBe('Wyczyść odpowiedź')
+  })
+
+  it('does not offer clearing for a required selected choice', () => {
+    const requiredQuestion: FormQuestion = { ...yesNoQuestion, required: true }
+
+    render(<ClientQuestionRenderer question={requiredQuestion} value="YES" mode="interactive" onChange={vi.fn()} />)
+
+    expect(screen.queryByRole('button', { name: /Wyczyść/ })).toBeNull()
+  })
+
   it('formats arrays and missing answers for readonly output', () => {
     const multiQuestion: FormQuestion = {
       key: 'zakres',
