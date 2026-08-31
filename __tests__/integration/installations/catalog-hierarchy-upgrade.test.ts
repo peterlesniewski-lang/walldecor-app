@@ -96,8 +96,25 @@ async function seedLegacyInconsistentHierarchy(db: PrismaClient) {
   const template = await db.installationFormTemplate.create({ data: { id: 'legacy-template', familyId: 'legacy-family', name: 'Legacy form', nameKey: 'legacy-form', version: 1, status: 'PUBLISHED', publishedAt: new Date('2026-08-01T00:00:00.000Z') } })
   const snapshot = await db.installationOrderFormSnapshot.create({ data: { id: 'legacy-snapshot', orderId: order.id, templateId: template.id, templateVersion: 1, schemaJson: '{"name":"Legacy form","version":1,"questions":[]}', createdById: 'legacy-migration' } })
   const room = await db.installationRoom.create({ data: { orderId: order.id, name: 'Legacy room', sortOrder: 0 } })
-  const scope = await db.installationScope.create({ data: { roomId: room.id, name: 'Legacy scope', sortOrder: 0 } })
-  const scopeProduct = await db.installationScopeProduct.create({ data: { scopeId: scope.id, catalogProductId: productUnderInactiveCategory.id, productNameSnapshot: 'Legacy category product', productCodeSnapshot: 'LEG-001', manufacturerSnapshot: 'Legacy maker', collectionSnapshot: 'Legacy collection', sortOrder: 0 } })
+  // The current client expects columns added after migration 21, so these rows
+  // deliberately use the actual historic table shape under test.
+  const scope = { id: 'legacy-upgrade-scope' }
+  await db.$executeRawUnsafe(
+    `INSERT INTO "InstallationScope" (
+      "id", "roomId", "name", "sortOrder", "createdAt", "updatedAt"
+    ) VALUES (?, ?, ?, ?, ?, ?)`,
+    scope.id, room.id, 'Legacy scope', 0, legacyUpdatedAt, legacyUpdatedAt,
+  )
+  const scopeProduct = { id: 'legacy-upgrade-scope-product' }
+  await db.$executeRawUnsafe(
+    `INSERT INTO "InstallationScopeProduct" (
+      "id", "scopeId", "catalogProductId", "productNameSnapshot",
+      "productCodeSnapshot", "manufacturerSnapshot", "collectionSnapshot",
+      "sortOrder", "createdAt", "updatedAt"
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+    scopeProduct.id, scope.id, productUnderInactiveCategory.id, 'Legacy category product',
+    'LEG-001', 'Legacy maker', 'Legacy collection', 0, legacyUpdatedAt, legacyUpdatedAt,
+  )
   return { productUnderInactiveCategory, productUnderInactiveType, activeTypeUnderInactiveCategory, snapshot, scopeProduct, legacyUpdatedAt, legacyProductArchivedAt }
 }
 
