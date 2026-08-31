@@ -48,6 +48,7 @@ const clarificationParams = { params: Promise.resolve({ id: 'order-1', clarifica
 
 describe('client-link and clarification internal routes', () => {
   beforeEach(() => {
+    vi.unstubAllEnvs()
     mocks.session = null
     mocks.editable.mockReset().mockResolvedValue({ order: { id: 'order-1' } })
     mocks.accessible.mockReset().mockResolvedValue({ order: { id: 'order-1' } })
@@ -83,6 +84,32 @@ describe('client-link and clarification internal routes', () => {
     expect(response.status).toBe(201)
     expect(result.url).toBe(`http://test/m/${'b'.repeat(43)}`)
     expect(result.link).not.toHaveProperty('tokenHash')
+  })
+
+  it('uses the configured public app origin instead of the container request origin', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('NEXTAUTH_URL', 'https://app.walldecor.pl')
+    mocks.session = { user: { id: 'owner-user', role: 'EMPLOYEE', employeeId: 'owner-employee' } }
+
+    const response = await POST(new NextRequest('https://0.0.0.0:3000/api/installations/order-1/client-link', {
+      method: 'POST', body: JSON.stringify({ expiresAt: '2027-01-01T00:00:00.000Z' }),
+    }), orderParams)
+
+    expect(response.status).toBe(201)
+    expect((await response.json()).url).toBe(`https://app.walldecor.pl/m/${'b'.repeat(43)}`)
+  })
+
+  it('falls back to the official app origin when production configuration points at a bind address', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('NEXTAUTH_URL', 'https://0.0.0.0:3000')
+    mocks.session = { user: { id: 'owner-user', role: 'EMPLOYEE', employeeId: 'owner-employee' } }
+
+    const response = await POST(new NextRequest('https://internal-proxy:3000/api/installations/order-1/client-link', {
+      method: 'POST', body: JSON.stringify({ expiresAt: '2027-01-01T00:00:00.000Z' }),
+    }), orderParams)
+
+    expect(response.status).toBe(201)
+    expect((await response.json()).url).toBe(`https://app.walldecor.pl/m/${'b'.repeat(43)}`)
   })
 
   it('returns a deliberate Polish conflict instead of a server error when no single form snapshot is pinned', async () => {

@@ -38,6 +38,7 @@ const codeParams = { params: Promise.resolve({ code: 'b'.repeat(43) }) }
 
 describe('public private-media routes', () => {
   beforeEach(() => {
+    vi.unstubAllEnvs()
     mocks.list.mockReset().mockResolvedValue([{ id: 'file-1', originalFilename: 'sciana.png' }])
     mocks.upload.mockReset().mockResolvedValue({
       id: 'file-1', status: 'READY', originalFilename: 'sciana.png', contentType: 'image/png', byteSize: 3,
@@ -88,6 +89,18 @@ describe('public private-media routes', () => {
     expect(body.handoffUrl).toBe(`http://app.example.test/m/u/${'b'.repeat(43)}`)
     expect(body.qrSvg).toContain('<svg')
     expect(JSON.stringify(body)).not.toContain('private/v1')
+  })
+
+  it('uses the configured public app origin for a QR handoff behind the production proxy', async () => {
+    vi.stubEnv('NODE_ENV', 'production')
+    vi.stubEnv('NEXTAUTH_URL', 'https://app.walldecor.pl')
+
+    const response = await createHandoff(new NextRequest('https://0.0.0.0:3000/api/public/installations/token/handoffs', {
+      method: 'POST', body: JSON.stringify({ questionKey: 'zdjecie' }), headers: { 'Content-Type': 'application/json' },
+    }), params)
+
+    expect(response.status).toBe(201)
+    expect((await response.json()).handoffUrl).toBe(`https://app.walldecor.pl/m/u/${'b'.repeat(43)}`)
   })
 
   it('burns the code into a secure HttpOnly Lax cookie and only lets that mobile session add bytes', async () => {
