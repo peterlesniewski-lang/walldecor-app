@@ -31,6 +31,21 @@ function jsonResponse(value: unknown, ok = true, status = ok ? 200 : 400) {
 }
 
 describe('InstallationVisitsPanel', () => {
+  it('preserves a newly created visit draft when its first server refresh arrives late', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('fetch', vi.fn().mockResolvedValue(jsonResponse(draftVisit)))
+    const props = { orderId: 'order-1', visits: [], scopes, employees, canEdit: true, canForceOverwrite: false }
+    const { rerender } = render(createElement(InstallationVisitsPanel, props))
+    await user.click(screen.getByRole('button', { name: 'Dodaj wizytę' }))
+    fireEvent.change(screen.getByLabelText('Początek wizyty'), { target: { value: '2027-03-10T09:00' } })
+    fireEvent.change(screen.getByLabelText('Koniec wizyty'), { target: { value: '2027-03-10T13:00' } })
+    await user.click(screen.getByRole('checkbox', { name: 'Salon — Tapety' }))
+    rerender(createElement(InstallationVisitsPanel, { ...props, visits: [{ ...draftVisit }] }))
+    expect(screen.getByLabelText('Początek wizyty')).toHaveProperty('value', '2027-03-10T09:00')
+    expect(screen.getByLabelText('Koniec wizyty')).toHaveProperty('value', '2027-03-10T13:00')
+    expect(screen.getByRole('checkbox', { name: 'Salon — Tapety' })).toHaveProperty('checked', true)
+  })
+
   it('preserves unsaved visit fields when another card section refreshes server props', async () => {
     const props = { orderId: 'order-1', visits: [draftVisit], scopes, employees, canEdit: true, canForceOverwrite: false }
     const { rerender } = render(createElement(InstallationVisitsPanel, props))

@@ -111,7 +111,9 @@ export function InstallationVisitsPanel({ orderId, visits, scopes, employees, ca
     setLocalVisits(visits)
     const previous = previousVisits.current
     setForms((current) => Object.fromEntries(visits.map((visit) => {
-      const baseline = previous.find((item) => item.id === visit.id)
+      // A newly created visit can be edited before its first RSC refresh arrives.
+      // Its local edit baseline already exists even though previous props omit it.
+      const baseline = previous.find((item) => item.id === visit.id) ?? editBaselines.current[visit.id]
       const dirty = baseline && current[visit.id] && JSON.stringify(current[visit.id]) !== JSON.stringify(formForVisit(baseline))
       return [visit.id, dirty ? current[visit.id] : formForVisit(visit)]
     })))
