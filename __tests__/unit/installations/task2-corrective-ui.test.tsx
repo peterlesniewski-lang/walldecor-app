@@ -1,12 +1,12 @@
 import { createElement } from 'react'
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { InstallationOrderDetail } from '@/components/installations/order-detail'
 import { RoomScopeEditor } from '@/components/installations/room-scope-editor'
 import { TemplateBuilder } from '@/components/installations/template-builder'
 
-vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn() }) }))
+vi.mock('next/navigation', () => ({ useRouter: () => ({ push: vi.fn(), refresh: vi.fn() }) }))
 
 const archivedOrder = {
   id: 'archived-order', number: 'MON-ARCHIVED', status: 'ARCHIVED', archivedAt: '2026-08-22T12:00:00.000Z',
@@ -35,7 +35,9 @@ describe('Task 2 corrective UI invariants', () => {
     expect(screen.queryByRole('button', { name: 'Edytuj pokój Salon' })).toBeNull()
     expect(screen.queryByLabelText('Produkt dla Ściana')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Archiwizuj zlecenie' })).toBeNull()
-    expect(screen.getByRole('heading', { name: 'Formularz klienta' })).toBeTruthy()
+    expect(screen.queryByRole('button', { name: 'Edytuj dane' })).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Formularz klienta' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Wybierz formularz' })).toBeNull()
     expect(screen.queryByLabelText('Wersja formularza dla zlecenia')).toBeNull()
   })
 
@@ -56,14 +58,16 @@ describe('Task 2 corrective UI invariants', () => {
       formRevisions: [{ revisionNumber: 1, status: 'SUBMITTED', submittedAt: '2026-08-22T12:00:00.000Z', answers: [{ questionKey: 'glify', normalizedValue: 'UNKNOWN', isUnknown: true }] }],
     } as never))
 
-    expect(screen.queryByText('Bezpieczny link do przygotowania montażu')).toBeNull()
-    expect(screen.queryByText('Wymaga ustalenia przed terminem montażu')).toBeNull()
+    expect(screen.queryByText('Link dla klienta')).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Do ustalenia przed montażem' })).toBeNull()
     expect(screen.queryByText('wewnętrzny-dowód')).toBeNull()
-    expect(screen.queryByText('Wersje odpowiedzi klienta')).toBeNull()
+    expect(screen.queryByRole('heading', { name: 'Odpowiedzi klienta' })).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Zobacz odpowiedzi klienta' })).toBeNull()
     expect(screen.queryByRole('button', { name: /Podgląd jak klient/ })).toBeNull()
   })
 
-  it('renders readable form history separately for a coordinator detail view', () => {
+  it('renders readable form history separately for a coordinator detail view', async () => {
+    const user = userEvent.setup()
     render(createElement(InstallationOrderDetail, {
       order: { ...archivedOrder, id: 'history-order', archivedAt: null, status: 'NEW' },
       employees: [], canEdit: true, rooms, catalog, files: [],
@@ -74,8 +78,11 @@ describe('Task 2 corrective UI invariants', () => {
       }],
     } as never))
 
-    expect(screen.getByRole('heading', { name: 'Wersje odpowiedzi klienta' })).toBeTruthy()
-    expect(screen.getByText('Czy są glify?')).toBeTruthy()
+    expect(screen.getByRole('heading', { name: 'Odpowiedzi klienta' })).toBeTruthy()
+    await user.click(screen.getByRole('button', { name: 'Zobacz odpowiedzi klienta' }))
+    const preview = within(screen.getByRole('region', { name: 'Podgląd formularza klienta, wersja 1' }))
+    expect(preview.getByText('Czy są glify?')).toBeTruthy()
+    expect(preview.getByText('Nie')).toBeTruthy()
     expect(screen.queryByText('glify_history')).toBeNull()
   })
 
@@ -91,7 +98,7 @@ describe('Task 2 corrective UI invariants', () => {
     } as never))
 
     await user.selectOptions(screen.getByLabelText('Wersja formularza dla zlecenia'), 'template-v1')
-    await user.click(screen.getByRole('button', { name: 'Przypnij formularz' }))
+    await user.click(screen.getByRole('button', { name: 'Wybierz formularz' }))
 
     await waitFor(() => expect(screen.getByText('Wywiad o glifach · wersja 1')).toBeTruthy())
     expect(fetchMock).toHaveBeenCalledWith('/api/installations/active-order/form-snapshot', expect.objectContaining({ method: 'POST' }))

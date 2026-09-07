@@ -76,7 +76,9 @@ test.afterAll(async () => { await db?.$disconnect() })
 test('backup takes over, admin delegates, and the client must accept an approved fee', async ({ page, browser }) => {
   await login(page, 'governanceadmin')
   await page.goto(`/installations/${orderId}`)
+  await page.getByText('Ustawienia dodatkowe', { exact: true }).click()
   await expect(page.getByRole('heading', { name: /Opiekun, zastępstwo i czasowe przejęcie/i })).toBeVisible()
+  await page.locator('#visit-fee > summary').click()
   await page.getByRole('button', { name: 'Użyj domyślnej kwoty' }).click()
   await expect(page.getByText(/Zatwierdzona kwota: 249,90 zł brutto/i)).toBeVisible()
 
@@ -109,9 +111,11 @@ test('backup takes over, admin delegates, and the client must accept an approved
   await login(backupPage, 'governancebackup')
   await backupPage.goto(`/installations/${orderId}`)
   await expect(backupPage.getByRole('heading', { name: /Klient MON-GOV-E2E-1/ })).toBeVisible()
+  await backupPage.getByRole('button', { name: 'Edytuj dane' }).click()
   await backupPage.getByLabel('Numer budynku').fill('2A')
   await backupPage.getByRole('button', { name: 'Zapisz zmiany' }).click()
-  await expect(backupPage.getByRole('status')).toHaveText('Wszystko zapisane')
+  await expect(backupPage.getByText(/Testowa 2A/)).toBeVisible()
+  await expect.poll(async () => (await db.installationOrder.findUniqueOrThrow({ where: { id: orderId } })).addressBuildingNumber).toBe('2A')
   await backupContext.close()
 
   const clientContext = await browser.newContext({ baseURL: 'http://localhost:3000', viewport: { width: 390, height: 844 } })
@@ -156,6 +160,8 @@ test('a fee chosen after form submission is accepted without restarting the ques
 
   await login(page, 'governanceadmin')
   await page.goto(`/installations/${postSubmitOrderId}`)
+  await page.getByText('Ustawienia dodatkowe', { exact: true }).click()
+  await page.locator('#visit-fee > summary').click()
   await page.getByRole('button', { name: 'Użyj domyślnej kwoty' }).click()
   await expect(page.getByText(/Zatwierdzona kwota: 249,90 zł brutto/i)).toBeVisible()
   await expect(await getInstallationReadiness(db, postSubmitOrderId)).toMatchObject({ isReady: false, visitFeeAcceptanceRequired: true })

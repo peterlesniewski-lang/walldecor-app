@@ -10,5 +10,9 @@ export default function globalTeardown() {
     E2E_DATABASE_URL: process.env.E2E_DATABASE_URL,
   })
   if (!validated) throw new Error('Odmowa usunięcia niezweryfikowanego katalogu E2E.')
+  if (process.env.WALLDECOR_E2E_KEEP_FOR_PREVIEW === '1') {
+    console.log(`Isolated employee preview retained: ${validated.directoryPath}`)
+    return
+  }
   rmSync(validated.directoryPath, { recursive: true, force: true })
 }

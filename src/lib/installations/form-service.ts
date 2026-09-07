@@ -716,8 +716,8 @@ export async function resolveInstallationClarification(
   const resolution = input.resolution?.trim()
   const note = input.note?.trim()
   const evidenceReference = input.evidenceReference?.trim()
-  if (input.action === 'RESOLVE' && (!resolution || (!note && !evidenceReference))) {
-    throw new InstallationClarificationValidationError({ form: 'Podaj ustalenie oraz notatkę lub odwołanie do dowodu.' })
+  if (input.action === 'RESOLVE' && !resolution) {
+    throw new InstallationClarificationValidationError({ form: 'Podaj treść ustalenia.' })
   }
   if (input.action === 'WAIVE' && !note) {
     throw new InstallationClarificationValidationError({ note: 'Odstąpienie wymaga uzasadnienia.' })

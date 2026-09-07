@@ -99,6 +99,7 @@ export function InstallationOrderForm({
   onSaved,
   primaryEmployeeIdLocked,
   canManageOwners = mode === 'create',
+  onCancel,
 }: {
   mode: 'create' | 'edit'
   employees: InstallationEmployeeOption[]
@@ -107,6 +108,7 @@ export function InstallationOrderForm({
   primaryEmployeeIdLocked?: string
   /** Named owners are changed only through the audited governance panel after creation. */
   canManageOwners?: boolean
+  onCancel?: () => void
 }) {
   const router = useRouter()
   const initial = useMemo(() => ({
@@ -133,6 +135,11 @@ export function InstallationOrderForm({
       delete next[field]
       return next
     })
+  }
+
+  function cancel() {
+    if (JSON.stringify(form) !== JSON.stringify(initial) && !window.confirm('Odrzucić niezapisane zmiany danych klienta?')) return
+    onCancel?.()
   }
 
   async function submit(event: FormEvent<HTMLFormElement>) {
@@ -186,7 +193,7 @@ export function InstallationOrderForm({
 
   return (
     <form onSubmit={submit} className="mx-auto max-w-4xl" noValidate>
-      <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
+      {mode === 'create' && <div className="mb-8 flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="data-label">{mode === 'create' ? 'Nowe zlecenie' : 'Edycja karty'}</p>
           <h1 className="mt-1 text-3xl font-extrabold tracking-tight" style={{ color: 'var(--wd-dark)' }}>
@@ -201,7 +208,7 @@ export function InstallationOrderForm({
             <ArrowLeft /> Wróć
           </Button>
         )}
-      </div>
+      </div>}
 
       <div className="space-y-5">
         <section className="rounded-2xl border p-5 sm:p-6" style={{ background: 'var(--wd-white)', borderColor: 'rgba(30, 30, 30, 0.12)', boxShadow: 'var(--card-shadow)' }}>
@@ -254,7 +261,7 @@ export function InstallationOrderForm({
           </div>
         </section>
 
-        <section className="rounded-2xl border p-5 sm:p-6" style={{ background: 'var(--wd-white)', borderColor: 'rgba(30, 30, 30, 0.12)', boxShadow: 'var(--card-shadow)' }}>
+        {(mode === 'create' || canManageOwners) && <section className="rounded-2xl border p-5 sm:p-6" style={{ background: 'var(--wd-white)', borderColor: 'rgba(30, 30, 30, 0.12)', boxShadow: 'var(--card-shadow)' }}>
           <p className="data-label" style={{ color: '#8C5718' }}>03 · Odpowiedzialność</p>
           <p className="mt-2 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Karta wymaga dwóch różnych aktywnych pracowników. Zastępca nie jest opcją awaryjną — jest widoczną odpowiedzialnością.</p>
           {mode === 'create' || canManageOwners ? <div className="mt-4 grid gap-4 sm:grid-cols-2">
@@ -273,11 +280,12 @@ export function InstallationOrderForm({
               {fieldError(errors, 'backupEmployeeId') && <p className="mt-1 text-xs text-red-700">{fieldError(errors, 'backupEmployeeId')}</p>}
             </div>
           </div> : <p className="mt-4 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Zmianę opiekuna, zastępcy i czasowe zastępstwo zapisuje administrator lub manager w audytowanej sekcji poniżej.</p>}
-        </section>
+        </section>}
       </div>
 
       {message && <p role="status" className="mt-4 text-sm font-medium" style={{ color: message === 'Wszystko zapisane' ? '#356B43' : '#9F2D24' }}>{message}</p>}
-      <div className="mt-6 flex justify-end">
+      <div className="mt-6 flex justify-end gap-3">
+        {onCancel && <Button type="button" variant="outline" disabled={saving} onClick={cancel}>Anuluj</Button>}
         <Button type="submit" disabled={saving} className="min-h-11" style={{ background: '#A96A20', color: '#fff' }}>
           <Save /> {saving ? 'Zapisywanie…' : mode === 'create' ? 'Utwórz kartę' : 'Zapisz zmiany'}
         </Button>

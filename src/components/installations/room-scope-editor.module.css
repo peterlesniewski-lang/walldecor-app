@@ -1,0 +1,179 @@
+.editor {
+  container: installation-editor / inline-size;
+}
+
+.editor input,
+.editor select {
+  min-width: 0;
+  width: 100%;
+}
+
+.editor label {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.room {
+  min-width: 0;
+  border: 1px solid;
+  border-radius: 12px;
+  padding: 12px;
+}
+
+.roomHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin: -12px -12px 20px;
+  padding: 16px 12px;
+  border-radius: 11px 11px 0 0;
+  border-bottom: 1px solid rgba(169, 106, 32, .18);
+  background: var(--wd-sand-light);
+}
+
+.roomHeader > div,
+.scopeHeader > form {
+  min-width: 0;
+}
+
+.roomHeader h3,
+.scopeHeader h4 {
+  overflow-wrap: anywhere;
+}
+
+.scopes {
+  display: grid;
+  gap: 24px;
+}
+
+.scope {
+  min-width: 0;
+  border: 1px solid;
+  border-radius: 10px;
+  padding: 16px 12px;
+}
+
+.scopeHeader {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.scopeGroup {
+  margin-top: 24px;
+  padding-top: 24px;
+  border-top: 1px solid;
+}
+
+.productFields {
+  display: grid;
+  gap: 16px;
+  margin-top: 16px;
+}
+
+.measurementForm {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  width: 100%;
+  margin-top: 16px;
+  align-items: end;
+}
+
+.measurementForm > * {
+  min-width: 0;
+}
+
+.measurementForm > label {
+  margin: 0;
+}
+
+.measurementForm > label > span {
+  display: block;
+  margin-bottom: 6px;
+  font-size: 14px;
+  font-weight: 500;
+}
+
+.measurementName,
+.measurementTools,
+.measurementSubmit,
+.fullRow,
+.measurementForm[data-kind='RECTANGLE'] .measurementUnit {
+  grid-column: 1 / -1;
+}
+
+.measurementTools {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 4px;
+}
+
+.measurementTools button {
+  white-space: normal;
+  height: auto;
+}
+
+.measurementTools button[aria-pressed='true'] {
+  background: var(--wd-sand-light);
+  border-color: #A96A20;
+  color: var(--wd-dark);
+  font-weight: 600;
+}
+
+.measurementSubmit {
+  justify-self: start;
+}
+
+.addScope {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: end;
+  gap: 16px;
+  margin-top: 24px;
+}
+
+.generalMeasurements {
+  margin-top: 32px;
+  padding-top: 24px;
+  border-top: 1px solid;
+}
+
+@container installation-editor (min-width: 560px) {
+  .room {
+    padding: 24px;
+  }
+
+  .roomHeader {
+    margin: -24px -24px 24px;
+    padding: 20px 24px;
+  }
+
+  .scope {
+    padding: 24px;
+  }
+
+  .productFields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+
+@container installation-editor (min-width: 720px) {
+  .measurementForm {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr);
+  }
+
+  .measurementForm[data-kind='RECTANGLE'] {
+    grid-template-columns: minmax(0, 2fr) minmax(0, 1fr) minmax(0, 1fr) minmax(88px, .8fr);
+  }
+
+  .measurementName,
+  .measurementForm[data-kind='RECTANGLE'] .measurementUnit {
+    grid-column: auto;
+  }
+}

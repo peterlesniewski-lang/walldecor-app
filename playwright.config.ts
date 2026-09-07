@@ -35,7 +35,8 @@ export default defineConfig({
     trace: 'on-first-retry',
   },
   webServer: {
-    command: 'npm run dev',
+    command: 'node --preserve-symlinks --import tsx e2e/dev-server.ts',
+    gracefulShutdown: { signal: 'SIGTERM', timeout: 10_000 },
     url: 'http://localhost:3000',
     env: {
       ...process.env,

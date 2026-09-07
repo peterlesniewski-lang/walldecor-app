@@ -10,7 +10,7 @@ import {
 } from '@/lib/installations/access'
 import { installationViewerFromSession } from '@/lib/installations/http-access'
 import { getInstallationOrder } from '@/lib/installations/order-service'
-import { getInstallationOrderFormSnapshot, getInstallationOrderRooms, getInstallerInstallationOrderRooms, listInstallationCatalog, listInstallationFormTemplates } from '@/lib/installations/catalog-service'
+import { getInstallationOrderFormSnapshot, getInstallationOrderRooms, listInstallationCatalog, listInstallationFormTemplates } from '@/lib/installations/catalog-service'
 import { listClientLinkStatuses } from '@/lib/installations/client-link'
 import { listInstallationClarifications, listInstallationFormRevisions } from '@/lib/installations/form-service'
 import { getInstallationReadiness } from '@/lib/installations/readiness'
@@ -19,8 +19,7 @@ import { listInstallationFiles, listInstallationMismatchesForEvidence } from '@/
 import { listInstallationVisits } from '@/lib/installations/visit-service'
 import { listScopeInstallerAssignments } from '@/lib/installations/scope-assignment-service'
 import { InstallationOrderDetail } from '@/components/installations/order-detail'
-import { presentInstallerInstallationOrder } from '@/lib/installations/order-presenter'
-import { presentInstallerInstallationVisits } from '@/lib/installations/installer-visit-presenter'
+import { getInstallerInstallationCardData } from '@/lib/installations/installer-card-data'
 
 type Params = { params: Promise<{ id: string }> }
 
@@ -31,6 +30,11 @@ export default async function InstallationOrderPage({ params }: Params) {
   const { id } = await params
   const viewer = await installationViewerFromSession(session)
   if (!isInstallationViewerAuthorized(viewer)) notFound()
+  if (viewer.role === 'INSTALLER') {
+    const card = await getInstallerInstallationCardData(prisma, id, viewer)
+    if (!card) notFound()
+    return <InstallationOrderDetail order={card.order} rooms={card.rooms} visits={card.visits} employees={[]} canEdit={false} canArchive={false} catalog={[]} clientLinks={[]} clarifications={[]} formRevisions={[]} files={[]} scopeAssignments={[]} />
+  }
   const order = await getInstallationOrder(prisma, id)
   if (!order) notFound()
 
@@ -39,14 +43,11 @@ export default async function InstallationOrderPage({ params }: Params) {
   const canCoordinateClientForm = canEditInstallationOrder(viewer, order)
   const canManageGovernance = viewer.role === 'ADMIN' || viewer.role === 'MANAGER'
   const [rooms, visits, scopeAssignments] = await Promise.all([
-    viewer.role === 'INSTALLER'
-      ? getInstallerInstallationOrderRooms(prisma, id, viewer.employeeId!)
-      : getInstallationOrderRooms(prisma, id),
+    getInstallationOrderRooms(prisma, id),
     listInstallationVisits(prisma, id),
     listScopeInstallerAssignments(prisma, id),
   ])
-  // An installer gets the limited work-order view. Client answers, their
-  // clarification/evidence trail and client-link management are coordinator-only.
+  // Client answers, evidence and link management are coordinator-only.
   const coordinatorData = canCoordinateClientForm ? await (async () => {
     const [employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches] = await Promise.all([
       prisma.employee.findMany({
@@ -69,18 +70,11 @@ export default async function InstallationOrderPage({ params }: Params) {
     return { employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches }
   })() : null
 
-  // Cross the Server/Client boundary with a role-specific payload: an explicit
-  // installer allowlist, or the coordinator model with Decimal serialized.
-  const installerView = viewer.role === 'INSTALLER'
-  const clientOrder = installerView
-    ? presentInstallerInstallationOrder(order)
-    : {
-        ...order,
-        visitFeeGrossAmount: order.visitFeeGrossAmount?.toFixed(2) ?? null,
-      }
-  const clientVisits = installerView
-    ? presentInstallerInstallationVisits(visits, viewer)
-    : visits
+  // The coordinator model needs Decimal serialization at the client boundary.
+  const clientOrder = {
+    ...order,
+    visitFeeGrossAmount: order.visitFeeGrossAmount?.toFixed(2) ?? null,
+  }
 
   return <InstallationOrderDetail
     order={clientOrder}
@@ -100,7 +94,7 @@ export default async function InstallationOrderPage({ params }: Params) {
     files={coordinatorData?.files ?? []}
     mismatches={coordinatorData?.mismatches ?? []}
     canManageGovernance={canManageGovernance}
-    visits={clientVisits}
-    scopeAssignments={installerView ? [] : scopeAssignments}
+    visits={visits}
+    scopeAssignments={scopeAssignments}
   />
 }

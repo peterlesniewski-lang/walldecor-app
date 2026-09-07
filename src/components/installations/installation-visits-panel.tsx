@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useState, useTransition } from 'react'
+import { useEffect, useMemo, useRef, useState, useTransition } from 'react'
 import { CalendarDays, CheckCircle2, ChevronDown, ExternalLink, LoaderCircle, Plus, RotateCw, Save, UsersRound, XCircle } from 'lucide-react'
 import { useRouter } from 'next/navigation'
 import { Button } from '@/components/ui/button'
@@ -102,16 +102,28 @@ export function InstallationVisitsPanel({ orderId, visits, scopes, employees, ca
   const [pendingAction, setPendingAction] = useState<string | null>(null)
   const [message, setMessage] = useState('')
   const [error, setError] = useState('')
+  const previousVisits = useRef(visits)
+  const previousTeams = useRef(Object.fromEntries(scopes.map((scope) => [scope.id, scope.installerIds])))
+  const editBaselines = useRef<Record<string, InstallationVisitValue>>({})
+  const [conflictVisitId, setConflictVisitId] = useState<string | null>(null)
 
   useEffect(() => {
     setLocalVisits(visits)
-    setForms(Object.fromEntries(visits.map((visit) => [visit.id, formForVisit(visit)])))
+    const previous = previousVisits.current
+    setForms((current) => Object.fromEntries(visits.map((visit) => {
+      const baseline = previous.find((item) => item.id === visit.id)
+      const dirty = baseline && current[visit.id] && JSON.stringify(current[visit.id]) !== JSON.stringify(formForVisit(baseline))
+      return [visit.id, dirty ? current[visit.id] : formForVisit(visit)]
+    })))
+    previousVisits.current = visits
   }, [visits])
 
   useEffect(() => {
     const teams = Object.fromEntries(scopes.map((scope) => [scope.id, scope.installerIds]))
-    setScopeTeams(teams)
+    const previous = previousTeams.current
+    setScopeTeams((current) => Object.fromEntries(Object.entries(teams).map(([id, team]) => [id, current[id] && previous[id] && !sameIds(current[id], previous[id]) ? current[id] : team])))
     setPersistedScopeTeams(teams)
+    previousTeams.current = teams
   }, [scopes])
 
   const scopesById = useMemo(() => new Map(scopes.map((scope) => [scope.id, scope])), [scopes])
@@ -123,10 +135,14 @@ export function InstallationVisitsPanel({ orderId, visits, scopes, employees, ca
   }
 
   function setForm(visitId: string, patch: Partial<VisitForm>) {
+    const visit = localVisits.find((item) => item.id === visitId)
+    if (visit && !editBaselines.current[visitId]) editBaselines.current[visitId] = visit
     setForms((current) => ({ ...current, [visitId]: { ...current[visitId], ...patch } }))
   }
 
   function replaceVisit(updated: InstallationVisitValue) {
+    delete editBaselines.current[updated.id]
+    setConflictVisitId(null)
     setLocalVisits((current) => current.map((visit) => visit.id === updated.id ? updated : visit))
     setForms((current) => ({ ...current, [updated.id]: formForVisit(updated) }))
   }
@@ -200,6 +216,7 @@ export function InstallationVisitsPanel({ orderId, visits, scopes, employees, ca
         const revision = revisions.get(visit.id)
         return revision === undefined ? visit : { ...visit, revision }
       }))
+      refreshCard()
     }
   }
 
@@ -229,6 +246,12 @@ export function InstallationVisitsPanel({ orderId, visits, scopes, employees, ca
   async function saveVisit(visit: InstallationVisitValue, action: 'SAVE_DRAFT' | 'CONFIRM' | 'CHANGE_SCHEDULE') {
     const form = forms[visit.id]
     if (!form) return
+    const baseline = editBaselines.current[visit.id]
+    if (baseline && (baseline.status !== visit.status || JSON.stringify(formForVisit(baseline)) !== JSON.stringify(formForVisit(visit)))) {
+      setConflictVisitId(visit.id)
+      setError('Wizyta została zmieniona przez inną osobę. Twoje wpisy zachowano. Wczytaj aktualne dane wizyty przed ponowną edycją.')
+      return
+    }
     const requiresSchedule = action !== 'SAVE_DRAFT'
     if (requiresSchedule && hasUnsavedScopeTeams(form)) {
       setError('Najpierw zapisz zmienioną ekipę dla wybranych zakresów.')
@@ -379,6 +402,12 @@ export function InstallationVisitsPanel({ orderId, visits, scopes, employees, ca
         </article>
       })}
     </div>}
+    {conflictVisitId && <Button type="button" variant="outline" onClick={() => {
+      if (!window.confirm('Odrzucić niezapisane zmiany tej wizyty i wczytać aktualne dane?')) return
+      const current = localVisits.find((visit) => visit.id === conflictVisitId)
+      if (current) replaceVisit(current)
+      setError('')
+    }}>Wczytaj aktualne dane wizyty</Button>}
     {pendingAction && !message && <p className="mt-4 text-sm" role="status"><LoaderCircle className="mr-2 inline h-4 w-4 animate-spin" />Trwa zapisywanie…</p>}
   </section>
 }

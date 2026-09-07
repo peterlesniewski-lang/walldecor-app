@@ -168,7 +168,7 @@ describe('client form uses a real SQLite revision history', () => {
     expect(clarification).toEqual([expect.objectContaining({ status: 'OPEN', questionKey: 'glify' })])
 
     await resolveInstallationClarification(db, orderId, clarification[0].id, {
-      action: 'RESOLVE', resolution: 'Glif ma 12,5 cm.', note: 'Potwierdzone z klientką.', evidenceReference: 'rozmowa-2026-08-22',
+      action: 'RESOLVE', resolution: 'Glif ma 12,5 cm. Potwierdzone z klientką.',
     }, 'form-owner')
     expect(await getInstallationReadiness(db, orderId)).toMatchObject({ isReady: true, openBlockingCount: 0 })
     await expect(updateInstallationOrder(db, orderId, { status: 'READY_TO_PLAN' }, 'form-owner'))

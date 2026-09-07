@@ -1,8 +1,11 @@
 import { describe, expect, it, vi } from 'vitest'
+import { presentInstallerInstallationOrder } from '@/lib/installations/order-presenter'
+import { presentInstallerInstallationVisits } from '@/lib/installations/installer-visit-presenter'
 
 const mocks = vi.hoisted(() => ({
   session: { user: { id: 'installer-user', role: 'INSTALLER', employeeId: 'installer-employee' } },
   getOrder: vi.fn(),
+  getCard: vi.fn(),
   getRooms: vi.fn(),
   listCatalog: vi.fn(),
   listTemplates: vi.fn(),
@@ -35,6 +38,7 @@ vi.mock('@/lib/installations/access', () => ({
   isInstallationViewerAuthorized: vi.fn(() => true),
 }))
 vi.mock('@/lib/installations/order-service', () => ({ getInstallationOrder: mocks.getOrder }))
+vi.mock('@/lib/installations/installer-card-data', () => ({ getInstallerInstallationCardData: mocks.getCard }))
 vi.mock('@/lib/installations/catalog-service', () => ({
   getInstallationOrderRooms: mocks.getRooms,
   getInstallerInstallationOrderRooms: mocks.getRooms,
@@ -92,7 +96,7 @@ describe('installer installation detail privacy', () => {
       employeeId: 'installer-employee',
       employeeActive: true,
     })
-    mocks.listVisits.mockResolvedValue([{
+    const visits = [{
       id: 'installer-visit', orderId: 'order-1', status: 'CONFIRMED', startsAt: '2026-09-14T06:00:00.000Z', endsAt: '2026-09-14T14:00:00.000Z', timezone: 'Europe/Warsaw', revision: 2,
       scopeIds: ['scope-1'], note: 'Prywatna notatka koordynatora', createdById: 'coordinator-1',
       participants: [{ employeeId: 'installer-employee', name: 'Instalator', email: 'installer@example.test', scopeIds: ['scope-1'], inviteStatus: 'READY' }],
@@ -102,14 +106,17 @@ describe('installer installation detail privacy', () => {
       scopeIds: ['scope-foreign'], note: 'SENTINEL FOREIGN VISIT',
       participants: [{ employeeId: 'other-installer', name: 'Inny instalator', email: 'other@example.test', scopeIds: ['scope-foreign'], inviteStatus: 'READY' }],
       syncState: { status: 'SYNCED' },
-    }])
+    }]
+    mocks.listVisits.mockResolvedValue(visits)
     mocks.listScopeAssignments.mockResolvedValue([{ scopeId: 'scope-1', employeeIds: ['installer-employee'] }])
+    mocks.getCard.mockResolvedValue({ order: presentInstallerInstallationOrder(order), rooms: [{ id: 'room-1', name: 'Salon' }], visits: presentInstallerInstallationVisits(visits as never, { role: 'INSTALLER', employeeId: 'installer-employee', employeeActive: true }) })
 
     const result = await InstallationOrderPage({ params: Promise.resolve({ id: 'order-1' }) })
 
-    expect(mocks.getRooms).toHaveBeenCalledWith(expect.anything(), 'order-1', 'installer-employee')
-    expect(mocks.listVisits).toHaveBeenCalledWith(expect.anything(), 'order-1')
-    expect(mocks.listScopeAssignments).toHaveBeenCalledWith(expect.anything(), 'order-1')
+    expect(mocks.getOrder).not.toHaveBeenCalled()
+    expect(mocks.getCard).toHaveBeenCalledWith(expect.anything(), 'order-1', { role: 'INSTALLER', employeeId: 'installer-employee', employeeActive: true })
+    expect(mocks.listVisits).not.toHaveBeenCalled()
+    expect(mocks.listScopeAssignments).not.toHaveBeenCalled()
     expect(mocks.listLinks).not.toHaveBeenCalled()
     expect(mocks.listClarifications).not.toHaveBeenCalled()
     expect(mocks.listRevisions).not.toHaveBeenCalled()

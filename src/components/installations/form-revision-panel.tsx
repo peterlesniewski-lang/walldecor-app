@@ -60,6 +60,7 @@ export function InstallationFormRevisionPanel({
   const closePreviewRef = useRef<HTMLButtonElement | null>(null)
   const preview = revisions.find((revision) => revision.formSubmissionId === previewedRevisionId) ?? null
   const previewId = (formSubmissionId: string) => `form-revision-preview-${panelId}-${formSubmissionId}`
+  const latest = [...revisions].filter((revision) => revision.status === 'SUBMITTED').sort((a, b) => b.revisionNumber - a.revisionNumber)[0]
 
   useEffect(() => {
     if (previewedRevisionId) closePreviewRef.current?.focus()
@@ -73,9 +74,10 @@ export function InstallationFormRevisionPanel({
   if (revisions.length === 0) return null
 
   return <section className="mt-6 rounded-xl border p-4" aria-labelledby="form-revisions-heading" style={{ background: 'var(--wd-white)', borderColor: 'rgba(30,30,30,.12)', boxShadow: 'var(--card-shadow)' }}>
-    <p className="data-label">Historia formularza</p>
-    <h2 id="form-revisions-heading" className="mt-1 text-xl font-extrabold tracking-tight" style={{ color: 'var(--wd-dark)' }}>Wersje odpowiedzi klienta</h2>
-    <div className="mt-4 grid gap-3">
+    <h3 id="form-revisions-heading" className="font-bold" style={{ color: 'var(--wd-dark)' }}>Odpowiedzi klienta</h3>
+    {latest && <div className="mt-3"><p className="text-sm">Wypełniony · wersja {latest.revisionNumber} · {submissionDate(latest.submittedAt)}</p><button type="button" className="mt-2 min-h-11 rounded-md border px-4 text-sm font-bold" aria-expanded={previewedRevisionId === latest.formSubmissionId} aria-controls={previewId(latest.formSubmissionId)} onClick={(event) => { openerRef.current = event.currentTarget; setPreviewedRevisionId(latest.formSubmissionId) }}>Zobacz odpowiedzi klienta</button></div>}
+    {revisions.some((revision) => revision.status !== 'SUBMITTED') && <p className="mt-2 text-sm">{latest ? 'Klient rozpoczął korektę — nie została jeszcze wysłana.' : 'Klient rozpoczął wypełnianie — formularz nie został jeszcze wysłany.'}</p>}
+    <details className="mt-3"><summary className="cursor-pointer text-sm font-semibold">Historia odpowiedzi</summary><div className="mt-4 grid gap-3">
       {revisions.map((revision) => <article key={revision.formSubmissionId} className="rounded-lg border p-3" style={{ borderColor: 'rgba(30,30,30,.12)', background: '#FAFAF8' }}>
         <div className="flex flex-wrap items-center justify-between gap-3">
           <p className="text-sm font-bold">Wersja {revision.revisionNumber} · {revision.status === 'SUBMITTED' ? 'wysłana' : 'szkic'}</p>
@@ -97,7 +99,7 @@ export function InstallationFormRevisionPanel({
           Podgląd jak klient · wersja {revision.revisionNumber}
         </button>
       </article>)}
-    </div>
+    </div></details>
     {preview && <section id={previewId(preview.formSubmissionId)} className="mt-5 w-full border-t pt-5" aria-label={`Podgląd formularza klienta, wersja ${preview.revisionNumber}`} style={{ borderColor: 'rgba(30,30,30,.12)' }}>
       <div className="flex flex-wrap items-center justify-between gap-3">
         <h3 className="text-lg font-extrabold" style={{ color: 'var(--wd-dark)' }}>Podgląd formularza klienta · wersja {preview.revisionNumber}</h3>

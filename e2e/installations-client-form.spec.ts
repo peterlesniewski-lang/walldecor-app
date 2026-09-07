@@ -2,6 +2,7 @@ import { createHash, randomBytes } from 'node:crypto'
 import bcrypt from 'bcryptjs'
 import { expect, test } from '@playwright/test'
 import { PrismaClient } from '@/generated/prisma'
+import { getInstallationReadiness } from '@/lib/installations/readiness'
 
 const databaseUrl = process.env.E2E_DATABASE_URL
 const password = 'E2E-Client-Form-2026!'
@@ -169,7 +170,7 @@ test('admin sends an anonymous client link through autosave, clarification and i
   await page.getByRole('button', { name: 'Utwórz kartę' }).click()
   await expect(page).not.toHaveURL(/\/installations\/new$/)
   const orderId = page.url().split('/').at(-1)!
-  await expect(page.getByText('Najpierw przypnij dokładnie jeden formularz klienta do zlecenia.')).toBeVisible()
+  await expect(page.getByText('Najpierw wybierz formularz dla tego zlecenia.')).toBeVisible()
   await expect(page.getByRole('button', { name: 'Wygeneruj link' })).toBeDisabled()
   await expectOrderFormStatus(page, orderId, 'Brak formularza')
   await page.goto(`/installations/${orderId}`)
@@ -186,17 +187,19 @@ test('admin sends an anonymous client link through autosave, clarification and i
   const requestedExpiry = new Date(Date.now() + 30 * 24 * 60 * 60_000)
   await page.getByLabel(/Ważny do/).fill(localDateTimeInput(requestedExpiry))
   await page.getByRole('button', { name: 'Wygeneruj link' }).click()
-  const linkPanel = page.getByRole('heading', { name: 'Bezpieczny link do przygotowania montażu' }).locator('..')
+  const linkPanel = page.getByRole('heading', { name: 'Link dla klienta' }).locator('..')
   const clientUrl = await linkPanel.locator('output').textContent()
   expect(clientUrl).toMatch(/\/m\/[A-Za-z0-9_-]{43}$/)
+  await linkPanel.getByText('Zarządzaj linkiem', { exact: true }).click()
   await page.getByRole('button', { name: 'Przedłuż o 14 dni' }).click()
   await expect.poll(async () => (await db.installationClientLink.findFirstOrThrow({ where: { orderId, revokedAt: null } })).expiresAt.getTime()).toBeGreaterThan(requestedExpiry.getTime() + 13 * 24 * 60 * 60_000)
-  await expect(linkPanel.locator('output')).toHaveCount(0)
+  await expect(linkPanel.locator('output')).toHaveText(clientUrl!)
   await page.getByRole('button', { name: 'Oznacz jako wysłany' }).click()
-  await expect(linkPanel.getByRole('status')).toContainText('Wysłano:')
-  await expect(linkPanel.getByRole('status')).toBeFocused()
+  await expect(linkPanel.getByRole('status').filter({ hasText: 'Wysłano:' })).toBeVisible()
+  await expect(linkPanel.getByRole('status').filter({ hasText: 'Wysłano:' })).toBeFocused()
   await expectOrderFormStatus(page, orderId, 'Wysłany · czeka na klienta')
   await page.goto(`/installations/${orderId}`)
+  await expect(linkPanel.locator('output')).toHaveCount(0)
 
   const clientContext = await browser.newContext({ baseURL: 'http://localhost:3000', viewport: { width: 375, height: 812 } })
   const client = await clientContext.newPage()
@@ -271,8 +274,10 @@ test('admin sends an anonymous client link through autosave, clarification and i
 
   await expectOrderFormStatus(page, orderId, 'Wypełniony', true)
   await page.goto(`/installations/${orderId}`)
-  await expect(page.getByText('Wymaga ustalenia przed terminem montażu')).toBeVisible()
-  const revisionPanel = page.getByRole('region', { name: 'Wersje odpowiedzi klienta' })
+  await expect(page.getByRole('heading', { name: 'Do ustalenia przed montażem' })).toBeVisible()
+  await expect(page.getByText('Otwarte kwestie: 1', { exact: true })).toBeVisible()
+  const revisionPanel = page.getByRole('region', { name: 'Odpowiedzi klienta' })
+  await revisionPanel.getByText('Historia odpowiedzi', { exact: true }).click()
   await expect(revisionPanel).toContainText(surfacePreparationQuestion)
   await expect(revisionPanel).toContainText('Czy tapetujemy glify?')
   await expect(revisionPanel).toContainText('Nie wiem')
@@ -282,7 +287,7 @@ test('admin sends an anonymous client link through autosave, clarification and i
     if (request.url().endsWith('/autosave')) previewAutosaveRequests += 1
   }
   page.on('request', countPreviewAutosave)
-  const previewOpener = revisionPanel.getByRole('button', { name: 'Podgląd jak klient · wersja 1' })
+  const previewOpener = revisionPanel.getByRole('button', { name: 'Zobacz odpowiedzi klienta' })
   await previewOpener.click()
   const preview = revisionPanel.getByRole('region', { name: 'Podgląd formularza klienta, wersja 1' })
   await expect(preview.getByRole('button', { name: 'Zamknij podgląd' })).toBeFocused()
@@ -298,12 +303,16 @@ test('admin sends an anonymous client link through autosave, clarification and i
   await expect(previewOpener).toBeFocused()
   page.off('request', countPreviewAutosave)
 
+  await page.getByRole('button', { name: 'Zapisz ustalenie', exact: true }).click()
   await page.getByLabel('Ustalenie dla Czy tapetujemy glify?').fill('Glif ma 12 cm')
+  await page.getByText('Notatka i materiały (opcjonalnie)', { exact: true }).click()
   await page.getByLabel('Notatka dla Czy tapetujemy glify?').fill('Potwierdzone z klientką')
   await page.getByRole('button', { name: 'Oznacz jako ustalone' }).click()
+  await page.getByText('Historia ustaleń (1)', { exact: true }).click()
   await expect(page.getByText('Ustalono.')).toBeVisible()
   await page.reload()
-  await expect(page.getByText('Gotowe do planowania')).toBeVisible()
+  await expect(page.getByText('Brak otwartych kwestii w systemie.', { exact: true })).toBeVisible()
+  expect(await getInstallationReadiness(db, orderId)).toMatchObject({ isReady: true, openBlockingCount: 0 })
 
   const correctionResponsePromise = client.waitForResponse((response) => response.url().endsWith('/correction') && response.request().method() === 'POST')
   await client.getByRole('button', { name: 'Zgłoś korektę' }).click()
@@ -318,6 +327,7 @@ test('admin sends an anonymous client link through autosave, clarification and i
   await client.getByRole('button', { name: 'Wyślij formularz' }).click()
   await expect(client.getByText(/wersję 2/i)).toBeVisible()
   await page.reload()
+  await revisionPanel.getByText('Historia odpowiedzi', { exact: true }).click()
   const version1Opener = page.getByRole('button', { name: 'Podgląd jak klient · wersja 1' })
   const version2Opener = page.getByRole('button', { name: 'Podgląd jak klient · wersja 2' })
   await expect(version1Opener).toBeVisible()
@@ -335,6 +345,8 @@ test('admin sends an anonymous client link through autosave, clarification and i
   await expect(version2Preview.getByText('Podaj głębokość glifów', { exact: true }).locator('..')).toContainText('12.5')
   await version2Preview.getByRole('button', { name: 'Zamknij podgląd' }).click()
 
+  await linkPanel.getByText('Zarządzaj linkiem', { exact: true }).click()
+  page.once('dialog', async (dialog) => { expect(dialog.type()).toBe('confirm'); await dialog.accept() })
   await page.getByRole('button', { name: 'Cofnij link' }).click()
   await expect.poll(async () => (await db.installationClientLink.findFirstOrThrow({ where: { orderId, tokenHash: createHash('sha256').update(new URL(clientUrl!).pathname.split('/').at(-1)!).digest('hex') } })).revokedAt).not.toBeNull()
   const revokedReplay = await client.evaluate(async ({ clientUrl, body }) => {

@@ -4,11 +4,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { ClientLinkPanel } from '@/components/installations/client-link-panel'
 import { InstallationClarificationPanel } from '@/components/installations/installation-clarification-panel'
 
-afterEach(() => vi.unstubAllGlobals())
+afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('installation detail client-link and clarification panels', () => {
   it('shows a one-time URL only after the editor really generates it', async () => {
     const user = userEvent.setup()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       link: { id: 'link-2', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: null, sentById: null },
       url: 'https://app.example.test/m/secret-once',
@@ -17,7 +18,9 @@ describe('installation detail client-link and clarification panels', () => {
     render(<ClientLinkPanel orderId="order-1" canEdit initialLinks={[{ id: 'link-1', expiresAt: '2026-12-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: null, sentById: null }]} />)
 
     expect(screen.queryByText('https://app.example.test/m/secret-once')).toBeNull()
+    await user.click(screen.getByText('Zarządzaj linkiem'))
     await user.click(screen.getByRole('button', { name: /Wygeneruj/ }))
+    expect(confirm).toHaveBeenCalledWith('Wygenerować nowy link? Dotychczasowy link klienta przestanie działać.')
     expect(fetchMock).toHaveBeenCalledWith('/api/installations/order-1/client-link', expect.objectContaining({ method: 'POST' }))
     expect(screen.getByText('https://app.example.test/m/secret-once')).not.toBeNull()
   })
@@ -30,6 +33,7 @@ describe('installation detail client-link and clarification panels', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(<ClientLinkPanel orderId="order-1" canEdit initialLinks={[{ id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: null, sentById: null }]} />)
 
+    await user.click(screen.getByText('Zarządzaj linkiem'))
     await user.click(screen.getByRole('button', { name: 'Przedłuż o 14 dni' }))
     expect(fetchMock).toHaveBeenCalledWith('/api/installations/order-1/client-link', expect.objectContaining({ method: 'PATCH' }))
     expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ action: 'EXTEND', linkId: 'link-1' })
@@ -37,9 +41,11 @@ describe('installation detail client-link and clarification panels', () => {
   })
 
   it('keeps generation unavailable until the order has exactly one form snapshot, without disabling an existing link lifecycle', async () => {
+    const user = userEvent.setup()
     render(<ClientLinkPanel orderId="order-1" canEdit canGenerate={false} initialLinks={[{ id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: null, sentById: null }]} />)
 
-    expect(screen.getByText('Najpierw przypnij dokładnie jeden formularz klienta do zlecenia.')).not.toBeNull()
+    expect(screen.getByText('Najpierw wybierz formularz dla tego zlecenia.')).not.toBeNull()
+    await user.click(screen.getByText('Zarządzaj linkiem'))
     expect(screen.getByRole('button', { name: 'Wygeneruj nowy link' }).hasAttribute('disabled')).toBe(true)
     expect(screen.getByRole('button', { name: 'Przedłuż o 14 dni' }).hasAttribute('disabled')).toBe(false)
     expect(screen.getByRole('button', { name: 'Cofnij link' }).hasAttribute('disabled')).toBe(false)
@@ -79,27 +85,36 @@ describe('installation detail client-link and clarification panels', () => {
 
   it('requires an actual resolution/note form instead of prompt before closing an open clarification', async () => {
     const user = userEvent.setup()
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ clarification: { id: 'clarification-1', status: 'RESOLVED' } }), { status: 200 }))
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ clarification: { id: 'clarification-1', status: 'RESOLVED', resolution: 'Glif ma 12 cm', resolutionNote: 'Potwierdzone telefonicznie' } }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
     render(<InstallationClarificationPanel orderId="order-1" canEdit readiness={{ isReady: false, openBlockingCount: 1, submittedCount: 1 }} clarifications={[{
       id: 'clarification-1', status: 'OPEN', isBlocking: true, questionLabel: 'Czy są glify?', reason: 'Klient wskazał odpowiedź „Nie wiem”.',
       revisionNumber: 1, answer: 'UNKNOWN', createdAt: '2026-08-22T00:00:00.000Z', resolution: null, resolutionNote: null, evidenceReference: null,
     }]} />)
 
-    expect(screen.getByText('Wymaga ustalenia przed terminem montażu')).not.toBeNull()
+    expect(screen.getByRole('heading', { name: 'Do ustalenia przed montażem' })).not.toBeNull()
+    expect(screen.getByText('Otwarte kwestie: 1')).not.toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Zapisz ustalenie' }))
     await user.type(screen.getByLabelText('Ustalenie dla Czy są glify?'), 'Glif ma 12 cm')
+    await user.click(screen.getByText('Notatka i materiały (opcjonalnie)'))
     await user.type(screen.getByLabelText('Notatka dla Czy są glify?'), 'Potwierdzone telefonicznie')
     await user.click(screen.getByRole('button', { name: 'Oznacz jako ustalone' }))
     expect(fetchMock).toHaveBeenCalledWith('/api/installations/order-1/clarifications/clarification-1', expect.objectContaining({ method: 'PATCH' }))
+    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ action: 'RESOLVE', resolution: 'Glif ma 12 cm', note: 'Potwierdzone telefonicznie' })
+    await user.click(screen.getByText('Historia ustaleń (1)'))
+    expect(screen.getByText('Potwierdzone telefonicznie')).not.toBeNull()
+    expect(screen.queryByRole('button', { name: 'Zapisz ustalenie' })).toBeNull()
   })
 
-  it('uses the snapshot question label rather than a technical key in clarification text and fields', () => {
+  it('uses the snapshot question label rather than a technical key in clarification text and fields', async () => {
+    const user = userEvent.setup()
     render(<InstallationClarificationPanel orderId="order-1" canEdit readiness={{ isReady: false, openBlockingCount: 1, submittedCount: 1 }} clarifications={[{
       id: 'clarification-readable', status: 'OPEN', isBlocking: true, questionLabel: 'Czy są glify?', reason: 'Klient wskazał odpowiedź „Nie wiem”.',
       revisionNumber: 1, answer: 'Nie wiem', createdAt: '2026-08-22T00:00:00.000Z', resolution: null, resolutionNote: null, evidenceReference: null,
     }]} /> as never)
 
     expect(screen.getByText('Czy są glify? · wersja 1')).not.toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Zapisz ustalenie' }))
     expect(screen.getByLabelText('Ustalenie dla Czy są glify?')).not.toBeNull()
     expect(screen.queryByText('glify')).toBeNull()
   })

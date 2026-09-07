@@ -49,18 +49,16 @@ async function createRoomAndScopesThroughUi(page: Page) {
   await roomPanel.getByRole('button', { name: 'Dodaj pomieszczenie' }).click()
   await expect(roomPanel.getByRole('heading', { name: 'Salon' })).toBeVisible()
 
-  const scopeInput = roomPanel.getByLabel('Nowy zakres w Salon')
+  const scopeCategory = roomPanel.getByLabel('Rodzaj prac dla Salon')
   const addScope = roomPanel.getByRole('button', { name: 'Dodaj zakres w Salon' })
-  await scopeInput.fill('Tapety tekstylne')
+  await scopeCategory.selectOption('calendar-ui-wallpaper')
   await addScope.click()
   await expect(roomPanel.getByRole('heading', { name: 'Tapety tekstylne' })).toBeVisible()
-  await scopeInput.fill('Sztukateria ścienna')
+  await scopeCategory.selectOption('calendar-ui-moulding')
   await addScope.click()
   await expect(roomPanel.getByRole('heading', { name: 'Sztukateria ścienna' })).toBeVisible()
 
-  // The map editor refreshes its own state, while the independent visits panel
-  // receives its scope choices as server props.
-  await page.reload()
+  // The new scope choices must reach the visits panel without a page reload.
 }
 
 function expandedVisitCard(visitsPanel: Locator) {
@@ -96,6 +94,10 @@ test.beforeAll(async () => {
   db = new PrismaClient({ datasources: { db: { url: databaseUrl } } })
   await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
   await db.costCenter.create({ data: { id: 'CUI', name: 'E2E Calendar UI' } })
+  await db.installationCatalogCategory.createMany({ data: [
+    { id: 'calendar-ui-wallpaper', name: 'Tapety tekstylne', nameKey: 'calendar-ui-tapety-tekstylne', sortOrder: 0 },
+    { id: 'calendar-ui-moulding', name: 'Sztukateria ścienna', nameKey: 'calendar-ui-sztukateria-scienna', sortOrder: 1 },
+  ] })
   await db.user.create({ data: {
     username: 'calendaruiadmin', email: 'calendar-ui-admin@example.test', name: 'Administrator UI kalendarza', role: 'ADMIN', passwordHash: await bcrypt.hash(password, 10), passwordChangedAt: new Date(),
   } })

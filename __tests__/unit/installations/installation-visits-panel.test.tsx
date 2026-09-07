@@ -31,6 +31,30 @@ function jsonResponse(value: unknown, ok = true, status = ok ? 200 : 400) {
 }
 
 describe('InstallationVisitsPanel', () => {
+  it('preserves unsaved visit fields when another card section refreshes server props', async () => {
+    const props = { orderId: 'order-1', visits: [draftVisit], scopes, employees, canEdit: true, canForceOverwrite: false }
+    const { rerender } = render(createElement(InstallationVisitsPanel, props))
+    fireEvent.change(screen.getByLabelText('Początek wizyty'), { target: { value: '2026-10-01T08:00' } })
+    rerender(createElement(InstallationVisitsPanel, { ...props, visits: [{ ...draftVisit }], scopes: scopes.map((scope) => ({ ...scope })) }))
+    expect((screen.getByLabelText('Początek wizyty') as HTMLInputElement).value).toBe('2026-10-01T08:00')
+  })
+  it('requires explicitly loading the changed server visit before overwriting a dirty conflicting draft', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    const props = { orderId: 'order-1', visits: [draftVisit], scopes, employees, canEdit: true, canForceOverwrite: false }
+    const { rerender } = render(createElement(InstallationVisitsPanel, props))
+    fireEvent.change(screen.getByLabelText('Początek wizyty'), { target: { value: '2026-10-01T08:00' } })
+    fireEvent.change(screen.getByLabelText('Koniec wizyty'), { target: { value: '2026-10-01T10:00' } })
+    rerender(createElement(InstallationVisitsPanel, { ...props, visits: [{ ...draftVisit, revision: 2, startsAt: '2026-10-02T06:00:00Z', endsAt: '2026-10-02T08:00:00Z' }] }))
+    await user.click(screen.getByRole('button', { name: 'Zapisz szkic' }))
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(screen.getByRole('alert').textContent).toContain('zmieniona przez inną osobę')
+    vi.spyOn(window, 'confirm').mockReturnValue(true)
+    await user.click(screen.getByRole('button', { name: 'Wczytaj aktualne dane wizyty' }))
+    expect((screen.getByLabelText('Początek wizyty') as HTMLInputElement).value).toBe('2026-10-02T08:00')
+    vi.restoreAllMocks()
+  })
   beforeEach(() => {
     vi.unstubAllGlobals()
     mocks.refresh.mockReset()
@@ -179,7 +203,7 @@ describe('InstallationVisitsPanel', () => {
     expect(screen.getByRole('checkbox', { name: 'Sypialnia — Sztukateria' })).toHaveProperty('checked', true)
     expect(screen.getByRole('checkbox', { name: 'Anna Montaż dla Salon — Tapety' })).toHaveProperty('disabled', false)
     expect(fetchMock).toHaveBeenCalledTimes(1)
-    expect(mocks.refresh).not.toHaveBeenCalled()
+    expect(mocks.refresh).toHaveBeenCalled()
 
     await user.click(scheduleButton)
 

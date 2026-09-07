@@ -749,17 +749,23 @@ describe('installation order controls', () => {
 
   it('archives a visible order through its working detail action', async () => {
     const user = userEvent.setup()
+    const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ...apiOrder, archivedAt: '2026-08-22T12:00:00.000Z' }) })
     vi.stubGlobal('fetch', fetchMock)
     render(createElement(InstallationOrderDetail, { order: apiOrder, employees: installationEmployees, canEdit: true, canArchive: true } as never))
 
+    await user.click(screen.getByText('Ustawienia dodatkowe'))
+    await user.click(screen.getByText('Archiwizacja'))
     await user.click(screen.getByRole('button', { name: 'Archiwizuj zlecenie' }))
 
+    expect(confirm).toHaveBeenCalledTimes(1)
     expect(fetchMock).toHaveBeenCalledWith('/api/installations/order-1', { method: 'DELETE' })
     expect(mockRouterPush).toHaveBeenCalledWith('/installations')
+    confirm.mockRestore()
   })
 
-  it('renders an operational edit form but no archive control for a delegated viewer', () => {
+  it('renders an operational edit form but no archive control for a delegated viewer', async () => {
+    const user = userEvent.setup()
     render(createElement(InstallationOrderDetail, {
       order: apiOrder,
       employees: installationEmployees,
@@ -767,7 +773,12 @@ describe('installation order controls', () => {
       canArchive: false,
     } as never))
 
-    expect(screen.getByRole('heading', { name: 'Dane zlecenia' })).not.toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Edytuj dane' }))
+    expect(screen.getByLabelText('Klient')).toHaveProperty('value', 'Anna Kowalska')
+    expect(screen.getByLabelText('Numer budynku')).toHaveProperty('value', '17')
+    expect(screen.getByRole('button', { name: 'Zapisz zmiany' })).not.toBeNull()
+    expect(screen.queryByLabelText('Opiekun główny')).toBeNull()
+    expect(screen.queryByText('Archiwizacja')).toBeNull()
     expect(screen.queryByRole('button', { name: 'Archiwizuj zlecenie' })).toBeNull()
   })
 

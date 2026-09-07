@@ -24,6 +24,17 @@ describe('room scope editor order products and measurements UI', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
   })
 
+  it('shows concise labels while preserving scope-specific accessible names', () => {
+    render(createElement(RoomScopeEditor, { orderId: 'order-1', initialRooms: baseRooms, catalog, canEdit: true }))
+
+    const width = screen.getByLabelText('Szerokość pomiaru dla Tapetowanie') as HTMLInputElement
+    const height = screen.getByLabelText('Wysokość pomiaru dla Tapetowanie') as HTMLInputElement
+    expect(width.labels?.[0]?.textContent).toBe('Szerokość')
+    expect(height.labels?.[0]?.textContent).toBe('Wysokość')
+    expect(screen.getByRole('button', { name: 'Dodaj pomiar do Tapetowanie' }).textContent).toBe('Dodaj pomiar')
+    expect(screen.getByRole('button', { name: 'Dodaj produkt do Tapetowanie' }).textContent).toBe('Dodaj produkt')
+  })
+
   it('creates a scope from an active work type, not from a free-text name', async () => {
     const user = userEvent.setup()
     const fetchMock = vi.fn()

@@ -29,7 +29,7 @@ export const INSTALLATION_GUIDES: readonly InstallationGuide[] = [
     summary: 'Od utworzenia karty, przez formularz klienta i planowanie, po kontrolę realizacji ustalonego zakresu.',
     audience: 'COORDINATOR',
     audienceLabel: 'Opiekun karty',
-    updatedAt: '2026-08-24',
+    updatedAt: '2026-09-07',
     sections: [
       {
         title: '1. Załóż kartę z odpowiedzialnością',
@@ -37,6 +37,8 @@ export const INSTALLATION_GUIDES: readonly InstallationGuide[] = [
         steps: [
           'W Montaże wybierz „Nowa karta” i wpisz klienta oraz pełny adres montażu.',
           'Wybierz dwóch różnych aktywnych pracowników: opiekuna i zastępcę. Jako opiekun odpowiadasz za kompletność ustaleń.',
+          'Na górze karty znajdziesz kontakt, adres, opiekuna i najbliższą wizytę. „Edytuj dane” otwiera zmianę kontaktu i adresu; „Anuluj” pyta o odrzucenie niezapisanych zmian.',
+          'Odpowiedzialność, opłatę za podjazd i archiwizację znajdziesz w rozwijanych „Ustawieniach dodatkowych”.',
           'Dodaj pokoje, a w nich zakresy, produkty, wymiary i pliki projektu. Dla tapet zapisuj przede wszystkim szerokość × wysokość; dodatkowy wymiar dodaj tylko, gdy jest potrzebny.',
         ],
         attention: 'Nie wpisuj w notatkach haseł, danych kart płatniczych ani innych informacji, których nie potrzebuje montaż.',
@@ -44,10 +46,12 @@ export const INSTALLATION_GUIDES: readonly InstallationGuide[] = [
       {
         title: '2. Przygotuj i wyślij formularz klienta',
         steps: [
-          'Na karcie wybierz opublikowany szablon formularza i przypnij dokładnie jedną jego wersję do zlecenia.',
+          'W sekcji „Formularz klienta” wybierz opublikowaną wersję i kliknij „Wybierz formularz”. Zapisana wersja pozostaje w historii tego zlecenia.',
           'Wygeneruj bezpieczny link, ustaw jego ważność i wyślij klientowi zwykłym firmowym e-mailem. Sama wysyłka e-maila pozostaje po stronie zespołu.',
           'Sprawdź status formularza na liście kart: gotowy do wysłania, oczekuje, w trakcie albo wypełniony.',
-          'Jeśli odpowiedź jest „nie wiem” albo wynika z niej ryzyko (np. glify, drzwi ukryte), utwórz lub zamknij ustalenie przed terminem. Nie traktuj braku odpowiedzi jako „nie”.',
+          'W „Do ustalenia przed montażem” otwórz „Zapisz ustalenie” przy kwestii. Wystarczy treść ustalenia; opcjonalną notatkę i materiały rozwiniesz osobno. Odstąpienie nadal wymaga uzasadnienia w notatce. Zamknięte sprawy pozostają w „Historii ustaleń”.',
+          '„Zobacz odpowiedzi klienta” pokazuje ostatni wysłany formularz, a „Historia odpowiedzi” starsze wersje. Brak otwartych kwestii nie jest potwierdzeniem przygotowania ścian — sprawdź odpowiedzi także samodzielnie.',
+          '„Zarządzaj linkiem” zawiera przedłużenie i cofnięcie. Generowanie nowego linku unieważnia stary i wymaga potwierdzenia. Skopiuj świeży adres przed opuszczeniem karty; po odświeżeniu nie można go ponownie odczytać.',
         ],
         attention: 'Wizytę planuj dopiero po zamknięciu blokujących ustaleń. Przy niezgodności na miejscu obowiązuje kwota podjazdu ustawiona na tej karcie i zaakceptowana przez klienta w formularzu.',
       },
@@ -60,6 +64,15 @@ export const INSTALLATION_GUIDES: readonly InstallationGuide[] = [
           'Po zmianie terminu aplikacja aktualizuje istniejące wydarzenie; nie twórz ręcznie drugiego wydarzenia dla tej samej wizyty.',
         ],
         attention: 'Status „Wymaga uwagi” przy kalendarzu oznacza, że trzeba sprawdzić błąd i świadomie zdecydować o ponowieniu albo nadpisaniu konfliktu.',
+      },
+      {
+        title: 'Załączniki do zlecenia',
+        steps: [
+          'W „Załączniki” kliknij „Dodaj załącznik”, wybierz projekt, rzut lub zdjęcie i zapisz. Domyślnie plik dotyczy całego zlecenia.',
+          'Opcjonalne „Przypisz do pomieszczenia lub zakresu” pozwala wybrać pokój, a następnie zakres. Po zapisaniu sprawdź przypisanie na liście.',
+          'Dokumentację istniejącego zgłoszenia dodaj przy nim w „Dokumentacja zgłoszonych problemów”. To inny materiał niż zwykły projekt.',
+          'Pliki pobieraj przyciskiem „Pobierz”. Jeżeli dodawanie się nie powiedzie, wybrany plik pozostaje do ponowienia; brak potwierdzenia zapisu nie oznacza, że materiał został dodany.',
+        ],
       },
       {
         title: '4. Czynności poza obecnym modułem',

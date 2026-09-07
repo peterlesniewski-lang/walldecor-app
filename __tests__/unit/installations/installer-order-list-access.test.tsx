@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   viewerFromSession: vi.fn(),
   listOrders: vi.fn(),
   getOrder: vi.fn(),
+  getCard: vi.fn(),
   getRooms: vi.fn(),
   notFound: vi.fn(),
   redirect: vi.fn(),
@@ -33,6 +34,7 @@ vi.mock('@/lib/installations/order-service', () => ({
   listInstallationOrders: mocks.listOrders,
   getInstallationOrder: mocks.getOrder,
 }))
+vi.mock('@/lib/installations/installer-card-data', () => ({ getInstallerInstallationCardData: mocks.getCard }))
 vi.mock('@/lib/installations/catalog-service', () => ({
   getInstallationOrderRooms: mocks.getRooms,
   getInstallerInstallationOrderRooms: mocks.getRooms,
@@ -94,6 +96,7 @@ describe('installer SSR installation access', () => {
       canViewInstallationOrder(viewer, scopeAssignedOrder) ? [scopeAssignedOrder] : []
     ))
     mocks.getOrder.mockResolvedValue(scopeAssignedOrder)
+    mocks.getCard.mockImplementation(async (_db, _id, viewer) => canViewInstallationOrder(viewer, scopeAssignedOrder) ? { order: scopeAssignedOrder, rooms: [], visits: [] } : null)
     mocks.getRooms.mockResolvedValue([])
     mocks.listVisits.mockResolvedValue([])
     mocks.listScopeAssignments.mockResolvedValue([])
@@ -136,7 +139,8 @@ describe('installer SSR installation access', () => {
 
     expect(mocks.viewerFromSession).toHaveBeenCalledWith(mocks.session)
     expect(result.props.order.id).toBe('order-1')
-    expect(mocks.getRooms).toHaveBeenCalledWith(expect.anything(), 'order-1', 'installer-employee')
+    expect(mocks.getCard).toHaveBeenCalledWith(expect.anything(), 'order-1', installerViewer(true))
+    expect(mocks.getOrder).not.toHaveBeenCalled()
   })
 
   it('returns notFound for an inactive installer despite a scope assignment', async () => {
