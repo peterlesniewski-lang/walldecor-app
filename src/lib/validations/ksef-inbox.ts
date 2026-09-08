@@ -81,6 +81,11 @@ export const KsefInvoicePaymentSchema = z.object({
   dueDate: z.string().datetime().optional().nullable(),
 })
 
+export const KsefBulkPaymentSchema = z.object({
+  invoiceIds: z.array(z.string().trim().min(1).max(128)).min(1).max(200),
+  paidDate: z.string().refine(isIsoDate, 'Podaj poprawną datę płatności'),
+})
+
 export const KsefInvoiceCurrencyConversionSchema = z.object({
   reportingGrossAmount: z.coerce.number().positive('Kwota brutto PLN musi być większa od zera'),
   reportingNetAmount: z.coerce.number().nonnegative('Kwota netto PLN nie może być ujemna').optional().nullable(),
