@@ -1,11 +1,13 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ArrowUpDown, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, CloudDownload, Eye, FilePlus2, RefreshCcw, Save, Search, Settings2, X } from 'lucide-react'
 import { parseKsefInvoiceXmlPreview, type KsefInvoiceXmlPreview } from '@/lib/finance/ksef-invoice-preview'
 import { TagChips } from '@/components/shared/tag-chips'
 import { KsefInvoicePartsEditor } from '@/components/shared/ksef-invoice-parts-editor'
 import { KsefPaymentSummary } from '@/components/shared/ksef-payment-summary'
+import { KsefSelectionBar } from '@/components/shared/ksef-selection-bar'
+import { warsawToday, type BulkPaymentResult } from '@/lib/finance/ksef-selection'
 
 export type KsefStatus = 'NEW' | 'MAPPED' | 'APPROVED' | 'IGNORED'
 export type KsefPaymentStatus = 'UNPAID' | 'PAID'
@@ -304,6 +306,12 @@ export function KsefInboxView({
   const [sortBy, setSortBy] = useState<KsefSortBy>(DEFAULT_SORT_BY)
   const [sortDir, setSortDir] = useState<KsefSortDir>(DEFAULT_SORT_DIR)
   const [saving, setSaving] = useState<string | null>(null)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkPaidDate, setBulkPaidDate] = useState(warsawToday)
+  const [bulkResult, setBulkResult] = useState<string | null>(null)
+  const bulkInFlight = useRef(false)
+  const selectedInvoices = invoices.filter((invoice) => selectedIds.has(invoice.id))
+  const bulkBusy = saving === 'bulk-payment'
   const [error, setError] = useState<string | null>(null)
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
   const [contentPreview, setContentPreview] = useState<KsefInvoiceContentPreview | null>(null)
@@ -355,6 +363,7 @@ export function KsefInboxView({
   }
 
   function applyInvoicePage(response: KsefInvoiceListResponse) {
+    setSelectedIds(new Set())
     setInvoices(response.invoices)
     setPage(response.page)
     setPageSize(response.pageSize)
@@ -650,6 +659,43 @@ export function KsefInboxView({
     }
   }
 
+  async function paySelectedInvoices() {
+    if (bulkInFlight.current || saving || selectedInvoices.length === 0) return
+    bulkInFlight.current = true
+    setSaving('bulk-payment')
+    setError(null)
+    setBulkResult(null)
+    const submittedInvoices = [...selectedInvoices]
+    try {
+      const result = await readJson(await fetch('/api/finance/ksef/invoices/bulk-payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceIds: submittedInvoices.map((invoice) => invoice.id), paidDate: bulkPaidDate }),
+      })) as { results: BulkPaymentResult[]; paidAt: string }
+      const paid = result.results.filter((item) => item.outcome === 'paid')
+      const skipped = result.results.filter((item) => item.outcome === 'already_paid')
+      const failed = result.results.filter((item) => item.outcome === 'failed')
+      const completedIds = new Set([...paid, ...skipped].map((item) => item.id))
+      setInvoices((current) => current.map((invoice) => completedIds.has(invoice.id)
+        ? { ...invoice, paymentStatus: 'PAID', paidAt: invoice.paidAt ?? result.paidAt }
+        : invoice))
+      setSelectedIds(new Set(failed.map((item) => item.id)))
+      const failures = failed.map((item) => `${submittedInvoices.find((invoice) => invoice.id === item.id)?.invoiceNumber ?? item.id}: ${item.error}`).join(' ')
+      setBulkResult(`Oznaczono jako zapłacone: ${paid.length}. Już zapłacone: ${skipped.length}. Błędy: ${failed.length}.${failures ? ` ${failures}` : ''}`)
+      try {
+        const refreshed = await refreshInvoices()
+        setSelectedIds(new Set(failed.filter((item) => refreshed.some((invoice) => invoice.id === item.id)).map((item) => item.id)))
+      } catch {
+        setError('Płatności zapisano, ale nie udało się odświeżyć podsumowania. Odśwież stronę.')
+      }
+    } catch (err) {
+      setError(`${err instanceof Error ? err.message : 'Nie udało się potwierdzić wyniku operacji'}. Możesz ponowić zapis — już zapłacone faktury zostaną pominięte.`)
+    } finally {
+      bulkInFlight.current = false
+      setSaving(null)
+    }
+  }
+
   async function convertCurrency(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!conversionForm) return
@@ -885,7 +931,7 @@ export function KsefInboxView({
   }
 
   return (
-    <div className="space-y-6">
+    <fieldset disabled={bulkBusy} className="m-0 min-w-0 space-y-6 border-0 p-0">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="data-label mb-1">Kondycja firmy</p>
@@ -997,7 +1043,7 @@ export function KsefInboxView({
         </form>
       </section>
 
-      <section className="overflow-hidden rounded-lg border border-[var(--wd-border)] bg-white">
+      <section className="rounded-lg border border-[var(--wd-border)] bg-white">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--wd-border)] px-4 py-3">
           <div>
             <h2 className="text-base font-semibold">Inbox faktur</h2>
@@ -1083,10 +1129,15 @@ export function KsefInboxView({
             </div>
           </div>
         </form>
+        <KsefSelectionBar invoices={selectedInvoices} paidDate={bulkPaidDate} busy={bulkBusy} disabled={saving !== null} onDateChange={setBulkPaidDate} onClear={() => setSelectedIds(new Set())} onPay={() => void paySelectedInvoices()} />
+        {bulkResult && <p role="status" className="border-b border-[var(--wd-border)] px-4 py-3 text-sm">{bulkResult}</p>}
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1040px] text-left text-sm">
             <thead className="bg-gray-50 text-xs uppercase tracking-wide" style={{ color: 'var(--wd-text-muted)' }}>
               <tr>
+                <th className="w-10 px-3 py-3">
+                  <input type="checkbox" aria-label="Zaznacz wszystkie faktury na stronie" disabled={saving !== null || invoices.length === 0} checked={invoices.length > 0 && selectedInvoices.length === invoices.length} ref={(element) => { if (element) element.indeterminate = selectedInvoices.length > 0 && selectedInvoices.length < invoices.length }} onChange={(event) => setSelectedIds(event.target.checked ? new Set(invoices.map((invoice) => invoice.id)) : new Set())} className="h-4 w-4 cursor-pointer accent-[var(--wd-dark)]" />
+                </th>
                 <th className="px-4 py-3 text-right">Lp.</th>
                 <th className="px-4 py-3">{renderSortableHeader('Faktura', 'issueDate')}</th>
                 <th className="px-4 py-3">{renderSortableHeader('Dostawca', 'supplierName')}</th>
@@ -1100,7 +1151,7 @@ export function KsefInboxView({
             <tbody className="divide-y divide-[var(--wd-border)]">
               {invoices.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-8 text-center text-sm" colSpan={8} style={{ color: 'var(--wd-text-muted)' }}>
+                  <td className="px-4 py-8 text-center text-sm" colSpan={9} style={{ color: 'var(--wd-text-muted)' }}>
                     Brak faktur dla wybranego filtra.
                   </td>
                 </tr>
@@ -1114,7 +1165,18 @@ export function KsefInboxView({
                 const reportingAmount = invoice.reportingGrossAmount ?? null
                 const needsCurrencyConversion = invoice.currency !== 'PLN' && reportingAmount == null
                 return (
-                  <tr key={invoice.id} className="align-top">
+                  <tr key={invoice.id} className={`align-top ${selectedIds.has(invoice.id) ? 'bg-amber-50/60' : ''}`}>
+                    <td className="px-3 py-4">
+                      <input type="checkbox" aria-label={`Zaznacz fakturę ${invoice.invoiceNumber}`} checked={selectedIds.has(invoice.id)} disabled={saving !== null} onChange={(event) => {
+                        const checked = event.target.checked
+                        setSelectedIds((current) => {
+                          const next = new Set(current)
+                          if (checked) next.add(invoice.id)
+                          else next.delete(invoice.id)
+                          return next
+                        })
+                      }} className="h-4 w-4 cursor-pointer accent-[var(--wd-dark)]" />
+                    </td>
                     <td className="px-4 py-3 text-right num text-xs font-semibold" style={{ color: 'var(--wd-text-muted)' }}>
                       {(page - 1) * pageSize + index + 1}
                     </td>
@@ -1438,6 +1500,6 @@ export function KsefInboxView({
           ))}
         </div>
       </section>
-    </div>
+    </fieldset>
   )
 }
