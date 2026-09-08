@@ -28,6 +28,11 @@ const optionalNonNegativeNumber = z.preprocess(
   z.coerce.number().nonnegative().optional()
 )
 
+const optionalIsoDate = z.preprocess(
+  (value) => typeof value === 'string' ? value.trim() || undefined : value,
+  z.string().refine(isIsoDate, 'Podaj poprawną datę w formacie YYYY-MM-DD').optional()
+)
+
 export const KsefInvoiceCreateSchema = z.object({
   supplierName: z.string().trim().min(1, 'Podaj nazwę dostawcy'),
   supplierNip: z
@@ -65,6 +70,8 @@ export const KsefInvoiceQuerySchema = z.object({
   search: optionalTrimmedString,
   amountMin: optionalNonNegativeNumber,
   amountMax: optionalNonNegativeNumber,
+  issueDateFrom: optionalIsoDate,
+  issueDateTo: optionalIsoDate,
   sortBy: z.enum(VALID_KSEF_SORT_FIELDS).default('issueDate'),
   sortDir: z.enum(VALID_KSEF_SORT_DIRECTIONS).default('desc'),
 }).refine(
@@ -73,6 +80,9 @@ export const KsefInvoiceQuerySchema = z.object({
     message: 'Kwota od nie może być większa niż kwota do',
     path: ['amountMax'],
   }
+).refine(
+  (data) => !data.issueDateFrom || !data.issueDateTo || data.issueDateFrom <= data.issueDateTo,
+  { message: 'Data od nie może być późniejsza niż data do.', path: ['issueDateTo'] }
 )
 
 export const KsefInvoicePaymentSchema = z.object({

@@ -1,4 +1,4 @@
-import { render, screen, within } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { KsefInboxView } from '@/components/shared/ksef-inbox-view'
@@ -51,6 +51,119 @@ afterEach(() => {
 })
 
 describe('KsefInboxView', () => {
+  function renderCompactInvoice(status: 'NEW' | 'APPROVED' = 'NEW') {
+    render(<KsefInboxView initialInvoices={[{ ...invoices[0], status, parts: [{
+      tags: [{ tagId: 'tag-goods', tag: costTagGroups[0].tags[0] }], allocations: [],
+    }] }]} initialTotal={120} initialPage={2} initialPageSize={50} initialTotalPages={3}
+    initialGrossAmountTotal={123} initialCounts={{ NEW: 120, MAPPED: 0, APPROVED: 0, IGNORED: 0 }}
+    initialRules={[]} costCenters={costCenters} subCategories={subCategories} costTagGroups={costTagGroups} />)
+  }
+
+  it('shows only assigned tag labels, expands on demand and preserves a collapsed draft', async () => {
+    const user = userEvent.setup()
+    renderCompactInvoice()
+    const table = within(screen.getByRole('table'))
+    expect(table.getByText('goods')).toBeTruthy()
+    expect(table.queryByRole('button', { name: 'contractors' })).toBeNull()
+    await user.click(table.getByRole('button', { name: 'Edytuj tagi' }))
+    await user.click(table.getByRole('button', { name: 'contractors' }))
+    await user.click(table.getByRole('button', { name: 'Zwiń tagi' }))
+    expect(table.queryByRole('button', { name: 'contractors' })).toBeNull()
+    expect(table.getByText('contractors')).toBeTruthy()
+    expect(table.getByText('Niezapisane zmiany')).toBeTruthy()
+    await user.click(table.getByRole('button', { name: 'Edytuj tagi' }))
+    expect(table.getByRole('button', { name: 'contractors' }).getAttribute('aria-pressed')).toBe('true')
+  })
+
+  it('renders approved tags as labels without an edit action', () => {
+    renderCompactInvoice('APPROVED')
+    const table = within(screen.getByRole('table'))
+    expect(table.getByText('goods')).toBeTruthy()
+    expect(table.queryByRole('button', { name: 'Edytuj tagi' })).toBeNull()
+    expect(table.queryByRole('button', { name: 'contractors' })).toBeNull()
+  })
+
+  it('fills leap-month bounds, resets selection, preserves dates when sorting and clears them', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({
+      invoices, total: 1, page: 1, pageSize: 50, totalPages: 1, grossAmountTotal: 123,
+      counts: { NEW: 1, MAPPED: 0, APPROVED: 0, IGNORED: 0 },
+    })))
+    renderCompactInvoice()
+    await user.click(screen.getByLabelText('Zaznacz fakturę FV/1/2026'))
+    fireEvent.change(screen.getByLabelText('Miesiąc wystawienia'), { target: { value: '2024-02' } })
+    expect((screen.getByLabelText('Data wystawienia od') as HTMLInputElement).value).toBe('2024-02-01')
+    expect((screen.getByLabelText('Data wystawienia do') as HTMLInputElement).value).toBe('2024-02-29')
+    await user.click(screen.getByRole('button', { name: 'Filtruj' }))
+    expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain('issueDateFrom=2024-02-01&issueDateTo=2024-02-29')
+    expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain('page=1')
+    expect((screen.getByLabelText('Zaznacz fakturę FV/1/2026') as HTMLInputElement).checked).toBe(false)
+    await user.click(screen.getByRole('button', { name: /Kwota/i }))
+    expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain('issueDateFrom=2024-02-01&issueDateTo=2024-02-29')
+    await user.click(screen.getByRole('button', { name: 'Wyczyść' }))
+    expect(String(fetchMock.mock.calls.at(-1)?.[0])).not.toContain('issueDate')
+    expect((screen.getByLabelText('Miesiąc wystawienia') as HTMLInputElement).value).toBe('')
+    expect((screen.getByLabelText('Data wystawienia od') as HTMLInputElement).value).toBe('')
+  })
+
+  it('allows a custom date range and rejects reversed dates without requesting data', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockImplementation(async () => new Response(JSON.stringify({
+      invoices, total: 1, page: 1, pageSize: 50, totalPages: 1, grossAmountTotal: 123,
+      counts: { NEW: 1, MAPPED: 0, APPROVED: 0, IGNORED: 0 },
+    })))
+    renderCompactInvoice()
+    fireEvent.change(screen.getByLabelText('Miesiąc wystawienia'), { target: { value: '2026-09' } })
+    fireEvent.change(screen.getByLabelText('Data wystawienia od'), { target: { value: '2026-10-01' } })
+    expect((screen.getByLabelText('Miesiąc wystawienia') as HTMLInputElement).value).toBe('')
+    await user.click(screen.getByRole('button', { name: 'Filtruj' }))
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(screen.getByText('Data od nie może być późniejsza niż data do.')).toBeTruthy()
+    fireEvent.change(screen.getByLabelText('Data wystawienia do'), { target: { value: '2026-10-15' } })
+    await user.click(screen.getByRole('button', { name: 'Filtruj' }))
+    expect(String(fetchMock.mock.calls.at(-1)?.[0])).toContain('issueDateFrom=2026-10-01&issueDateTo=2026-10-15')
+  })
+
+  it('clears month selection when showing all invoices', async () => {
+    const user = userEvent.setup()
+    vi.spyOn(globalThis, 'fetch').mockResolvedValue(new Response(JSON.stringify({
+      invoices, total: 1, page: 1, pageSize: 50, totalPages: 1, grossAmountTotal: 123,
+      counts: { NEW: 1, MAPPED: 0, APPROVED: 0, IGNORED: 0 },
+    })))
+    renderCompactInvoice()
+    fireEvent.change(screen.getByLabelText('Miesiąc wystawienia'), { target: { value: '2026-09' } })
+    await user.click(screen.getAllByRole('button', { name: 'pokaż wszystkie' })[0])
+    expect((screen.getByLabelText('Miesiąc wystawienia') as HTMLInputElement).value).toBe('')
+  })
+
+  it.each(['filter', 'sort'])('blocks competing list actions while a %s request is pending', async (first) => {
+    const user = userEvent.setup()
+    let finish!: (response: Response) => void
+    const fetchMock = vi.spyOn(globalThis, 'fetch').mockReturnValue(new Promise<Response>((resolve) => { finish = resolve }))
+    renderCompactInvoice()
+    fireEvent.change(screen.getByLabelText('Miesiąc wystawienia'), { target: { value: '2026-09' } })
+    const filter = screen.getByRole('button', { name: 'Filtruj' })
+    const sort = screen.getByRole('button', { name: /Kwota/i })
+    await user.click(first === 'filter' ? filter : sort)
+    await user.click(first === 'filter' ? sort : filter)
+    const callsWhilePending = fetchMock.mock.calls.length
+    await act(async () => finish(new Response(JSON.stringify({
+      invoices, total: 1, page: 1, pageSize: 50, totalPages: 1, grossAmountTotal: 123,
+      counts: { NEW: 1, MAPPED: 0, APPROVED: 0, IGNORED: 0 },
+    }))))
+    expect(callsWhilePending).toBe(1)
+    expect(filter.matches(':disabled')).toBe(false)
+    expect(sort.matches(':disabled')).toBe(false)
+  })
+
+  it.each([['2026-02', '2026-02-28'], ['2026-12', '2026-12-31'], ['2026-04', '2026-04-30']])(
+    'fills correct month end for %s', (month, lastDay) => {
+      renderCompactInvoice()
+      fireEvent.change(screen.getByLabelText('Miesiąc wystawienia'), { target: { value: month } })
+      expect((screen.getByLabelText('Data wystawienia do') as HTMLInputElement).value).toBe(lastDay)
+    }
+  )
+
   it('renders pagination controls above and below the invoice list', () => {
     render(
       <KsefInboxView
@@ -409,6 +522,7 @@ describe('KsefInboxView', () => {
 
     // Inline tagging is now grouped toggle chips instead of a native <select multiple>.
     const table = screen.getByRole('table')
+    await user.click(within(table).getByRole('button', { name: 'Edytuj tagi' }))
     await user.click(within(table).getByRole('button', { name: 'goods' }))
     await user.click(screen.getByTitle('Zapisz klasyfikację'))
 
@@ -458,6 +572,7 @@ describe('KsefInboxView', () => {
     )
 
     const table = screen.getByRole('table')
+    await user.click(within(table).getByRole('button', { name: 'Edytuj tagi' }))
     await user.click(within(table).getByRole('button', { name: 'Dodaj tag do Typ wydatku' }))
     const form = within(table).getByRole('form', { name: 'Dodaj tag do Typ wydatku' })
     await user.type(within(form).getByLabelText('Nowy tag w Typ wydatku'), 'Usługi prawne')
@@ -526,6 +641,7 @@ describe('KsefInboxView', () => {
     expect(within(table).queryByRole('combobox')).toBeNull()
 
     await user.click(within(table).getByRole('button', { name: 'Puławska' }))
+    await user.click(within(table).getByRole('button', { name: 'Edytuj tagi' }))
     await user.click(within(table).getByRole('button', { name: 'goods' }))
     await user.click(screen.getByTitle('Zapisz klasyfikację'))
 
