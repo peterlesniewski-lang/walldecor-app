@@ -70,6 +70,8 @@ export async function GET(req: NextRequest) {
     search: req.nextUrl.searchParams.get('search') || undefined,
     amountMin: req.nextUrl.searchParams.get('amountMin') || undefined,
     amountMax: req.nextUrl.searchParams.get('amountMax') || undefined,
+    issueDateFrom: req.nextUrl.searchParams.get('issueDateFrom') || undefined,
+    issueDateTo: req.nextUrl.searchParams.get('issueDateTo') || undefined,
     sortBy: req.nextUrl.searchParams.get('sortBy') || undefined,
     sortDir: req.nextUrl.searchParams.get('sortDir') || undefined,
   })
@@ -82,6 +84,13 @@ export async function GET(req: NextRequest) {
   if (parsed.data.paymentStatus) filters.push({ paymentStatus: parsed.data.paymentStatus })
   if (parsed.data.documentStatus) filters.push({ documentStatus: parsed.data.documentStatus })
   if (parsed.data.ruleMatchStatus) filters.push({ ruleMatchStatus: parsed.data.ruleMatchStatus })
+  if (parsed.data.issueDateFrom || parsed.data.issueDateTo) {
+    // issueDate is the invoice's date-only value, stored as UTC by import/manual entry.
+    filters.push({ issueDate: {
+      ...(parsed.data.issueDateFrom ? { gte: new Date(`${parsed.data.issueDateFrom}T00:00:00.000Z`) } : {}),
+      ...(parsed.data.issueDateTo ? { lte: new Date(`${parsed.data.issueDateTo}T23:59:59.999Z`) } : {}),
+    } })
+  }
   if (parsed.data.search) {
     const normalizedNip = normalizeSupplierNip(parsed.data.search)
     filters.push({

@@ -7,6 +7,8 @@ import { TagChips } from '@/components/shared/tag-chips'
 import { KsefInvoicePartsEditor } from '@/components/shared/ksef-invoice-parts-editor'
 import { KsefPaymentSummary } from '@/components/shared/ksef-payment-summary'
 import { KsefSelectionBar } from '@/components/shared/ksef-selection-bar'
+import { KsefInvoiceTags } from '@/components/shared/ksef-invoice-tags'
+import { monthIssueDateRange } from '@/lib/finance/ksef-date-filter'
 import { warsawToday, type BulkPaymentResult } from '@/lib/finance/ksef-selection'
 
 export type KsefStatus = 'NEW' | 'MAPPED' | 'APPROVED' | 'IGNORED'
@@ -110,6 +112,8 @@ interface KsefInvoiceFilters {
   search: string
   amountMin: string
   amountMax: string
+  issueDateFrom: string
+  issueDateTo: string
   paymentStatus: KsefPaymentStatus | 'ALL'
   paymentDeadline: KsefPaymentDeadline | 'ALL'
 }
@@ -157,6 +161,8 @@ const EMPTY_INVOICE_FILTERS: KsefInvoiceFilters = {
   search: '',
   amountMin: '',
   amountMax: '',
+  issueDateFrom: '',
+  issueDateTo: '',
   paymentStatus: 'ALL',
   paymentDeadline: 'ALL',
 }
@@ -269,6 +275,8 @@ function normalizeInvoiceFilters(filters: KsefInvoiceFilters): KsefInvoiceFilter
     search: filters.search.trim(),
     amountMin: filters.amountMin.trim(),
     amountMax: filters.amountMax.trim(),
+    issueDateFrom: filters.issueDateFrom,
+    issueDateTo: filters.issueDateTo,
     paymentStatus: filters.paymentStatus,
     paymentDeadline: filters.paymentDeadline,
   }
@@ -303,9 +311,12 @@ export function KsefInboxView({
   const [counts, setCounts] = useState<KsefInvoiceCounts>(initialCounts)
   const [filterForm, setFilterForm] = useState<KsefInvoiceFilters>(EMPTY_INVOICE_FILTERS)
   const [activeFilters, setActiveFilters] = useState<KsefInvoiceFilters>(EMPTY_INVOICE_FILTERS)
+  const [issueMonth, setIssueMonth] = useState('')
+  const [editingTagsId, setEditingTagsId] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<KsefSortBy>(DEFAULT_SORT_BY)
   const [sortDir, setSortDir] = useState<KsefSortDir>(DEFAULT_SORT_DIR)
   const [saving, setSaving] = useState<string | null>(null)
+  const [listLoading, setListLoading] = useState(false)
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
   const [bulkPaidDate, setBulkPaidDate] = useState(warsawToday)
   const [bulkResult, setBulkResult] = useState<string | null>(null)
@@ -348,7 +359,7 @@ export function KsefInboxView({
   const hasActiveResultFilter = statusFilter !== 'ALL'
     || activeFilters.paymentStatus !== 'ALL'
     || activeFilters.paymentDeadline !== 'ALL'
-    || Boolean(activeFilters.search || activeFilters.amountMin || activeFilters.amountMax)
+    || Boolean(activeFilters.search || activeFilters.amountMin || activeFilters.amountMax || activeFilters.issueDateFrom || activeFilters.issueDateTo)
   const hasCostTags = tagGroups.some((group) => group.tags.length > 0)
 
   function replaceInvoice(updated: KsefInvoiceRow) {
@@ -364,6 +375,7 @@ export function KsefInboxView({
 
   function applyInvoicePage(response: KsefInvoiceListResponse) {
     setSelectedIds(new Set())
+    setEditingTagsId(null)
     setInvoices(response.invoices)
     setPage(response.page)
     setPageSize(response.pageSize)
@@ -401,22 +413,28 @@ export function KsefInboxView({
     if (targetFilters.search) params.set('search', targetFilters.search)
     if (targetFilters.amountMin) params.set('amountMin', targetFilters.amountMin)
     if (targetFilters.amountMax) params.set('amountMax', targetFilters.amountMax)
+    if (targetFilters.issueDateFrom) params.set('issueDateFrom', targetFilters.issueDateFrom)
+    if (targetFilters.issueDateTo) params.set('issueDateTo', targetFilters.issueDateTo)
     if (targetFilters.paymentStatus !== 'ALL') params.set('paymentStatus', targetFilters.paymentStatus)
     if (targetFilters.paymentDeadline !== 'ALL') params.set('paymentDeadline', targetFilters.paymentDeadline)
 
-    const response = await readJson(await fetch(`/api/finance/ksef/invoices?${params.toString()}`)) as KsefInvoiceListResponse
-    if (response.invoices.length === 0 && response.total > 0 && targetPage > response.totalPages) {
-      return refreshInvoices({
-        page: response.totalPages,
-        pageSize: targetPageSize,
-        statusFilter: targetStatus,
-        filters: targetFilters,
-        sortBy: targetSortBy,
-        sortDir: targetSortDir,
-      })
+    setListLoading(true)
+    try {
+      const response = await readJson(await fetch(`/api/finance/ksef/invoices?${params.toString()}`)) as KsefInvoiceListResponse
+      if (response.invoices.length === 0 && response.total > 0 && targetPage > response.totalPages) {
+        return await refreshInvoices({
+          page: response.totalPages,
+          pageSize: targetPageSize,
+          statusFilter: targetStatus,
+          filters: targetFilters,
+          sortBy: targetSortBy,
+          sortDir: targetSortDir,
+        })
+      }
+      return applyInvoicePage(response)
+    } finally {
+      setListLoading(false)
     }
-
-    return applyInvoicePage(response)
   }
 
   async function createCostTag(group: CostTagGroupOption, name: string) {
@@ -442,13 +460,16 @@ export function KsefInboxView({
     event.preventDefault()
     setError(null)
     setSyncMessage(null)
-    setSaving('filters')
     const nextFilters = normalizeInvoiceFilters(filterForm)
+    if (nextFilters.issueDateFrom && nextFilters.issueDateTo && nextFilters.issueDateFrom > nextFilters.issueDateTo) {
+      setError('Data od nie może być późniejsza niż data do.')
+      return
+    }
+    setSaving('filters')
     try {
+      await refreshInvoices({ page: 1, filters: nextFilters })
       setActiveFilters(nextFilters)
       setFilterForm(nextFilters)
-      setPage(1)
-      await refreshInvoices({ page: 1, filters: nextFilters })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nie udało się zastosować filtrów')
     } finally {
@@ -461,10 +482,10 @@ export function KsefInboxView({
     setSyncMessage(null)
     setSaving('filters')
     try {
+      await refreshInvoices({ page: 1, filters: EMPTY_INVOICE_FILTERS })
+      setIssueMonth('')
       setFilterForm(EMPTY_INVOICE_FILTERS)
       setActiveFilters(EMPTY_INVOICE_FILTERS)
-      setPage(1)
-      await refreshInvoices({ page: 1, filters: EMPTY_INVOICE_FILTERS })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nie udało się wyczyścić filtrów')
     } finally {
@@ -489,6 +510,7 @@ export function KsefInboxView({
     setError(null)
     setSyncMessage(null)
     try {
+      setIssueMonth('')
       setFilterForm(EMPTY_INVOICE_FILTERS)
       setActiveFilters(EMPTY_INVOICE_FILTERS)
       setStatusFilter('ALL')
@@ -558,6 +580,7 @@ export function KsefInboxView({
         }),
       }))
       setStatusFilter('ALL')
+      setIssueMonth('')
       setFilterForm(EMPTY_INVOICE_FILTERS)
       setActiveFilters(EMPTY_INVOICE_FILTERS)
       await refreshInvoices({ page: 1, statusFilter: 'ALL', filters: EMPTY_INVOICE_FILTERS })
@@ -776,6 +799,7 @@ export function KsefInboxView({
     try {
       const result = await readJson(await fetch('/api/finance/ksef/sync', { method: 'POST' }))
       setStatusFilter('ALL')
+      setIssueMonth('')
       setFilterForm(EMPTY_INVOICE_FILTERS)
       setActiveFilters(EMPTY_INVOICE_FILTERS)
       await refreshInvoices({ page: 1, statusFilter: 'ALL', filters: EMPTY_INVOICE_FILTERS })
@@ -931,7 +955,7 @@ export function KsefInboxView({
   }
 
   return (
-    <fieldset disabled={bulkBusy} className="m-0 min-w-0 space-y-6 border-0 p-0">
+    <fieldset disabled={saving !== null || listLoading} aria-busy={saving !== null || listLoading} className="m-0 min-w-0 space-y-6 border-0 p-0">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="data-label mb-1">Kondycja firmy</p>
@@ -1054,6 +1078,32 @@ export function KsefInboxView({
           {renderPaginationControls()}
         </div>
         <form onSubmit={applyInvoiceFilters} className="border-b border-[var(--wd-border)] bg-white px-4 py-3">
+          <div className="mb-3 grid items-end gap-3 border-b border-[var(--wd-border)] pb-3 sm:grid-cols-3 xl:grid-cols-[180px_180px_180px_1fr]">
+            <label className="block text-xs font-semibold text-[var(--wd-text-muted)]">
+              Miesiąc wystawienia
+              <input type="month" value={issueMonth} onChange={(event) => {
+                const month = event.target.value
+                setIssueMonth(month)
+                const range = monthIssueDateRange(month)
+                setFilterForm((current) => ({ ...current, issueDateFrom: range?.issueDateFrom ?? '', issueDateTo: range?.issueDateTo ?? '' }))
+              }} className="mt-1 w-full min-w-0 rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-normal text-[var(--wd-dark)]" />
+            </label>
+            <label className="block text-xs font-semibold text-[var(--wd-text-muted)]">
+              Data wystawienia od
+              <input type="date" value={filterForm.issueDateFrom} onChange={(event) => {
+                setIssueMonth('')
+                setFilterForm((current) => ({ ...current, issueDateFrom: event.target.value }))
+              }} className="mt-1 w-full min-w-0 rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-normal text-[var(--wd-dark)]" />
+            </label>
+            <label className="block text-xs font-semibold text-[var(--wd-text-muted)]">
+              Data wystawienia do
+              <input type="date" value={filterForm.issueDateTo} onChange={(event) => {
+                setIssueMonth('')
+                setFilterForm((current) => ({ ...current, issueDateTo: event.target.value }))
+              }} className="mt-1 w-full min-w-0 rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-normal text-[var(--wd-dark)]" />
+            </label>
+            <p className="pb-2 text-xs text-[var(--wd-text-muted)]">Wybierz miesiąc lub wpisz własny zakres, a następnie kliknij „Filtruj”.</p>
+          </div>
           <div className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_140px_140px_140px_150px_auto] md:items-end">
             <label className="block text-xs font-semibold" style={{ color: 'var(--wd-text-muted)' }}>
               Dostawca lub NIP
@@ -1129,6 +1179,9 @@ export function KsefInboxView({
             </div>
           </div>
         </form>
+        {(activeFilters.issueDateFrom || activeFilters.issueDateTo) && (
+          <p className="border-b border-[var(--wd-border)] px-4 py-2 text-xs text-[var(--wd-text-muted)]">Okres wystawienia: <strong className="num text-[var(--wd-dark)]">{activeFilters.issueDateFrom || 'bez początku'} — {activeFilters.issueDateTo || 'bez końca'}</strong></p>
+        )}
         <KsefSelectionBar invoices={selectedInvoices} paidDate={bulkPaidDate} busy={bulkBusy} disabled={saving !== null} onDateChange={setBulkPaidDate} onClear={() => setSelectedIds(new Set())} onPay={() => void paySelectedInvoices()} />
         {bulkResult && <p role="status" className="border-b border-[var(--wd-border)] px-4 py-3 text-sm">{bulkResult}</p>}
         <div className="overflow-x-auto">
@@ -1223,27 +1276,12 @@ export function KsefInboxView({
                       />
                     </td>
                     <td className="px-4 py-3">
-                      {hasCostTags ? (
-                        <div className="max-h-44 min-w-56 overflow-y-auto pr-1">
-                          <TagChips
-                            groups={tagGroups}
-                            value={rowClassification.tagIds}
-                            disabled={approved}
-                            size="sm"
-                            onCreateTag={createCostTag}
-                            onChange={(tagIds) =>
-                              setClassification((current) => ({
-                                ...current,
-                                [invoice.id]: { ...rowClassification, tagIds },
-                              }))
-                            }
-                          />
-                        </div>
-                      ) : (
-                        <div className="min-w-48 rounded border border-dashed border-[var(--wd-border)] bg-gray-50 px-2 py-2 text-xs font-medium" style={{ color: 'var(--wd-text-muted)' }}>
-                          Brak tagów kosztowych
-                        </div>
-                      )}
+                      <KsefInvoiceTags groups={tagGroups} value={rowClassification.tagIds} savedValue={invoiceTagIds(invoice)}
+                        invoiceTags={invoice.parts?.flatMap((part) => part.tags.flatMap((entry) => entry.tag ? [entry.tag] : [])) ?? []}
+                        disabled={approved} editing={editingTagsId === invoice.id}
+                        onToggle={() => setEditingTagsId((current) => current === invoice.id ? null : invoice.id)}
+                        onCreateTag={createCostTag}
+                        onChange={(tagIds) => setClassification((current) => ({ ...current, [invoice.id]: { ...rowClassification, tagIds } }))} />
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap justify-end gap-2">
