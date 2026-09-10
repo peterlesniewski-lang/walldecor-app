@@ -2,6 +2,23 @@
 
 **ORM:** Prisma | **Baza:** SQLite | **Plik:** `walldecor.db`
 
+## Aktualizacja finansów i kasy — 10.09.2026
+
+Implementacja lokalna; wdrożenie wymaga osobnego odbioru. Źródłem bieżącego schematu jest `prisma/schema.prisma`; starsze diagramy i przykłady poniżej dokumentują pierwotny MVP.
+
+- `Revenue.asOfDate String?`: data ISO stanu narastającego w miesiącu; brak danych historycznych pozostaje `null`. Unikalność rok/miesiąc/centrum/kanał bez zmian. `RevenueBudget` zachowane wyłącznie historycznie; budżety kosztowe nietknięte.
+- `SalonCashSettings`: jeden rekord PUL/JAG, unikalny `cashAccountId`, data/saldo startowe, cel kasy stałej i wersja. Rachunek wybiera administrator jawnie.
+- `CashDailyReport`: unikalny salon/dzień, status DRAFT/CLOSED, wersja, otwarcie, wpływy i policzona gotówka, zamrożone wartości rozliczenia i celu, klucz zamknięcia. Częściowy indeks SQLite dopuszcza najwyżej jeden szkic na salon.
+- `CashDailyOperation`: zwrot sprzedaży, przyjęcie/zwrot kaucji, metoda CASH/CARD, dodatnia kwota, dokument, anulowanie zamiast fizycznego usunięcia.
+- `CashDeposit`: najwyżej jeden na raport; WAITING → RECEIVED → VERIFIED/DISCREPANCY; VOID zachowuje ślad wycofanej paczki. Oddzielne daty/aktorzy odbioru i przeliczenia oraz rachunek docelowy.
+- `CashierAuditLog`: niezmieniane wpisy przed/po z aktorem, czasem i powodem. Korekta raportu dopuszczalna wyłącznie przed późniejszym raportem i odbiorem paczki; poprzednie wartości pozostają w audycie.
+
+Nowe kwoty: `Int` w groszach, walidowane do 2 147 483 647; aktualizacja dotychczasowego `CashAccount.balance` i `CashBalanceHistory` w tej samej transakcji. Zamknięcie zmienia rachunek o policzona minus otwarcie; depozyt nadal należy do tego salda. Odbiór przenosi zadeklarowaną kwotę, przeliczenie dopisuje tylko różnicę. Kasa nie dopisuje miesięcznego `Revenue` i nie księguje automatycznie kart, banku ani płatności KSeF.
+
+Dostęp kasy jest ustalany na każdym żądaniu z bieżącego `User.employeeId → Employee.costCenterId`, aktywności i roli; nie z samego JWT. ADMIN obie kasy, EMPLOYEE tylko swój PUL/JAG. Stare API rachunków blokuje ręczne saldo/dezaktywację rachunku zarządzanego przez kasę i dezaktywację odbiorcy nieprzeliczonej paczki.
+
+Migracja: `prisma/migrations/20260910070000_finance_actuals_cashier/migration.sql` — wyłącznie addytywna, bez backfillu dat i bez automatycznej aktywacji. Sprawdzenie pełnego łańcucha/upgrade: `node scripts/validate-finance-migrations.mjs`. Szczegóły kontraktu w `docs/superpowers/specs/2026-09-10-finance-cashier-design.md`.
+
 ---
 
 ## Diagram relacji (uproszczony)

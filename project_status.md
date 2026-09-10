@@ -1,6 +1,20 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-07-02 (Sesja 13 — HR: domknięcie prywatności, scoping ról i raportowanie M6-M8)
+**Ostatnia aktualizacja:** 2026-09-10 (przychody rzeczywiste, dashboard i kasa salonu — implementacja lokalna)
+
+## Aktualny zakres finansowy — 10.09.2026
+
+Gałąź `feat/finance-actuals-cash-ledger`, odizolowany checkout `walldecor-ksef`. Lokalny odbiór zakończony; 10.09.2026 właściciel zatwierdził commit i push tej gałęzi. Merge i wdrożenie nie są objęte tą zgodą. Poniższe ustalenia zastępują historyczne opisy planu sprzedaży i dashboardu M3/M4; nie zmieniają budżetów kosztowych.
+
+- [x] Przychody: wyłącznie miesięczne rzeczywiste kwoty brutto po korektach, zastępowanie zapisu, brak/zero/ujemna korekta, opcjonalny stan na dzień, import/eksport CSV. Historyczne `RevenueBudget` zachowane; czynne endpointy planu zwracają 410 po autoryzacji.
+- [x] `/` i `/dashboard`: wspólny model, wybrany miesiąc i sumy narastające, brak fallbacku do planu, kontrola kompletności i porównywalności r/r, istniejące alokacje kosztów, środki osobno od wyniku.
+- [x] `/cashier` + `GET/POST /api/cashier`: ręczny start, aktualne uprawnienia, dzienne wpływy/operacje, kasa stała, policzona gotówka, zamknięcie, depozyt, odbiór i osobne przeliczenie, ograniczona audytowana korekta, historia i filtry.
+- [x] Migracja addytywna `20260910070000_finance_actuals_cashier`: `Revenue.asOfDate` i pięć tabel kasy. Brak automatycznego uruchamiania salonów i przypisywania rachunków.
+- [x] Lokalny odbiór: 1657/1657 testów PASS, build/TypeScript, migracje clean+upgrade, browser UI/API+role+restart, zakresowy lint i niezależny przegląd. [Raport i warunki publikacji](docs/superpowers/plans/2026-09-10-finance-cashier-acceptance.md).
+- [ ] Publikacja po zgodzie właściciela, kopii SQLite i weryfikacji wdrożenia.
+- [ ] Uruchomienie PUL/JAG: potwierdzone rachunki, daty i salda startowe oraz właściwe pola raportu Subiekta; nie zgadywać ani dublować istniejącej gotówki.
+
+Kontrakt: [finanse i kasa salonu](docs/superpowers/specs/2026-09-10-finance-cashier-design.md). Etapy i dowody: [plan wykonania](docs/superpowers/plans/2026-09-10-finance-cashier-plan.md). Nowa logika: `src/lib/cashier/`, `src/lib/finance/actual-dashboard*.ts`; UI kasy: `src/components/cashier/`. Testy pełnego przebiegu: `scripts/validate-finance-cashier.mjs`; migracje: `scripts/validate-finance-migrations.mjs`.
 
 ---
 
@@ -299,7 +313,11 @@ M10 — Operacje / Playbook         [x] MVP start (2026-05-18)
 
 ---
 
-## Następna sesja: Operacje — edytor szablonów
+## Następna sesja
+
+**Finanse (10.09.2026):** commit/push gałęzi zatwierdzony przez właściciela. Wdrożenie i aktywacja kas to osobne kroki wymagające decyzji, kopii bazy, odczytu po migracji i potwierdzenia danych startowych. Historyczny backlog poniżej pozostaje poza tym zakresem.
+
+### Historyczny backlog: Operacje — edytor szablonów
 
 > Sesja 13 (2026-07-02): domknięcie HR M6-M8 po testach prywatności i dostępów.
 >

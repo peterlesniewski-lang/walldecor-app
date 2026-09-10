@@ -30,12 +30,18 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
   }
 
-  const parsed = RevenueEntrySchema.safeParse(await req.json())
+  const body: unknown = await req.json().catch(() => null)
+  if (body && typeof body === 'object' && 'type' in body && body.type === 'plan') {
+    return NextResponse.json({ error: 'Plan sprzedaży został wycofany. Zapisz rzeczywisty obrót.' }, { status: 410 })
+  }
+  const parsed = RevenueEntrySchema.safeParse(body)
   if (!parsed.success) {
     return NextResponse.json({ error: 'Invalid data', details: parsed.error.flatten() }, { status: 400 })
   }
 
   const data = parsed.data
+  const amount = Math.round(data.amount * 100) / 100
+  const asOfDate = data.asOfDate ?? null
   const entry = await prisma.revenue.upsert({
     where: {
       year_month_costCenterId_channel: {
@@ -45,13 +51,14 @@ export async function POST(req: NextRequest) {
         channel: data.channel,
       },
     },
-    update: { amount: Math.round(data.amount * 100) / 100 },
+    update: { amount, asOfDate },
     create: {
       year: data.year,
       month: data.month,
       costCenterId: data.costCenterId,
       channel: data.channel,
-      amount: Math.round(data.amount * 100) / 100,
+      amount,
+      asOfDate,
     },
   })
 

@@ -1,0 +1,40 @@
+.root,
+.cashSnapshot {
+  --finance-positive: #28734e;
+  --finance-negative: #ad452e;
+  --finance-warning: #805819;
+  --finance-warning-surface: #fbf3e2;
+  --finance-warning-border: #ead7ad;
+  --finance-error-surface: #faf0ec;
+  --finance-error-border: #e5c2b8;
+}
+
+.positive { color: var(--finance-positive); }
+.negative { color: var(--finance-negative); }
+.warning { color: var(--finance-warning); }
+.warningBadge {
+  color: var(--finance-warning);
+  background: var(--finance-warning-surface);
+  border-color: var(--finance-warning-border);
+}
+.error {
+  color: var(--finance-negative);
+  background: var(--finance-error-surface);
+  border-color: var(--finance-error-border);
+}
+.cashHero {
+  background: var(--wd-surface-2);
+  border: 1px solid var(--wd-border);
+  color: var(--wd-dark);
+}
+.cashHeroLabel { color: var(--wd-text-muted); }
+.cashHeroAmount {
+  font-family: var(--font-mono);
+  color: var(--wd-dark);
+}
+.cashHeroUnit { color: var(--wd-text-muted); }
+.cashHeroAction {
+  background: var(--wd-white);
+  border: 1px solid var(--wd-border);
+  color: var(--wd-dark);
+}

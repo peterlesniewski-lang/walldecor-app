@@ -4,6 +4,17 @@
 **Autor:** Piotr + Claude Code
 **Status:** Draft MVP
 
+## Aktualizacja kierunku — 10.09.2026
+
+Zatwierdzony i zrealizowany lokalnie zakres opisuje `docs/superpowers/specs/2026-09-10-finance-cashier-design.md`. W kwestiach poniżej zastępuje pierwotną specyfikację MVP; nie oznacza wdrożenia:
+
+- Przychody wyłącznie rzeczywiste brutto, miesięczne narastająco po korektach. Zapis zastępuje poprzedni; brak danych, zero i ujemna kwota mają odrębne znaczenie. Czynny plan sprzedaży wycofany, historia zachowana. Budżety kosztów bez zmian.
+- Dashboard pokazuje orientacyjną różnicę rzeczywistych przychodów i rozpoznanych kosztów brutto, nie zysk księgowy. Jawne braki i daty danych; pełny okres/r/r wymagają dat przychodów, potwierdzenia `FinancePeriodClose` i braku aktywnych oczekujących kosztów. Środki pieniężne są osobnym bieżącym stanem.
+- Kasa salonu jest dziennym rozliczeniem fizycznej gotówki/kart/zwrotów/kaucji, z konfigurowalną kasą stałą i depozytami. Nie tworzy drugiego przychodu miesięcznego. Odbiór paczki i przeliczenie zawartości to oddzielne, audytowane operacje.
+- Administrator uruchamia kasę po wskazaniu rachunku i potwierdzeniu policzonego otwarcia oraz źródła wpływów. Aktywny przypisany pracownik rozlicza tylko własny salon. Nie wprowadzamy automatycznej aktywacji, importu historii arkuszy, księgowania kart/banku ani nowych alokacji GLOBAL.
+
+Warunki publikacji: zgoda właściciela, kopia SQLite, sprawdzenie migracji na kopii i odczyt po wdrożeniu. Pełne lokalne scenariusze akceptacyjne i granice korekt zawiera powyższy dokument.
+
 ---
 
 ## 1. Cel projektu

@@ -2,6 +2,7 @@
 
 import { useState, useRef } from 'react'
 import Link from 'next/link'
+import styles from './dashboard-theme.module.css'
 import {
   Landmark,
   Banknote,
@@ -21,6 +22,7 @@ interface CashAccount {
   type: string
   balance: number
   order: number
+  managedByCashier?: boolean
 }
 
 interface ReceivableEntry {
@@ -44,7 +46,7 @@ interface Thresholds {
   cashThresholdBad: number
 }
 
-interface CashFlowRowProps {
+export interface CashFlowRowProps {
   initialAccounts: CashAccount[]
   receivables: ReceivableEntry[]
   latestLiability: CashLiabilitySnapshot | null
@@ -65,20 +67,25 @@ function CardLabel({ children }: { children: React.ReactNode }) {
 interface InlineBalanceInputProps {
   account: CashAccount
   onSave: (accountId: string, newBalance: number) => Promise<void>
+  editable: boolean
 }
 
-function InlineBalanceInput({ account, onSave }: InlineBalanceInputProps) {
+function InlineBalanceInput({ account, onSave, editable }: InlineBalanceInputProps) {
   const [editing, setEditing] = useState(false)
   const [value, setValue] = useState(String(account.balance))
+  const [editBaseBalance, setEditBaseBalance] = useState(account.balance)
   const inputRef = useRef<HTMLInputElement>(null)
+  const balanceChanged = editing && account.balance !== editBaseBalance
 
   const handleClick = () => {
     setEditing(true)
     setValue(String(account.balance))
+    setEditBaseBalance(account.balance)
     setTimeout(() => inputRef.current?.select(), 0)
   }
 
   const handleBlur = async () => {
+    if (balanceChanged || !editable) return
     setEditing(false)
     const parsed = parseFloat(value.replace(',', '.'))
     if (!isNaN(parsed) && parsed !== account.balance) {
@@ -102,22 +109,32 @@ function InlineBalanceInput({ account, onSave }: InlineBalanceInputProps) {
       >
         {account.name}
       </span>
-      {editing ? (
-        <input
-          ref={inputRef}
-          value={value}
-          onChange={(e) => setValue(e.target.value)}
-          onBlur={handleBlur}
-          onKeyDown={handleKeyDown}
-          className="w-28 text-right text-xs font-semibold tabular-nums rounded-lg px-2 py-1 outline-none transition-all"
-          style={{
-            border: '2px solid var(--wd-sand)',
-            color: 'var(--wd-dark)',
-            background: 'var(--wd-off-white)',
-            boxShadow: '0 0 0 3px rgba(228,220,209,0.25)',
-          }}
-          autoFocus
-        />
+      {!editable ? <div className="text-right"><span className="num text-xs font-semibold">{account.balance.toLocaleString('pl-PL')}</span>{account.managedByCashier && <Link href="/cashier" className="mt-1 block text-[10px] underline">Rozlicz w kasie salonu</Link>}</div> : editing ? (
+        <div className="max-w-[60%] text-right">
+          <input
+            ref={inputRef}
+            value={value}
+            onChange={(e) => setValue(e.target.value)}
+            onBlur={handleBlur}
+            onKeyDown={handleKeyDown}
+            className="w-28 text-right text-xs font-semibold tabular-nums rounded-lg px-2 py-1 outline-none transition-all"
+            style={{
+              border: '2px solid var(--wd-sand)',
+              color: 'var(--wd-dark)',
+              background: 'var(--wd-off-white)',
+              boxShadow: '0 0 0 3px rgba(228,220,209,0.25)',
+            }}
+            autoFocus
+          />
+          {balanceChanged && <div role="alert" className={`mt-2 text-xs ${styles.warning}`}>
+            Saldo zmieniło się na {account.balance.toLocaleString('pl-PL')} {account.currency}. Twój wpis nie został zapisany.
+            <button type="button" className="mt-1 block w-full font-semibold underline" onClick={() => {
+              setValue(String(account.balance))
+              setEditBaseBalance(account.balance)
+              inputRef.current?.focus()
+            }}>Wczytaj aktualne saldo</button>
+          </div>}
+        </div>
       ) : (
         <button
           onClick={handleClick}
@@ -190,7 +207,7 @@ function AccountList({
       onClick={(e) => e.stopPropagation()}
     >
       {accounts.map((a) => (
-        <InlineBalanceInput key={a.id} account={a} onSave={onSave} />
+        <InlineBalanceInput key={a.id} account={a} onSave={onSave} editable={isAdmin && !a.managedByCashier} />
       ))}
       {isAdmin && onAddAccount && (
         <button
@@ -348,15 +365,21 @@ export function CashFlowRow({
   isAdmin,
 }: CashFlowRowProps) {
   const [accounts, setAccounts] = useState<CashAccount[]>(initialAccounts)
+  const accountsSnapshot = JSON.stringify(initialAccounts)
+  const [lastAccountsSnapshot, setLastAccountsSnapshot] = useState(accountsSnapshot)
   const [openBank, setOpenBank] = useState(false)
   const [openCash, setOpenCash] = useState(false)
   const [openEur, setOpenEur] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   // Liability modal
   const [showLiabilityModal, setShowLiabilityModal] = useState(false)
   const [liabilityAmount, setLiabilityAmount] = useState('')
   const [liabilityNotes, setLiabilityNotes] = useState('')
   const [liabilityLatest, setLiabilityLatest] = useState<CashLiabilitySnapshot | null>(latestLiability)
+  const liabilitySnapshot = JSON.stringify(latestLiability)
+  const [lastLiabilitySnapshot, setLastLiabilitySnapshot] = useState(liabilitySnapshot)
+  const [liabilityEditBase, setLiabilityEditBase] = useState(liabilitySnapshot)
   const [savingLiability, setSavingLiability] = useState(false)
 
   // Add account modal
@@ -365,6 +388,18 @@ export function CashFlowRow({
   const [newAccountType, setNewAccountType] = useState<'bank' | 'cash'>('bank')
   const [newAccountCurrency, setNewAccountCurrency] = useState<'PLN' | 'EUR'>('PLN')
   const [savingAccount, setSavingAccount] = useState(false)
+
+  // Refresh server values independently of editors. Equal snapshots must retain
+  // confirmed local saves; changed snapshots must not remount an active draft.
+  if (lastAccountsSnapshot !== accountsSnapshot) {
+    setLastAccountsSnapshot(accountsSnapshot)
+    setAccounts(initialAccounts)
+  }
+  if (lastLiabilitySnapshot !== liabilitySnapshot) {
+    setLastLiabilitySnapshot(liabilitySnapshot)
+    setLiabilityLatest(latestLiability)
+  }
+  const liabilityChanged = showLiabilityModal && liabilityEditBase !== JSON.stringify(liabilityLatest)
 
   const plnAccounts = accounts.filter((a) => a.currency === 'PLN')
   const eurAccounts = accounts.filter((a) => a.currency === 'EUR')
@@ -375,26 +410,37 @@ export function CashFlowRow({
   const cashTotal = cashAccounts.reduce((s, a) => s + a.balance, 0)
   const eurTotal = eurAccounts.reduce((s, a) => s + a.balance, 0)
 
-  const totalPLN = plnAccounts.reduce((s, a) => s + a.balance, 0) + eurTotal * (eurRate ?? 0)
+  const hasEurRate = eurRate !== null && Number.isFinite(eurRate) && eurRate > 0
+  const missingEurRate = eurAccounts.some((account) => account.balance !== 0) && !hasEurRate
+  const unsupportedCurrency = accounts.some((account) => account.currency !== 'PLN' && account.currency !== 'EUR')
+  const totalPLN = accounts.length === 0 || missingEurRate || unsupportedCurrency ? null
+    : Math.round((plnAccounts.reduce((s, a) => s + a.balance, 0) + eurTotal * (hasEurRate ? eurRate! : 0)) * 100) / 100
   const totalReceivables = receivables.reduce((s, r) => s + r.amount, 0)
-  const netCash = totalPLN - (liabilityLatest?.amount ?? 0)
+  const netCash = totalPLN === null || liabilityLatest === null ? null : totalPLN - liabilityLatest.amount
 
-  const statusKey = getStatusKey(netCash, thresholds)
-  const status = STATUS_CONFIG[statusKey]
-  const pct = Math.min(100, Math.max(0, Math.round((netCash / thresholds.cashThresholdVeryGood) * 100)))
+  const status = netCash === null ? null : STATUS_CONFIG[getStatusKey(netCash, thresholds)]
+  const pct = netCash === null ? 0 : Math.min(100, Math.max(0, Math.round((netCash / thresholds.cashThresholdVeryGood) * 100)))
 
   const updateBalance = async (accountId: string, newBalance: number) => {
-    const res = await fetch(`/api/cash/accounts/${accountId}`, {
-      method: 'PATCH',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ balance: newBalance }),
-    })
-    if (res.ok) {
+    setError(null)
+    try {
+      const res = await fetch(`/api/cash/accounts/${accountId}`, {
+        method: 'PATCH',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ balance: newBalance }),
+      })
+      if (!res.ok) {
+        const body = await res.json().catch(() => ({}))
+        throw new Error(body.error ?? 'Nie udało się zapisać salda rachunku.')
+      }
       setAccounts((prev) => prev.map((a) => (a.id === accountId ? { ...a, balance: newBalance } : a)))
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Nie udało się zapisać salda rachunku.')
     }
   }
 
   const handleSaveLiability = async () => {
+    if (liabilityChanged) return
     const amt = parseFloat(liabilityAmount.replace(',', '.'))
     if (isNaN(amt) || amt < 0) return
     setSavingLiability(true)
@@ -446,39 +492,37 @@ export function CashFlowRow({
   }
 
   return (
-    <>
+    <div className={styles.cashSnapshot}>
+      {error && <p role="alert" className={`mt-3 rounded-lg border p-3 text-xs ${styles.error}`}>{error} <Link href="/cashier" className="font-semibold underline">Kasa salonu</Link></p>}
       <div
-        className="grid gap-3 mt-6"
-        style={{ gridTemplateColumns: '2fr 1fr 1fr 1fr 1fr' }}
+        className="mt-4 grid gap-3 sm:grid-cols-2 xl:grid-cols-[2fr_1fr_1fr_1fr_1fr]"
       >
 
         {/* ── Karta 1 — Stan Kasy (hero card) ─────────────────────────────── */}
         <div
-          className="rounded-2xl p-5 flex flex-col justify-between"
-          style={{
-            background: 'linear-gradient(135deg, var(--wd-dark) 0%, #2a2a2a 100%)',
-            boxShadow: '0 4px 24px -4px rgba(30,30,30,0.30)',
-          }}
+          className={`rounded-2xl p-5 flex flex-col justify-between ${styles.cashHero}`}
         >
           <div>
-            <p className="data-label mb-3" style={{ color: 'rgba(228,220,209,0.70)' }}>
-              Stan Kasy
+            <p className={`data-label mb-3 ${styles.cashHeroLabel}`}>
+              Saldo rachunków
             </p>
             <p
-              className="text-3xl font-black tabular-nums tracking-tight leading-none"
-              style={{ color: '#F7F6F4', fontFamily: 'var(--font-mono, monospace)' }}
+              className={`text-3xl font-black tabular-nums tracking-tight leading-none ${styles.cashHeroAmount}`}
             >
-              {totalPLN.toLocaleString('pl-PL')}
-              <span className="text-lg font-semibold ml-1.5" style={{ color: 'rgba(247,246,244,0.55)' }}>
+              {totalPLN === null ? '—' : totalPLN.toLocaleString('pl-PL')}
+              <span className={`text-lg font-semibold ml-1.5 ${styles.cashHeroUnit}`}>
                 PLN
               </span>
             </p>
+            {accounts.length === 0 && <p className={`mt-3 text-xs ${styles.warning}`}>Brak aktywnych rachunków</p>}
+            {missingEurRate && <p className={`mt-3 text-xs ${styles.warning}`}>Brak kursu EUR — suma PLN niedostępna</p>}
+            {unsupportedCurrency && <p className={`mt-3 text-xs ${styles.warning}`}>Suma niedostępna: rachunek w walucie bez przeliczenia.</p>}
 
-            {liabilityLatest && (
-              <p className="text-xs mt-2 tabular-nums" style={{ color: 'rgba(247,246,244,0.50)' }}>
+            {netCash !== null && (
+              <p className={`text-xs mt-2 tabular-nums ${styles.cashHeroLabel}`}>
                 Netto:{' '}
-                <span style={{ color: 'rgba(247,246,244,0.80)' }}>
-                  {(totalPLN - liabilityLatest.amount).toLocaleString('pl-PL')} PLN
+                <span className={styles.cashHeroAmount}>
+                  {netCash.toLocaleString('pl-PL')} PLN
                 </span>
               </p>
             )}
@@ -498,13 +542,11 @@ export function CashFlowRow({
 
           {isAdmin && (
             <button
-              onClick={() => setShowLiabilityModal(true)}
-              className="mt-4 self-start flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-medium transition-all duration-200 hover:scale-105 active:scale-95"
-              style={{
-                background: 'rgba(228,220,209,0.15)',
-                color: 'var(--wd-sand)',
-                border: '1px solid rgba(228,220,209,0.25)',
+              onClick={() => {
+                setLiabilityEditBase(JSON.stringify(liabilityLatest))
+                setShowLiabilityModal(true)
               }}
+              className={`mt-4 self-start flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-full font-medium transition-all duration-200 hover:opacity-80 ${styles.cashHeroAction}`}
             >
               <Plus size={12} />
               Aktualizuj zobowiązania
@@ -642,21 +684,21 @@ export function CashFlowRow({
               EUR
             </span>
           </p>
-          {eurRate && (
+          {hasEurRate && (
             <p className="text-xs mt-1.5 tabular-nums" style={{ color: 'var(--wd-text-muted)' }}>
-              ≈ {(eurTotal * eurRate).toLocaleString('pl-PL')} PLN
+              ≈ {(eurTotal * eurRate!).toLocaleString('pl-PL')} PLN
             </p>
           )}
-          {eurRate && eurRateDate && (
+          {hasEurRate && eurRateDate && (
             <p className="text-xs mt-0.5" style={{ color: 'var(--wd-text-muted)', opacity: 0.6 }}>
-              kurs: {eurRate.toFixed(4)} · {eurRateDate}
+              kurs: {eurRate!.toFixed(4)} · {eurRateDate}
             </p>
           )}
           {openEur && (
             <AccountList
               accounts={eurAccounts}
               onSave={updateBalance}
-              isAdmin={false}
+              isAdmin={isAdmin}
             />
           )}
         </div>
@@ -671,7 +713,7 @@ export function CashFlowRow({
               >
                 <TrendingUp size={13} style={{ color: 'var(--wd-text-muted)' }} />
               </div>
-              <CardLabel>Stan finansów</CardLabel>
+              <CardLabel>Środki po zobowiązaniach</CardLabel>
             </div>
             <Link
               href="/settings"
@@ -686,14 +728,14 @@ export function CashFlowRow({
           {/* Status badge */}
           <div className="mt-1 mb-3">
             <span
-              className={`inline-flex items-center text-xs font-semibold px-2.5 py-1 rounded-full border ${status.badgeClass}`}
+              className={`inline-flex items-center text-xs font-semibold px-2.5 py-1 rounded-full border ${status?.badgeClass ?? 'border-[var(--wd-border)] bg-[var(--wd-surface-2)] text-[var(--wd-text-muted)]'}`}
             >
-              {status.label}
+              {status?.label ?? (totalPLN === null ? 'Niepełna wycena środków' : 'Brak stanu zobowiązań')}
             </span>
           </div>
 
           <p className="text-xs tabular-nums mb-3" style={{ color: 'var(--wd-text-muted)' }}>
-            {netCash.toLocaleString('pl-PL')} PLN netto
+            {netCash === null ? '—' : `${netCash.toLocaleString('pl-PL')} PLN po zapisanych zobowiązaniach`}
           </p>
 
           {/* Progress bar */}
@@ -703,11 +745,11 @@ export function CashFlowRow({
           >
             <div
               className="h-2 rounded-full transition-all duration-500"
-              style={{ width: `${pct}%`, background: status.barColor }}
+              style={{ width: `${pct}%`, background: status?.barColor ?? 'var(--wd-border)' }}
             />
           </div>
           <p className="text-xs mt-1.5" style={{ color: 'var(--wd-text-muted)', opacity: 0.7 }}>
-            {pct}% progu &quot;Bardzo dobry&quot;
+            {status ? `${pct}% progu „Bardzo dobry”` : 'Uzupełnij dane, aby ocenić stan środków.'}
           </p>
         </div>
       </div>
@@ -718,6 +760,14 @@ export function CashFlowRow({
           title="Aktualizuj zobowiązania"
           onClose={() => setShowLiabilityModal(false)}
         >
+          {liabilityChanged && <div role="alert" className={`mb-4 text-xs ${styles.warning}`}>
+            Zobowiązania zmieniły się na {liabilityLatest ? `${liabilityLatest.amount.toLocaleString('pl-PL')} PLN` : 'brak wpisu'}. Twój wpis nie został zapisany.
+            <button type="button" className="mt-1 block font-semibold underline" onClick={() => {
+              setLiabilityAmount(liabilityLatest ? String(liabilityLatest.amount) : '')
+              setLiabilityNotes(liabilityLatest?.notes ?? '')
+              setLiabilityEditBase(JSON.stringify(liabilityLatest))
+            }}>Wczytaj aktualne zobowiązania</button>
+          </div>}
           {liabilityLatest && (
             <div
               className="flex items-center gap-2 px-3 py-2.5 rounded-xl mb-4 text-xs"
@@ -758,7 +808,7 @@ export function CashFlowRow({
           <ModalActions
             onCancel={() => setShowLiabilityModal(false)}
             onConfirm={handleSaveLiability}
-            disabled={savingLiability || !liabilityAmount}
+            disabled={savingLiability || !liabilityAmount || liabilityChanged}
             confirmLabel="Zapisz"
             loadingLabel="Zapisuję..."
             loading={savingLiability}
@@ -814,6 +864,6 @@ export function CashFlowRow({
           />
         </Modal>
       )}
-    </>
+    </div>
   )
 }

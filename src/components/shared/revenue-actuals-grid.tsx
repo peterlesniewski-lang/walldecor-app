@@ -1,226 +1,212 @@
 'use client'
-import { useState, useCallback } from 'react'
-import React from 'react'
-import { BudgetCell, NavDirection } from '@/components/shared/budget-cell'
-import { CHANNEL_LABELS, COST_CENTER_CHANNELS, REVENUE_CHANNELS, RevenueChannel } from '@/lib/validations/revenue'
+
+import { useId, useRef, useState, type FormEvent } from 'react'
+import { useRouter } from 'next/navigation'
+import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import { CHANNEL_LABELS, COST_CENTER_CHANNELS, REVENUE_CHANNELS, RevenueEntrySchema, parseRevenueAmount, revenueWarsawToday, type RevenueChannel } from '@/lib/validations/revenue'
+import styles from './revenue-ui.module.css'
+
+export interface RevenueActualEntry {
+  year: number
+  month: number
+  costCenterId: string
+  channel: string
+  amount: number
+  asOfDate: string | null
+}
 
 interface RevenueActualsGridProps {
-  planEntries: Record<string, number>     // key: `${channel}_${month}`
-  initialActuals: Record<string, number>  // key: `${channel}_${month}`
+  initialEntries: RevenueActualEntry[]
   year: number
   costCenterId: string
   editable: boolean
 }
 
-type ActiveCell = { channel: RevenueChannel; month: number } | null
+const MONTHS = ['styczeń', 'luty', 'marzec', 'kwiecień', 'maj', 'czerwiec', 'lipiec', 'sierpień', 'wrzesień', 'październik', 'listopad', 'grudzień']
+const money = (value: number) => value.toLocaleString('pl-PL', { style: 'currency', currency: 'PLN' })
+const displayDate = (value: string) => value.split('-').reverse().join('.')
+type EditingCell = { channel: RevenueChannel; month: number }
 
-const MONTHS = ['Sty', 'Lut', 'Mar', 'Kwi', 'Maj', 'Cze', 'Lip', 'Sie', 'Wrz', 'Paź', 'Lis', 'Gru']
+export function RevenueActualsGrid({ initialEntries, year, costCenterId, editable }: RevenueActualsGridProps) {
+  const serverSnapshot = JSON.stringify(initialEntries)
+  const [data, setData] = useState(() => ({ serverSnapshot, entries: initialEntries }))
+  // Reconcile only a changed server snapshot. An unchanged parent render must
+  // preserve confirmed saves; receiving fresh rows must preserve the editor.
+  if (data.serverSnapshot !== serverSnapshot) {
+    setData({ serverSnapshot, entries: initialEntries })
+  }
+  const entries = data.entries
+  const [editing, setEditing] = useState<EditingCell | null>(null)
+  const [amount, setAmount] = useState('')
+  const [asOfDate, setAsOfDate] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [savedMessage, setSavedMessage] = useState('')
+  const triggerRef = useRef<HTMLButtonElement | null>(null)
+  const amountId = useId()
+  const dateId = useId()
+  const router = useRouter()
+  const isCompany = costCenterId === 'GLOBAL'
+  const canEdit = editable && !isCompany
+  const channels = isCompany ? [...REVENUE_CHANNELS] : COST_CENTER_CHANNELS[costCenterId] ?? []
+  const today = revenueWarsawToday()
+  const rows = entries.filter((entry) => entry.year === year && (isCompany || entry.costCenterId === costCenterId))
+  const expectedCenters = (channel: RevenueChannel) => (isCompany ? ['JAG', 'PUL'] : [costCenterId])
+    .filter((center) => COST_CENTER_CHANNELS[center]?.includes(channel))
+  const expectedCount = channels.reduce((sum, channel) => sum + expectedCenters(channel).length, 0)
 
-export function RevenueActualsGrid({
-  planEntries,
-  initialActuals,
-  year,
-  costCenterId,
-  editable,
-}: RevenueActualsGridProps) {
-  const [actuals, setActuals] = useState<Record<string, number>>(initialActuals)
-  const [activeCell, setActiveCell] = useState<ActiveCell>(null)
-
-  const channels: RevenueChannel[] = costCenterId === 'GLOBAL'
-    ? [...REVENUE_CHANNELS]
-    : (COST_CENTER_CHANNELS[costCenterId] ?? [])
-
-  const getPlan = (ch: RevenueChannel, month: number) => planEntries[`${ch}_${month}`] ?? 0
-  const getReal = (ch: RevenueChannel, month: number) => actuals[`${ch}_${month}`] ?? 0
-
-  const rowPlanSum = (ch: RevenueChannel) => MONTHS.reduce((s, _, i) => s + getPlan(ch, i + 1), 0)
-  const rowRealSum = (ch: RevenueChannel) => MONTHS.reduce((s, _, i) => s + getReal(ch, i + 1), 0)
-  const rowPct = (ch: RevenueChannel): number | null => {
-    const p = rowPlanSum(ch)
-    return p > 0 ? (rowRealSum(ch) / p) * 100 : null
+  function openEditor(cell: EditingCell, trigger: HTMLButtonElement) {
+    if (!canEdit) return
+    const existing = rows.find((row) => row.month === cell.month && row.channel === cell.channel)
+    setAmount(existing ? String(existing.amount) : '')
+    setAsOfDate(existing?.asOfDate ?? '')
+    setError(null)
+    setSavedMessage('')
+    triggerRef.current = trigger
+    setEditing(cell)
   }
 
-  const colPlanSum = (month: number) => channels.reduce((s, ch) => s + getPlan(ch, month), 0)
-  const colRealSum = (month: number) => channels.reduce((s, ch) => s + getReal(ch, month), 0)
-  const colPct = (month: number): number | null => {
-    const p = colPlanSum(month)
-    return p > 0 ? (colRealSum(month) / p) * 100 : null
-  }
-
-  const grandPlan = MONTHS.reduce((s, _, i) => s + colPlanSum(i + 1), 0)
-  const grandReal = MONTHS.reduce((s, _, i) => s + colRealSum(i + 1), 0)
-  const grandPct: number | null = grandPlan > 0 ? (grandReal / grandPlan) * 100 : null
-
-  const fmt = (n: number) => (n === 0 ? '—' : n.toLocaleString('pl-PL'))
-  const fmtPct = (p: number | null) => (p === null ? '—' : `${Math.round(p)}%`)
-  const pctClass = (p: number | null) =>
-    p === null ? 'text-gray-300' : p >= 100 ? 'text-green-600' : p >= 80 ? 'text-amber-500' : 'text-red-500'
-
-  const onSave = useCallback(
-    async (channel: RevenueChannel, month: number, amount: number) => {
-      const res = await fetch('/api/revenue', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ year, month, costCenterId, channel, amount }),
+  async function save(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault()
+    if (!editing || saving || !canEdit) return
+    if (!amount.trim()) { setError('Wpisz kwotę brutto. Zero wpisz jawnie jako 0.'); return }
+    const parsed = RevenueEntrySchema.safeParse({
+      year, month: editing.month, costCenterId, channel: editing.channel,
+      amount: parseRevenueAmount(amount), asOfDate: asOfDate || null,
+    })
+    if (!parsed.success) { setError(parsed.error.issues.map((issue) => issue.message).join('. ')); return }
+    setSaving(true)
+    setError(null)
+    try {
+      const response = await fetch('/api/revenue', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(parsed.data),
       })
-      if (res.ok) {
-        setActuals((prev) => ({ ...prev, [`${channel}_${month}`]: amount }))
-      }
-    },
-    [year, costCenterId]
-  )
-
-  const handleNavigate = useCallback(
-    (channel: RevenueChannel, month: number, dir: NavDirection) => {
-      const rowIdx = channels.indexOf(channel)
-      let newChannel = channel
-      let newMonth = month
-      switch (dir) {
-        case 'right':
-          if (month < 12) { newMonth = month + 1 }
-          else if (rowIdx < channels.length - 1) { newChannel = channels[rowIdx + 1]; newMonth = 1 }
-          break
-        case 'left':
-          if (month > 1) { newMonth = month - 1 }
-          else if (rowIdx > 0) { newChannel = channels[rowIdx - 1]; newMonth = 12 }
-          break
-        case 'down':
-          if (rowIdx < channels.length - 1) { newChannel = channels[rowIdx + 1] }
-          break
-        case 'up':
-          if (rowIdx > 0) { newChannel = channels[rowIdx - 1] }
-          break
-      }
-      setActiveCell({ channel: newChannel, month: newMonth })
-    },
-    [channels]
-  )
-
-  const planCellClass = 'text-right font-mono text-[11px] tabular-nums whitespace-nowrap px-1 py-1 bg-gray-100 text-gray-600 border-r border-gray-200'
+      const result = await response.json()
+      if (!response.ok) throw new Error(typeof result.error === 'string' ? result.error : 'Nie udało się zapisać obrotu. Spróbuj ponownie.')
+      const saved = RevenueEntrySchema.safeParse(result)
+      if (!saved.success) throw new Error('Serwer nie potwierdził zapisu obrotu. Odśwież stronę i sprawdź wpis.')
+      const confirmed: RevenueActualEntry = { ...saved.data, asOfDate: saved.data.asOfDate ?? null }
+      setData((current) => ({
+        ...current,
+        entries: [
+          ...current.entries.filter((entry) => !(entry.year === confirmed.year && entry.month === confirmed.month && entry.costCenterId === confirmed.costCenterId && entry.channel === confirmed.channel)),
+          confirmed,
+        ],
+      }))
+      setSavedMessage(`Zapisano ${MONTHS[confirmed.month - 1]}: ${money(confirmed.amount)}.`)
+      setEditing(null)
+      router.refresh()
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Błąd połączenia. Spróbuj zapisać ponownie.')
+    } finally {
+      setSaving(false)
+    }
+  }
 
   return (
-    <div className="overflow-x-auto rounded-2xl bg-white shadow-sm">
-      <table className="table-fixed w-full border-collapse text-sm">
-        <colgroup>
-          <col style={{ width: '11rem' }} />
-          {MONTHS.map((_, i) => (
-            <React.Fragment key={i}>
-              <col style={{ width: '4.5rem' }} />
-              <col style={{ width: '5rem' }} />
-            </React.Fragment>
-          ))}
-          <col style={{ width: '5rem' }} />
-          <col style={{ width: '5rem' }} />
-          <col style={{ width: '3rem' }} />
-        </colgroup>
-        <thead>
-          <tr className="border-b bg-gray-50">
-            <th rowSpan={2} className="text-left px-3 py-2 font-medium text-gray-500 border-r border-gray-200 align-bottom">
-              Kanał
-            </th>
-            {MONTHS.map((m) => (
-              <th key={m} colSpan={2} className="text-center px-1 py-1 font-medium text-gray-500 border-r border-gray-100 text-xs">
-                {m}
-              </th>
-            ))}
-            <th colSpan={2} className="text-center px-1 py-1 font-medium text-gray-500 border-r border-gray-200 text-xs">
-              SUMA
-            </th>
-            <th rowSpan={2} className="text-center px-1 py-2 font-medium text-gray-500 align-bottom text-xs">
-              %
-            </th>
-          </tr>
-          <tr className="border-b bg-gray-50">
-            {MONTHS.map((m) => (
-              <React.Fragment key={m}>
-                <th className="text-center py-1 font-normal text-gray-400 text-xs bg-gray-50 border-r border-gray-100">Plan</th>
-                <th className="text-center py-1 font-normal text-gray-500 text-xs border-r border-gray-100">Real</th>
-              </React.Fragment>
-            ))}
-            <th className="text-center py-1 font-normal text-gray-400 text-xs bg-gray-50 border-r border-gray-100">P</th>
-            <th className="text-center py-1 font-normal text-gray-500 text-xs border-r border-gray-200">R</th>
-          </tr>
-        </thead>
-        <tbody>
-          {channels.map((ch) => (
-            <tr key={ch} className="border-t hover:bg-gray-50/50">
-              <td className="px-3 py-0 text-gray-700 font-medium text-sm border-r border-gray-200">
-                {CHANNEL_LABELS[ch]}
-              </td>
-              {MONTHS.map((_, i) => {
-                const month = i + 1
-                return (
-                  <React.Fragment key={i}>
-                    <td className={planCellClass}>{fmt(getPlan(ch, month))}</td>
-                    <BudgetCell
-                      value={getReal(ch, month)}
-                      editable={editable}
-                      isEditing={editable && activeCell?.channel === ch && activeCell?.month === month}
-                      onActivate={() => setActiveCell({ channel: ch, month })}
-                      onDeactivate={() => setActiveCell(null)}
-                      onNavigate={(dir) => handleNavigate(ch, month, dir)}
-                      onSave={(v) => onSave(ch, month, v)}
-                    />
-                  </React.Fragment>
-                )
-              })}
-              <td className="text-right whitespace-nowrap px-1 py-1 font-mono text-xs text-gray-400 bg-gray-50 border-l border-gray-100">
-                {fmt(rowPlanSum(ch))}
-              </td>
-              <td className="text-right whitespace-nowrap px-2 py-1 font-mono text-sm text-gray-700 font-medium border-r border-gray-200">
-                {fmt(rowRealSum(ch))}
-              </td>
-              <td className={`text-right px-2 py-1 font-mono text-xs font-medium ${pctClass(rowPct(ch))}`}>
-                {fmtPct(rowPct(ch))}
-              </td>
+    <div className={styles.theme}>
+      {savedMessage && <p role="status" className={styles.status}>{savedMessage}</p>}
+      <div className={styles.tableShell}>
+        <table className={styles.table}>
+          <caption className="sr-only">Rzeczywiste miesięczne przychody brutto — {year}</caption>
+          <thead>
+            <tr>
+              <th scope="col">Miesiąc</th>
+              {channels.map((channel) => <th key={channel} scope="col">{CHANNEL_LABELS[channel]}</th>)}
+              <th scope="col">Suma wpisów</th>
             </tr>
-          ))}
-        </tbody>
-        <tfoot>
-          <tr className="border-t-2 border-gray-300 bg-gray-50 font-semibold">
-            <td className="px-3 py-2 text-gray-700 border-r border-gray-200">SUMA</td>
-            {MONTHS.map((_, i) => {
-              const month = i + 1
+          </thead>
+          <tbody>
+            {MONTHS.map((monthName, index) => {
+              const month = index + 1
+              const monthRows = rows.filter((row) => row.month === month)
+              const isCurrent = today.startsWith(`${year}-${String(month).padStart(2, '0')}-`)
               return (
-                <React.Fragment key={i}>
-                  <td className="text-right whitespace-nowrap px-1 py-2 font-mono text-xs text-gray-400 bg-gray-50 border-r border-gray-100">
-                    {fmt(colPlanSum(month))}
+                <tr key={month} className={isCurrent ? styles.currentRow : undefined}>
+                  <th scope="row" className={styles.month}>
+                    {monthName}
+                    {isCurrent && <span className={styles.cellMeta}>w trakcie</span>}
+                  </th>
+                  {channels.map((channel) => {
+                    const cellRows = monthRows.filter((row) => row.channel === channel)
+                    const value = cellRows.reduce((sum, row) => sum + row.amount, 0)
+                    const contents = <>
+                      <span className={`${styles.amount} ${value < 0 ? styles.negative : ''}`}>
+                        {cellRows.length ? money(value) : <span className={styles.missing}>Brak wpisu</span>}
+                      </span>
+                      {expectedCenters(channel).map((center) => {
+                        const record = cellRows.find((row) => row.costCenterId === center)
+                        if (!record && !isCompany) return null
+                        return <span key={center} className={styles.cellMeta}>
+                          {isCompany ? `${center}: ` : ''}{!record ? 'brak wpisu' : record.asOfDate ? `Stan na ${displayDate(record.asOfDate)}` : 'Data stanu niepodana'}
+                        </span>
+                      })}
+                    </>
+                    return <td key={channel} className={styles.cell}>
+                      {canEdit ? <button
+                        type="button" aria-label={`Edytuj ${CHANNEL_LABELS[channel]} — ${monthName} ${year}`}
+                        onClick={(event) => openEditor({ channel, month }, event.currentTarget)}
+                        className={styles.cellButton}
+                      >{contents}</button> : <div className={styles.cellReadOnly}>{contents}</div>}
+                    </td>
+                  })}
+                  <td className={styles.total}>
+                    <span className={styles.amount}>{monthRows.length ? money(monthRows.reduce((sum, row) => sum + row.amount, 0)) : '—'}</span>
+                    {monthRows.length > 0 && monthRows.length < expectedCount && <span className={styles.cellMeta}>Częściowe dane</span>}
                   </td>
-                  <td className="text-right whitespace-nowrap px-2 py-2 font-mono text-sm text-gray-700 border-r border-gray-100">
-                    {fmt(colRealSum(month))}
-                  </td>
-                </React.Fragment>
+                </tr>
               )
             })}
-            <td className="text-right whitespace-nowrap px-1 py-2 font-mono text-xs text-gray-400 bg-gray-50 border-l border-gray-100">
-              {fmt(grandPlan)}
-            </td>
-            <td className="text-right whitespace-nowrap px-2 py-2 font-mono text-sm text-gray-700 border-r border-gray-200">
-              {fmt(grandReal)}
-            </td>
-            <td className={`text-right px-2 py-2 font-mono text-xs ${pctClass(grandPct)}`}>
-              {fmtPct(grandPct)}
-            </td>
-          </tr>
-          <tr className="border-t border-gray-200 bg-gray-50">
-            <td className="px-3 py-1 text-gray-500 text-xs border-r border-gray-200">% wykonania</td>
-            {MONTHS.map((_, i) => {
-              const pct = colPct(i + 1)
-              return (
-                <React.Fragment key={i}>
-                  <td className={`text-right px-1 py-1 font-mono text-xs font-medium bg-gray-50 border-r border-gray-100 ${pctClass(pct)}`}>
-                    {fmtPct(pct)}
-                  </td>
-                  <td className="border-r border-gray-100" />
-                </React.Fragment>
-              )
-            })}
-            <td className="bg-gray-50 border-l border-gray-100" />
-            <td className="border-r border-gray-200" />
-            <td />
-          </tr>
-        </tfoot>
-      </table>
+          </tbody>
+          <tfoot>
+            <tr>
+              <th scope="row" className={`${styles.total} ${styles.annualLabel}`}>Suma roku</th>
+              {channels.map((channel) => {
+                const channelRows = rows.filter((row) => row.channel === channel)
+                return <td key={channel} className={styles.total}><span className={styles.amount}>{channelRows.length ? money(channelRows.reduce((sum, row) => sum + row.amount, 0)) : '—'}</span></td>
+              })}
+              <td className={styles.total}><span className={styles.amount}>{rows.length ? money(rows.reduce((sum, row) => sum + row.amount, 0)) : '—'}</span></td>
+            </tr>
+          </tfoot>
+        </table>
+      </div>
+      <p className={`${styles.help} ${styles.gridNote}`}>
+        Sumy obejmują zapisane wpisy. Brak wpisu nie oznacza zera. Brak daty oznacza, że aktualność kwoty nie została określona.
+      </p>
+
+      <Dialog open={editing !== null} onOpenChange={(open) => { if (!open && !saving) setEditing(null) }}>
+        <DialogContent className={`${styles.theme} ${styles.editor}`} onCloseAutoFocus={(event) => { event.preventDefault(); triggerRef.current?.focus() }}>
+          <DialogHeader>
+            <DialogTitle>Obrót — {editing ? MONTHS[editing.month - 1] : ''} {year}</DialogTitle>
+            <DialogDescription>{costCenterId} · {editing ? CHANNEL_LABELS[editing.channel] : ''}. Kwota brutto po korektach, od początku tego miesiąca.</DialogDescription>
+          </DialogHeader>
+          <form onSubmit={save} className={styles.form}>
+            <div className={styles.field}>
+              <label htmlFor={amountId} className={styles.fieldLabel}>Kwota brutto narastająco (PLN)</label>
+              <Input id={amountId} type="text" inputMode="decimal" autoFocus value={amount} disabled={saving} onChange={(event) => setAmount(event.target.value)}
+                className={`${styles.input} ${styles.amountInput}`} />
+              <p className={styles.help}>Zapis zastąpi poprzednią kwotę. Korekta może zmniejszyć obrót, również poniżej zera.</p>
+            </div>
+            <div className={styles.field}>
+              <label htmlFor={dateId} className={styles.fieldLabel}>Stan na dzień (opcjonalnie)</label>
+              <Input id={dateId} type="date" value={asOfDate} disabled={saving}
+                min={editing ? `${year}-${String(editing.month).padStart(2, '0')}-01` : undefined}
+                max={editing ? [today, `${year}-${String(editing.month).padStart(2, '0')}-${new Date(Date.UTC(year, editing.month, 0)).getUTCDate()}`].sort()[0] : today}
+                onChange={(event) => setAsOfDate(event.target.value)} className={styles.input} />
+              <p className={styles.help}>Do którego dnia miesiąca obejmuje obrót? Puste pole pozostawia aktualność nieokreśloną.</p>
+            </div>
+            {error && <p role="alert" className={styles.error}>{error}</p>}
+            <div className={styles.actions}>
+              <Button type="button" disabled={saving} onClick={() => setEditing(null)} className={styles.button}>Anuluj</Button>
+              <Button type="submit" disabled={saving} className={`${styles.button} ${styles.primary}`}>
+                {saving ? 'Zapisywanie…' : 'Zapisz obrót'}
+              </Button>
+            </div>
+          </form>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }
