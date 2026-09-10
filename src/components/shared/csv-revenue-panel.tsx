@@ -1,12 +1,14 @@
 'use client'
 import { useState, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import Papa from 'papaparse'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import styles from './revenue-ui.module.css'
 
 interface CsvRevenuePanelProps {
   userRole: string
 }
-
-type DataType = 'plan' | 'actuals'
 
 interface CsvRow {
   rok: string
@@ -23,12 +25,13 @@ interface ImportResult {
 }
 
 const CURRENT_YEAR = new Date().getFullYear()
+const CSV_FIELDS = ['rok', 'miesiac', 'centrum_kosztow', 'kanal', 'kwota', 'stan_na_dzien']
 
 export function CsvRevenuePanel({ userRole }: CsvRevenuePanelProps) {
+  const router = useRouter()
   const isAdmin = userRole === 'ADMIN'
   const canImportActuals = isAdmin
 
-  const [dataType, setDataType] = useState<DataType>('actuals')
   const [exportYear, setExportYear] = useState<string>(String(CURRENT_YEAR))
   const [exportCostCenter, setExportCostCenter] = useState<string>('')
   const [parsedRows, setParsedRows] = useState<CsvRow[]>([])
@@ -39,10 +42,10 @@ export function CsvRevenuePanel({ userRole }: CsvRevenuePanelProps) {
 
   const fileRef = useRef<HTMLInputElement>(null)
 
-  const canEditType = dataType === 'plan' ? isAdmin : canImportActuals
+  const canEditType = canImportActuals
 
   const handleExport = () => {
-    const params = new URLSearchParams({ type: dataType })
+    const params = new URLSearchParams({ type: 'actuals' })
     if (exportYear) params.set('year', exportYear)
     if (exportCostCenter) params.set('costCenterId', exportCostCenter)
     window.location.href = `/api/export/revenue?${params}`
@@ -77,23 +80,26 @@ export function CsvRevenuePanel({ userRole }: CsvRevenuePanelProps) {
     if (parsedRows.length === 0) return
     setImporting(true)
     setImportResult(null)
+    setParseError(null)
 
     try {
       const res = await fetch('/api/import/revenue', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ type: dataType, rows: parsedRows }),
+        body: JSON.stringify({ type: 'actuals', rows: parsedRows }),
       })
       const data = await res.json()
+      if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Nie udało się zaimportować obrotów')
       const result: ImportResult = { imported: data.imported ?? 0, errors: data.errors ?? [] }
       setImportResult(result)
       if (result.imported > 0) {
         setParsedRows([])
         setFileName('')
         if (fileRef.current) fileRef.current.value = ''
+        router.refresh()
       }
-    } catch {
-      setParseError('Błąd połączenia z serwerem')
+    } catch (cause) {
+      setParseError(cause instanceof Error ? cause.message : 'Błąd połączenia z serwerem')
     } finally {
       setImporting(false)
     }
@@ -108,121 +114,110 @@ export function CsvRevenuePanel({ userRole }: CsvRevenuePanelProps) {
   }
 
   return (
-    <div className="space-y-6">
-      {/* Type toggle */}
-      <div className="flex gap-1 p-1 bg-gray-100 rounded-lg w-fit">
-        {(['actuals', 'plan'] as DataType[]).map((t) => (
-          <button
-            key={t}
-            onClick={() => { setDataType(t); clearFile(); setImportResult(null) }}
-            className={`px-4 py-1.5 rounded-md text-sm font-medium transition-all ${
-              dataType === t
-                ? 'bg-white shadow-sm text-gray-900'
-                : 'text-gray-500 hover:text-gray-700'
-            }`}
-          >
-            {t === 'plan' ? 'Plan sprzedaży' : 'Wykonanie przychodów'}
-          </button>
-        ))}
-      </div>
+    <div className={`${styles.theme} ${styles.stack}`}>
+      <p className={styles.description}>
+        Rzeczywiste obroty brutto po korektach. Import zastępuje kwotę dla miesiąca, salonu i kanału; nie dodaje jej do poprzedniego wpisu.
+      </p>
 
-      <div className="grid gap-6 md:grid-cols-2">
+      <div className={styles.importGrid}>
         {/* Export */}
-        <div className="rounded-xl border border-[var(--wd-border)] p-5 space-y-4">
-          <h3 className="font-semibold text-sm uppercase tracking-wider text-gray-400">Eksport CSV</h3>
-          <div className="flex gap-2 flex-wrap">
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-500">Rok</label>
-              <input
+        <div className={styles.panel}>
+          <h3 className={styles.eyebrow}>Eksport CSV</h3>
+          <div className={styles.toolbar}>
+            <label className={styles.field}>
+              <span>Rok</span>
+              <Input
                 type="number"
                 value={exportYear}
                 onChange={(e) => setExportYear(e.target.value)}
                 placeholder="Wszystkie"
-                className="w-24 px-2 py-1.5 text-sm border border-gray-200 rounded-lg outline-none focus:border-[var(--wd-sand)]"
+                className={styles.input}
               />
-            </div>
-            <div className="flex flex-col gap-1">
-              <label className="text-xs text-gray-500">Lokal</label>
+            </label>
+            <label className={styles.field}>
+              <span>Lokal</span>
               <select
                 value={exportCostCenter}
                 onChange={(e) => setExportCostCenter(e.target.value)}
-                className="px-2 py-1.5 text-sm border border-gray-200 rounded-lg outline-none focus:border-[var(--wd-sand)] bg-white"
+                className={styles.input}
               >
                 <option value="">Wszystkie</option>
                 <option value="JAG">JAG</option>
                 <option value="PUL">PUL</option>
               </select>
-            </div>
+            </label>
           </div>
-          <button
+          <Button
             onClick={handleExport}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-[var(--wd-dark)] text-white hover:opacity-90 transition-opacity"
+            disabled={!isAdmin}
+            className={`${styles.button} ${styles.primary}`}
           >
-            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <svg className={styles.icon} aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" />
             </svg>
             Eksportuj CSV
-          </button>
-          <p className="text-xs text-gray-400">
-            Format: rok, miesiac, centrum_kosztow, kanal, kwota
+          </Button>
+          <p className={styles.help}>
+            Format: rok, miesiac, centrum_kosztow, kanal, kwota, stan_na_dzien (opcjonalnie, RRRR-MM-DD).
+            Brak daty w imporcie oznacza nieokreśloną aktualność — również po zastąpieniu starszego wpisu.
           </p>
         </div>
 
         {/* Import */}
-        <div className="rounded-xl border border-[var(--wd-border)] p-5 space-y-4">
-          <h3 className="font-semibold text-sm uppercase tracking-wider text-gray-400">
+        <div className={styles.panel}>
+          <h3 className={styles.eyebrow}>
             Import CSV
             {!canEditType && (
-              <span className="ml-2 text-xs font-normal text-amber-500 normal-case">(brak uprawnień)</span>
+              <span className={styles.muted}> (brak uprawnień)</span>
             )}
           </h3>
 
           {canEditType ? (
             <>
-              <div className="flex items-center gap-2">
-                <label className="flex items-center gap-2 px-3 py-2 rounded-lg border border-dashed border-gray-300 text-sm text-gray-500 hover:border-[var(--wd-sand)] hover:text-gray-700 cursor-pointer transition-colors">
-                  <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <div className={styles.toolbar}>
+                <label className={styles.upload}>
+                  <svg className={styles.icon} aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
                   </svg>
                   {fileName || 'Wybierz plik CSV'}
-                  <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleFile} />
+                  <input ref={fileRef} type="file" accept=".csv" className="sr-only" onChange={handleFile} />
                 </label>
                 {fileName && (
-                  <button onClick={clearFile} className="text-gray-400 hover:text-gray-600 text-lg leading-none">×</button>
+                  <Button aria-label="Usuń wybrany plik" onClick={clearFile} className={styles.textButton}>×</Button>
                 )}
               </div>
 
               {parseError && (
-                <div className="px-3 py-2 rounded-lg bg-red-50 border border-red-200 text-red-600 text-sm">
+                <div role="alert" className={styles.error}>
                   {parseError}
                 </div>
               )}
 
               {parsedRows.length > 0 && (
-                <div className="space-y-2">
-                  <p className="text-xs text-gray-500">
+                <div className={styles.compactStack}>
+                  <p className={styles.help}>
                     Podgląd ({parsedRows.length} wierszy):
                   </p>
-                  <div className="overflow-x-auto rounded-lg border border-gray-100">
-                    <table className="text-xs w-full">
+                  <div className={styles.tableShell}>
+                    <table className={`${styles.table} ${styles.previewTable}`}>
                       <thead>
-                        <tr className="bg-gray-50">
-                          {['rok','miesiac','centrum_kosztow','kanal','kwota'].map((h) => (
-                            <th key={h} className="px-2 py-1 text-left font-medium text-gray-400">{h}</th>
+                        <tr>
+                          {CSV_FIELDS.map((h) => (
+                            <th key={h}>{h}</th>
                           ))}
                         </tr>
                       </thead>
                       <tbody>
                         {parsedRows.slice(0, 5).map((row, i) => (
-                          <tr key={i} className="border-t border-gray-50">
-                            {['rok','miesiac','centrum_kosztow','kanal','kwota'].map((h) => (
-                              <td key={h} className="px-2 py-1 text-gray-600">{row[h]}</td>
+                          <tr key={i}>
+                            {CSV_FIELDS.map((h) => (
+                              <td key={h}>{row[h]}</td>
                             ))}
                           </tr>
                         ))}
                         {parsedRows.length > 5 && (
-                          <tr className="border-t border-gray-50">
-                            <td colSpan={5} className="px-2 py-1 text-gray-400 italic">
+                          <tr>
+                            <td colSpan={CSV_FIELDS.length}>
                               ... i {parsedRows.length - 5} więcej
                             </td>
                           </tr>
@@ -230,35 +225,30 @@ export function CsvRevenuePanel({ userRole }: CsvRevenuePanelProps) {
                       </tbody>
                     </table>
                   </div>
-                  <button
+                  <Button
                     onClick={handleImport}
                     disabled={importing}
-                    className="flex items-center gap-2 px-4 py-2 rounded-lg text-sm font-medium bg-green-700 text-white hover:bg-green-800 disabled:opacity-50 transition-colors"
+                    aria-busy={importing}
+                    className={`${styles.button} ${styles.primary}`}
                   >
-                    {importing ? (
-                      <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-                    ) : (
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    {!importing && (
+                      <svg className={styles.icon} aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                         <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                       </svg>
                     )}
-                    Importuj {parsedRows.length} wierszy
-                  </button>
+                    {importing ? 'Importowanie…' : `Importuj ${parsedRows.length} wierszy`}
+                  </Button>
                 </div>
               )}
 
               {importResult && (
-                <div className={`px-3 py-2 rounded-lg text-sm space-y-1 ${
-                  importResult.errors.length === 0
-                    ? 'bg-green-50 border border-green-200'
-                    : 'bg-amber-50 border border-amber-200'
-                }`}>
-                  <p className={importResult.errors.length === 0 ? 'text-green-700' : 'text-amber-700'}>
+                <div role="status" className={importResult.errors.length === 0 ? styles.status : styles.warning}>
+                  <p>
                     Zaimportowano: <strong>{importResult.imported}</strong> wierszy
                     {importResult.errors.length > 0 && ` / Błędy: ${importResult.errors.length}`}
                   </p>
                   {importResult.errors.length > 0 && (
-                    <ul className="text-xs text-amber-600 space-y-0.5">
+                    <ul className={styles.resultList}>
                       {importResult.errors.slice(0, 5).map((e, i) => (
                         <li key={i}>Wiersz {e.row}: {e.message}</li>
                       ))}
@@ -271,8 +261,8 @@ export function CsvRevenuePanel({ userRole }: CsvRevenuePanelProps) {
               )}
             </>
           ) : (
-            <p className="text-sm text-gray-400">
-              Import {dataType === 'plan' ? 'planu sprzedaży' : 'wykonania przychodów'} wymaga roli{' '}
+            <p className={styles.description}>
+              Import rzeczywistych obrotów wymaga roli{' '}
               ADMIN.
             </p>
           )}

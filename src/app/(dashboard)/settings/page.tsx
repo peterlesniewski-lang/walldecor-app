@@ -46,7 +46,7 @@ export default async function SettingsPage() {
           <h2 className="text-base font-semibold" style={{ color: 'var(--wd-dark)' }}>
             Import / Eksport — Przychody
           </h2>
-          <p className="text-xs text-gray-400 mt-0.5">Plan sprzedaży i wykonanie przychodów</p>
+          <p className="text-xs text-gray-400 mt-0.5">Rzeczywiste miesięczne obroty brutto po korektach</p>
         </div>
         <CsvRevenuePanel userRole={userRole} />
       </section>

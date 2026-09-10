@@ -62,6 +62,7 @@ export const NAV_SECTIONS: Array<{ label: string | null; items: NavSectionItem[]
   {
     label: 'Operacje',
     items: [
+      { href: '/cashier', label: 'Kasa salonu', icon: Banknote, roles: ['ADMIN', 'EMPLOYEE'] },
       { href: '/operations', label: 'Centrum', icon: ListChecks },
       { href: '/operations/procedures', label: 'Procedury', icon: BookOpen },
       { href: '/operations/runs', label: 'Wykonania', icon: ListChecks },

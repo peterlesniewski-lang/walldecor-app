@@ -28,6 +28,8 @@ model CostCenter {
   ksefInvoicePartAllocations KsefInvoicePartAllocation[]
   costEventPartAllocations   CostEventPartAllocation[]
   contributionMarginSettings ContributionMarginSetting[]
+  salonCashSettings SalonCashSettings?
+  cashDailyReports CashDailyReport[]
 }
 
 model AccountCategory {
@@ -118,6 +120,7 @@ model Revenue {
   year         Int
   month        Int
   amount       Float
+  asOfDate     String?
   costCenterId String
   costCenter   CostCenter @relation(fields: [costCenterId], references: [id])
   channel      String
@@ -154,6 +157,108 @@ model CashAccount {
   createdAt DateTime             @default(now())
   updatedAt DateTime             @updatedAt
   history   CashBalanceHistory[]
+  salonCashSettings SalonCashSettings?
+  receivedCashDeposits CashDeposit[] @relation("CashDepositDestination")
+}
+
+// PLN integer cents; ISO business dates; ledger writes are transactional and audited.
+model SalonCashSettings {
+  costCenterId String @id
+  costCenter CostCenter @relation(fields: [costCenterId], references: [id])
+  cashAccountId String @unique
+  cashAccount CashAccount @relation(fields: [cashAccountId], references: [id])
+  targetFloatCents Int
+  initialCashCents Int
+  startDate String
+  version Int @default(1)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model CashDailyReport {
+  id String @id @default(cuid())
+  costCenterId String
+  costCenter CostCenter @relation(fields: [costCenterId], references: [id])
+  businessDate String
+  status String @default("DRAFT")
+  openingCents Int
+  targetFloatCents Int
+  cashReceiptsCents Int?
+  cardReceiptsCents Int?
+  countedCents Int?
+  expectedCents Int?
+  differenceCents Int?
+  retainedCents Int?
+  depositCents Int?
+  shortfallCents Int?
+  note String?
+  version Int @default(1)
+  createdById String
+  closedById String?
+  closedAt DateTime?
+  closeRequestId String? @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  operations CashDailyOperation[]
+  deposit CashDeposit?
+
+  @@unique([costCenterId, businessDate])
+  @@index([costCenterId, status, businessDate])
+}
+
+model CashDailyOperation {
+  id String @id @default(cuid())
+  reportId String
+  report CashDailyReport @relation(fields: [reportId], references: [id])
+  kind String
+  method String
+  amountCents Int
+  reference String
+  note String?
+  createdById String
+  cancelledAt DateTime?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([reportId, createdAt])
+}
+
+model CashDeposit {
+  id String @id @default(cuid())
+  reportId String @unique
+  report CashDailyReport @relation(fields: [reportId], references: [id])
+  declaredCents Int
+  status String @default("WAITING")
+  version Int @default(1)
+  destinationAccountId String?
+  destinationAccount CashAccount? @relation("CashDepositDestination", fields: [destinationAccountId], references: [id])
+  receivedById String?
+  receivedAt DateTime?
+  actualCents Int?
+  verifiedById String?
+  verifiedAt DateTime?
+  verificationNote String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([status, createdAt])
+}
+
+model CashierAuditLog {
+  id String @id @default(cuid())
+  costCenterId String
+  entityType String
+  entityId String
+  action String
+  actorId String
+  actorName String
+  beforeJson String?
+  afterJson String
+  reason String?
+  createdAt DateTime @default(now())
+
+  @@index([costCenterId, createdAt])
+  @@index([entityType, entityId, createdAt])
 }
 
 model CashBalanceHistory {
