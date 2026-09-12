@@ -1,6 +1,13 @@
 import { NextResponse } from 'next/server'
+import type { PrismaClient } from '@/generated/prisma'
 import { prisma } from '@/lib/prisma'
+import { withAiQueueMutation } from '@/lib/ai/queue'
 import { requireFinanceAdmin } from '@/lib/finance/finance-access'
+import { InvoiceImportError } from '@/lib/invoice-import/errors'
+import { InvoiceImportHttpError, invoiceHttpErrorResponse } from '@/lib/invoice-import/http-errors'
+import { assertLegacyInvoiceWriteAllowed, invoiceImportReviewRequiredResponse } from '@/lib/invoice-import/legacy-write-guard'
+import { reconcileImportedKsefInvoice } from '@/lib/invoice-import/ksef-reconciliation-service'
+import { buildKsefReconciliationSnapshot, KsefReconciliationPolicyError } from '@/lib/invoice-import/ksef-reconciliation-policy'
 import {
   KsefApiError,
   KsefApiClient,
@@ -26,12 +33,25 @@ const KSEF_SETTINGS = [
 ] as const
 
 type MappedKsefInvoice = ReturnType<typeof mapKsefMetadataToInvoice>
+type InvoiceReader = Pick<PrismaClient, 'ksefInvoice'>
 type PersistableKsefInvoice = Omit<MappedKsefInvoice, 'correctedKsefNumber' | 'correctedInvoiceNumber'>
 type ExistingInvoiceDetails = {
+  externalId?: string | null
+  xmlContent?: string | null
+  invoiceImportDraft?: { id: string } | null
   dueDate: Date | null
   bankAccount: string | null
   paymentDetailsFetchedAt?: Date | null
 } | null
+
+async function assertCurrentAdmin(db: Pick<PrismaClient, 'user'>, actorId: string) {
+  const user = await db.user.findUnique({
+    where: { id: actorId }, select: { role: true, isActive: true, mustChangePassword: true },
+  })
+  if (!user || user.role !== 'ADMIN' || !user.isActive || user.mustChangePassword) {
+    throw new InvoiceImportError('FORBIDDEN', 403)
+  }
+}
 
 function splitMappedInvoice(invoice: MappedKsefInvoice) {
   const { correctedKsefNumber, correctedInvoiceNumber, ...data } = invoice
@@ -46,28 +66,34 @@ function blocksAutomaticClassification(invoice: PersistableKsefInvoice) {
 }
 
 function needsInvoiceXmlDetails(invoice: PersistableKsefInvoice, existing: ExistingInvoiceDetails) {
+  // Complete metadata still cannot establish payment. New/imported documents
+  // need their own XML once; an XML cache is checked before this predicate.
+  if (!existing) return true
+  if (existing.invoiceImportDraft) return existing.externalId !== invoice.externalId || !existing.xmlContent
   if (existing?.paymentDetailsFetchedAt) return false
   return (!invoice.dueDate && !existing?.dueDate) || (!invoice.bankAccount && !existing?.bankAccount)
 }
 
-async function findExistingInvoice(invoice: PersistableKsefInvoice) {
-  const byExternalId = await prisma.ksefInvoice.findUnique({
+async function findExistingInvoice(db: InvoiceReader, invoice: PersistableKsefInvoice) {
+  const byExternalId = await db.ksefInvoice.findUnique({
     where: { externalId: invoice.externalId },
+    include: { invoiceImportDraft: { select: { id: true } } },
   })
   if (byExternalId) return byExternalId
 
   if (!invoice.supplierNip) return null
 
-  return prisma.ksefInvoice.findFirst({
+  return db.ksefInvoice.findFirst({
     where: {
       supplierNip: invoice.supplierNip,
       invoiceNumber: invoice.invoiceNumber,
       issueDate: invoice.issueDate,
     },
+    include: { invoiceImportDraft: { select: { id: true } } },
   })
 }
 
-async function findCorrectedInvoiceId({
+async function findCorrectedInvoiceId(db: InvoiceReader, {
   correctedKsefNumber,
   correctedInvoiceNumber,
   supplierNip,
@@ -79,7 +105,7 @@ async function findCorrectedInvoiceId({
   excludeId?: string
 }) {
   if (correctedKsefNumber) {
-    const original = await prisma.ksefInvoice.findUnique({
+    const original = await db.ksefInvoice.findUnique({
       where: { externalId: correctedKsefNumber },
       select: { id: true },
     })
@@ -88,7 +114,7 @@ async function findCorrectedInvoiceId({
 
   if (!correctedInvoiceNumber) return null
 
-  const original = await prisma.ksefInvoice.findFirst({
+  const original = await db.ksefInvoice.findFirst({
     where: {
       invoiceNumber: correctedInvoiceNumber,
       ...(supplierNip ? { supplierNip } : {}),
@@ -105,25 +131,26 @@ export async function POST() {
   const auth = await requireFinanceAdmin()
   if (auth.error) return auth.error
 
-  const settings = await prisma.appSetting.findMany({
-    where: { key: { in: [...KSEF_SETTINGS] } },
-  })
-  const map = new Map(settings.map((setting) => [setting.key, setting.value]))
-
-  if (map.get('ksef_enabled') !== 'true') {
-    return NextResponse.json({ error: 'Integracja KSeF jest wyłączona w ustawieniach.' }, { status: 400 })
-  }
-
-  const token = map.get('ksef_token') ?? ''
-  const companyNip = map.get('ksef_company_nip') ?? ''
-  const environment = (map.get('ksef_environment') ?? 'test') as KsefEnvironment
-  const syncFrom = map.get('ksef_sync_from') || new Date().toISOString().slice(0, 10)
-
-  if (!token || !companyNip) {
-    return NextResponse.json({ error: 'Brakuje tokena KSeF albo NIP firmy w ustawieniach.' }, { status: 400 })
-  }
-
   try {
+    await assertCurrentAdmin(prisma, auth.session.user.id)
+    const settings = await prisma.appSetting.findMany({
+      where: { key: { in: [...KSEF_SETTINGS] } },
+    })
+    const map = new Map(settings.map((setting) => [setting.key, setting.value]))
+
+    if (map.get('ksef_enabled') !== 'true') {
+      return NextResponse.json({ error: 'Integracja KSeF jest wyłączona w ustawieniach.' }, { status: 400 })
+    }
+
+    const token = map.get('ksef_token') ?? ''
+    const companyNip = map.get('ksef_company_nip') ?? ''
+    const environment = (map.get('ksef_environment') ?? 'test') as KsefEnvironment
+    const syncFrom = map.get('ksef_sync_from') || new Date().toISOString().slice(0, 10)
+
+    if (!token || !companyNip) {
+      return NextResponse.json({ error: 'Brakuje tokena KSeF albo NIP firmy w ustawieniach.' }, { status: 400 })
+    }
+
     const client = new KsefApiClient({ environment })
     const authTokens = await client.authenticateWithToken({ companyNip, token })
     const rules = await prisma.ksefSupplierRule.findMany({
@@ -133,6 +160,8 @@ export async function POST() {
 
     let imported = 0
     let updated = 0
+    let linked = 0
+    let conflicts = 0
     let fetched = 0
     let truncated = false
     let mappedByRules = 0
@@ -158,16 +187,24 @@ export async function POST() {
         hasMore = response.hasMore
 
         for (const metadata of response.invoices) {
+          // Reject malformed provider fields before the legacy mapper or any
+          // invoice/cache lookup. XML is validated again after downloading it.
+          buildKsefReconciliationSnapshot(metadata, null)
           const mappedInvoice = mapKsefMetadataToInvoice(metadata)
           const {
             data: invoiceData,
             correctedKsefNumber,
             correctedInvoiceNumber,
           } = splitMappedInvoice(mappedInvoice)
-          const existing = await findExistingInvoice(invoiceData)
+          invoiceData.externalId = invoiceData.externalId.trim()
+          const existingBeforeFetch = await findExistingInvoice(prisma, invoiceData)
+          const observed = await prisma.invoiceKsefReconciliation.findUnique({
+            where: { externalId: invoiceData.externalId }, select: { xmlContent: true },
+          })
           let paymentDetailsFetchedAt: Date | null = null
-          let xmlContent: string | null = null
-          if (needsInvoiceXmlDetails(invoiceData, existing)) {
+          let xmlContent: string | null = observed?.xmlContent
+            ?? (existingBeforeFetch?.externalId === invoiceData.externalId ? existingBeforeFetch.xmlContent ?? null : null)
+          if (xmlContent === null && needsInvoiceXmlDetails(invoiceData, existingBeforeFetch)) {
             try {
               const details = await fetchKsefInvoiceDetailWithRetry({
                 client,
@@ -186,105 +223,123 @@ export async function POST() {
             // trip KSeF rate limiting and silently drop payment due dates.
             await wait(XML_DETAILS_THROTTLE_MS)
           }
-          const xmlConfirmsNoDueDate = Boolean(paymentDetailsFetchedAt && !invoiceData.dueDate)
-          const correctsInvoiceId = await findCorrectedInvoiceId({
-            correctedKsefNumber,
-            correctedInvoiceNumber,
-            supplierNip: invoiceData.supplierNip,
-            excludeId: existing?.id,
-          })
-          const shouldBlockClassification = blocksAutomaticClassification(invoiceData)
+          const outcome = await withAiQueueMutation(prisma, () => new Date(), async (tx, _lease, now) => {
+            await assertCurrentAdmin(tx, auth.session.user.id)
+            const reconciliation = await reconcileImportedKsefInvoice(tx, auth.session.user.id, metadata, xmlContent, now)
+            if (reconciliation.outcome === 'LINKED') return reconciliation
+            // Network work stays outside the reservation. Eligibility is read
+            // again after acquiring it, sharing the boundary with draft approval.
+            const existing = await findExistingInvoice(tx, invoiceData)
+            if (existing) await assertLegacyInvoiceWriteAllowed(tx, existing.id)
+            const snapshot = buildKsefReconciliationSnapshot(metadata, xmlContent)
+            const documentStatus = snapshot.documentStatus
+            const correctsInvoiceId = await findCorrectedInvoiceId(tx, {
+              correctedKsefNumber,
+              correctedInvoiceNumber,
+              supplierNip: invoiceData.supplierNip,
+              excludeId: existing?.id,
+            })
+            const shouldBlockClassification = blocksAutomaticClassification({ ...invoiceData, documentStatus })
 
-          if (existing) {
-            await prisma.ksefInvoice.update({
-              where: { id: existing.id },
+            if (existing) {
+              await tx.ksefInvoice.update({
+                where: { id: existing.id },
+                data: {
+                  supplierName: invoiceData.supplierName,
+                  supplierNip: invoiceData.supplierNip,
+                  invoiceNumber: invoiceData.invoiceNumber,
+                  externalId: invoiceData.externalId,
+                  source: existing.source === 'MANUAL' ? 'MANUAL' : invoiceData.source,
+                  issueDate: invoiceData.issueDate,
+                  grossAmount: invoiceData.grossAmount,
+                  netAmount: invoiceData.netAmount,
+                  vatAmount: invoiceData.vatAmount,
+                  currency: invoiceData.currency,
+                  reportingGrossAmount: invoiceData.currency === 'PLN' ? null : existing.reportingGrossAmount,
+                  reportingNetAmount: invoiceData.currency === 'PLN' ? null : existing.reportingNetAmount,
+                  reportingVatAmount: invoiceData.currency === 'PLN' ? null : existing.reportingVatAmount,
+                  originalCurrency: invoiceData.originalCurrency,
+                  originalGrossAmount: invoiceData.originalGrossAmount,
+                  originalNetAmount: invoiceData.originalNetAmount,
+                  originalVatAmount: invoiceData.originalVatAmount,
+                  dueDate: invoiceData.dueDate ?? existing.dueDate,
+                  bankAccount: invoiceData.bankAccount ?? existing.bankAccount,
+                  paymentDetailsFetchedAt: paymentDetailsFetchedAt ?? existing.paymentDetailsFetchedAt,
+                  xmlContent: xmlContent ?? existing.xmlContent,
+                  xmlFetchedAt: paymentDetailsFetchedAt ?? existing.xmlFetchedAt,
+                  documentStatus,
+                  correctsInvoiceId: documentStatus === 'CORRECTION' ? correctsInvoiceId : null,
+                  ...(shouldBlockClassification && existing.status !== 'APPROVED'
+                    ? {
+                        status: 'NEW',
+                        ruleMatchStatus: 'NO_RULE',
+                        costCenterId: null,
+                        subCategoryId: null,
+                        supplierRuleId: null,
+                      }
+                    : {}),
+                },
+              })
+              return 'UPDATED' as const
+            }
+
+            const ruleDecision = shouldBlockClassification
+              ? { status: 'NO_RULE' as const }
+              : resolveSupplierRuleMatch(
+                  { supplierName: invoiceData.supplierName, supplierNip: invoiceData.supplierNip },
+                  rules
+                )
+            const match = ruleDecision.status === 'MATCHED' ? ruleDecision.rule : null
+
+            await tx.ksefInvoice.create({
               data: {
-                supplierName: invoiceData.supplierName,
-                supplierNip: invoiceData.supplierNip,
-                invoiceNumber: invoiceData.invoiceNumber,
-                externalId: invoiceData.externalId,
-                source: invoiceData.source,
-                issueDate: invoiceData.issueDate,
-                grossAmount: invoiceData.grossAmount,
-                netAmount: invoiceData.netAmount,
-                vatAmount: invoiceData.vatAmount,
-                currency: invoiceData.currency,
-                reportingGrossAmount: invoiceData.currency === 'PLN' ? null : existing.reportingGrossAmount,
-                reportingNetAmount: invoiceData.currency === 'PLN' ? null : existing.reportingNetAmount,
-                reportingVatAmount: invoiceData.currency === 'PLN' ? null : existing.reportingVatAmount,
-                originalCurrency: invoiceData.originalCurrency,
-                originalGrossAmount: invoiceData.originalGrossAmount,
-                originalNetAmount: invoiceData.originalNetAmount,
-                originalVatAmount: invoiceData.originalVatAmount,
-                dueDate: invoiceData.dueDate ?? existing.dueDate,
-                bankAccount: invoiceData.bankAccount ?? existing.bankAccount,
-                paymentDetailsFetchedAt: paymentDetailsFetchedAt ?? existing.paymentDetailsFetchedAt,
-                xmlContent: xmlContent ?? existing.xmlContent,
-                xmlFetchedAt: paymentDetailsFetchedAt ?? existing.xmlFetchedAt,
-                documentStatus: invoiceData.documentStatus,
-                correctsInvoiceId: invoiceData.documentStatus === 'CORRECTION' ? correctsInvoiceId : null,
-                ...(xmlConfirmsNoDueDate && existing.paymentStatus !== 'PAID'
-                  ? { paymentStatus: 'PAID', paidAt: existing.paidAt ?? invoiceData.issueDate }
-                  : {}),
-                ...(shouldBlockClassification && existing.status !== 'APPROVED'
+                ...invoiceData,
+                documentStatus,
+                paymentDetailsFetchedAt,
+                xmlContent,
+                xmlFetchedAt: paymentDetailsFetchedAt,
+                correctsInvoiceId: documentStatus === 'CORRECTION' ? correctsInvoiceId : null,
+                paymentStatus: snapshot.data.paymentStatus,
+                paidAt: snapshot.data.paidAt ? new Date(`${snapshot.data.paidAt}T00:00:00.000Z`) : null,
+                status: match ? 'MAPPED' : 'NEW',
+                ruleMatchStatus: ruleDecision.status === 'CONFLICT' ? 'CONFLICT' : match ? 'MATCHED' : 'NO_RULE',
+                costCenterId: match?.costCenterId ?? null,
+                subCategoryId: match?.subCategoryId ?? null,
+                supplierRuleId: match?.id ?? null,
+                ...(match?.tags && match.tags.length > 0
                   ? {
-                      status: 'NEW',
-                      ruleMatchStatus: 'NO_RULE',
-                      costCenterId: null,
-                      subCategoryId: null,
-                      supplierRuleId: null,
+                      parts: {
+                        create: {
+                          label: invoiceData.invoiceNumber,
+                          grossAmount: invoiceData.reportingGrossAmount ?? invoiceData.grossAmount,
+                          order: 0,
+                          tags: { create: match.tags.map((tag) => ({ tagId: tag.tagId })) },
+                          allocations: { create: { costCenterId: match.costCenterId, percent: 100 } },
+                        },
+                      },
                     }
                   : {}),
               },
             })
-            updated += 1
-            continue
-          }
-
-          const ruleDecision = shouldBlockClassification
-            ? { status: 'NO_RULE' as const }
-            : resolveSupplierRuleMatch(
-                { supplierName: invoiceData.supplierName, supplierNip: invoiceData.supplierNip },
-                rules
-              )
-          const match = ruleDecision.status === 'MATCHED' ? ruleDecision.rule : null
-
-          await prisma.ksefInvoice.create({
-            data: {
-              ...invoiceData,
-              paymentDetailsFetchedAt,
-              xmlContent,
-              xmlFetchedAt: paymentDetailsFetchedAt,
-              correctsInvoiceId: invoiceData.documentStatus === 'CORRECTION' ? correctsInvoiceId : null,
-              ...(xmlConfirmsNoDueDate ? { paymentStatus: 'PAID', paidAt: invoiceData.issueDate } : {}),
-              status: match ? 'MAPPED' : 'NEW',
-              ruleMatchStatus: ruleDecision.status === 'CONFLICT' ? 'CONFLICT' : match ? 'MATCHED' : 'NO_RULE',
-              costCenterId: match?.costCenterId ?? null,
-              subCategoryId: match?.subCategoryId ?? null,
-              supplierRuleId: match?.id ?? null,
-              ...(match?.tags && match.tags.length > 0
-                ? {
-                    parts: {
-                      create: {
-                        label: invoiceData.invoiceNumber,
-                        grossAmount: invoiceData.reportingGrossAmount ?? invoiceData.grossAmount,
-                        order: 0,
-                        tags: { create: match.tags.map((tag) => ({ tagId: tag.tagId })) },
-                        allocations: { create: { costCenterId: match.costCenterId, percent: 100 } },
-                      },
-                    },
-                  }
-                : {}),
-            },
+            return 'IMPORTED' as const
           })
-          imported += 1
+          // The callback may be retried after a rolled-back SQLite transaction.
+          if (outcome === 'IMPORTED') imported += 1
+          else if (outcome === 'UPDATED') updated += 1
+          else {
+            linked += 1
+            if (outcome.status === 'CONFLICT') conflicts += 1
+          }
         }
 
         pageOffset += 1
       }
     }
 
-    mappedByRules = await applySupplierRulesToNewInvoices(prisma, rules)
+    mappedByRules = await withAiQueueMutation(prisma, () => new Date(), async (tx) => {
+      await assertCurrentAdmin(tx, auth.session.user.id)
+      return applySupplierRulesToNewInvoices(tx, rules)
+    })
 
     return NextResponse.json({
       ok: true,
@@ -292,6 +347,8 @@ export async function POST() {
       fetched,
       imported,
       updated,
+      linked,
+      conflicts,
       mappedByRules,
       xmlDetailsFetched,
       xmlDetailsFailed,
@@ -299,8 +356,14 @@ export async function POST() {
       truncated,
     })
   } catch (err) {
+    const importedConflict = invoiceImportReviewRequiredResponse(err)
+    if (importedConflict) return importedConflict
+    if (err instanceof InvoiceImportError) return invoiceHttpErrorResponse(err)
+    if (err instanceof KsefReconciliationPolicyError) {
+      return invoiceHttpErrorResponse(new InvoiceImportHttpError(err.code, 422))
+    }
     return NextResponse.json(
-      { error: describeKsefApiError(err) },
+      { error: err instanceof KsefApiError ? describeKsefApiError(err) : 'Nie udało się przeprowadzić synchronizacji KSeF.' },
       { status: err instanceof KsefApiError && err.status === 429 ? 429 : 502 }
     )
   }

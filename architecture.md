@@ -2,6 +2,43 @@
 
 **ORM:** Prisma | **Baza:** SQLite | **Plik:** `walldecor.db`
 
+## Wspólne AI i import faktur — 10.09.2026 (w trakcie, lokalnie)
+
+Migracja `20260910180000_shared_ai_queue` dodaje wyłącznie dwie tabele; nie zmienia istniejących kwot ani dokumentów:
+
+- `AiJob`: właściciel `User` (FK RESTRICT), rodzaj FINANCE_CHAT/WIKI_CHAT/INVOICE_EXTRACT, stan, przygotowany kontekst JSON i zwalidowany wynik, kontrolowany kod błędu, priorytet, licznik prób oraz ogrodzone tokenem prawo wykonawcy do zadania. Klucz `(ownerUserId, idempotencyKey)` gwarantuje jeden zapis dla powtórzonego żądania. Częściowy indeks SQLite dopuszcza najwyżej jeden RUNNING.
+- `AiQueueLease`: jeden rekord `shared-ai`, identyfikator wykonawcy, losowy token blokady, termin ważności i powód globalnej pauzy AUTH/QUOTA/MODEL_UNAVAILABLE. Transakcja najpierw uzyskuje blokadę zapisu SQLite, dopiero potem pobiera aktualny czas do oceny terminu. Stary wynik nie może nadpisać nowego wykonania.
+
+Czaty mają priorytet przed kolejną fakturą. API sprawdza aktualną rolę, aktywność i wymaganą zmianę hasła; odczyt zadania wyłącznie dla właściciela. ADMIN ma trzy rodzaje, MANAGER tylko encyklopedię. Próby przerwane przez restart można wznowić najwyżej trzy razy automatycznie; jawne ponowienie rozpoczyna nowy cykl. Własne QUEUED wolno ponowić również podczas globalnej pauzy, bez znajomości zadania innego użytkownika.
+
+FK właściciela pozostaje RESTRICT: endpoint usuwania konta zwraca 409 przy historii AI, również po równoległym enqueue. Dezaktywacja nie kasuje historii. Prywatny runtime trzyma wspólny plik blokady OAuth przez FD 9, przekazując go jako FD 3 do potomnego CLI; lokalny test przekazania deskryptora nie zastępuje wymaganej próby rzeczywistego flock na Linuksie.
+
+`loadActualDashboardModel` jest współdzielonym finansowym loaderem dashboardu i czatu. Nie pobiera sald, należności, alertów ani kursów. Kontekst AI jest jawną projekcją agregatów z zachowaniem null/zero, dat pokrycia i kompletności. API czatu finansowego wymaga jawnego roku i miesiąca; odzyskanie klucza żądania nie przelicza kontekstu na nowo.
+
+Prywatny wykonawca nie łączy się z SQLite. Wąskie API `/api/internal/ai-worker` przyjmuje osobny klucz wykonawcy i przekazuje przygotowany kontekst oraz schemat, nigdy dowolne zapytania SQL/ścieżki. Proces Codex ma oddzielną białą listę środowiska, przypięty model i katalog bez narzędzi, a ślady uruchomienia trafiają do katalogu tymczasowego. OAuth pozostaje wyłącznie w prywatnym runtime. Po stronie systemu konieczna jest dodatkowa blokada procesu na wolumenie OAuth, trzymana aż do zakończenia procesu potomnego.
+
+Stan odbioru i pozostały zakres szkiców/załączników/finansów: [plan importu i AI](docs/plans/2026-09-10-invoice-import-codex-ai.md). Lokalny test bez logowania nie zastępuje bramki Linux + rzeczywisty OAuth.
+
+## Fundament szkiców faktur — 11.09.2026 (lokalnie)
+
+Addytywna migracja `20260911150000_invoice_import_drafts` nie zmienia istniejących faktur ani kosztów. Dodaje:
+
+- `InvoiceImportBatch`: właściciel i czas utworzenia paczki.
+- `InvoiceAttachment`: unikalny klucz magazynu oraz SHA-256, oryginalna nazwa, MIME, rozmiar i liczba stron PDF, stan STAGED/READY/STORAGE_ERROR. READY wymaga poprawnych limitów; obrazy nie mają liczby stron PDF.
+- `InvoiceImportDraft`: jeden szkic na załącznik, wersja danych, osobna rewizja odczytu, JSON częściowych danych i nazw pól ręcznych, aktualne zadanie AI oraz trwałe unikalne powiązanie z fakturą. Stany OPEN/APPROVED/ARCHIVED. Po pierwszym przypisaniu `invoiceId` trigger blokuje jego wyzerowanie lub zmianę.
+- `InvoiceDraftAudit`: niezmienny audyt operacji z aktorem i opcjonalnym zadaniem AI. Unikalna para aktor/klucz idempotencji przechowuje hash żądania i rezultat operacji. UPDATE i DELETE audytu blokują triggery.
+
+Relacje mają FK RESTRICT. Nie ma kaskadowego usuwania historii. Odczyt AI może proponować dokładnie 12 pól; ręcznie ustawione `null` także jest chronione, a przeliczenie PLN i klasyfikacja nie należą do pól AI. Świeży łańcuch i migracja wcześniejszego łańcucha zweryfikowane na syntetycznych bazach, wraz z integralnością i zachowaniem dotychczasowych danych. Sam schemat nie oznacza ukończenia uploadu/finansowego przebiegu.
+
+## Późniejsze powiązanie KSeF — 12.09.2026 (lokalnie)
+
+Addytywna migracja `20260911190000_invoice_ksef_reconciliation` dodaje `InvoiceKsefReconciliation`: niezmienne powiązanie numeru KSeF ze szkicem, wersję, ograniczony snapshot/hash i zachowany prywatny XML. Relacje RESTRICT i triggery chronią tożsamość oraz audyt; tabela `WITHOUT ROWID` blokuje także obchodzenie ochrony przez alternatywne aliasy SQLite. Testy obejmują rzeczywisty klient Prisma.
+
+- Synchronizacja pobiera XML poza transakcją, następnie uzyskuje wspólną rezerwację zapisu i ponownie sprawdza uprawnienia oraz dopasowanie. Obserwacja nie zmienia `KsefInvoice`, `CostEvent`, klasyfikacji ani załącznika. Zgodny snapshot jest idempotentny; nowe różnice zwiększają wersję szkicu i linku oraz dopisują audyt.
+- Status jest wyliczany z aktualnych danych: MATCHED, CONFLICT, KEPT_LOCAL lub APPLIED_TO_DRAFT. Hash danych objętych świadomym KEEP uniemożliwia zachowanie nieaktualnej zgody po zmianie kwoty/płatności. Dokument KSeF non-ACTIVE zawsze wymaga osobnej obsługi.
+- GET/POST `/api/finance/invoice-import/drafts/[id]/ksef` wymagają świeżego aktywnego ADMIN-a. POST sprawdza obie wersje i klucz idempotencji; zapis decyzji, danych szkicu i audytu jest atomowy. APPLY wymaga OPEN; nie tworzy kosztu. Zatwierdzenie sprawdza wszystkie nierozstrzygnięte linki wewnątrz swojej transakcji.
+- DTO porównania i paginowane podsumowania list wybierają tylko potrzebne pola, bez XML. Listy sumujące kwoty nie pobierają snapshotów. Koszt zatwierdzony przed konfliktem pozostaje aktywny, dopóki administrator jawnie go nie cofnie.
+
 ## Aktualizacja finansów i kasy — 10.09.2026
 
 Implementacja lokalna; wdrożenie wymaga osobnego odbioru. Źródłem bieżącego schematu jest `prisma/schema.prisma`; starsze diagramy i przykłady poniżej dokumentują pierwotny MVP.

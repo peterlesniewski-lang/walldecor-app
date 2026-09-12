@@ -39,7 +39,7 @@ export const KsefInvoiceCreateSchema = z.object({
     .string()
     .trim()
     .optional()
-    .transform((value) => normalizeSupplierNip(value)),
+    .transform((value) => value ?? ''),
   invoiceNumber: z.string().trim().min(1, 'Podaj numer faktury'),
   issueDate: z.string().trim().refine(isIsoDate, 'Data musi mieć format YYYY-MM-DD'),
   grossAmount: z.coerce.number().positive('Kwota brutto musi być większa od zera'),

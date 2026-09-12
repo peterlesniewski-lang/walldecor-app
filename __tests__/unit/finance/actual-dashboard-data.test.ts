@@ -6,6 +6,9 @@ import { join } from 'node:path'
 import { execFileSync } from 'node:child_process'
 import { PrismaClient } from '@/generated/prisma'
 import { loadActualDashboardData } from '@/lib/finance/actual-dashboard-data'
+import { loadActualDashboardModel } from '@/lib/finance/actual-dashboard-model-data'
+import { approveInvoiceDraft, revokeInvoiceDraft } from '@/lib/invoice-import/approval-service'
+import { archiveDraft, editDraft } from '@/lib/invoice-import/draft-service'
 
 const state = vi.hoisted(() => ({ db: null as unknown as PrismaClient }))
 vi.mock('@/lib/prisma', () => ({ get prisma() { return state.db } }))
@@ -37,6 +40,12 @@ afterAll(async () => {
 })
 
 describe('shared dashboard data on SQLite', () => {
+  it('returns the identical financial model through the dashboard and standalone financial loader', async () => {
+    const period = { year: 2026, month: 8 }
+    const now = new Date('2026-09-10T12:00:00Z')
+    const dashboard = await loadActualDashboardData(period, 'test-admin', now)
+    expect(await loadActualDashboardModel(period, now)).toEqual(dashboard.model)
+  })
   it('ignores historical sales budgets even when there is no actual revenue', async () => {
     const data = await loadActualDashboardData({ year: 2024, month: 8 }, 'test-admin', new Date('2026-09-10T12:00:00Z'))
     expect(data.model.selected.revenue).toBeNull()
@@ -116,5 +125,101 @@ describe('shared dashboard data on SQLite', () => {
     ])
     expect((await load()).model.selected).toMatchObject({ costs: 100, result: 400, complete: true, costsConfirmed: true, pendingDocumentCount: 0 })
     expect((await state.db.costEvent.findUniqueOrThrow({ where: { id: old.id } })).status).toBe('VOID')
+  })
+
+  it('keeps revoked import snapshots out of waiting money through editing and archiving', async () => {
+    const period = { year: 2026, month: 6 }
+    const now = new Date('2026-09-10T12:00:00Z')
+    const actor = await state.db.user.create({ data: {
+      id: 'import-dashboard-admin', name: 'Import dashboard admin', email: 'import-dashboard@example.test',
+      role: 'ADMIN', passwordHash: 'test', isActive: true, mustChangePassword: false,
+    } })
+    const behavior = await state.db.costTagGroup.create({ data: { name: 'Charakter', slug: 'behavior' } })
+    const fixed = await state.db.costTag.create({ data: { groupId: behavior.id, name: 'Stały', slug: 'fixed' } })
+    const batch = await state.db.invoiceImportBatch.create({ data: { ownerUserId: actor.id } })
+    const attachment = await state.db.invoiceAttachment.create({ data: {
+      storageKey: 'dashboard-june-import.bin', sha256: 'a'.repeat(64), originalName: 'june-invoice.pdf',
+      mimeType: 'application/pdf', byteSize: 100, pageCount: 1, state: 'READY', createdById: actor.id,
+    } })
+    const draft = await state.db.invoiceImportDraft.create({ data: {
+      batchId: batch.id, attachmentId: attachment.id,
+      dataJson: JSON.stringify({
+        documentType: 'INVOICE', supplierName: 'June imported supplier', taxId: 'PL1234567890',
+        invoiceNumber: 'IMPORT/06/2026', issueDate: '2026-06-15', currency: 'PLN',
+        gross: 123, net: 100, vat: 23, paymentStatus: 'UNPAID', costCenterId: 'PUL', tagIds: [fixed.id],
+      }),
+    } })
+    const load = () => loadActualDashboardData(period, actor.id, now)
+    const inboxCount = () => state.db.ksefInvoice.count({ where: {
+      status: { in: ['NEW', 'MAPPED'] }, invoiceImportDraft: { is: null },
+    } })
+    const initialInboxCount = await inboxCount()
+
+    const approved = await approveInvoiceDraft(state.db, actor.id, draft.id, {
+      expectedVersion: draft.version, idempotencyKey: 'dashboard-june-approve',
+    })
+    expect(approved.outcome).toBe('APPROVED')
+    const approvedDashboard = await load()
+    expect(approvedDashboard.model.selected).toMatchObject({ costs: 123, pendingDocumentCount: 0 })
+    expect(approvedDashboard.model.waiting).toEqual({ count: 0, plnAmount: 0, unconverted: [] })
+    const originalParts = await state.db.costEventPart.findMany({
+      where: { eventId: approved.costEventId! }, include: { tags: true, allocations: true },
+    })
+    const approvalReceipt = await state.db.invoiceDraftAudit.findFirstOrThrow({
+      where: { draftId: draft.id, action: 'APPROVED' },
+    })
+
+    const revoked = await revokeInvoiceDraft(state.db, actor.id, draft.id, {
+      expectedVersion: approved.version, idempotencyKey: 'dashboard-june-revoke',
+    })
+    expect(revoked).toMatchObject({ outcome: 'REVOKED', invoiceId: approved.invoiceId, costEventId: approved.costEventId })
+    const revokedDashboard = await load()
+    expect(revokedDashboard.model.selected).toMatchObject({ costs: 0, pendingDocumentCount: 0 })
+    expect(revokedDashboard.model.waiting).toEqual({ count: 0, plnAmount: 0, unconverted: [] })
+    expect(await inboxCount()).toBe(initialInboxCount)
+
+    const edited = await editDraft(state.db, actor.id, draft.id, revoked.version, {
+      issueDate: '2026-05-15', gross: 999, net: 999, vat: 0,
+    })
+    expect(edited).toMatchObject({ state: 'OPEN', invoiceId: approved.invoiceId, data: { issueDate: '2026-05-15', gross: 999 } })
+    const editedDashboard = await load()
+    expect(editedDashboard.model.selected).toMatchObject({ costs: 0, pendingDocumentCount: 0 })
+    expect(editedDashboard.model.waiting).toEqual({ count: 0, plnAmount: 0, unconverted: [] })
+    const may = await loadActualDashboardModel({ year: 2026, month: 5 }, now)
+    expect(may.selected).toMatchObject({ costs: 0, pendingDocumentCount: 0 })
+    expect(may.waiting).toEqual({ count: 0, plnAmount: 0, unconverted: [] })
+    expect(await inboxCount()).toBe(initialInboxCount)
+
+    const archived = await archiveDraft(state.db, actor.id, draft.id, edited.version)
+    expect(archived).toMatchObject({ state: 'ARCHIVED', invoiceId: approved.invoiceId })
+    const archivedDashboard = await load()
+    expect(archivedDashboard.model.selected).toMatchObject({ costs: 0, pendingDocumentCount: 0 })
+    expect(archivedDashboard.model.waiting).toEqual({ count: 0, plnAmount: 0, unconverted: [] })
+    expect(await inboxCount()).toBe(initialInboxCount)
+    expect(await state.db.ksefInvoice.findUniqueOrThrow({ where: { id: approved.invoiceId } })).toMatchObject({
+      status: 'MAPPED', issueDate: new Date('2026-06-15T00:00:00Z'), grossAmount: 123,
+    })
+    expect(await state.db.costEvent.findUniqueOrThrow({ where: { id: approved.costEventId! } })).toMatchObject({
+      status: 'VOID', sourceInvoiceId: null, grossAmount: 123,
+    })
+    expect(await state.db.costEventPart.findMany({
+      where: { eventId: approved.costEventId! }, include: { tags: true, allocations: true },
+    })).toEqual(originalParts)
+    expect(await state.db.invoiceDraftAudit.findUniqueOrThrow({ where: { id: approvalReceipt.id } })).toEqual(approvalReceipt)
+    const audits = await state.db.invoiceDraftAudit.findMany({ where: { draftId: draft.id } })
+    expect(audits.map((audit) => audit.action).sort()).toEqual(['APPROVED', 'ARCHIVED', 'EDITED', 'REVOKED'])
+    const costAudits = await state.db.costAuditLog.findMany({
+      where: { invoiceId: approved.invoiceId, costEventId: approved.costEventId },
+    })
+    expect(costAudits.map((audit) => audit.action).sort()).toEqual(['invoice.approve', 'invoice.revoke'])
+
+    await state.db.ksefInvoice.create({ data: {
+      supplierName: 'Ordinary June supplier', invoiceNumber: 'ORDINARY/06/2026',
+      issueDate: new Date('2026-06-20T00:00:00Z'), grossAmount: 50, currency: 'PLN', status: 'MAPPED',
+    } })
+    const ordinaryWaiting = await load()
+    expect(ordinaryWaiting.model.selected).toMatchObject({ costs: 0, pendingDocumentCount: 1 })
+    expect(ordinaryWaiting.model.waiting).toEqual({ count: 1, plnAmount: 50, unconverted: [] })
+    expect(await inboxCount()).toBe(initialInboxCount + 1)
   })
 })

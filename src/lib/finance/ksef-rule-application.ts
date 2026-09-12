@@ -70,7 +70,7 @@ export async function applySupplierRuleToNewInvoices(db: DbClient, rule: Supplie
   if (!rule.active) return 0
 
   const candidates = await db.ksefInvoice.findMany({
-    where: { status: 'NEW' },
+    where: { status: 'NEW', invoiceImportDraft: { is: null } },
     select: {
       id: true,
       invoiceNumber: true,
@@ -93,8 +93,8 @@ export async function applySupplierRuleToNewInvoices(db: DbClient, rule: Supplie
   if (tagIds.length > 0) {
     let applied = 0
     for (const invoice of candidates.filter((candidate) => ids.includes(candidate.id))) {
-      await db.ksefInvoice.update({
-        where: { id: invoice.id },
+      const updated = await db.ksefInvoice.updateMany({
+        where: { id: invoice.id, status: 'NEW', invoiceImportDraft: { is: null } },
         data: {
           status: 'MAPPED',
           costCenterId: rule.costCenterId,
@@ -103,6 +103,7 @@ export async function applySupplierRuleToNewInvoices(db: DbClient, rule: Supplie
           ruleMatchStatus: 'MATCHED',
         },
       })
+      if (updated.count !== 1) continue
       await replaceInvoicePartFromRule(db, invoice, rule)
       applied += 1
     }
@@ -110,7 +111,7 @@ export async function applySupplierRuleToNewInvoices(db: DbClient, rule: Supplie
   }
 
   const result = await db.ksefInvoice.updateMany({
-    where: { id: { in: ids }, status: 'NEW' },
+    where: { id: { in: ids }, status: 'NEW', invoiceImportDraft: { is: null } },
     data: {
       status: 'MAPPED',
       costCenterId: rule.costCenterId,
@@ -128,7 +129,7 @@ export async function applySupplierRulesToNewInvoices(db: DbClient, rules: Suppl
   if (activeRules.length === 0) return 0
 
   const candidates = await db.ksefInvoice.findMany({
-    where: { status: 'NEW' },
+    where: { status: 'NEW', invoiceImportDraft: { is: null } },
     select: {
       id: true,
       invoiceNumber: true,
@@ -148,8 +149,8 @@ export async function applySupplierRulesToNewInvoices(db: DbClient, rules: Suppl
     const decision = resolveSupplierRuleMatch(invoice, activeRules)
 
     if (decision.status === 'MATCHED') {
-      await db.ksefInvoice.update({
-        where: { id: invoice.id },
+      const updated = await db.ksefInvoice.updateMany({
+        where: { id: invoice.id, status: 'NEW', invoiceImportDraft: { is: null } },
         data: {
           status: 'MAPPED',
           costCenterId: decision.rule.costCenterId,
@@ -158,14 +159,15 @@ export async function applySupplierRulesToNewInvoices(db: DbClient, rules: Suppl
           ruleMatchStatus: 'MATCHED',
         },
       })
+      if (updated.count !== 1) continue
       await replaceInvoicePartFromRule(db, invoice, decision.rule)
       applied += 1
       continue
     }
 
     if (decision.status === 'CONFLICT') {
-      await db.ksefInvoice.update({
-        where: { id: invoice.id },
+      await db.ksefInvoice.updateMany({
+        where: { id: invoice.id, status: 'NEW', invoiceImportDraft: { is: null } },
         data: {
           status: 'NEW',
           costCenterId: null,
@@ -177,8 +179,8 @@ export async function applySupplierRulesToNewInvoices(db: DbClient, rules: Suppl
       continue
     }
 
-    await db.ksefInvoice.update({
-      where: { id: invoice.id },
+    await db.ksefInvoice.updateMany({
+      where: { id: invoice.id, status: 'NEW', invoiceImportDraft: { is: null } },
       data: {
         status: 'NEW',
         supplierRuleId: null,

@@ -1,9 +1,10 @@
 'use client'
 
 import { useState, useRef, useEffect } from 'react'
-import { Bot, X, ChevronDown } from 'lucide-react'
+import { Bot, X } from 'lucide-react'
 import { AiMessage } from './AiMessage'
 import { AiInput } from './AiInput'
+import { AI_CHAT_INITIAL_STATE, createAiChatClient, type AiChatClient } from '@/lib/ai/client'
 
 interface Message {
   role: 'user' | 'assistant'
@@ -20,48 +21,27 @@ export function AiAssistant({ articleTitle, articleCategory, articleContent }: A
   const [open, setOpen] = useState(false)
   const [messages, setMessages] = useState<Message[]>([])
   const [input, setInput] = useState('')
-  const [loading, setLoading] = useState(false)
+  const [jobState, setJobState] = useState(AI_CHAT_INITIAL_STATE)
+  const clientRef = useRef<AiChatClient | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
+
+  useEffect(() => {
+    const client = createAiChatClient({ onState: setJobState, onAnswer: (answer) => setMessages((prev) => [...prev, { role: 'assistant', content: answer }]) })
+    clientRef.current = client
+    return () => { client.dispose(); clientRef.current = null }
+  }, [])
 
   useEffect(() => {
     if (open) {
       messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
     }
-  }, [messages, open])
+  }, [messages, open, jobState.message])
 
-  async function handleSend() {
-    if (!input.trim() || loading) return
-
+  function handleSend() {
     const question = input.trim()
+    if (!question || !clientRef.current?.submit({ kind: 'WIKI_CHAT', question, articleTitle, articleCategory, articleContent: articleContent?.slice(0, 3000) })) return
     setInput('')
     setMessages((prev) => [...prev, { role: 'user', content: question }])
-    setLoading(true)
-
-    try {
-      const res = await fetch('/api/knowledge/ai', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          question,
-          articleTitle,
-          articleCategory,
-          articleContent: articleContent?.slice(0, 3000),
-        }),
-      })
-
-      if (!res.ok) {
-        const err = await res.json()
-        throw new Error(err.error ?? 'Błąd AI')
-      }
-
-      const { answer } = await res.json()
-      setMessages((prev) => [...prev, { role: 'assistant', content: answer }])
-    } catch (e: unknown) {
-      const msg = e instanceof Error ? e.message : 'Błąd połączenia'
-      setMessages((prev) => [...prev, { role: 'assistant', content: `❌ ${msg}` }])
-    } finally {
-      setLoading(false)
-    }
   }
 
   return (
@@ -80,7 +60,7 @@ export function AiAssistant({ articleTitle, articleCategory, articleContent }: A
 
       {/* Chat panel */}
       {open && (
-        <div className="fixed bottom-6 right-6 w-96 h-[520px] bg-white border border-gray-200 rounded-2xl shadow-2xl flex flex-col z-40 overflow-hidden">
+        <div className="fixed bottom-6 right-4 sm:right-6 w-96 max-w-[calc(100vw-2rem)] h-[520px] max-h-[calc(100dvh-3rem)] bg-white border border-gray-200 rounded-2xl shadow-2xl flex flex-col z-40 overflow-hidden">
           {/* Header */}
           <div
             className="flex items-center justify-between px-4 py-3 border-b border-gray-200"
@@ -95,7 +75,7 @@ export function AiAssistant({ articleTitle, articleCategory, articleContent }: A
                 )}
               </div>
             </div>
-            <button onClick={() => setOpen(false)} className="opacity-70 hover:opacity-100">
+            <button onClick={() => setOpen(false)} className="opacity-70 hover:opacity-100" aria-label="Zamknij asystenta wiedzy">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -114,20 +94,20 @@ export function AiAssistant({ articleTitle, articleCategory, articleContent }: A
             {messages.map((msg, i) => (
               <AiMessage key={i} role={msg.role} content={msg.content} />
             ))}
-            {loading && (
-              <div className="flex items-center gap-2 text-gray-400 text-sm">
-                <div className="flex gap-1">
-                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0ms' }} />
-                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '150ms' }} />
-                  <span className="w-1.5 h-1.5 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '300ms' }} />
-                </div>
-                <span>Myślę...</span>
+            {jobState.message && (
+              <div className="text-gray-500 text-sm">
+                <p role={jobState.busy ? 'status' : 'alert'}>{jobState.message}</p>
+                {jobState.action && (
+                  <button type="button" className="mt-2 text-xs font-semibold underline" onClick={() => jobState.action === 'retry' ? clientRef.current?.retry() : clientRef.current?.resume()}>
+                    {jobState.action === 'retry' ? 'Ponów zadanie' : jobState.action === 'recover' ? 'Odzyskaj zadanie' : 'Sprawdź ponownie'}
+                  </button>
+                )}
               </div>
             )}
             <div ref={messagesEndRef} />
           </div>
 
-          <AiInput value={input} onChange={setInput} onSend={handleSend} loading={loading} />
+          <AiInput value={input} onChange={(value) => setInput(value.slice(0, 500))} onSend={handleSend} loading={!jobState.canSubmit} />
         </div>
       )}
     </>

@@ -20,7 +20,13 @@ export function AiMessage({ role, content }: AiMessageProps) {
   return (
     <div className="flex justify-start">
       <div className="max-w-[92%] px-3 py-2 rounded-2xl rounded-bl-sm text-sm bg-gray-100 text-gray-800 prose prose-sm max-w-none prose-p:mb-1.5 prose-li:leading-relaxed">
-        <ReactMarkdown remarkPlugins={[remarkGfm]}>{content}</ReactMarkdown>
+        <ReactMarkdown
+          remarkPlugins={[remarkGfm]}
+          // Model-supplied image URLs must not trigger browser requests or SSR preloads.
+          components={{ img: ({ alt }) => alt || '[Obraz pominięty]' }}
+        >
+          {content}
+        </ReactMarkdown>
       </div>
     </div>
   )

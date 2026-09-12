@@ -2,6 +2,11 @@ import { NextRequest, NextResponse } from 'next/server'
 import { requireFinanceAdmin } from '@/lib/finance/finance-access'
 import { prisma } from '@/lib/prisma'
 import { KsefInvoicePaymentSchema } from '@/lib/validations/ksef-inbox'
+import { withAiQueueMutation } from '@/lib/ai/queue'
+import {
+  assertLegacyInvoiceWriteAllowed,
+  invoiceImportReviewRequiredResponse,
+} from '@/lib/invoice-import/legacy-write-guard'
 
 export async function PATCH(
   req: NextRequest,
@@ -17,26 +22,35 @@ export async function PATCH(
 
   const { id } = await params
   const data = parsed.data
-  const invoice = await prisma.ksefInvoice.update({
-    where: { id },
-    data: {
-      paymentStatus: data.paymentStatus,
-      paidAt: data.paymentStatus === 'PAID' ? (data.paidAt ? new Date(data.paidAt) : new Date()) : null,
-      dueDate: data.dueDate ? new Date(data.dueDate) : null,
-      auditLogs: {
-        create: {
-          action: 'payment.update',
-          actorId: auth.session.user.id,
-          afterJson: JSON.stringify(data),
+  try {
+    const invoice = await withAiQueueMutation(prisma, () => new Date(), async (tx) => {
+      await assertLegacyInvoiceWriteAllowed(tx, id)
+      return tx.ksefInvoice.update({
+        where: { id },
+        data: {
+          paymentStatus: data.paymentStatus,
+          paidAt: data.paymentStatus === 'PAID' ? (data.paidAt ? new Date(data.paidAt) : new Date()) : null,
+          dueDate: data.dueDate ? new Date(data.dueDate) : null,
+          auditLogs: {
+            create: {
+              action: 'payment.update',
+              actorId: auth.session.user.id,
+              afterJson: JSON.stringify(data),
+            },
+          },
         },
-      },
-    },
-    include: {
-      costCenter: true,
-      subCategory: { include: { category: true } },
-      supplierRule: true,
-    },
-  })
+        include: {
+          costCenter: true,
+          subCategory: { include: { category: true } },
+          supplierRule: true,
+        },
+      })
+    })
 
-  return NextResponse.json({ invoice })
+    return NextResponse.json({ invoice })
+  } catch (error) {
+    const conflict = invoiceImportReviewRequiredResponse(error)
+    if (conflict) return conflict
+    throw error
+  }
 }

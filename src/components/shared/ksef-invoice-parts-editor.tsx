@@ -32,6 +32,7 @@ interface KsefInvoicePartsEditorProps {
   onCreateTag?: (group: TagChipsGroup, name: string) => Promise<TagChipsTag>
   onClose: () => void
   onSaved: (invoice: unknown) => void
+  onReviewRequired?: (draftId: string) => void
 }
 
 function roundMoney(value: number) {
@@ -55,6 +56,7 @@ export function KsefInvoicePartsEditor({
   onCreateTag,
   onClose,
   onSaved,
+  onReviewRequired,
 }: KsefInvoicePartsEditorProps) {
   const [parts, setParts] = useState<PartDraft[]>([createDefaultPart(invoice)])
   const [saving, setSaving] = useState(false)
@@ -95,6 +97,12 @@ export function KsefInvoicePartsEditor({
         }),
       })
       const data = await response.json().catch(() => ({}))
+      if (response.status === 409 && data.code === 'INVOICE_IMPORT_REVIEW_REQUIRED'
+        && typeof data.draftId === 'string' && data.draftId.length > 0 && data.draftId.length <= 191
+        && onReviewRequired) {
+        onReviewRequired(data.draftId)
+        return
+      }
       if (!response.ok) throw new Error(data.error ?? 'Nie udało się zapisać części faktury')
       onSaved(data.invoice)
     } catch (err) {

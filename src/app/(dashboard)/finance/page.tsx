@@ -4,9 +4,10 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { CompanyHealthView } from '@/components/shared/company-health-view'
 import { buildCompanyHealth, type FinanceCostCenterId } from '@/lib/finance/company-health'
-import { buildCostWarningTotal } from '@/lib/finance/cost-reporting'
+import { buildCostWarningSummary } from '@/lib/finance/cost-reporting'
 import { buildRealizedCostSummary, costEventYearDateRange } from '@/lib/finance/realized-costs'
-import { roundMoney } from '@/lib/finance/ksef-inbox'
+import { summarizeInvoicePayments } from '@/lib/finance/invoice-money'
+import { isActiveInvoiceMoneyRow } from '@/lib/finance/invoice-money-scope'
 
 interface PageProps {
   searchParams: Promise<{ year?: string; costCenterId?: string }>
@@ -48,12 +49,22 @@ export default async function FinancePage({ searchParams }: PageProps) {
       ? prisma.cashAccount.findMany({ where: { isActive: true }, orderBy: { order: 'asc' } })
       : Promise.resolve([]),
     isAdmin
-      ? prisma.ksefInvoice.count({ where: { status: { in: ['NEW', 'MAPPED'] } } })
+      ? prisma.ksefInvoice.count({ where: {
+          status: { in: ['NEW', 'MAPPED'] }, invoiceImportDraft: { is: null },
+        } })
       : Promise.resolve(0),
     isAdmin
       ? prisma.ksefInvoice.findMany({
-          where: { paymentStatus: 'UNPAID' },
-          select: { grossAmount: true, reportingGrossAmount: true },
+          where: { paymentStatus: { not: 'PAID' } },
+          select: {
+            currency: true,
+            grossAmount: true,
+            reportingGrossAmount: true,
+            paymentStatus: true,
+            dueDate: true,
+            documentStatus: true,
+            invoiceImportDraft: { select: { state: true } },
+          },
         })
       : Promise.resolve([]),
     canViewCostReports
@@ -64,6 +75,7 @@ export default async function FinancePage({ searchParams }: PageProps) {
             currency: true,
             grossAmount: true,
             reportingGrossAmount: true,
+            invoiceImportDraft: { select: { state: true } },
           },
         })
       : Promise.resolve([]),
@@ -93,10 +105,10 @@ export default async function FinancePage({ searchParams }: PageProps) {
       return acc
     }, {})
   )
-  const unpaidInvoiceAmount = roundMoney(
-    unpaidInvoices.reduce((sum, invoice) => sum + (invoice.reportingGrossAmount ?? invoice.grossAmount), 0)
-  )
-  const unclassifiedWarningAmount = canViewCostReports ? buildCostWarningTotal(warningInvoices) : 0
+  const unpaidSummary = summarizeInvoicePayments(unpaidInvoices.filter(isActiveInvoiceMoneyRow))
+  const warningSummary = canViewCostReports
+    ? buildCostWarningSummary(warningInvoices.filter(isActiveInvoiceMoneyRow))
+    : { plnAmount: 0, unconvertedCount: 0, unconvertedByCurrency: [] }
 
   return (
     <CompanyHealthView
@@ -104,8 +116,12 @@ export default async function FinancePage({ searchParams }: PageProps) {
       health={health}
       cashByCurrency={cashByCurrency}
       ksefInboxCount={ksefInboxCount}
-      unpaidInvoiceAmount={unpaidInvoiceAmount}
-      unclassifiedWarningAmount={unclassifiedWarningAmount}
+      unpaidInvoiceAmount={unpaidSummary.unpaid.plnAmount}
+      unpaidInvoiceSummary={unpaidSummary.unpaid}
+      unpaidInvoiceCount={unpaidSummary.unpaidCount}
+      uncertainPaymentCount={unpaidSummary.uncertainPaymentCount}
+      unclassifiedWarningAmount={warningSummary.plnAmount}
+      unclassifiedWarningSummary={warningSummary}
     />
   )
 }

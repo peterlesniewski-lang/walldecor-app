@@ -1,6 +1,8 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { InvoiceMoneyUnconverted } from '@/components/shared/invoice-payment-money-summary'
+import type { InvoiceMoneySummary } from '@/lib/finance/invoice-money'
 
 interface BreakEvenViewProps {
   initialReport?: BreakEvenReport | null
@@ -8,6 +10,7 @@ interface BreakEvenViewProps {
 
 interface BreakEvenReport {
   warningAmount: number
+  warningSummary?: InvoiceMoneySummary
   byCostCenter: Record<string, {
     revenue: number
     fixedCosts: number
@@ -20,9 +23,9 @@ interface BreakEvenReport {
   }>
 }
 
-function money(value: number | null) {
+function money(value: number | null, currency = 'PLN') {
   if (value == null) return '-'
-  return `${Math.round(value * 100) / 100}`.replace('.', ',') + ' PLN'
+  return `${Math.round(value * 100) / 100}`.replace('.', ',') + ` ${currency}`
 }
 
 export function BreakEvenView({ initialReport = null }: BreakEvenViewProps) {
@@ -65,7 +68,12 @@ export function BreakEvenView({ initialReport = null }: BreakEvenViewProps) {
           </div>
           <section className="rounded-lg border border-amber-100 bg-amber-50 p-4">
             <p className="data-label">Koszty oczekujące / niepewne</p>
-            <p className="num text-sm font-semibold">{money(report.warningAmount)}</p>
+            <p className="num text-sm font-semibold">{money(report.warningSummary?.plnAmount ?? report.warningAmount)}</p>
+            <p className="mt-1 text-[11px] text-[var(--wd-text-muted)]">Znana kwota w PLN</p>
+            <InvoiceMoneyUnconverted
+              summary={report.warningSummary ?? { plnAmount: report.warningAmount, unconvertedCount: 0, unconvertedByCurrency: [] }}
+              formatMoney={money}
+            />
           </section>
         </>
       )}

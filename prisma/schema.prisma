@@ -71,6 +71,137 @@ model User {
 
   visibilityGrants        ContentVisibilityGrant[] @relation("VisibilityGrantUser")
   grantedVisibilityGrants ContentVisibilityGrant[] @relation("VisibilityGrantGrantedBy")
+  aiJobs                  AiJob[]
+  invoiceImportBatches    InvoiceImportBatch[]
+  invoiceAttachments      InvoiceAttachment[]
+  invoiceDraftAudits      InvoiceDraftAudit[] @relation("InvoiceDraftAuditActor")
+}
+
+// Durable data-only AI jobs. The migration also enforces a single RUNNING job.
+model AiJob {
+  id             String   @id @default(cuid())
+  ownerUserId    String
+  owner          User     @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
+  kind           String
+  status         String   @default("QUEUED")
+  payloadJson    String
+  resultJson     String?
+  errorCode      String?
+  idempotencyKey String?
+  priority       Int      @default(0)
+  attempts       Int      @default(0)
+  workerId       String?
+  leaseToken     String?
+  leaseUntil     DateTime?
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  latestInvoiceImportDraft InvoiceImportDraft? @relation("InvoiceImportDraftLatestAiJob")
+  invoiceDraftAudits       InvoiceDraftAudit[] @relation("InvoiceDraftAuditAiJob")
+
+  @@unique([ownerUserId, idempotencyKey])
+  @@index([status, priority, createdAt])
+  @@index([ownerUserId, createdAt])
+}
+
+// Exactly one row, id = shared-ai. Runtime must additionally hold its OS lock.
+model AiQueueLease {
+  id          String    @id
+  workerId    String?
+  leaseToken  String?
+  leaseUntil  DateTime?
+  pauseReason String?
+  updatedAt   DateTime  @updatedAt
+}
+
+model InvoiceImportBatch {
+  id          String   @id @default(cuid())
+  ownerUserId String
+  owner       User     @relation(fields: [ownerUserId], references: [id], onDelete: Restrict)
+  createdAt   DateTime @default(now())
+
+  drafts InvoiceImportDraft[]
+}
+
+model InvoiceAttachment {
+  id           String   @id @default(cuid())
+  storageKey   String   @unique
+  sha256       String   @unique
+  originalName String
+  mimeType     String
+  byteSize     Int
+  pageCount    Int?
+  state        String   @default("STAGED")
+  createdById  String
+  createdBy    User     @relation(fields: [createdById], references: [id], onDelete: Restrict)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  draft InvoiceImportDraft?
+}
+
+model InvoiceImportDraft {
+  id                     String             @id @default(cuid())
+  batchId                String
+  batch                  InvoiceImportBatch @relation(fields: [batchId], references: [id], onDelete: Restrict)
+  attachmentId           String             @unique
+  attachment             InvoiceAttachment  @relation(fields: [attachmentId], references: [id], onDelete: Restrict)
+  version                 Int                @default(1)
+  extractionRevision      Int                @default(0)
+  dataJson                String             @default("{}")
+  manualFieldsJson        String             @default("[]")
+  latestAiJobId           String?            @unique
+  latestAiJob             AiJob?             @relation("InvoiceImportDraftLatestAiJob", fields: [latestAiJobId], references: [id], onDelete: Restrict)
+  invoiceId               String?            @unique
+  invoice                 KsefInvoice?        @relation(fields: [invoiceId], references: [id], onDelete: Restrict)
+  state                    String             @default("OPEN")
+  skippedAt                DateTime?
+  createdAt                DateTime           @default(now())
+  updatedAt                DateTime           @updatedAt
+
+  audits InvoiceDraftAudit[]
+  ksefReconciliations InvoiceKsefReconciliation[]
+
+  @@index([batchId])
+}
+
+// External observations never replace the original file or active financial data.
+// Decisions and previous snapshots are retained in InvoiceDraftAudit.
+model InvoiceKsefReconciliation {
+  id               String             @id @default(cuid())
+  draftId          String
+  draft            InvoiceImportDraft @relation(fields: [draftId], references: [id], onDelete: Restrict)
+  externalId       String             @unique
+  version          Int                @default(1)
+  snapshotJson     String
+  snapshotHash     String
+  xmlContent       String?
+  status           String             @default("MATCHED")
+  resolvedDataHash String?
+  createdAt        DateTime           @default(now())
+  updatedAt        DateTime           @updatedAt
+
+  @@index([draftId])
+}
+
+model InvoiceDraftAudit {
+  id             String             @id @default(cuid())
+  draftId        String
+  draft          InvoiceImportDraft @relation(fields: [draftId], references: [id], onDelete: Restrict)
+  action         String
+  actorId        String?
+  actor          User?              @relation("InvoiceDraftAuditActor", fields: [actorId], references: [id], onDelete: Restrict)
+  aiJobId        String?
+  aiJob          AiJob?             @relation("InvoiceDraftAuditAiJob", fields: [aiJobId], references: [id], onDelete: Restrict)
+  beforeJson     String?
+  afterJson      String?
+  idempotencyKey String?
+  requestHash    String?
+  resultJson     String?
+  createdAt      DateTime           @default(now())
+
+  @@unique([actorId, idempotencyKey])
+  @@index([draftId, createdAt])
 }
 
 // ─── Finance Models ───────────────────────────────────────────────────────────
@@ -347,6 +478,7 @@ model KsefInvoice {
   costEvent CostEvent?
   parts     KsefInvoicePart[]
   auditLogs CostAuditLog[]
+  invoiceImportDraft InvoiceImportDraft?
 
   @@index([status])
   @@index([paymentStatus])

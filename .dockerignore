@@ -1,10 +1,33 @@
 node_modules
 .next
-.env.local
-*.db
-*.db-journal
-*.db-shm
-*.db-wal
+# Local secrets, including nested worker configuration. Keep templates only.
+**/.env
+**/.env.*
+!**/.env.example
+
+# Runtime databases and their sidecars, wherever local tools created them.
+**/*.db
+**/*.db-journal
+**/*.db-shm
+**/*.db-wal
+**/*.sqlite
+**/*.sqlite-*
+**/*.sqlite3
+**/*.sqlite3-*
+
+# Browser evidence and private runtime data must never enter COPY . . layers.
+**/test-results
+**/playwright-report
+/data
+/uploads
+/public/uploads
+/invoice-originals
+/invoice-processing
+/oauth
+/runtime
+/backups
+**/.codex
+
 __tests__
 e2e
 coverage

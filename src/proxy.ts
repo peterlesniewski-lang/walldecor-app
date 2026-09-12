@@ -30,10 +30,14 @@ function installerPathIsAllowed(pathname: string): boolean {
     || pathname === '/api/account/change-password'
 }
 
-// These APIs enforce their own session/key boundaries. Let them return JSON 401
-// (cashier) and validate the existing integration key (revenue import).
+// These APIs enforce their own fresh session/key boundaries and return JSON 401.
+// The private AI worker uses a dedicated narrow key, never a browser session.
 export function requiresProxySession(pathname: string): boolean {
   return pathname !== '/api/cashier' && pathname !== '/api/import/revenue'
+    && pathname !== '/api/ai/chat' && pathname !== '/api/knowledge/ai'
+    && !/^\/api\/finance\/invoice-import(?:\/|$)/.test(pathname)
+    && !/^\/api\/ai\/jobs(?:\/|$)/.test(pathname)
+    && !/^\/api\/internal\/ai-worker(?:\/|$)/.test(pathname)
 }
 
 export function installerBoundaryResponse(req: NextRequest, token: JWT | null) {

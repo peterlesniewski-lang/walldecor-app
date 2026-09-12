@@ -3,6 +3,7 @@ import { roundMoney } from '@/lib/finance/ksef-inbox'
 
 export interface KsefInvoiceForCostEvent {
   id: string
+  source: string
   currency: string
   originalCurrency?: string | null
   issueDate: Date
@@ -27,13 +28,20 @@ export interface KsefInvoiceForCostEvent {
 }
 
 export function buildCostEventDraftFromKsefInvoice(invoice: KsefInvoiceForCostEvent) {
+  if (invoice.source !== 'MANUAL' && invoice.source !== 'KSEF') {
+    throw new Error(`Unsupported invoice source: ${invoice.source}`)
+  }
   const isForeignCurrency = invoice.currency !== 'PLN'
   if (isForeignCurrency && invoice.reportingGrossAmount == null) {
     throw new Error('Faktura w walucie obcej wymaga ręcznego przeliczenia na PLN przed zatwierdzeniem.')
   }
   const reportingGrossAmount = roundMoney(invoice.reportingGrossAmount ?? invoice.grossAmount)
-  const reportingNetAmount = invoice.reportingNetAmount ?? invoice.netAmount
-  const reportingVatAmount = invoice.reportingVatAmount ?? invoice.vatAmount
+  const reportingNetAmount = isForeignCurrency
+    ? invoice.reportingNetAmount
+    : invoice.reportingNetAmount ?? invoice.netAmount
+  const reportingVatAmount = isForeignCurrency
+    ? invoice.reportingVatAmount
+    : invoice.reportingVatAmount ?? invoice.vatAmount
 
   const parts = invoice.parts.length > 0
     ? invoice.parts.map((part) => ({
@@ -61,7 +69,7 @@ export function buildCostEventDraftFromKsefInvoice(invoice: KsefInvoiceForCostEv
   if (!validation.ok) throw new Error(validation.error)
 
   return {
-    source: 'KSEF',
+    source: invoice.source,
     sourceInvoiceId: invoice.id,
     eventDate: invoice.issueDate,
     supplierName: invoice.supplierName,

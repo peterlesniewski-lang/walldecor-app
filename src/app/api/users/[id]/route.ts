@@ -38,6 +38,11 @@ const patchUserSchema = z.object({
   name: z.string().min(1).optional(),
 })
 
+const aiHistoryConflictMessage = 'Konto ma historię zadań AI. Zablokuj konto zamiast je usuwać.'
+async function hasAiHistory(ownerUserId: string) {
+  return Boolean(await prisma.aiJob.findFirst({ where: { ownerUserId }, select: { id: true } }))
+}
+
 export async function PATCH(
   req: NextRequest,
   { params }: { params: Promise<{ id: string }> }
@@ -132,6 +137,21 @@ export async function DELETE(
     return NextResponse.json({ error: 'Nie można usunąć konta powiązanego z pracownikiem.' }, { status: 400 })
   }
 
-  await prisma.user.delete({ where: { id } })
+  if (await hasAiHistory(id)) {
+    return NextResponse.json({ error: aiHistoryConflictMessage }, { status: 409 })
+  }
+
+  try {
+    await prisma.user.delete({ where: { id } })
+  } catch (error) {
+    // The precheck is advisory: a concurrent enqueue can commit before DELETE.
+    // RESTRICT is the final fence; preserve both records and return a conflict.
+    if (error && typeof error === 'object' && 'code' in error && error.code === 'P2003') {
+      const message = await hasAiHistory(id) ? aiHistoryConflictMessage
+        : 'Konto ma powiązane dane. Zablokuj konto zamiast je usuwać.'
+      return NextResponse.json({ error: message }, { status: 409 })
+    }
+    throw error
+  }
   return NextResponse.json({ success: true })
 }

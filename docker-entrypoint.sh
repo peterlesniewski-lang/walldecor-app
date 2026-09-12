@@ -3,6 +3,15 @@ set -eu
 
 echo "WallDecor — starting..."
 
+SKIP_SEED="${WALLDECOR_SKIP_SEED-false}"
+case "$SKIP_SEED" in
+  true|false) ;;
+  *)
+    echo "ERROR: WALLDECOR_SKIP_SEED must be true or false." >&2
+    exit 1
+    ;;
+esac
+
 if [ -z "${DATABASE_URL:-}" ]; then
   echo "ERROR: DATABASE_URL is required." >&2
   exit 1
@@ -24,6 +33,7 @@ case "$DB_PATH" in
   *) DB_PATH="$(pwd)/prisma/$DB_PATH" ;;
 esac
 
+USER_TABLE_COUNT=0
 if [ -f "$DB_PATH" ]; then
   BACKUP_DIR="$(dirname "$DB_PATH")/backups"
   BACKUP_FILE="$BACKUP_DIR/walldecor-$(date +%Y%m%d-%H%M%S)-$$.db"
@@ -64,11 +74,20 @@ if [ -f "$DB_PATH" ]; then
 
 fi
 
+if [ "$SKIP_SEED" = true ] && [ "$USER_TABLE_COUNT" -eq 0 ]; then
+  echo "ERROR: Skipping seed requires an existing non-empty SQLite database with successful Prisma migration history." >&2
+  exit 1
+fi
+
 echo "Running database migrations (migrate deploy)..."
 node ./node_modules/prisma/build/index.js migrate deploy
 
-echo "Running database seed..."
-./node_modules/.bin/tsx prisma/seed.ts
+if [ "$SKIP_SEED" = true ]; then
+  echo "Skipping database seed (WALLDECOR_SKIP_SEED=true)."
+else
+  echo "Running database seed..."
+  ./node_modules/.bin/tsx prisma/seed.ts
+fi
 
 echo "Starting Next.js server..."
 exec node .next/standalone/server.js
