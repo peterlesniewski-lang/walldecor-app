@@ -4,9 +4,19 @@ import { readdir } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { describe, expect, it } from 'vitest'
-import { createInvoiceEurUiFixtureBytes, invoiceEurUiFixtureFacts, parseInvoiceEurUiArgs } from '../../../scripts/validate-invoice-eur-ui.mjs'
+import { createInvoiceEurUiFixtureBytes, invoiceEurUiBrowserLaunchOptions, invoiceEurUiFixtureFacts, parseInvoiceEurUiArgs } from '../../../scripts/validate-invoice-eur-ui.mjs'
+import { chatOAuthBrowserLaunchOptions } from '../../../scripts/validate-ai-chat-oauth.mjs'
 
 describe('isolated EUR browser acceptance guard', () => {
+  it('uses full Chromium for native PDF while preserving the existing private browser environment', () => {
+    const directory = '/private/tmp/synthetic-eur-browser'
+    const options = invoiceEurUiBrowserLaunchOptions(directory)
+    expect(options).toEqual({ ...chatOAuthBrowserLaunchOptions(directory), channel: 'chromium' })
+    expect(options.env.HOME).toBe(directory)
+    expect(options.env).not.toHaveProperty('DATABASE_URL')
+    expect(options.env).not.toHaveProperty('NEXTAUTH_SECRET')
+    expect(options.headless).toBe(true)
+  })
   it('creates a genuine two-page paid EUR no-VAT PDF from the same facts used by the form', async () => {
     const facts = invoiceEurUiFixtureFacts
     const fixture = await createInvoiceEurUiFixtureBytes()

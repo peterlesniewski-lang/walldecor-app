@@ -57,6 +57,9 @@ export function parseInvoiceEurUiArgs(args) {
   check(Array.isArray(args) && args.length === 1 && args[0] === '--confirm-synthetic-local', 'SYNTHETIC_LOCAL_CONFIRMATION_REQUIRED')
   return { syntheticLocal: true }
 }
+export function invoiceEurUiBrowserLaunchOptions(directory) {
+  return { ...chatOAuthBrowserLaunchOptions(directory), channel: 'chromium' }
+}
 
 export async function runInvoiceEurUiGate(args) {
   // Guard before imports, directories, processes or database access.
@@ -166,7 +169,7 @@ export async function runInvoiceEurUiGate(args) {
       }, 'OWNED_NEXT_SERVER_UNAVAILABLE')
     }
     await startServer()
-    browser = await chromium.launch(chatOAuthBrowserLaunchOptions(directory))
+    browser = await chromium.launch(invoiceEurUiBrowserLaunchOptions(directory))
     const context = await browser.newContext({ viewport: { width: 1440, height: 1100 }, acceptDownloads: true })
     page = await context.newPage()
     page.setDefaultTimeout(20_000)
