@@ -91,8 +91,11 @@ export function createInvoiceImportClient(fetcher: typeof fetch = fetch) {
     try {
       if (!Number.isSafeInteger(expected.byteSize) || expected.byteSize < 1 || expected.byteSize > INVOICE_ATTACHMENT_MAX_BYTES) throw new Error()
       const response = await fetcher(invoiceOriginalUrl(draftId), { cache: 'no-store', credentials: 'same-origin', signal: controller.signal })
-      if (!response.ok || response.headers.get('content-type') !== expected.mimeType
-        || response.headers.get('content-length') !== String(expected.byteSize)) {
+      const length = response.headers.get('content-length')
+      const encoding = response.headers.get('content-encoding')?.trim().toLowerCase()
+      const identity = !encoding || encoding === 'identity'
+      const badLength = identity && length !== null && length !== String(expected.byteSize)
+      if (!response.ok || response.headers.get('content-type') !== expected.mimeType || badLength) {
         void response.body?.cancel().catch(() => {})
         throw new Error()
       }

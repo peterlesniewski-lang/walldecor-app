@@ -9,6 +9,21 @@ const headers = { 'content-type': 'image/png', 'content-length': '4' }
 afterEach(() => vi.useRealTimers())
 
 describe('invoice browser transport failures', () => {
+  it.each<Record<string, string>>([
+    { 'content-type': 'image/png' },
+    { ...headers, 'content-encoding': 'identity' },
+    { ...headers, 'content-encoding': 'gzip', 'content-length': '24' },
+    { ...headers, 'content-encoding': 'br', 'content-length': '8' },
+    { ...headers, 'content-encoding': 'zstd', 'content-length': '13' },
+    { ...headers, 'content-encoding': ' GZip ', 'content-length': '24' },
+  ])('verifies decoded original bytes independently of transfer length (%#)', async (responseHeaders) => {
+    // Fetch exposes decoded bytes while retaining the encoded transport headers.
+    const client = createInvoiceImportClient(async () => new Response(bytes, { headers: responseHeaders }))
+    const original = await client.original('draft', expected)
+    expect(original.type).toBe(expected.mimeType)
+    expect(new Uint8Array(await original.arrayBuffer())).toEqual(bytes)
+  })
+
   it('rejects malformed KSeF detail and resolution identities instead of claiming success', async () => {
     const input = { reconciliationId: 'link', expectedDraftVersion: 2, expectedLinkVersion: 1, action: 'KEEP_LOCAL' as const, idempotencyKey: 'same-key' }
     const result = { draftId: 'draft', version: 3, reconciliationId: 'link', reconciliationVersion: 2, outcome: 'KEPT_LOCAL' }
@@ -31,6 +46,8 @@ describe('invoice browser transport failures', () => {
     { body: Uint8Array.of(1, 2, 3, 4, 5), headers },
     { body: bytes, headers: { ...headers, 'content-type': 'text/html' } },
     { body: bytes, headers: { ...headers, 'content-length': '5' } },
+    { body: bytes, headers: { ...headers, 'content-encoding': 'identity', 'content-length': '5' } },
+    { body: bytes, headers: { ...headers, 'content-encoding': ' IDENTITY ', 'content-length': '5' } },
     { body: Uint8Array.of(5, 6, 7, 8), headers },
   ])('never returns unverified original bytes (%#)', async (response) => {
     const client = createInvoiceImportClient(vi.fn(async () => new Response(response.body, { headers: response.headers })))
