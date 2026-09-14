@@ -17,6 +17,7 @@ RUN npm ci --omit=dev --no-audit --no-fund \
 COPY src/lib/ai/codex-policy.ts src/lib/ai/codex-runner.ts src/lib/ai/contracts.ts src/lib/ai/prompts.ts ./src/lib/ai/
 COPY src/lib/ai/worker-client.ts src/lib/ai/worker-consumer.ts src/lib/ai/queue-errors.ts ./src/lib/ai/
 COPY src/lib/invoice-import/contracts.ts src/lib/invoice-import/document-processor.ts ./src/lib/invoice-import/
+COPY src/lib/invoice-import/eur-conversion.ts ./src/lib/invoice-import/
 COPY scripts/validate-ai-codex.ts scripts/run-ai-worker.ts scripts/smoke-ai-oauth.ts ./scripts/
 COPY worker/ai/catalog.json ./worker/ai/catalog.json
 COPY --chmod=755 worker/ai/entrypoint.sh ./worker/ai/entrypoint.sh

@@ -72,16 +72,29 @@ publiczny podgląd po wdrożeniu pozostaje częścią końcowej bramki.
 
 Kontrakt metadanych nazwany `conversion` jest opcjonalny/null dla starych szkiców. Zawiera `mode: 'NBP' | 'MANUAL_RATE' | 'MANUAL_AMOUNT'`, dodatni kurs dziesiętny w `rate` albo null dla ręcznej kwoty, `paymentDate`, `rateDate`, `tableNumber`. Tylko NBP ma numer tabeli i datę publikacji. Kwoty pozostają w `reportingGross`, `reportingNet`, `reportingVat`. AI nie dostaje prawa do modyfikacji metadanych.
 
-- [ ] RED: testy rachunku: `360.20 × 4.25 = 1530.85`, `0.01 × 4.255 = 0.04`, brak netto/VAT pozostaje null; kurs zerowy/ujemny/nieskończony/niepoprawny jest odrzucany. BigInt lub równoważne dokładne dziesiętne mnożenie, bez błędów binarnych float przy zaokrągleniu half-up do groszy.
-- [ ] GREEN: schema metadanych, parser kursu i funkcja `convertEurAmounts` używane przez serwer i formularz. Ograniczyć długość i precyzję wejścia, sprawdzać bezpieczny zakres groszy. Eksporty i argumenty udokumentować w pliku testów.
-- [ ] RED: test NBP z wstrzykiwanym Fetch: dla zapłaty 2026-09-14 wynik pochodzi z 2026-09-11; wynik z dnia zapłaty, inna waluta/tabela, niepełna odpowiedź, timeout, błędna/future data nie mogą dać ważnego kursu.
-- [ ] GREEN: `getNbpEurRate(paymentDate, dependencies)` pobiera wyłącznie stały host i ścieżkę `https://api.nbp.pl/api/exchangerates/rates/a/eur/{start}/{end}/?format=json`. `end` to dzień przed zapłatą, `start` to 31 dni wcześniej. Ograniczony timeout i rozmiar odpowiedzi, brak przekierowań na obcy host, walidacja Zod, wybór najpóźniejszej poprawnej tabeli. Dziś wyznaczać w strefie Europe/Warsaw. Brak wyników to czytelny błąd z możliwością ręcznego kursu, nie kurs dzisiejszy.
-- [ ] RED: test endpointu: niezalogowany 401, nieaktywny/inny niż ADMIN 403, poprawna data daje JSON kursu, nieprawidłowa 422, niedostępny NBP bez surowych szczegółów 502/503. Endpoint `GET ?paymentDate=YYYY-MM-DD` nie przyjmuje dowolnego URL ani danych faktury.
-- [ ] GREEN: użyć istniejącego `respond`/`actor` w `http.ts`; route Node.js, force-dynamic, wywołuje handler. Klient waliduje wynik przed użyciem. Wstrzykiwanie pobierania kursu w handlerach ułatwia test bez prawdziwego NBP.
-- [ ] RED: integracyjne testy zapisu i zatwierdzania sprawdzają metadane po odczycie, audyt, kontrolę wersji, unieważnienie potwierdzenia po zmianie `paidAt`, kursu i kwot PLN; niezgodna kwota wyliczona nie może zostać zatwierdzona. Stary szkic bez metadanych nadal działa.
-- [ ] GREEN: rozszerzyć opcjonalny kontrakt i listę pól chronionych. W `editDraft` walidować spójność merged danych z metadanymi; zapis nieukończonego szkicu dozwolony, zatwierdzenie wymaga kompletnej zgodnej podstawy. `approval-policy` ponownie sprawdza kurs i wynik, aby ominiecie UI nie ominęło kontroli. Przeliczenie NBP nie może mieć fałszywie oznaczonej daty/tabeli; weryfikować źródło po stronie serwera przed przyjęciem nowej potwierdzonej podstawy, poza długą transakcją DB. Nie pobierać kursu przy każdym odczycie ani przeliczać już zatwierdzonych kosztów.
-- [ ] RED/GREEN: przyjęcie danych KSeF ze zmienionym `paidAt` unieważnia istniejące potwierdzenie, tak jak zmiana kwot. Test usługi zachowuje ślad tej zmiany w audycie; metadane nie znikają bez decyzji operatora.
-- [ ] Uruchomić testy nowych modułów oraz integracyjne testy zmienionych usług. Commit tylko własnych plików. Przegląd zgodności i jakości.
+- [x] RED: testy rachunku: `360.20 × 4.25 = 1530.85`, `0.01 × 4.255 = 0.04`, brak netto/VAT pozostaje null; kurs zerowy/ujemny/nieskończony/niepoprawny jest odrzucany. BigInt lub równoważne dokładne dziesiętne mnożenie, bez błędów binarnych float przy zaokrągleniu half-up do groszy.
+- [x] GREEN: schema metadanych, parser kursu i funkcja `convertEurAmounts` używane przez serwer i formularz. Ograniczyć długość i precyzję wejścia, sprawdzać bezpieczny zakres groszy. Eksporty i argumenty udokumentować w pliku testów.
+- [x] RED: test NBP z wstrzykiwanym Fetch: dla zapłaty 2026-09-14 wynik pochodzi z 2026-09-11; wynik z dnia zapłaty, inna waluta/tabela, niepełna odpowiedź, timeout, błędna/future data nie mogą dać ważnego kursu.
+- [x] GREEN: `getNbpEurRate(paymentDate, dependencies)` pobiera wyłącznie stały host i ścieżkę `https://api.nbp.pl/api/exchangerates/rates/a/eur/{start}/{end}/?format=json`. `end` to dzień przed zapłatą, `start` to 31 dni wcześniej. Ograniczony timeout i rozmiar odpowiedzi, brak przekierowań na obcy host, walidacja Zod, wybór najpóźniejszej poprawnej tabeli. Dziś wyznaczać w strefie Europe/Warsaw. Brak wyników to czytelny błąd z możliwością ręcznego kursu, nie kurs dzisiejszy.
+- [x] RED: test endpointu: niezalogowany 401, nieaktywny/inny niż ADMIN 403, poprawna data daje JSON kursu, nieprawidłowa 422, niedostępny NBP bez surowych szczegółów 502/503. Endpoint `GET ?paymentDate=YYYY-MM-DD` nie przyjmuje dowolnego URL ani danych faktury.
+- [x] GREEN: użyć istniejącego `respond`/`actor` w `http.ts`; route Node.js, force-dynamic, wywołuje handler. Klient waliduje wynik przed użyciem. Wstrzykiwanie pobierania kursu w handlerach ułatwia test bez prawdziwego NBP.
+- [x] RED: integracyjne testy zapisu i zatwierdzania sprawdzają metadane po odczycie, audyt, kontrolę wersji, unieważnienie potwierdzenia po zmianie `paidAt`, kursu i kwot PLN; niezgodna kwota wyliczona nie może zostać zatwierdzona. Stary szkic bez metadanych nadal działa.
+- [x] GREEN: rozszerzyć opcjonalny kontrakt i listę pól chronionych. W `editDraft` walidować spójność merged danych z metadanymi; zapis nieukończonego szkicu dozwolony, zatwierdzenie wymaga kompletnej zgodnej podstawy. `approval-policy` ponownie sprawdza kurs i wynik, aby ominiecie UI nie ominęło kontroli. Przeliczenie NBP nie może mieć fałszywie oznaczonej daty/tabeli; weryfikować źródło po stronie serwera przed przyjęciem nowej potwierdzonej podstawy, poza długą transakcją DB. Nie pobierać kursu przy każdym odczycie ani przeliczać już zatwierdzonych kosztów.
+- [x] RED/GREEN: przyjęcie danych KSeF ze zmienionym `paidAt` unieważnia istniejące potwierdzenie, tak jak zmiana kwot. Test usługi zachowuje ślad tej zmiany w audycie; metadane nie znikają bez decyzji operatora.
+- [x] Uruchomić testy nowych modułów oraz integracyjne testy zmienionych usług. Commit tylko własnych plików. Przegląd zgodności i jakości.
+
+DOWÓD Task 2: commit `27c53dd`; niezależne przeglądy zgodności i jakości PASS.
+Własny pełny zestaw kontrolera 2026-09-14 15:09 CEST: 34 pliki, 620/620 PASS.
+Rzeczywisty moduł NBP oraz połączenie z kontenera produkcyjnego zwróciły
+kurs 4.3228 z 2026-09-11, tabela 177/A/NBP/2026, dla zapłaty 2026-09-14.
+Brak migracji bazy i nowych zależności. To nie jest jeszcze wdrożenie funkcji.
+
+Preflight wykrył też zależność pakowania workera: nowy kontrakt importuje
+`eur-conversion.ts`. Wymagane jest dopisanie tego jednego modułu do COPY oraz
+restrykcyjnej allowlisty Dockerfile, bez restartu obecnego workera i bez dostępu
+do bazy. Nowy test importuje rzeczywistą paczkę z odizolowanego katalogu:
+RED `Cannot find module './eur-conversion'`, GREEN 7/7; zestaw workera i
+konfiguracji wdrożenia 103/103 PASS. To nie zastępuje budowy obrazu Linux.
 
 ## Task 3 — Operator przelicza, poprawia, zapisuje i ponownie otwiera
 
@@ -103,6 +116,20 @@ Kontrakt metadanych nazwany `conversion` jest opcjonalny/null dla starych szkic�
 - [ ] Commit tylko własnych plików. Przegląd specyfikacji i jakości.
 
 ## Końcowa bramka i wdrożenie
+
+Granice wdrożenia: aktualizacja istniejącej aplikacji WallDecor-App w kontekście
+`wallvps`, UUID `pwc0sk0w8cw8k8wkgwokgogk`, repozytorium produkcyjne `main`.
+Nie zmieniamy zmiennych, domen, wolumenów, seedowania ani procesu AI.
+Przed push ponownie odczytać zdalny commit, a przed restartem wykonać i
+sprawdzić prywatny snapshot SQLite oraz kopię oryginałów. Startup dodatkowo
+wykonuje `.backup` i `migrate deploy`, z potwierdzonym `WALLDECOR_SKIP_SEED=true`.
+
+Rollback wymaga uwagi: nowe pole `conversion` w JSON i liście pól ręcznych
+jest nieznane starym ścisłym parserom. Po zapisaniu nowych danych nie wolno
+po prostu uruchomić starego obrazu ani przywrócić całej bazy, tracąc nowsze
+zmiany użytkownika. Preferowana naprawa to kolejny kompatybilny commit.
+Powrót do starego kodu jest dopuszczalny tylko po potwierdzeniu braku zapisów
+nowego formatu; odtwarzanie danych wymaga osobnej decyzji operatora.
 
 - [ ] `npm test -- __tests__/unit/invoice-import __tests__/integration/invoice-import` — wszystko zielone.
 - [ ] `npm run typecheck:app` i `npm run build` — poprawny rzeczywisty build Next.js 16.

@@ -1,7 +1,9 @@
 // @vitest-environment node
-import { mkdir, readFile, readdir } from 'node:fs/promises'
+import { copyFile, mkdir, readFile, readdir, symlink } from 'node:fs/promises'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { createHash } from 'node:crypto'
+import { execFile } from 'node:child_process'
+import { promisify } from 'node:util'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import sharp from 'sharp'
@@ -59,6 +61,31 @@ describe('private AI worker startup', () => {
     expect(dockerfile).toContain('COPY src/lib/invoice-import/contracts.ts src/lib/invoice-import/document-processor.ts ./src/lib/invoice-import/')
     expect(dockerignore).toContain('!src/lib/invoice-import/contracts.ts')
     expect(dockerignore).toContain('!src/lib/invoice-import/document-processor.ts')
+  })
+
+  it('loads invoice contracts using only source files shipped by the worker image', async () => {
+    const root = mkdtempSync(path.join(tmpdir(), 'walldecor-worker-package-'))
+    try {
+      const dockerfile = await readFile('worker/ai/Dockerfile', 'utf8')
+      const allowed = new Set((await readFile('worker/ai/Dockerfile.dockerignore', 'utf8')).split(/\r?\n/))
+      for (const line of dockerfile.split(/\r?\n/).filter((line) => line.startsWith('COPY src/'))) {
+        const [, ...parts] = line.split(/\s+/)
+        const destination = parts.pop()!
+        await mkdir(path.join(root, destination), { recursive: true })
+        for (const source of parts) {
+          expect(allowed.has(`!${source}`), `${source} must be in the restricted build context`).toBe(true)
+          await copyFile(source, path.join(root, destination, path.basename(source)))
+        }
+      }
+      await symlink(path.join(process.cwd(), 'node_modules'), path.join(root, 'node_modules'), 'dir')
+      const { stdout } = await promisify(execFile)(process.execPath, [
+        '--preserve-symlinks', '--import', 'tsx', '--input-type=module', '--eval',
+        "const m = await import('./src/lib/invoice-import/contracts.ts'); const c = m.default ?? m; console.log(c.invoiceDraftDataSchema.safeParse({currency:'EUR'}).success)",
+      ], { cwd: root, timeout: 15_000, env: { PATH: process.env.PATH } })
+      expect(stdout.trim()).toBe('true')
+    } finally {
+      rmSync(root, { recursive: true, force: true })
+    }
   })
 
   it('downloads and renders invoice bytes, awaits the model callback, then removes document images', async () => {

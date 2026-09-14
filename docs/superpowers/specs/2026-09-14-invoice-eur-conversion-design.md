@@ -1,6 +1,6 @@
 # Faktury EUR: przeliczenie PLN i czytelne kwoty
 
-Status: uzgodniony kierunek, specyfikacja do przeglądu przed implementacją.
+Status: zakres zatwierdzony przez użytkownika 2026-09-14; implementacja i odbiór w toku.
 Data: 2026-09-14.
 
 ## Cel i zakres

@@ -18,6 +18,7 @@
 !src/lib/ai/worker-consumer.ts
 !src/lib/invoice-import
 !src/lib/invoice-import/contracts.ts
+!src/lib/invoice-import/eur-conversion.ts
 !src/lib/invoice-import/document-processor.ts
 !scripts
 !scripts/validate-ai-codex.ts
