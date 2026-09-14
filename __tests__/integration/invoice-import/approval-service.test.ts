@@ -107,6 +107,23 @@ afterAll(async () => {
 })
 
 describe('invoice draft approval service', () => {
+  it('persists an unfinished manual rate across reconnect and rejects both reconfirmation and approval', async () => {
+    const conversion = { mode: 'MANUAL_RATE', paymentDate: null, rate: '4.25', rateDate: null, tableNumber: null }
+    const draft = await createDraft(validData({ currency: 'EUR', gross: 360.2, net: null, vat: null,
+      conversion, reportingGross: 1530.85, conversionConfirmed: true, conversionNote: 'Kurs ręczny 4.25',
+    }))
+    await editDraft(db, 'admin', draft.id, 1, { conversion: { ...conversion, rate: null }, reportingGross: null,
+      reportingNet: null, reportingVat: null, conversionConfirmed: false, conversionNote: 'Uzupełnij kurs ręczny',
+    })
+    await db.$disconnect()
+    db = client()
+    const saved = JSON.parse((await db.invoiceImportDraft.findUniqueOrThrow({ where: { id: draft.id } })).dataJson)
+    expect(saved).toMatchObject({ conversion: { ...conversion, rate: null }, reportingGross: null, conversionConfirmed: false })
+    await expect(editDraft(db, 'admin', draft.id, 2, { conversionConfirmed: true, reportingGross: 1530.85 })).rejects.toMatchObject({ status: 422 })
+    await expect(approveInvoiceDraft(db, 'admin', draft.id, approveInput('unfinished-rate-1', 2))).rejects.toMatchObject({ code: 'APPROVAL_VALIDATION_FAILED' })
+    expect(await db.costEvent.count()).toBe(0)
+    expect(await db.ksefInvoice.count()).toBe(0)
+  })
   it('saves and approves structured manual EUR conversion offline with real PLN cost', async () => {
     const draft = await createDraft(validData({ currency: 'EUR', gross: 360.2, net: null, vat: null }))
     const conversion = { mode: 'MANUAL_RATE', paymentDate: null, rate: '4.25', rateDate: null, tableNumber: null }

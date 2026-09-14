@@ -40,7 +40,7 @@ function basisNote(values: InvoiceReviewFormValues, conversion: InvoiceEurConver
   const date = values.paidAt ? `Data zapłaty: ${values.paidAt}.` : 'Data zapłaty nieznana.'
   if (conversion?.mode === 'NBP') return `NBP, tabela ${conversion.tableNumber} z ${conversion.rateDate}; 1 EUR = ${conversion.rate} PLN. ${date}`
   if (values.conversionMode === 'MANUAL_AMOUNT') return `Kwota PLN ustalona ręcznie. ${date}`
-  if (conversion?.mode === 'MANUAL_RATE') return `Kurs ręczny: 1 EUR = ${conversion.rate} PLN. ${date}`
+  if (conversion?.mode === 'MANUAL_RATE' && conversion.rate != null) return `Kurs ręczny: 1 EUR = ${conversion.rate} PLN. ${date}`
   return 'Kurs ręczny — uzupełnij poprawny kurs przed potwierdzeniem.'
 }
 function initiallyOwnedNote(values: InvoiceReviewFormValues): string | null {
@@ -71,7 +71,14 @@ export function InvoiceEurConversion({ form, disabled, scopeKey, onBasisChange, 
       form.setValue('conversion', conversion, { shouldDirty: true })
       onBasisChange()
     }
-    if (conversion && conversion.mode !== 'MANUAL_AMOUNT') {
+    // Incomplete rate modes must never round-trip as legacy manual PLN values.
+    // Manual-amount mode (including legacy values) remains entirely untouched.
+    if (current.conversionMode !== 'MANUAL_AMOUNT' && (!conversion || conversion.rate == null)) {
+      for (const name of REPORTING) {
+        if (form.getValues(name) !== '') { form.setValue(name, '', { shouldDirty: true }); onBasisChange() }
+      }
+    }
+    if (conversion && conversion.mode !== 'MANUAL_AMOUNT' && conversion.rate != null) {
       try {
         const gross = invoiceReviewMoneyValue(current.gross)
         if (gross != null) {
@@ -105,7 +112,7 @@ export function InvoiceEurConversion({ form, disabled, scopeKey, onBasisChange, 
     if (current.conversionMode === 'MANUAL_AMOUNT') return { mode: 'MANUAL_AMOUNT', paymentDate: date, rate: null, rateDate: null, tableNumber: null }
     try {
       return { mode: 'MANUAL_RATE', paymentDate: date, rate: parseCanonicalRate(current.conversionRate.replace(',', '.')), rateDate: null, tableNumber: null }
-    } catch { return null }
+    } catch { return { mode: 'MANUAL_RATE', paymentDate: date, rate: null, rateDate: null, tableNumber: null } }
   }, [form])
 
   useEffect(() => {

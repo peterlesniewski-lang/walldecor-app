@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from 'vitest'
 import { InvoiceReviewEditor, type InvoiceReviewEditorProps } from '@/components/invoice-import/invoice-review-editor'
 import type { InvoiceDraftData } from '@/lib/invoice-import/contracts'
 import type { NbpEurQuote } from '@/lib/invoice-import/eur-conversion'
+import { validateInvoiceApproval } from '@/lib/invoice-import/approval-policy'
 
 const quote: NbpEurQuote = { currency: 'EUR', paymentDate: '2026-09-14', rate: '4.3228', rateDate: '2026-09-11', tableNumber: '177/A/NBP/2026' }
 const manual = { mode: 'MANUAL_RATE' as const, paymentDate: null, rate: '4.25', rateDate: null, tableNumber: null }
@@ -201,15 +202,56 @@ describe('EUR review operator flow', () => {
   })
 
   it.each(['0', '-1', 'Infinity', 'NaN', '', '4,2,5'])('does not approve stale metadata with invalid manual rate %s but permits saving an unconfirmed draft', async (rate) => {
-    const props = input({ conversion: manual, reportingGross: 1530.85, conversionConfirmed: true })
-    render(<InvoiceReviewEditor {...props} />)
+    const props = input({ conversion: manual, reportingGross: 1530.85, conversionConfirmed: true,
+      net: 360.2, vat: 0, reportingNet: 1530.85, reportingVat: 0,
+      documentType: 'INVOICE', supplierName: 'Supplier', taxId: 'DE123456789', invoiceNumber: 'EUR-1', issueDate: '2026-09-10',
+      paymentStatus: 'UNPAID', costCenterId: 'JAG', tagIds: ['fixed'], conversionNote: 'Kurs ręczny 4.25',
+    })
+    const view = render(<InvoiceReviewEditor {...props} />)
     edit('1 EUR = … PLN', rate)
     expect(confirmation().checked).toBe(false)
     expect(confirmation().disabled).toBe(true)
     click('Zatwierdź i następna')
     expect(props.onApprove).not.toHaveBeenCalled()
     click('Zapisz szkic')
-    await waitFor(() => expect(props.onSave).toHaveBeenCalledWith(expect.objectContaining({ conversion: null, conversionConfirmed: false }), 1))
+    await waitFor(() => expect(props.onSave).toHaveBeenCalledOnce())
+    const savedPatch = vi.mocked(props.onSave).mock.calls[0][0]
+    expect(savedPatch).toMatchObject({ conversion: { ...manual, rate: null }, reportingGross: null, reportingNet: null, reportingVat: null, conversionConfirmed: false })
+    const saved = { ...props.draft.data, ...savedPatch }
+    view.unmount()
+    const reopened = input(saved)
+    render(<InvoiceReviewEditor {...reopened} />)
+    expect(screen.getByRole('button', { name: 'Wpisz kurs ręcznie' }).getAttribute('aria-pressed')).toBe('true')
+    expect(field('1 EUR = … PLN').value).toBe('')
+    expect(field('Brutto w PLN').value).toBe('')
+    expect(field('Netto w PLN').value).toBe('')
+    expect(field('VAT w PLN').value).toBe('')
+    expect(confirmation().disabled).toBe(true)
+    expect(confirmation().checked).toBe(false)
+    click('Zatwierdź i następna')
+    expect(reopened.onApprove).not.toHaveBeenCalled()
+    expect(reopened.eurRate).not.toHaveBeenCalled()
+    expect(validateInvoiceApproval({ ...saved, reportingGross: 1530.85, conversionConfirmed: true }).ok).toBe(false)
+  })
+
+  it('saves failed NBP retry without stale PLN and reopens as incomplete NBP instead of legacy manual amount', async () => {
+    const props = input({ paidAt: quote.paymentDate, conversion: { mode: 'NBP', paymentDate: quote.paymentDate, rate: quote.rate,
+      rateDate: quote.rateDate, tableNumber: quote.tableNumber }, reportingGross: 1557.07, conversionConfirmed: true,
+    }, { eurRate: vi.fn(async () => { throw new Error('offline') }) })
+    const view = render(<InvoiceReviewEditor {...props} />)
+    click('Kurs NBP')
+    await waitFor(() => expect(screen.getByText(/Nie udało się pobrać kursu NBP/)).toBeTruthy())
+    click('Zapisz szkic')
+    await waitFor(() => expect(props.onSave).toHaveBeenCalledOnce())
+    const patch = vi.mocked(props.onSave).mock.calls[0][0]
+    expect(patch).toMatchObject({ conversion: null, reportingGross: null, conversionConfirmed: false })
+    view.unmount()
+    const reopened = input({ ...props.draft.data, ...patch }, { eurRate: props.eurRate })
+    render(<InvoiceReviewEditor {...reopened} />)
+    expect(screen.getByRole('button', { name: 'Kurs NBP' }).getAttribute('aria-pressed')).toBe('true')
+    expect(field('Brutto w PLN').value).toBe('')
+    expect(confirmation().disabled).toBe(true)
+    await waitFor(() => expect(screen.getByText(/Nie udało się pobrać kursu NBP/)).toBeTruthy())
   })
 
   it('reopens saved manual and legacy amounts without fetching or overwriting them', () => {

@@ -54,7 +54,8 @@ const rateSchema = z.string().refine((value) => {
 const tableSchema = z.string().regex(/^\d{3}\/A\/NBP\/\d{4}$/)
 export const invoiceEurConversionSchema = z.discriminatedUnion('mode', [
   z.strictObject({ mode: z.literal('NBP'), paymentDate: z.iso.date(), rate: rateSchema, rateDate: z.iso.date(), tableNumber: tableSchema }),
-  z.strictObject({ mode: z.literal('MANUAL_RATE'), paymentDate: z.iso.date().nullable(), rate: rateSchema, rateDate: z.null(), tableNumber: z.null() }),
+  // A null manual rate is an unfinished draft, not a manual PLN amount.
+  z.strictObject({ mode: z.literal('MANUAL_RATE'), paymentDate: z.iso.date().nullable(), rate: rateSchema.nullable(), rateDate: z.null(), tableNumber: z.null() }),
   z.strictObject({ mode: z.literal('MANUAL_AMOUNT'), paymentDate: z.iso.date().nullable(), rate: z.null(), rateDate: z.null(), tableNumber: z.null() }),
 ]).refine((value) => value.mode !== 'NBP' || (value.rateDate < value.paymentDate
   && value.tableNumber.endsWith(value.rateDate.slice(0, 4))), 'Nieprawidłowa data lub tabela NBP.')
@@ -92,7 +93,7 @@ export function isValidConfirmedEurConversion(data: {
   if (data.reportingGross == null || amounts.some((amount) => amount != null
     && (!Number.isFinite(amount) || amount < 0 || amount > Number.MAX_SAFE_INTEGER / 100))) return false
   if (conversion.mode === 'MANUAL_AMOUNT') return true
-  if (data.gross == null) return false
+  if (data.gross == null || conversion.rate == null) return false
   try {
     const expected = convertEurAmounts({ gross: data.gross, net: data.net, vat: data.vat }, conversion.rate)
     return Object.entries(expected).every(([field, amount]) => (data[field as keyof typeof expected] ?? null) === amount)
