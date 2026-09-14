@@ -3,6 +3,35 @@ import { invoiceDataToForm, invoiceFormPatch, invoiceReviewFormSchema } from '@/
 import { invoiceClassificationHint } from '@/lib/invoice-import/classification-hint'
 
 describe('invoice reviewer form conversion', () => {
+  it('roundtrips structured conversion while keeping UI-only rate text out of the API patch', () => {
+    const conversion = { mode: 'MANUAL_RATE' as const, paymentDate: null, rate: '4.25', rateDate: null, tableNumber: null }
+    const initial = invoiceDataToForm({ currency: 'EUR', gross: 360.2, reportingGross: 1530.85, conversion })
+    expect(initial).toMatchObject({ conversion, conversionMode: 'MANUAL_RATE', conversionRate: '4.25' })
+    expect(invoiceFormPatch(initial, initial)).toEqual({})
+    expect(invoiceFormPatch(initial, { ...initial, conversionRate: '4,25' })).toEqual({})
+    expect(invoiceFormPatch(initial, { ...initial, conversion: null, conversionRate: 'oops', conversionConfirmed: false })).toEqual({ conversion: null })
+  })
+
+  it('defaults legacy reporting to manual amount and new EUR drafts to NBP without inventing metadata', () => {
+    expect(invoiceDataToForm({ currency: 'EUR', reportingGross: 0 })).toMatchObject({ conversionMode: 'MANUAL_AMOUNT', conversion: null })
+    expect(invoiceDataToForm({ currency: 'EUR' })).toMatchObject({ conversionMode: 'NBP', conversionRate: '', conversion: null })
+  })
+
+  it.each([{ reportingNet: 1562.94 }, { reportingVat: 0 }])('protects any legacy manual reporting amount even when gross is missing', (data) => {
+    expect(invoiceDataToForm({ currency: 'EUR', ...data })).toMatchObject({ conversionMode: 'MANUAL_AMOUNT', conversion: null })
+  })
+
+  it('invalidates confirmation for paidAt, metadata and PLN changes, and refuses invalid raw rates when confirmed', () => {
+    const conversion = { mode: 'MANUAL_RATE' as const, paymentDate: null, rate: '4.25', rateDate: null, tableNumber: null }
+    const initial = invoiceDataToForm({ currency: 'EUR', gross: 100, reportingGross: 425, conversion, conversionConfirmed: true })
+    for (const changes of [{ paidAt: '2026-09-14' }, { reportingGross: '426' }, { conversion: { ...conversion, rate: '4.26' } }]) {
+      expect(invoiceFormPatch(initial, { ...initial, ...changes, conversionConfirmed: false }).conversionConfirmed).toBe(false)
+    }
+    for (const conversionRate of ['0', 'Infinity', 'oops', '']) {
+      expect(invoiceReviewFormSchema.safeParse({ ...initial, conversionRate }).success).toBe(false)
+      expect(invoiceReviewFormSchema.safeParse({ ...initial, conversionRate, conversion: null, conversionConfirmed: false }).success).toBe(true)
+    }
+  })
   it('shows missing values as empty and never invents a date, currency, amount or payment confirmation', () => {
     const form = invoiceDataToForm({})
     expect(form.gross).toBe('')

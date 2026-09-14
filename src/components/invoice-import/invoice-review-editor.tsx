@@ -1,6 +1,6 @@
 'use client'
 
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { zodResolver } from '@hookform/resolvers/zod'
 import { AlertTriangle, Check, ChevronDown, ChevronRight, Lightbulb, RotateCcw } from 'lucide-react'
 import { Controller, useForm, useWatch } from 'react-hook-form'
@@ -14,6 +14,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
+import { InvoiceEurConversion, type InvoiceEurRateRequest } from './invoice-eur-conversion'
 import { TagChips, type TagChipsGroup } from '@/components/shared/tag-chips'
 import { invoiceClassificationHint, type InvoiceClassificationRule } from '@/lib/invoice-import/classification-hint'
 import type { InvoiceDraftData } from '@/lib/invoice-import/contracts'
@@ -21,6 +22,7 @@ import type { InvoiceDraftAction, InvoiceDraftDetail, InvoiceReviewIssue } from 
 import {
   invoiceDataToForm,
   invoiceFormPatch,
+  invoiceEurConversionIssue,
   invoiceReviewFormSchema,
   type InvoiceReviewFormValues,
 } from '@/lib/invoice-import/review-form'
@@ -38,6 +40,7 @@ export interface InvoiceReviewEditorProps {
   onRevoke(expectedVersion: number): Promise<void>
   onAction(action: InvoiceDraftAction, expectedVersion: number): Promise<void>
   onDirtyChange?(dirty: boolean): void
+  eurRate?: InvoiceEurRateRequest
 }
 
 interface FormBase {
@@ -52,12 +55,8 @@ interface ChoiceOption {
   label: string
 }
 
-interface ConversionBasis {
-  gross: string
-  net: string
-  vat: string
-  currency: string
-}
+type ConversionBasis = Pick<InvoiceReviewFormValues, 'gross' | 'net' | 'vat' | 'currency' | 'paidAt'
+  | 'conversion' | 'conversionRate' | 'conversionMode' | 'reportingGross' | 'reportingNet' | 'reportingVat'>
 
 interface RebaseNotice {
   basis: ConversionBasis
@@ -203,6 +202,13 @@ function conversionBasis(values: InvoiceReviewFormValues): ConversionBasis {
     net: values.net,
     vat: values.vat,
     currency: values.currency,
+    paidAt: values.paidAt,
+    conversion: values.conversion,
+    conversionRate: values.conversionRate,
+    conversionMode: values.conversionMode,
+    reportingGross: values.reportingGross,
+    reportingNet: values.reportingNet,
+    reportingVat: values.reportingVat,
   }
 }
 
@@ -232,6 +238,7 @@ export function InvoiceReviewEditor({
   onRevoke,
   onAction,
   onDirtyChange,
+  eurRate,
 }: InvoiceReviewEditorProps) {
   const [initialBase] = useState(() => baseFromDraft(draft)) // Parent keys the editor by draft id.
   const baseRef = useRef<FormBase>(initialBase)
@@ -242,6 +249,7 @@ export function InvoiceReviewEditor({
   const [rebaseNotice, setRebaseNotice] = useState<RebaseNotice | null>(null)
   const [localBusy, setLocalBusy] = useState(false)
   const [localError, setLocalError] = useState<string | null>(null)
+  const [formEpoch, setFormEpoch] = useState(0)
   const form = useForm<InvoiceReviewFormValues>({
     resolver: zodResolver(invoiceReviewFormSchema),
     defaultValues: initialBase.values,
@@ -256,6 +264,9 @@ export function InvoiceReviewEditor({
   const supplierName = useWatch({ control: form.control, name: 'supplierName' })
   const taxId = useWatch({ control: form.control, name: 'taxId' })
   const currentSourceKey = draftSourceKey(draft)
+  const watchedValues = useWatch({ control: form.control }) as InvoiceReviewFormValues
+  const isEur = currency.trim().toUpperCase() === 'EUR'
+  const eurIssue = isEur ? invoiceEurConversionIssue(watchedValues) : null
 
   useEffect(() => {
     onDirtyChange?.(isDirty)
@@ -270,6 +281,7 @@ export function InvoiceReviewEditor({
       explicitlyConfirmedConversionRef.current = false
       confirmedConversionBasisRef.current = null
       form.reset(incomingBase.values)
+      setFormEpoch((epoch) => epoch + 1)
       setStaleDraft(null)
       setRebaseNotice(null)
       return
@@ -328,6 +340,10 @@ export function InvoiceReviewEditor({
 
   function submit(kind: 'SAVE' | 'APPROVE') {
     if (kind === 'APPROVE' && approvalBlockReason) return
+    if (kind === 'APPROVE' && isEur && (eurIssue || !conversionConfirmed)) {
+      setLocalError(eurIssue?.message ?? 'Potwierdź przeliczenie na PLN przed zatwierdzeniem.')
+      return
+    }
     setLocalError(null)
     void form.handleSubmit(async (values) => {
       const base = baseRef.current
@@ -341,6 +357,7 @@ export function InvoiceReviewEditor({
         explicitlyConfirmedConversionRef.current = false
         confirmedConversionBasisRef.current = null
         form.reset(values)
+        setFormEpoch((epoch) => epoch + 1)
         setRebaseNotice(null)
       }
     }, () => {
@@ -348,20 +365,28 @@ export function InvoiceReviewEditor({
     })()
   }
 
-  function updateBasisField(field: 'gross' | 'net' | 'vat' | 'currency', value: string) {
-    form.setValue(field, value, { shouldDirty: true, shouldValidate: form.formState.isSubmitted })
+  const invalidateConversion = useCallback(() => {
     explicitlyConfirmedConversionRef.current = false
     confirmedConversionBasisRef.current = null
     if (form.getValues('conversionConfirmed')) {
       form.setValue('conversionConfirmed', false, { shouldDirty: true })
     }
-    if (rebaseNotice) {
-      const nextValues = { ...form.getValues(), [field]: value }
-      setRebaseNotice({
-        basis: conversionBasis(nextValues),
-        requiresFxConfirmation: isForeignCurrency(nextValues.currency),
-      })
+    setRebaseNotice((previous) => previous ? {
+      basis: conversionBasis(form.getValues()), requiresFxConfirmation: isForeignCurrency(form.getValues('currency')),
+    } : null)
+  }, [form])
+
+  function updateBasisField(field: 'gross' | 'net' | 'vat' | 'currency' | 'paidAt' | 'reportingGross' | 'reportingNet' | 'reportingVat', value: string) {
+    form.setValue(field, value, { shouldDirty: true, shouldValidate: form.formState.isSubmitted })
+    if (field === 'currency') {
+      if (value.trim().toUpperCase() !== 'EUR') {
+        form.setValue('conversion', null, { shouldDirty: true })
+      } else if (!form.getValues('conversion')) {
+        const manualAmounts = ['reportingGross', 'reportingNet', 'reportingVat'] as const
+        form.setValue('conversionMode', manualAmounts.some((name) => form.getValues(name) !== '') ? 'MANUAL_AMOUNT' : 'NBP', { shouldDirty: true })
+      }
     }
+    invalidateConversion()
   }
 
   function applyHint() {
@@ -379,6 +404,7 @@ export function InvoiceReviewEditor({
     explicitlyConfirmedConversionRef.current = false
     confirmedConversionBasisRef.current = null
     form.reset(nextBase.values)
+    setFormEpoch((epoch) => epoch + 1)
     setStaleDraft(null)
     setRebaseNotice(null)
     setLocalError(null)
@@ -420,6 +446,7 @@ export function InvoiceReviewEditor({
     }
     form.reset(latestValues)
     form.reset(rebasedValues, { keepDefaultValues: true })
+    setFormEpoch((epoch) => epoch + 1)
     setStaleDraft(null)
     setRebaseNotice({
       basis: effectiveBasis,
@@ -439,6 +466,21 @@ export function InvoiceReviewEditor({
   }
 
   const openActionDisabled = locked || isDirty || Boolean(staleDraft)
+  const fxNoteField = <Field id="invoice-conversion-note" label="Podstawa i uwaga do przeliczenia" message={messageFor('conversionNote')} className="mt-4">
+    <textarea id="invoice-conversion-note" disabled={readOnly || locked} className={textareaClassName} rows={2} {...form.register('conversionNote')} {...inputA11y('conversionNote', 'invoice-conversion-note')} />
+  </Field>
+  const fxConfirmationField = isForeignCurrency(currency) && <Controller control={form.control} name="conversionConfirmed" render={({ field }) => (
+    <div className="mt-4 flex items-start gap-3">
+      <input id="invoice-conversion-confirmed" type="checkbox" className="mt-0.5 size-4 rounded border-[var(--wd-border)] accent-[var(--wd-dark)]"
+        checked={field.value} disabled={readOnly || locked || Boolean(staleDraft) || Boolean(eurIssue)}
+        onChange={(event) => {
+          field.onChange(event.target.checked)
+          explicitlyConfirmedConversionRef.current = event.target.checked
+          confirmedConversionBasisRef.current = event.target.checked ? conversionBasis(form.getValues()) : null
+        }} />
+      <Label htmlFor="invoice-conversion-confirmed" className="text-sm leading-5">Potwierdzam przeliczenie na PLN i jego opisaną podstawę</Label>
+    </div>
+  )} />
 
   return (
     <section aria-label="Dane faktury" className="text-[var(--wd-dark)]">
@@ -570,7 +612,7 @@ export function InvoiceReviewEditor({
             <Input id="invoice-due-date" disabled={readOnly || locked} className={inputClassName} inputMode="numeric" placeholder="RRRR-MM-DD" {...form.register('dueDate')} {...inputA11y('dueDate', 'invoice-due-date')} />
           </Field>
 
-          <Field id="invoice-gross" label="Kwota brutto" message={messageFor('gross')}>
+          {!isEur && <Field id="invoice-gross" label="Kwota brutto" message={messageFor('gross')}>
             <Input
               id="invoice-gross"
               disabled={readOnly || locked}
@@ -580,7 +622,7 @@ export function InvoiceReviewEditor({
               onChange={(event) => updateBasisField('gross', event.target.value)}
               {...inputA11y('gross', 'invoice-gross')}
             />
-          </Field>
+          </Field>}
 
           <Controller
             control={form.control}
@@ -595,12 +637,17 @@ export function InvoiceReviewEditor({
             }}
           />
 
-          {(paymentStatus === 'PAID' || Boolean(messageFor('paidAt'))) && (
+          {(isEur || paymentStatus === 'PAID' || Boolean(messageFor('paidAt'))) && (
             <Field id="invoice-paid-at" label="Data zapłaty (opcjonalnie)" message={messageFor('paidAt')}>
-              <Input id="invoice-paid-at" disabled={readOnly || locked} className={inputClassName} inputMode="numeric" placeholder="RRRR-MM-DD" {...form.register('paidAt')} {...inputA11y('paidAt', 'invoice-paid-at')} />
+              <Input id="invoice-paid-at" disabled={readOnly || locked} className={inputClassName} inputMode="numeric" placeholder="RRRR-MM-DD" value={form.watch('paidAt')} onChange={(event) => updateBasisField('paidAt', event.target.value)} {...inputA11y('paidAt', 'invoice-paid-at')} />
             </Field>
           )}
         </div>
+
+        {isEur && <InvoiceEurConversion key={`${draft.id}:${formEpoch}`} form={form} disabled={readOnly || locked || Boolean(staleDraft)}
+          scopeKey={currentSourceKey} onBasisChange={invalidateConversion} messageFor={messageFor} eurRate={eurRate}>
+          {fxNoteField}{fxConfirmationField}
+        </InvoiceEurConversion>}
 
         <div className="border-y border-[var(--wd-border)] bg-[var(--wd-off-white)] px-4 py-4">
           {hint.status === 'MATCHED' ? (
@@ -667,7 +714,7 @@ export function InvoiceReviewEditor({
           />
         </div>
 
-        {(isForeignCurrency(currency) || fxHasError) && (
+        {!isEur && (isForeignCurrency(currency) || fxHasError) && (
           <section aria-labelledby="invoice-fx-title" className="border-l-4 border-amber-600 bg-amber-50/70 px-4 py-4">
             <h3 id="invoice-fx-title" className="font-semibold">Wartości raportowe w PLN</h3>
             <p className="mt-1 text-xs leading-5 text-amber-950">Przepisz wartości i podstawę przeliczenia z dokumentacji księgowej. Formularz nie pobiera ani nie oblicza kursu automatycznie.</p>
@@ -677,39 +724,12 @@ export function InvoiceReviewEditor({
                 const id = `invoice-${fieldName}`
                 return (
                   <Field key={fieldName} id={id} label={labels[fieldName]} message={messageFor(fieldName)}>
-                    <Input id={id} disabled={readOnly || locked} className={`${inputClassName} font-mono tabular-nums`} inputMode="decimal" {...form.register(fieldName)} {...inputA11y(fieldName, id)} />
+                    <Input id={id} disabled={readOnly || locked} className={`${inputClassName} font-mono tabular-nums`} inputMode="decimal" value={form.watch(fieldName)} onChange={(event) => updateBasisField(fieldName, event.target.value)} {...inputA11y(fieldName, id)} />
                   </Field>
                 )
               })}
             </div>
-            <Field id="invoice-conversion-note" label="Podstawa i uwaga do przeliczenia" message={messageFor('conversionNote')} className="mt-4">
-              <textarea id="invoice-conversion-note" disabled={readOnly || locked} className={textareaClassName} rows={2} {...form.register('conversionNote')} {...inputA11y('conversionNote', 'invoice-conversion-note')} />
-            </Field>
-            {isForeignCurrency(currency) && (
-              <Controller
-                control={form.control}
-                name="conversionConfirmed"
-                render={({ field }) => (
-                  <div className="mt-4 flex items-start gap-3">
-                    <input
-                      id="invoice-conversion-confirmed"
-                      type="checkbox"
-                      className="mt-0.5 size-4 rounded border-[var(--wd-border)] accent-[var(--wd-dark)]"
-                      checked={field.value}
-                      disabled={readOnly || locked}
-                      onChange={(event) => {
-                        field.onChange(event.target.checked)
-                        explicitlyConfirmedConversionRef.current = event.target.checked
-                        confirmedConversionBasisRef.current = event.target.checked ? conversionBasis(form.getValues()) : null
-                      }}
-                    />
-                    <Label htmlFor="invoice-conversion-confirmed" className="text-sm leading-5">
-                      Potwierdzam przeliczenie na PLN i jego opisaną podstawę
-                    </Label>
-                  </div>
-                )}
-              />
-            )}
+            {fxNoteField}{fxConfirmationField}
           </section>
         )}
 

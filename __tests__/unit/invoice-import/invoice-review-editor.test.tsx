@@ -126,7 +126,7 @@ describe('InvoiceReviewEditor', () => {
     const onSave = vi.fn().mockResolvedValue(undefined)
     render(<InvoiceReviewEditor {...props({
       draft: draft({
-        currency: 'EUR',
+        currency: 'USD',
         gross: 100,
         reportingGross: 425,
         conversionNote: 'Kurs NBP z dnia poprzedniego',
@@ -228,7 +228,7 @@ describe('InvoiceReviewEditor', () => {
   it('never confirms a polled FX basis that was not visible when the administrator checked confirmation', async () => {
     const user = userEvent.setup()
     const onSave = vi.fn().mockResolvedValue(undefined)
-    const initial = draft({ currency: 'EUR', gross: 100, reportingGross: 425, conversionConfirmed: false }, { version: 1 })
+    const initial = draft({ currency: 'USD', gross: 100, reportingGross: 425, conversionConfirmed: false }, { version: 1 })
     const editorProps = props({ draft: initial, onSave })
     const { rerender } = render(<InvoiceReviewEditor {...editorProps} />)
 
@@ -236,7 +236,7 @@ describe('InvoiceReviewEditor', () => {
     await user.click(confirmation)
     expect((confirmation as HTMLInputElement).checked).toBe(true)
 
-    const latest = draft({ currency: 'EUR', gross: 200, reportingGross: 850, conversionConfirmed: false }, { version: 2 })
+    const latest = draft({ currency: 'USD', gross: 200, reportingGross: 850, conversionConfirmed: false }, { version: 2 })
     rerender(<InvoiceReviewEditor {...editorProps} draft={latest} />)
     await user.click(screen.getByRole('button', { name: 'Zapisz moje poprawki na aktualnej wersji' }))
 
@@ -267,10 +267,10 @@ describe('InvoiceReviewEditor', () => {
     expect((screen.getByRole('button', { name: 'Zatwierdź i następna' }) as HTMLButtonElement).disabled).toBe(false)
   })
 
-  it('does not gate approval when polling replaces an explicitly confirmed EUR basis with PLN', async () => {
+  it('does not gate approval when polling replaces an explicitly confirmed foreign basis with PLN', async () => {
     const user = userEvent.setup()
     const onApprove = vi.fn().mockResolvedValue(undefined)
-    const initial = draft({ currency: 'EUR', gross: 100, conversionConfirmed: false }, { version: 1 })
+    const initial = draft({ currency: 'USD', gross: 100, conversionConfirmed: false }, { version: 1 })
     const editorProps = props({ draft: initial, onApprove })
     const { rerender } = render(<InvoiceReviewEditor {...editorProps} />)
 
@@ -290,13 +290,13 @@ describe('InvoiceReviewEditor', () => {
   it('does not display a latest-server confirmation on a retained local nominal basis it never confirmed', async () => {
     const user = userEvent.setup()
     const onSave = vi.fn().mockResolvedValue(undefined)
-    const initial = draft({ currency: 'EUR', gross: 100, conversionConfirmed: false }, { version: 1 })
+    const initial = draft({ currency: 'USD', gross: 100, conversionConfirmed: false }, { version: 1 })
     const editorProps = props({ draft: initial, onSave })
     const { rerender } = render(<InvoiceReviewEditor {...editorProps} />)
 
     await user.clear(screen.getByLabelText('Kwota brutto'))
     await user.type(screen.getByLabelText('Kwota brutto'), '101')
-    rerender(<InvoiceReviewEditor {...editorProps} draft={draft({ currency: 'EUR', gross: 200, conversionConfirmed: true }, { version: 2 })} />)
+    rerender(<InvoiceReviewEditor {...editorProps} draft={draft({ currency: 'USD', gross: 200, conversionConfirmed: true }, { version: 2 })} />)
     await user.click(screen.getByRole('button', { name: 'Zapisz moje poprawki na aktualnej wersji' }))
 
     expect((screen.getByLabelText('Kwota brutto') as HTMLInputElement).value).toBe('101')
