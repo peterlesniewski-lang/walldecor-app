@@ -43,6 +43,10 @@ wariant NBP z ręcznym fallbackiem.
   zachowujemy wpisane wartości, ale wymagamy ponownej weryfikacji użytkownika.
 - Zapis szkicu jest nadal możliwy bez ukończonego przeliczenia. Zatwierdzenie
   kosztu wymaga kompletnych, świadomie potwierdzonych danych zgodnie z obecną polityką.
+- Po zapisaniu nieukończonego kursu ręcznego ponowne otwarcie nadal pokazuje
+  tryb ręczny; nie wolno zamieniać starych wyliczeń w kwotę wpisaną ręcznie ani
+  samoczynnie włączać NBP. Nieukończony `MANUAL_RATE` może zachować `rate: null`
+  jako jawny brak kursu, ale nie może zostać zatwierdzony.
 
 ## Dane, API i granice odpowiedzialności
 

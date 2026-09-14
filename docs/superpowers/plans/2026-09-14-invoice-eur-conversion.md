@@ -72,6 +72,10 @@ publiczny podgląd po wdrożeniu pozostaje częścią końcowej bramki.
 
 Kontrakt metadanych nazwany `conversion` jest opcjonalny/null dla starych szkiców. Zawiera `mode: 'NBP' | 'MANUAL_RATE' | 'MANUAL_AMOUNT'`, dodatni kurs dziesiętny w `rate` albo null dla ręcznej kwoty, `paymentDate`, `rateDate`, `tableNumber`. Tylko NBP ma numer tabeli i datę publikacji. Kwoty pozostają w `reportingGross`, `reportingNet`, `reportingVat`. AI nie dostaje prawa do modyfikacji metadanych.
 
+Doprecyzowanie po przeglądzie Task 3: `MANUAL_RATE` z `rate: null` oznacza
+nieukończony szkic, nigdy zatwierdzone przeliczenie. Pozwala zachować ręczny
+wybór bez zamieniania go po odczycie w legacy `MANUAL_AMOUNT` lub auto-NBP.
+
 - [x] RED: testy rachunku: `360.20 × 4.25 = 1530.85`, `0.01 × 4.255 = 0.04`, brak netto/VAT pozostaje null; kurs zerowy/ujemny/nieskończony/niepoprawny jest odrzucany. BigInt lub równoważne dokładne dziesiętne mnożenie, bez błędów binarnych float przy zaokrągleniu half-up do groszy.
 - [x] GREEN: schema metadanych, parser kursu i funkcja `convertEurAmounts` używane przez serwer i formularz. Ograniczyć długość i precyzję wejścia, sprawdzać bezpieczny zakres groszy. Eksporty i argumenty udokumentować w pliku testów.
 - [x] RED: test NBP z wstrzykiwanym Fetch: dla zapłaty 2026-09-14 wynik pochodzi z 2026-09-11; wynik z dnia zapłaty, inna waluta/tabela, niepełna odpowiedź, timeout, błędna/future data nie mogą dać ważnego kursu.
@@ -98,6 +102,8 @@ konfiguracji wdrożenia 103/103 PASS. To nie zastępuje budowy obrazu Linux.
 
 ## Task 3 — Operator przelicza, poprawia, zapisuje i ponownie otwiera
 
+Status zadania: wykonane i odebrane; szczegółowe dowody poniżej.
+
 **Files:**
 - Modify: `src/lib/invoice-import/review-form.ts`.
 - Modify: `src/components/invoice-import/invoice-review-editor.tsx`.
@@ -115,6 +121,37 @@ konfiguracji wdrożenia 103/103 PASS. To nie zastępuje budowy obrazu Linux.
 - [ ] Testy jednostkowe oraz pełny flow UI na czystej izolowanej bazie: logowanie administratora → upload syntetycznego PDF → podgląd/pobranie → edycja faktury EUR bez VAT → kurs ręczny i próba NBP → korekta PLN → zapis → ponowne otwarcie → zatwierdzenie → rzeczywisty CostEvent w PLN → cofnięcie/archiwizacja. Drugą rolą potwierdzić odmowę. Restart testowej aplikacji ma zachować dane i plik. Walidator nie modyfikuje danych użytkownika.
 - [ ] Commit tylko własnych plików. Przegląd specyfikacji i jakości.
 
+DOWÓD przed poprawką końcową: Task 3 commit `0a0480f`; SPEC PASS 68/68.
+Własny zestaw kontrolera: 1416/1416 PASS (dwa odrębne testy zewnętrzne pominięte),
+`typecheck:app` PASS. QUALITY wykrył P2 nieobjęte tymi testami:
+niepoprawny kurs → zapis `conversion: null` ze starymi PLN → odczyt jako ręczna
+kwota → możliwe zatwierdzenie.
+
+P2 zamknięte w `b95df3d`: testy błędnego kursu → zapis → odczyt → próba
+zatwierdzenia, w tym ponowne połączenie z rzeczywistą SQLite. SPEC 180/180 PASS,
+QUALITY 84/84 PASS oraz niezależny reproduktor `INVALID_EUR_CONVERSION`.
+Kontroler 2026-09-14 15:47 CEST: 1418/1418 PASS, dwa odrębne testy zewnętrznego
+AI pominięte; `typecheck:app` i produkcyjny `npm run build` PASS.
+Build ID `O2Vfm6G2bPuVCL_k5YQAG` zawiera kod aplikacji z `b95df3d`.
+
+Pierwszy pełny UI run zatrzymał się na `NATIVE_PDF_PLUGIN_NOT_VISIBLE`:
+domyślny headless-shell nie ma natywnego czytnika. `d66e76d` wybiera prywatny
+pełny Chromium tak jak istniejąca bramka batch, bez osłabiania asercji pliku.
+Test konfiguracji RED → GREEN 4/4. Oryginalny syntetyczny PDF ma czytelne dwie
+strony i fakty zgodne z formularzem, potwierdzone osobnym renderem PDFium
+oraz oględzinami obu stron.
+
+DOWÓD pełnego UI: drugi run `invoice-eur-ui-1789393821359-9075f2c2` PASS 6/6,
+raport w `test-results/invoice-eur-ui-1789393821359-9075f2c2/report.json`.
+Rzeczywisty NBP 4.3228; kurs ręczny 4.25 daje 1530.85; świadoma korekta na
+1500 PLN pozostaje po zapisie i ponownym otwarciu, tworzy jeden CostEvent,
+trwa po restarcie tej samej prywatnej aplikacji i bazy. PDF przed/po restarcie
+ma identyczne SHA-256; cofnięcie i archiwizacja zachowują historię. Manager 403,
+zero wykonań AI, integralność bazy PASS. Kontroler niezależnie odczytał SQLite
+(ARCHIVED, EUR 360.2, MANUAL_AMOUNT 1500, koszt VOID PLN 1500/1500/0), obejrzał
+desktop NBP/kurs ręczny i ekran mobilny. Browser/server cleanup potwierdzone.
+Harness-only SPEC oraz QUALITY po `d66e76d`: oba PASS, 4/4 testów konfiguracji.
+
 ## Końcowa bramka i wdrożenie
 
 Granice wdrożenia: aktualizacja istniejącej aplikacji WallDecor-App w kontekście
@@ -124,6 +161,12 @@ Przed push ponownie odczytać zdalny commit, a przed restartem wykonać i
 sprawdzić prywatny snapshot SQLite oraz kopię oryginałów. Startup dodatkowo
 wykonuje `.backup` i `migrate deploy`, z potwierdzonym `WALLDECOR_SKIP_SEED=true`.
 
+Preflight 2026-09-14 przed push: zdalny main nadal `bcd35a9`, docelowa
+aplikacja/repo/domena bez zmian. Kopia `/data/backups/eur-20260914-NNfdiJ`
+zawiera `walldecor.db` (9179136 B) i `invoice-files.tar.gz` (34574 B).
+SQLite integrity PASS, foreign_key_check bez naruszeń; archiwum odczytywalne,
+3 wpisy. Katalog 700, oba pliki 600; SHA-256 obliczone na serwerze.
+
 Rollback wymaga uwagi: nowe pole `conversion` w JSON i liście pól ręcznych
 jest nieznane starym ścisłym parserom. Po zapisaniu nowych danych nie wolno
 po prostu uruchomić starego obrazu ani przywrócić całej bazy, tracąc nowsze
@@ -131,11 +174,11 @@ zmiany użytkownika. Preferowana naprawa to kolejny kompatybilny commit.
 Powrót do starego kodu jest dopuszczalny tylko po potwierdzeniu braku zapisów
 nowego formatu; odtwarzanie danych wymaga osobnej decyzji operatora.
 
-- [ ] `npm test -- __tests__/unit/invoice-import __tests__/integration/invoice-import` — wszystko zielone.
-- [ ] `npm run typecheck:app` i `npm run build` — poprawny rzeczywisty build Next.js 16.
-- [ ] `node scripts/validate-invoice-eur-ui.mjs` z parametrami opisanymi przez walidator; zapis outputu dowodowego, bez sekretów.
-- [ ] Pełny audyt interakcji zmienionego UI: działające przyciski, edycja, zapis/odczyt, archiwizacja, trwałość po restarcie, bajty pobrania i odmowa dla nieuprawnionej roli.
-- [ ] Niezależny końcowy code review. Błędy ważne zamknięte przed publikacją.
+- [x] `npm test -- __tests__/unit/invoice-import __tests__/integration/invoice-import` — wszystko zielone.
+- [x] `npm run typecheck:app` i `npm run build` — poprawny rzeczywisty build Next.js 16.
+- [x] `node scripts/validate-invoice-eur-ui.mjs` z parametrami opisanymi przez walidator; zapis outputu dowodowego, bez sekretów.
+- [x] Pełny audyt interakcji zmienionego UI: działające przyciski, edycja, zapis/odczyt, archiwizacja, trwałość po restarcie, bajty pobrania i odmowa dla nieuprawnionej roli.
+- [x] Niezależny końcowy code review. Błędy ważne zamknięte przed publikacją.
 - [ ] Zgodnie z `coolify-deploy`: sprawdzić aktualny HEAD produkcji, backup, skip-seed, stan kolejki i schedulerów; nie nadpisywać obcych zmian. Push i deploy dopiero po bramkach. Nie wznawiać/pauzować usług bez potrzeby, a każdą wymaganą pauzę jawnie odtworzyć.
 - [ ] Odczyt rzeczywistego wdrożonego commita i health. Publiczny podgląd oryginału przez proxy w osobnej karcie, bez odświeżania niezapisanego formularza użytkownika. Ewentualna konieczność zamknięcia/odświeżenia tego formularza wymaga uzgodnienia z użytkownikiem.
 - [ ] Raport DOWÓD rozdziela: kod/testy, izolowany flow, push, wdrożony commit, zweryfikowany rezultat publiczny i wszelkie pozostałe blokery.
