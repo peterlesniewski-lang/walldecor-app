@@ -27,7 +27,7 @@
 - Modify: `__tests__/unit/invoice-import/client.test.ts`.
 - Create: `__tests__/integration/invoice-import/original-transport.test.ts`.
 
-- [ ] RED: dopisać testy poprawnego ciała odpowiedzi bez `Content-Length` oraz z `Content-Encoding: gzip` i długością kompresji. Dane Response odpowiadają już rozkodowanemu strumieniowi Fetch:
+- [x] RED: dopisać testy poprawnego ciała odpowiedzi bez `Content-Length` oraz z `Content-Encoding: gzip` i długością kompresji. Dane Response odpowiadają już rozkodowanemu strumieniowi Fetch:
 
 ```ts
 const fetcher = vi.fn(async () => new Response(bytes, {
@@ -37,8 +37,8 @@ const blob = await createInvoiceImportClient(fetcher).original('draft', expected
 expect(new Uint8Array(await blob.arrayBuffer())).toEqual(bytes)
 ```
 
-- [ ] Uruchomić `npm test -- __tests__/unit/invoice-import/client.test.ts`; nowe testy mają przed poprawką kończyć się `INVALID_ORIGINAL`.
-- [ ] GREEN: uzależnić wstępną kontrolę rozmiaru od reprezentacji transportowej, zachować dokładną kontrolę końcowego strumienia oraz SHA-256:
+- [x] Uruchomić `npm test -- __tests__/unit/invoice-import/client.test.ts`; nowe testy mają przed poprawką kończyć się `INVALID_ORIGINAL`.
+- [x] GREEN: uzależnić wstępną kontrolę rozmiaru od reprezentacji transportowej, zachować dokładną kontrolę końcowego strumienia oraz SHA-256:
 
 ```ts
 const length = response.headers.get('content-length')
@@ -51,9 +51,14 @@ if (!response.ok || response.headers.get('content-type') !== expected.mimeType |
 }
 ```
 
-- [ ] Test integracyjny uruchamia lokalny HTTP server na 127.0.0.1, zwraca syntetyczny PDF zarówno bez kompresji, jak i przez `gzipSync`. Prawdziwy Fetch i klient mają zwrócić identyczne bajty. Złe SHA-256, skrócenie i nadmiar danych nadal odrzucane; serwer zamykany w `finally`.
-- [ ] Uruchomić oba pliki testów. Zatwierdzić tylko własne pliki commitem `fix(finance): verify decoded invoice originals through compression`.
-- [ ] Przegląd specyfikacji, następnie jakości. Dowód: output testów i odczyt blobu o oczekiwanych bajtach, bez poluzowania dostępu do pliku.
+- [x] Test integracyjny uruchamia lokalny HTTP server na 127.0.0.1, zwraca syntetyczny PDF zarówno bez kompresji, jak i przez `gzipSync`. Prawdziwy Fetch i klient mają zwrócić identyczne bajty. Złe SHA-256, skrócenie i nadmiar danych nadal odrzucane; serwer zamykany w `finally`.
+- [x] Uruchomić oba pliki testów. Zatwierdzić tylko własne pliki commitem `fix(finance): verify decoded invoice originals through compression`.
+- [x] Przegląd specyfikacji, następnie jakości. Dowód: output testów i odczyt blobu o oczekiwanych bajtach, bez poluzowania dostępu do pliku.
+
+DOWÓD Task 1: commit `a548017`; RED 7/32 zakończone `INVALID_ORIGINAL`, GREEN 32/32.
+Własny ponowny test kontrolera 2026-09-14 14:55 CEST: oba pliki, 32/32 PASS.
+Niezależne przeglądy zgodności i jakości PASS, bez uwag. To dowód lokalny;
+publiczny podgląd po wdrożeniu pozostaje częścią końcowej bramki.
 
 ## Task 2 — Kurs, zapis i walidacja EUR po stronie serwera
 
@@ -62,6 +67,7 @@ if (!response.ok || response.headers.get('content-type') !== expected.mimeType |
 - Create: `src/lib/invoice-import/nbp-rate.ts` (jedno ograniczone pobranie EUR).
 - Create: `src/app/api/finance/invoice-import/exchange-rate/route.ts`.
 - Modify: `src/lib/invoice-import/contracts.ts`, `draft-service.ts`, `approval-policy.ts`, `http.ts`, `client.ts`.
+- Modify: `src/lib/invoice-import/http-errors.ts`, `ksef-reconciliation-policy.ts` oraz odpowiadające testy (polskie błędy i unieważnienie potwierdzenia po zmianie daty zapłaty przez KSeF).
 - Test: nowe `__tests__/unit/invoice-import/eur-conversion.test.ts`, `nbp-rate.test.ts`; istniejące integracyjne `draft-service.test.ts`, `approval-service.test.ts`, `http.test.ts`.
 
 Kontrakt metadanych nazwany `conversion` jest opcjonalny/null dla starych szkiców. Zawiera `mode: 'NBP' | 'MANUAL_RATE' | 'MANUAL_AMOUNT'`, dodatni kurs dziesiętny w `rate` albo null dla ręcznej kwoty, `paymentDate`, `rateDate`, `tableNumber`. Tylko NBP ma numer tabeli i datę publikacji. Kwoty pozostają w `reportingGross`, `reportingNet`, `reportingVat`. AI nie dostaje prawa do modyfikacji metadanych.
@@ -74,6 +80,7 @@ Kontrakt metadanych nazwany `conversion` jest opcjonalny/null dla starych szkic�
 - [ ] GREEN: użyć istniejącego `respond`/`actor` w `http.ts`; route Node.js, force-dynamic, wywołuje handler. Klient waliduje wynik przed użyciem. Wstrzykiwanie pobierania kursu w handlerach ułatwia test bez prawdziwego NBP.
 - [ ] RED: integracyjne testy zapisu i zatwierdzania sprawdzają metadane po odczycie, audyt, kontrolę wersji, unieważnienie potwierdzenia po zmianie `paidAt`, kursu i kwot PLN; niezgodna kwota wyliczona nie może zostać zatwierdzona. Stary szkic bez metadanych nadal działa.
 - [ ] GREEN: rozszerzyć opcjonalny kontrakt i listę pól chronionych. W `editDraft` walidować spójność merged danych z metadanymi; zapis nieukończonego szkicu dozwolony, zatwierdzenie wymaga kompletnej zgodnej podstawy. `approval-policy` ponownie sprawdza kurs i wynik, aby ominiecie UI nie ominęło kontroli. Przeliczenie NBP nie może mieć fałszywie oznaczonej daty/tabeli; weryfikować źródło po stronie serwera przed przyjęciem nowej potwierdzonej podstawy, poza długą transakcją DB. Nie pobierać kursu przy każdym odczycie ani przeliczać już zatwierdzonych kosztów.
+- [ ] RED/GREEN: przyjęcie danych KSeF ze zmienionym `paidAt` unieważnia istniejące potwierdzenie, tak jak zmiana kwot. Test usługi zachowuje ślad tej zmiany w audycie; metadane nie znikają bez decyzji operatora.
 - [ ] Uruchomić testy nowych modułów oraz integracyjne testy zmienionych usług. Commit tylko własnych plików. Przegląd zgodności i jakości.
 
 ## Task 3 — Operator przelicza, poprawia, zapisuje i ponownie otwiera
