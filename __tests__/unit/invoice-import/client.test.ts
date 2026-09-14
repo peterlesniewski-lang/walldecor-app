@@ -9,6 +9,18 @@ const headers = { 'content-type': 'image/png', 'content-length': '4' }
 afterEach(() => vi.useRealTimers())
 
 describe('invoice browser transport failures', () => {
+  it('fetches EUR quotes with cancellation and validates requested date and provenance', async () => {
+    const quote = { currency: 'EUR', paymentDate: '2026-09-14', rate: '4.3228', rateDate: '2026-09-11', tableNumber: '177/A/NBP/2026' }
+    const fetcher = vi.fn<typeof fetch>(async () => Response.json({ quote }))
+    const client = createInvoiceImportClient(fetcher)
+    const controller = new AbortController()
+    expect(await client.eurRate('2026-09-14', controller.signal)).toEqual(quote)
+    expect(fetcher).toHaveBeenCalledWith('/api/finance/invoice-import/exchange-rate?paymentDate=2026-09-14', expect.objectContaining({ signal: controller.signal, cache: 'no-store', credentials: 'same-origin' }))
+    for (const patch of [{ paymentDate: '2026-09-15' }, { currency: 'USD' }, { rate: '0' }, { rateDate: '2026-09-14' }, { tableNumber: null }]) {
+      fetcher.mockResolvedValueOnce(Response.json({ quote: { ...quote, ...patch } }))
+      await expect(client.eurRate('2026-09-14')).rejects.toMatchObject({ code: 'INVALID_RESPONSE' })
+    }
+  })
   it.each<Record<string, string>>([
     { 'content-type': 'image/png' },
     { ...headers, 'content-encoding': 'identity' },

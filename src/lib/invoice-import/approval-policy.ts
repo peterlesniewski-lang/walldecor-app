@@ -1,4 +1,5 @@
 import { invoiceDraftDataSchema, type InvoiceDraftData } from '@/lib/invoice-import/contracts'
+import { hasEurSourceCentPrecision, isValidConfirmedEurConversion } from './eur-conversion'
 
 export const INVOICE_IMPORT_REALIZED_COST_CUTOVER_DATE = '2026-04-01'
 export const INVOICE_APPROVAL_MAX_AMOUNT = Number.MAX_SAFE_INTEGER / 100
@@ -136,6 +137,12 @@ export function validateInvoiceApproval(input: unknown): InvoiceApprovalResult {
 
   const data = parsed.data
   const issues: ApprovalIssue[] = []
+
+  if (!hasEurSourceCentPrecision(data)) {
+    pushIssue(issues, 'gross', 'EUR_AMOUNT_PRECISION', 'Kwoty źródłowe EUR muszą mieć dokładność do grosza. Popraw kwoty przed potwierdzeniem kursu.')
+  } else if (data.conversion && !isValidConfirmedEurConversion(data)) {
+    pushIssue(issues, 'conversion', 'INVALID_EUR_CONVERSION', 'Przeliczenie EUR nie odpowiada dacie płatności, kursowi lub kwotom PLN. Przelicz i potwierdź ponownie.')
+  }
 
   switch (data.documentType) {
     case 'INVOICE':

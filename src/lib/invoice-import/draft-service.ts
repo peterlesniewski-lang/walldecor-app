@@ -15,6 +15,8 @@ import {
   type InvoiceManualField,
 } from './contracts'
 import { InvoiceImportError } from './errors'
+import { EUR_CONVERSION_BASIS_FIELDS, hasEurSourceCentPrecision, isValidConfirmedEurConversion, nbpEurQuoteSchema } from './eur-conversion'
+import { getNbpEurRate, type NbpEurRateLookup } from './nbp-rate'
 import { KSEF_RECONCILIATION_STATE_SELECT, summarizeDraftKsefReconciliations, type StoredKsefReconciliationState } from './ksef-reconciliation-state'
 
 type Transaction = Prisma.TransactionClient
@@ -234,7 +236,7 @@ async function findDraftForMutation(tx: Transaction, draftId: string): Promise<D
   return draft
 }
 
-function assertExpectedVersion(draft: InvoiceImportDraft, expectedVersion: number) {
+function assertExpectedVersion(draft: Pick<InvoiceImportDraft, 'version'>, expectedVersion: number) {
   if (draft.version !== expectedVersion) throw new InvoiceImportError('STALE_VERSION', 409)
 }
 
@@ -398,23 +400,45 @@ export async function editDraft(
   draftId: string,
   expectedVersion: number,
   rawPatch: unknown,
+  dependencies: { nbpLookup?: NbpEurRateLookup } = {},
 ): Promise<InvoiceDraftDetailDto> {
   const patch = parseInput(invoiceDraftDataSchema, rawPatch)
+  // A provider request never holds SQLite's mutation lock. Authorize/read first;
+  // mutateExisting repeats authorization and the version check after the lookup.
+  if (patch.conversionConfirmed === true) {
+    const previous = await getDraft(db, actorId, draftId)
+    assertExpectedVersion(previous, expectedVersion)
+    if (previous.state !== 'OPEN') throw new InvoiceImportError('INVALID_STATE', 409)
+    const candidate = invoiceDraftDataSchema.parse({ ...previous.data, ...Object.fromEntries(Object.entries(patch).filter(([, value]) => value !== undefined)) })
+    if (!hasEurSourceCentPrecision(candidate)) throw new InvoiceImportError('EUR_AMOUNT_PRECISION', 422)
+    if (!isValidConfirmedEurConversion(candidate)) invalidInput()
+    const sameConfirmedBasis = previous.data.conversionConfirmed === true && EUR_CONVERSION_BASIS_FIELDS.every((field) =>
+      JSON.stringify(previous.data[field] ?? null) === JSON.stringify(candidate[field] ?? null))
+    if (candidate.conversion?.mode === 'NBP' && !sameConfirmedBasis) {
+      const quote = nbpEurQuoteSchema.parse(await (dependencies.nbpLookup ?? getNbpEurRate)(candidate.conversion.paymentDate))
+      const conversion = candidate.conversion
+      if (quote.paymentDate !== conversion.paymentDate || quote.rate !== conversion.rate
+        || quote.rateDate !== conversion.rateDate || quote.tableNumber !== conversion.tableNumber) invalidInput()
+    }
+  }
   return mutateExisting(db, actorId, draftId, expectedVersion, async (tx, draft) => {
     assertOpen(draft)
     const currentData = parseStoredJson(invoiceDraftDataSchema, draft.dataJson)
     const currentManualFields = parseStoredJson(invoiceManualFieldsSchema, draft.manualFieldsJson)
     const definedEntries = Object.entries(patch).filter(([, value]) => value !== undefined) as Array<[InvoiceManualField, unknown]>
     const patchValues = Object.fromEntries(definedEntries) as InvoiceDraftData
-    const conversionBasisFields = ['currency', 'gross', 'net', 'vat'] as const
+    const conversionBasisFields = EUR_CONVERSION_BASIS_FIELDS
     const touchesConversionBasis = conversionBasisFields.some((field) =>
-      definedEntries.some(([changedField]) => changedField === field),
+      definedEntries.some(([changedField, value]) => changedField === field
+        && JSON.stringify(value ?? null) !== JSON.stringify(currentData[field] ?? null)),
     )
     let nextData = invoiceDraftDataSchema.parse({ ...currentData, ...patchValues })
     if (patchValues.conversionConfirmed === true) {
       if (nextData.currency == null || nextData.currency === 'PLN' || typeof nextData.gross !== 'number') {
         invalidInput()
       }
+      if (!hasEurSourceCentPrecision(nextData)) throw new InvoiceImportError('EUR_AMOUNT_PRECISION', 422)
+      if (!isValidConfirmedEurConversion(nextData)) invalidInput()
     } else if (touchesConversionBasis) {
       nextData = invoiceDraftDataSchema.parse({ ...nextData, conversionConfirmed: false })
     }

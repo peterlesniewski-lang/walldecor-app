@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { aiInvoiceResultSchema } from '../ai/contracts'
+import { invoiceEurConversionSchema } from './eur-conversion'
 
 export const INVOICE_IMPORT_MAX_FILES = 20
 export const INVOICE_ATTACHMENT_MAX_BYTES = 10 * 1024 * 1024
@@ -44,6 +45,7 @@ export const invoiceDraftDataSchema = z.strictObject({
   reportingVat: z.number().finite().nullable().optional(),
   conversionNote: z.string().max(2_000).nullable().optional(),
   conversionConfirmed: z.boolean().optional(),
+  conversion: invoiceEurConversionSchema.nullable().optional(),
 })
 
 export type InvoiceDraftData = z.infer<typeof invoiceDraftDataSchema>
@@ -76,6 +78,7 @@ export const INVOICE_MANUAL_FIELD_NAMES = [
   'reportingVat',
   'conversionNote',
   'conversionConfirmed',
+  'conversion',
 ] as const satisfies ReadonlyArray<keyof InvoiceDraftData>
 
 export type InvoiceManualField = (typeof INVOICE_MANUAL_FIELD_NAMES)[number]

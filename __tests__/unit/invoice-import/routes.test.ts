@@ -7,11 +7,17 @@ import { describe, expect, it, vi } from 'vitest'
 const handlers = vi.hoisted(() => Object.fromEntries([
   'batchesPOST', 'draftsGET', 'draftsPOST', 'draftGET', 'draftPATCH',
   'actionsPOST', 'fileGET', 'approvePOST', 'approveDELETE', 'historyGET',
-  'ksefGET', 'ksefPOST',
+  'ksefGET', 'ksefPOST', 'exchangeRateGET',
 ].map((key) => [key, vi.fn()])))
 vi.mock('@/lib/invoice-import/http-runtime', () => ({ invoiceImportHandlers: handlers }))
 
 describe('invoice import Next route wiring', () => {
+  it('binds the private dynamic exchange-rate endpoint', async () => {
+    const route = await import('@/app/api/finance/invoice-import/exchange-rate/route')
+    expect(route.runtime).toBe('nodejs')
+    expect(route.dynamic).toBe('force-dynamic')
+    expect(route.GET).toBe(handlers.exchangeRateGET)
+  })
   it('exposes batch and collection handlers in the Node runtime', async () => {
     const batches = await import('@/app/api/finance/invoice-import/batches/route')
     const drafts = await import('@/app/api/finance/invoice-import/drafts/route')

@@ -2,6 +2,7 @@ export type InvoiceImportErrorCode =
   | 'FORBIDDEN'
   | 'NOT_FOUND'
   | 'INVALID_INPUT'
+  | 'EUR_AMOUNT_PRECISION'
   | 'STALE_VERSION'
   | 'INVALID_STATE'
   | 'BATCH_LIMIT'

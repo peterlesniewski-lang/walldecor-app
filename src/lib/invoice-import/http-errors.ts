@@ -7,6 +7,7 @@ import { InvoiceImportError } from './errors'
 import { InvoiceOriginalUnavailableError } from './file-service'
 import { InstallationMultipartError } from '@/lib/installation-media/multipart'
 import { InvoiceFilesConfigurationError } from './files-runtime'
+import { NbpRateError } from './nbp-rate'
 
 export const INVOICE_HTTP_HEADERS = { 'Cache-Control': 'private, no-store' }
 
@@ -18,6 +19,10 @@ export class InvoiceImportHttpError extends Error {
 }
 
 const MESSAGES: Record<string, string> = {
+  EUR_AMOUNT_PRECISION: 'Kwoty źródłowe EUR muszą mieć dokładność do grosza. Popraw kwoty przed potwierdzeniem kursu.',
+  NBP_INVALID_DATE: 'Wybierz poprawną datę płatności, nie późniejszą niż dziś, lub przelicz ręcznie.',
+  NBP_INVALID_RESPONSE: 'Nie udało się zweryfikować tabeli NBP. Spróbuj ponownie lub przelicz ręcznie.',
+  NBP_UNAVAILABLE: 'NBP jest chwilowo niedostępny. Spróbuj ponownie lub przelicz ręcznie.',
   UNAUTHENTICATED: 'Zaloguj się ponownie.',
   FORBIDDEN: 'Ta operacja jest dostępna wyłącznie dla aktywnego administratora.',
   NOT_FOUND: 'Nie znaleziono dokumentu lub paczki.',
@@ -58,7 +63,7 @@ export function invoiceHttpErrorResponse(error: unknown) {
   }
   if (error instanceof InvoiceImportError || error instanceof InvoiceApprovalError
     || error instanceof InvoiceOriginalUnavailableError || error instanceof InvoiceImportHttpError
-    || error instanceof AiHttpError || error instanceof InvoiceFilesConfigurationError) {
+    || error instanceof AiHttpError || error instanceof InvoiceFilesConfigurationError || error instanceof NbpRateError) {
     return NextResponse.json({
       error: MESSAGES[error.code] ?? 'Nie udało się obsłużyć dokumentu.', code: error.code,
       ...(error instanceof InvoiceApprovalError && error.issues ? { issues: error.issues } : {}),

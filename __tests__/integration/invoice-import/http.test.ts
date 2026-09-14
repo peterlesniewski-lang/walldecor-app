@@ -13,6 +13,7 @@ import { createInvoiceImportHandlers } from '@/lib/invoice-import/http'
 import { INVOICE_ATTACHMENT_MAX_BYTES } from '@/lib/invoice-import/contracts'
 import { InvoiceFilesConfigurationError } from '@/lib/invoice-import/files-runtime'
 import { createInvoiceImportClient } from '@/lib/invoice-import/client'
+import { NbpRateError } from '@/lib/invoice-import/nbp-rate'
 
 const directory = mkdtempSync(path.join(tmpdir(), 'walldecor-invoice-http-'))
 const databaseUrl = `file:${path.join(directory, 'http.db')}`
@@ -88,6 +89,34 @@ async function upload() {
 }
 
 describe('invoice import HTTP boundary', () => {
+  it('protects EUR lookup with current user authorization and strict date query', async () => {
+    const quote = { currency: 'EUR' as const, paymentDate: '2026-09-14', rate: '4.3228', rateDate: '2026-09-11', tableNumber: '177/A/NBP/2026' }
+    const nbpLookup = vi.fn(async () => quote)
+    const handler = createInvoiceImportHandlers({ db, files, getSession: async () => actorId ? { user: { id: actorId } } : null, nbpLookup })
+    for (const user of [null, 'manager', 'employee']) {
+      actorId = user
+      expect((await handler.exchangeRateGET(get('?paymentDate=2026-09-14'))).status).toBe(user ? 403 : 401)
+    }
+    actorId = 'admin'
+    for (const flags of [{ isActive: false }, { isActive: true, mustChangePassword: true }]) {
+      await db.user.update({ where: { id: actorId }, data: flags })
+      expect((await handler.exchangeRateGET(get('?paymentDate=2026-09-14'))).status).toBe(403)
+    }
+    await db.user.update({ where: { id: actorId }, data: { mustChangePassword: false } })
+    for (const query of ['', '?paymentDate=2026-02-30', '?paymentDate=2026-09-14&url=https://evil.test', '?paymentDate=2026-09-14&paymentDate=2026-09-14']) {
+      expect((await handler.exchangeRateGET(get(query))).status).toBe(422)
+    }
+    expect(nbpLookup).not.toHaveBeenCalled()
+    const response = await handler.exchangeRateGET(get('?paymentDate=2026-09-14'))
+    expect(response.headers.get('cache-control')).toBe('private, no-store')
+    expect(await response.json()).toEqual({ quote })
+    for (const [code, status] of [['NBP_INVALID_DATE', 422], ['NBP_INVALID_RESPONSE', 502], ['NBP_UNAVAILABLE', 503]] as const) {
+      nbpLookup.mockRejectedValueOnce(new NbpRateError(code, status))
+      const failed = await handler.exchangeRateGET(get('?paymentDate=2026-09-14'))
+      expect(failed.status).toBe(status)
+      expect(await failed.json()).toMatchObject({ code, error: expect.stringContaining('ręczn') })
+    }
+  })
   it('authorizes session and current user state before body parsing or file configuration', async () => {
     for (const actor of [null, 'manager', 'employee']) {
       actorId = actor

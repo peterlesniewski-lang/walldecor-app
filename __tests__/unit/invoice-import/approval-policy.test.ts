@@ -24,6 +24,25 @@ const validPlnDraft = {
 }
 
 describe('invoice import approval policy', () => {
+  it('rejects structured rate source precision that approval normalization would change', () => {
+    const result = validateInvoiceApproval({ ...validPlnDraft, currency: 'EUR', gross: 10.005, net: null, vat: null,
+      conversion: { mode: 'MANUAL_RATE', rate: '4.25', paymentDate: null, rateDate: null, tableNumber: null },
+      reportingGross: 42.52, conversionConfirmed: true, conversionNote: 'Ręczny kurs 4.25',
+    })
+    expect(result.ok).toBe(false)
+    if (!result.ok) expect(result.issues).toContainEqual(expect.objectContaining({ code: 'EUR_AMOUNT_PRECISION', messagePolish: expect.stringContaining('grosz') }))
+  })
+  it('validates structured rate arithmetic independently and supports manual amounts', () => {
+    const conversion = { mode: 'MANUAL_RATE', paymentDate: null, rate: '4.25', rateDate: null, tableNumber: null }
+    const data = { ...validPlnDraft, currency: 'EUR', gross: 100, net: null, vat: null, conversion, reportingGross: 425, conversionConfirmed: true, conversionNote: 'Kurs ręczny 4.25' }
+    expect(validateInvoiceApproval(data).ok).toBe(true)
+    for (const patch of [{ reportingGross: 424.99 }, { paidAt: '2026-09-14' }, { currency: 'PLN' }]) {
+      const result = validateInvoiceApproval({ ...data, ...patch })
+      expect(result.ok).toBe(false)
+      if (!result.ok) expect(result.issues.map((issue) => issue.code)).toContain('INVALID_EUR_CONVERSION')
+    }
+    expect(validateInvoiceApproval({ ...data, reportingGross: 410, conversion: { ...conversion, mode: 'MANUAL_AMOUNT', rate: null } }).ok).toBe(true)
+  })
   it('approves a complete PLN invoice at the cutover boundary', () => {
     expect(validateInvoiceApproval(validPlnDraft)).toEqual({
       ok: true,

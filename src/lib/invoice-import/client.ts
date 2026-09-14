@@ -3,6 +3,7 @@ import { INVOICE_ATTACHMENT_MAX_BYTES, invoiceDraftDataSchema, invoiceManualFiel
 import type { InvoiceDraftMutationResult } from './approval-service'
 import type { InvoiceClosedPeriod, InvoiceDraftAction, InvoiceDraftDetail, InvoiceDraftSummary, InvoiceReviewIssue, InvoiceKsefResolutionInput } from './client-contracts'
 import { invoiceKsefDetailSchema, invoiceKsefResultSchema } from './ksef-client-contracts'
+import { nbpEurQuoteSchema } from './eur-conversion'
 
 const id = z.string().min(1).max(191)
 const date = z.iso.datetime()
@@ -127,6 +128,10 @@ export function createInvoiceImportClient(fetcher: typeof fetch = fetch) {
   }
   return {
     original,
+    eurRate: async (paymentDate: string, signal?: AbortSignal) => (await request(
+      `${ROOT}/exchange-rate?paymentDate=${encodeURIComponent(paymentDate)}`,
+      z.object({ quote: nbpEurQuoteSchema.refine((quote) => quote.paymentDate === paymentDate) }), { signal },
+    )).quote,
     createBatch: async () => (await request(`${ROOT}/batches`, z.object({ batch: z.object({ id }) }), { method: 'POST' })).batch,
     list: async (filters: { batchId?: string; state?: 'OPEN' | 'APPROVED' | 'ARCHIVED'; limit?: number } = {}, signal?: AbortSignal) => {
       const query = new URLSearchParams()

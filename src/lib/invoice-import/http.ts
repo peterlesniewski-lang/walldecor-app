@@ -9,11 +9,13 @@ import { archiveDraft, createBatch, editDraft, getDraft, listDrafts, requestExtr
 import { getInvoiceOriginal, uploadInvoiceDocument, type InvoiceFileEnvironment } from './file-service'
 import { INVOICE_HTTP_HEADERS, InvoiceImportHttpError, invoiceHttpErrorResponse } from './http-errors'
 import { getDraftKsefReconciliations, resolveDraftKsefReconciliation } from './ksef-reconciliation-service'
+import { getNbpEurRate, type NbpEurRateLookup } from './nbp-rate'
 
 interface Dependencies {
   db: PrismaClient
   getSession: () => Promise<{ user: { id?: string } } | null>
   files: () => Promise<InvoiceFileEnvironment>
+  nbpLookup?: NbpEurRateLookup
 }
 
 const id = z.string().trim().min(1).max(191)
@@ -53,7 +55,7 @@ function contentDisposition(filename: string, download: boolean) {
 
 /** Thin authenticated HTTP adapter. Domain services repeat authorization inside
  * their transactions; this first check also prevents unauthorised body work. */
-export function createInvoiceImportHandlers({ db, getSession, files }: Dependencies) {
+export function createInvoiceImportHandlers({ db, getSession, files, nbpLookup = getNbpEurRate }: Dependencies) {
   async function actor() {
     const actorId = (await getSession())?.user.id
     if (!actorId) throw new InvoiceImportHttpError('UNAUTHENTICATED', 401)
@@ -73,6 +75,10 @@ export function createInvoiceImportHandlers({ db, getSession, files }: Dependenc
   const json = (value: unknown, status = 200) => NextResponse.json(value, { status, headers: INVOICE_HTTP_HEADERS })
 
   return {
+    exchangeRateGET: (req: NextRequest) => respond(async () => {
+      const { paymentDate } = query(z.strictObject({ paymentDate: z.iso.date() }), req)
+      return json({ quote: await nbpLookup(paymentDate) })
+    }),
     batchesPOST: () => respond(async (actorId) => json({ batch: await createBatch(db, actorId) }, 201)),
     draftsGET: (req: NextRequest) => respond(async (actorId) =>
       json({ drafts: await listDrafts(db, actorId, query(querySchema, req)) }),
@@ -93,7 +99,7 @@ export function createInvoiceImportHandlers({ db, getSession, files }: Dependenc
     ),
     draftPATCH: (req: NextRequest, draftId: string) => respond(async (actorId) => {
       const input = parse(editSchema, await readAiJson(req, 64_000))
-      return json({ draft: await editDraft(db, actorId, draftId, input.expectedVersion, input.data) })
+      return json({ draft: await editDraft(db, actorId, draftId, input.expectedVersion, input.data, { nbpLookup }) })
     }),
     actionsPOST: (req: NextRequest, draftId: string) => respond(async (actorId) => {
       const input = parse(actionSchema, await readAiJson(req, 8_000))

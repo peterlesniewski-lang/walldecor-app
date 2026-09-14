@@ -606,6 +606,14 @@ describe('explicit KSeF snapshot application', () => {
     expect(applyKsefSnapshotToDraft(current, snapshot).conversionConfirmed).toBe(true)
   })
 
+  it('withdraws structured EUR confirmation even for a subcent source change', () => {
+    const current = draft({ currency: 'EUR', gross: 10, net: 8, vat: 2, conversionConfirmed: true,
+      conversion: { mode: 'MANUAL_RATE', paymentDate: '2026-09-10', rate: '4.25', rateDate: null, tableNumber: null },
+    })
+    const snapshot = buildKsefReconciliationSnapshot(metadata({ currency: 'EUR', grossAmount: 10.004, netAmount: 8, vatAmount: 2 }), null)
+    expect(applyKsefSnapshotToDraft(current, snapshot).conversionConfirmed).toBe(false)
+  })
+
   it('clears stale paidAt when a strictly parsed stored snapshot explicitly says UNPAID', () => {
     const built = buildKsefReconciliationSnapshot(metadata(), null)
     const snapshot = ksefReconciliationSnapshotSchema.parse({
@@ -617,6 +625,16 @@ describe('explicit KSeF snapshot application', () => {
       paymentStatus: 'UNPAID',
       paidAt: null,
     })
+  })
+
+  it('withdraws conversion confirmation when KSeF changes only payment date', () => {
+    const current = draft({ conversionConfirmed: true })
+    const built = buildKsefReconciliationSnapshot(metadata(), null)
+    const snapshot = ksefReconciliationSnapshotSchema.parse({ ...built,
+      data: { ...built.data, gross: current.gross, net: current.net, vat: current.vat, currency: current.currency,
+        paymentStatus: 'PAID', paidAt: '2026-09-12' },
+    })
+    expect(applyKsefSnapshotToDraft(current, snapshot)).toMatchObject({ paidAt: '2026-09-12', conversionConfirmed: false })
   })
 
   it.each([

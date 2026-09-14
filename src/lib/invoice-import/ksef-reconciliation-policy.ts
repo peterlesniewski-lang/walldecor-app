@@ -494,6 +494,8 @@ export function applyKsefSnapshotToDraft(
   }
 
   const basisChanged = current.currency !== next.currency
+    || (current.paidAt ?? null) !== (next.paidAt ?? null)
+    || (current.conversion != null && (current.gross !== next.gross || current.net !== next.net || current.vat !== next.vat))
     || effectiveMoneyChanged(current.gross, next.gross)
     || effectiveMoneyChanged(current.net, next.net)
     || effectiveMoneyChanged(current.vat, next.vat)

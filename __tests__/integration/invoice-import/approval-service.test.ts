@@ -107,6 +107,27 @@ afterAll(async () => {
 })
 
 describe('invoice draft approval service', () => {
+  it('saves and approves structured manual EUR conversion offline with real PLN cost', async () => {
+    const draft = await createDraft(validData({ currency: 'EUR', gross: 360.2, net: null, vat: null }))
+    const conversion = { mode: 'MANUAL_RATE', paymentDate: null, rate: '4.25', rateDate: null, tableNumber: null }
+    await editDraft(db, 'admin', draft.id, 1, { conversion, reportingGross: 1530.85, reportingNet: null, reportingVat: null, conversionNote: 'Kurs ręczny 4.25', conversionConfirmed: true }, { nbpLookup: async () => { throw new Error('Must work offline') } })
+    await db.$disconnect()
+    db = client()
+    const result = await approveInvoiceDraft(db, 'admin', draft.id, approveInput('manual-eur-real-1', 2))
+    expect(result.outcome).toBe('APPROVED')
+    const cost = await db.costEvent.findUniqueOrThrow({ where: { id: result.costEventId! } })
+    expect(cost).toMatchObject({ grossAmount: 1530.85, currency: 'PLN', netAmount: null, vatAmount: null })
+    expect(JSON.parse((await db.invoiceImportDraft.findUniqueOrThrow({ where: { id: draft.id } })).dataJson).conversion).toEqual(conversion)
+  })
+
+  it('refuses forged stored structured arithmetic independently at approval', async () => {
+    const draft = await createDraft(validData({ currency: 'EUR', gross: 100, net: null, vat: null,
+      conversion: { mode: 'MANUAL_RATE', paymentDate: null, rate: '4.25', rateDate: null, tableNumber: null },
+      reportingGross: 424, conversionConfirmed: true, conversionNote: 'Kurs ręczny',
+    }))
+    await expect(approveInvoiceDraft(db, 'admin', draft.id, approveInput('forged-eur-real-1'))).rejects.toMatchObject({ code: 'APPROVAL_VALIDATION_FAILED', issues: expect.arrayContaining([expect.objectContaining({ code: 'INVALID_EUR_CONVERSION' })]) })
+    expect(await db.costEvent.count()).toBe(0)
+  })
   it('atomically creates the approved invoice, active cost and immutable receipt', async () => {
     const draft = await createDraft()
 

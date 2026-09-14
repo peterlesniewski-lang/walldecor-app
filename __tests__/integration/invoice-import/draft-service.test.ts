@@ -4,7 +4,7 @@ import { spawnSync } from 'node:child_process'
 import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PrismaClient } from '@/generated/prisma'
 import { claimAiJob, finishAiJob } from '@/lib/ai/queue'
 import {
@@ -19,6 +19,9 @@ import {
   skipDraft,
 } from '@/lib/invoice-import/draft-service'
 import { INVOICE_ATTACHMENT_MAX_BYTES } from '@/lib/invoice-import/contracts'
+
+const conversion = { mode: 'NBP' as const, paymentDate: '2026-09-14', rate: '4.3228', rateDate: '2026-09-11', tableNumber: '177/A/NBP/2026' }
+const nbpLookup = async () => ({ currency: 'EUR' as const, paymentDate: conversion.paymentDate, rate: conversion.rate, rateDate: conversion.rateDate, tableNumber: conversion.tableNumber })
 
 const directory = mkdtempSync(path.join(tmpdir(), 'walldecor-invoice-drafts-'))
 const databaseUrl = `file:${path.join(directory, 'drafts.db')}`
@@ -112,6 +115,54 @@ afterAll(async () => {
 })
 
 describe('invoice import draft service', () => {
+  it('saves fractional source drafts but refuses confirmation before approval could change their nominal basis', async () => {
+    const batch = await createBatch(db, 'admin')
+    const { draft } = await registerReadyDraft(db, 'admin', batch.id, metadata())
+    const data = { currency: 'EUR', gross: 10.005, conversion: { mode: 'MANUAL_RATE', rate: '4.25', rateDate: null, tableNumber: null, paymentDate: null }, reportingGross: 42.52 }
+    await editDraft(db, 'admin', draft.id, 1, data)
+    await expect(editDraft(db, 'admin', draft.id, 2, { conversionConfirmed: true })).rejects.toMatchObject({ code: 'EUR_AMOUNT_PRECISION', status: 422 })
+    expect((await getDraft(db, 'admin', draft.id)).data).toMatchObject({ gross: 10.005, conversionConfirmed: false })
+  })
+  it('persists verified NBP provenance, rejects forgery, fences versions, and supports offline note edits', async () => {
+    const batch = await createBatch(db, 'admin')
+    const { draft } = await registerReadyDraft(db, 'admin', batch.id, metadata())
+    const lookup = vi.fn(nbpLookup)
+    const data = { currency: 'EUR', gross: 100, paidAt: '2026-09-14', conversion, reportingGross: 432.28, conversionConfirmed: true }
+    await expect(editDraft(db, 'admin', draft.id, 1, { ...data, conversion: { ...conversion, rate: '4' }, reportingGross: 400 }, { nbpLookup: lookup })).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+    expect(lookup).toHaveBeenCalledOnce()
+    const saved = await editDraft(db, 'admin', draft.id, 1, data, { nbpLookup: lookup })
+    expect(saved.data).toMatchObject(data)
+    expect(saved.manualFields).toContain('conversion')
+    expect(JSON.parse((await db.invoiceDraftAudit.findFirstOrThrow({ where: { draftId: draft.id, action: 'EDITED' } })).afterJson).data.conversion).toEqual(conversion)
+    await db.$disconnect()
+    db = client()
+    expect((await getDraft(db, 'admin', draft.id)).data.conversion).toEqual(conversion)
+    const offline = vi.fn(async () => { throw new Error('offline') })
+    await expect(editDraft(db, 'admin', draft.id, 1, data, { nbpLookup: offline })).rejects.toMatchObject({ code: 'STALE_VERSION' })
+    const note = await editDraft(db, 'admin', draft.id, 2, { notes: 'Sprawdzone', conversionConfirmed: true }, { nbpLookup: offline })
+    expect(note.data.conversionConfirmed).toBe(true)
+    expect(offline).not.toHaveBeenCalled()
+  })
+
+  it.each([{ paidAt: '2026-09-15' }, { reportingGross: 500 }, { conversion: { ...conversion, rate: '5' } }])('invalidates a changed EUR basis and rejects explicit invalid reconfirmation', async (patch) => {
+    const batch = await createBatch(db, 'admin')
+    const { draft } = await registerReadyDraft(db, 'admin', batch.id, metadata())
+    await editDraft(db, 'admin', draft.id, 1, { currency: 'EUR', gross: 100, paidAt: '2026-09-14', conversion, reportingGross: 432.28, conversionConfirmed: true }, { nbpLookup })
+    await expect(editDraft(db, 'admin', draft.id, 2, { ...patch, conversionConfirmed: true }, { nbpLookup })).rejects.toMatchObject({ code: 'INVALID_INPUT' })
+    const changed = await editDraft(db, 'admin', draft.id, 2, patch, { nbpLookup })
+    expect(changed.data.conversionConfirmed).toBe(false)
+  })
+
+  it('rechecks version after lookup outside the transaction', async () => {
+    const batch = await createBatch(db, 'admin')
+    const { draft } = await registerReadyDraft(db, 'admin', batch.id, metadata())
+    await expect(editDraft(db, 'admin', draft.id, 1, { currency: 'EUR', gross: 100, paidAt: '2026-09-14', conversion, reportingGross: 432.28, conversionConfirmed: true }, { nbpLookup: async () => {
+      await editDraft(other, 'admin2', draft.id, 1, { notes: 'Concurrent edit' })
+      return nbpLookup()
+    } })).rejects.toMatchObject({ code: 'STALE_VERSION' })
+    expect((await getDraft(db, 'admin', draft.id)).data).toEqual({ notes: 'Concurrent edit' })
+  })
+
   it('authorizes every operation from current user state and keeps upload batches owner-bound', async () => {
     await expect(createBatch(db, 'manager')).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 })
     await expect(createBatch(db, 'missing')).rejects.toMatchObject({ code: 'FORBIDDEN', status: 403 })
