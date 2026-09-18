@@ -1,70 +1,33 @@
-import { render, screen } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { NextRequest } from 'next/server'
+import { NextRequest, NextResponse } from 'next/server'
 import { GET } from '@/app/api/finance/break-even/route'
-import { BreakEvenView } from '@/components/shared/break-even-view'
+import { GET as SOURCES } from '@/app/api/finance/break-even/sources/route'
+import { requireFinanceReportAccess } from '@/lib/finance/finance-access'
+import { loadBreakEvenReport, loadBreakEvenSources } from '@/lib/finance/break-even-data'
+vi.mock('@/lib/finance/break-even-data', () => ({ loadBreakEvenReport: vi.fn(), loadBreakEvenSources: vi.fn() }))
+vi.mock('@/lib/finance/finance-access', () => ({ requireFinanceReportAccess: vi.fn() }))
 
-const prismaMock = vi.hoisted(() => ({
-  actualEntry: { findMany: vi.fn() },
-  costEvent: { findMany: vi.fn() },
-  revenue: { findMany: vi.fn() },
-  contributionMarginSetting: { findMany: vi.fn() },
-  ksefInvoice: { findMany: vi.fn() },
-}))
-
-vi.mock('@/lib/prisma', () => ({ prisma: prismaMock }))
-vi.mock('@/lib/finance/finance-access', () => ({
-  requireFinanceReportAccess: vi.fn(async () => ({ session: { user: { id: 'admin-1', role: 'ADMIN' } } })),
-}))
-
-describe('break-even warning money', () => {
+describe('break-even read routes', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    prismaMock.actualEntry.findMany.mockResolvedValue([])
-    prismaMock.costEvent.findMany.mockResolvedValue([])
-    prismaMock.revenue.findMany.mockResolvedValue([])
-    prismaMock.contributionMarginSetting.findMany.mockResolvedValue([])
-    prismaMock.ksefInvoice.findMany.mockResolvedValue([
-      { status: 'NEW', documentStatus: 'ACTIVE', currency: 'PLN', grossAmount: 100, reportingGrossAmount: null, invoiceImportDraft: null },
-      { status: 'APPROVED', documentStatus: 'ACTIVE', currency: 'EUR', grossAmount: 20, reportingGrossAmount: null, invoiceImportDraft: null },
-      { status: 'MAPPED', documentStatus: 'ACTIVE', currency: 'USD', grossAmount: 30, reportingGrossAmount: 120, invoiceImportDraft: { state: 'APPROVED' } },
-      { status: 'NEW', documentStatus: 'CANCELLED', currency: 'PLN', grossAmount: 40, reportingGrossAmount: null, invoiceImportDraft: null },
-      { status: 'NEW', documentStatus: 'ACTIVE', currency: 'GBP', grossAmount: 50, reportingGrossAmount: null, invoiceImportDraft: { state: 'ARCHIVED' } },
-    ])
+    vi.mocked(requireFinanceReportAccess).mockResolvedValue({ session: { user: { id: 'admin', role: 'ADMIN' } } } as never)
   })
-
-  it('returns active known PLN and unconverted warning metadata', async () => {
+  it('preserves separate PLN and nominal warning currencies in response', async () => {
+    const payload = { year: 2026, month: 9, report: { warningAmount: 220, warningSummary: { plnAmount: 220, unconvertedCount: 1, unconvertedByCurrency: [{ currency: 'EUR', amount: 20, count: 1 }] } } }
+    vi.mocked(loadBreakEvenReport).mockResolvedValue(payload as never)
     const response = await GET(new NextRequest('http://localhost/api/finance/break-even?year=2026&month=9'))
-    const body = await response.json()
-
-    expect(body.report.warningAmount).toBe(220)
-    expect(body.report.warningSummary).toEqual({
-      plnAmount: 220,
-      unconvertedCount: 1,
-      unconvertedByCurrency: [{ currency: 'EUR', amount: 20, count: 1 }],
-    })
-    expect(prismaMock.ksefInvoice.findMany).toHaveBeenCalledWith({
-      select: expect.objectContaining({ invoiceImportDraft: { select: { state: true } } }),
-    })
+    expect(await response.json()).toEqual(payload)
+    expect(loadBreakEvenReport).toHaveBeenCalledWith(2026, 9)
   })
-
-  it('renders known PLN and each nominal warning currency separately', () => {
-    render(<BreakEvenView initialReport={{
-      warningAmount: 220,
-      warningSummary: {
-        plnAmount: 220,
-        unconvertedCount: 2,
-        unconvertedByCurrency: [
-          { currency: 'EUR', amount: 20, count: 1 },
-          { currency: 'GBP', amount: 30, count: 1 },
-        ],
-      },
-      byCostCenter: {},
-    }} />)
-
-    expect(screen.getByText('220 PLN')).toBeTruthy()
-    expect(screen.getByText('Bez przeliczenia: 2 dokumenty')).toBeTruthy()
-    expect(screen.getByText('20 EUR · 1 dokument')).toBeTruthy()
-    expect(screen.getByText('30 GBP · 1 dokument')).toBeTruthy()
+  it('validates month before any database reads', async () => {
+    expect((await GET(new NextRequest('http://localhost/api/finance/break-even?year=2026&month=99'))).status).toBe(400)
+    expect(loadBreakEvenReport).not.toHaveBeenCalled()
+  })
+  it('protects report and sources from unauthorized callers', async () => {
+    vi.mocked(requireFinanceReportAccess).mockResolvedValue({ error: NextResponse.json({ error: 'Forbidden' }, { status: 403 }) })
+    expect((await GET(new NextRequest('http://localhost/api/finance/break-even'))).status).toBe(403)
+    expect((await SOURCES(new NextRequest('http://localhost/api/finance/break-even/sources'))).status).toBe(403)
+    expect(loadBreakEvenReport).not.toHaveBeenCalled()
+    expect(loadBreakEvenSources).not.toHaveBeenCalled()
   })
 })

@@ -28,6 +28,8 @@ model CostCenter {
   ksefInvoicePartAllocations KsefInvoicePartAllocation[]
   costEventPartAllocations   CostEventPartAllocation[]
   contributionMarginSettings ContributionMarginSetting[]
+  breakEvenFixedCosts BreakEvenFixedCost[]
+  breakEvenRevenueBases BreakEvenRevenueBasis[]
   salonCashSettings SalonCashSettings?
   cashDailyReports CashDailyReport[]
 }
@@ -623,6 +625,7 @@ model CostEventPart {
 
   tags        CostEventPartTag[]
   allocations CostEventPartAllocation[]
+  breakEvenMatches BreakEvenFixedCostMatch[]
 }
 
 model CostEventPartTag {
@@ -687,6 +690,69 @@ model ContributionMarginSetting {
   createdAt     DateTime @default(now())
 
   @@index([costCenterId, effectiveFrom])
+}
+
+// Company-wide contribution margin. Effective dates are the first day of a month.
+model BreakEvenMarginSetting {
+  id            String   @id @default(cuid())
+  margin        Float
+  effectiveFrom DateTime @unique
+  note          String?
+  createdById   String?
+  createdAt     DateTime @default(now())
+}
+
+// Expected monthly NET costs remain until explicitly matched to approved invoice parts.
+model BreakEvenFixedCost {
+  id                String   @id @default(cuid())
+  name              String
+  costCenterId      String
+  costCenter        CostCenter @relation(fields: [costCenterId], references: [id])
+  supplierNip       String?
+  supplierName      String?
+  expectedNetAmount Float
+  effectiveFrom     String
+  effectiveTo       String?
+  active            Boolean  @default(true)
+  createdById       String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  matches           BreakEvenFixedCostMatch[]
+
+  @@index([costCenterId, active])
+}
+
+model BreakEvenFixedCostMatch {
+  id                String   @id @default(cuid())
+  fixedCostId       String
+  fixedCost         BreakEvenFixedCost @relation(fields: [fixedCostId], references: [id], onDelete: Restrict)
+  year              Int
+  month             Int
+  costEventPartId   String
+  costEventPart     CostEventPart @relation(fields: [costEventPartId], references: [id], onDelete: Restrict)
+  costCenterId      String
+  actualNetAmount   Float?
+  createdById       String?
+  createdAt         DateTime @default(now())
+
+  @@unique([costEventPartId, costCenterId])
+  @@index([year, month])
+  @@index([fixedCostId, year, month])
+}
+
+// Explicit NET companion to existing Revenue gross amounts; stale snapshots are incomplete.
+model BreakEvenRevenueBasis {
+  id                  String   @id @default(cuid())
+  year                Int
+  month               Int
+  costCenterId        String
+  costCenter          CostCenter @relation(fields: [costCenterId], references: [id])
+  netAmount           Float
+  grossAmountSnapshot Float
+  createdById         String?
+  updatedAt           DateTime @updatedAt
+
+  @@unique([year, month, costCenterId])
 }
 
 model PaymentReminder {
