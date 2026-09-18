@@ -1,6 +1,8 @@
 import Link from 'next/link'
 import { AlertTriangle, ArrowDownRight, ArrowUpRight, Banknote, CircleDollarSign, FileCheck2, ReceiptText, Target } from 'lucide-react'
 import type { CompanyHealth, CostCenterHealth, FinanceCostCenterId, HealthStatus } from '@/lib/finance/company-health'
+import { InvoiceMoneyUnconverted, invoiceDocumentLabel } from '@/components/shared/invoice-payment-money-summary'
+import type { InvoiceMoneySummary } from '@/lib/finance/invoice-money'
 
 const COST_CENTER_LABELS: Record<FinanceCostCenterId | 'COMPANY', string> = {
   COMPANY: 'Firma',
@@ -16,8 +18,12 @@ const COST_CENTER_SUBTITLES: Record<FinanceCostCenterId | 'COMPANY', string> = {
   GLOBAL: 'Koszty centralne',
 }
 
-function formatMoney(value: number) {
-  return `${Math.round(value).toLocaleString('pl-PL')} PLN`
+function formatMoney(value: number, currency = 'PLN') {
+  return `${Math.round(value).toLocaleString('pl-PL')} ${currency}`
+}
+
+function formatInvoiceMoney(value: number, currency = 'PLN') {
+  return `${(Math.round(value * 100) / 100).toLocaleString('pl-PL', { maximumFractionDigits: 2 })} ${currency}`
 }
 
 function formatCompact(value: number) {
@@ -111,7 +117,11 @@ interface CompanyHealthViewProps {
   cashByCurrency: Array<{ currency: string; amount: number }>
   ksefInboxCount?: number
   unpaidInvoiceAmount?: number
+  unpaidInvoiceSummary?: InvoiceMoneySummary
+  unpaidInvoiceCount?: number
+  uncertainPaymentCount?: number
   unclassifiedWarningAmount?: number
+  unclassifiedWarningSummary?: InvoiceMoneySummary
 }
 
 export function CompanyHealthView({
@@ -120,7 +130,11 @@ export function CompanyHealthView({
   cashByCurrency,
   ksefInboxCount = 0,
   unpaidInvoiceAmount = 0,
+  unpaidInvoiceSummary = { plnAmount: unpaidInvoiceAmount, unconvertedCount: 0, unconvertedByCurrency: [] },
+  unpaidInvoiceCount = 0,
+  uncertainPaymentCount = 0,
   unclassifiedWarningAmount = 0,
+  unclassifiedWarningSummary = { plnAmount: unclassifiedWarningAmount, unconvertedCount: 0, unconvertedByCurrency: [] },
 }: CompanyHealthViewProps) {
   const cards = [
     health.company,
@@ -205,9 +219,18 @@ export function CompanyHealthView({
           <div className="rounded-lg border border-[var(--wd-border)] bg-white p-4">
             <div className="flex items-center gap-2">
               <Banknote size={16} className="text-gray-700" />
-              <p className="data-label">Pozostało do zapłaty</p>
+              <p className="data-label">Niezapłacone dokumenty</p>
             </div>
-            <p className="num mt-3 text-xl font-bold">{formatMoney(unpaidInvoiceAmount)}</p>
+            <p className="num mt-3 text-xl font-bold">{formatInvoiceMoney(unpaidInvoiceSummary.plnAmount)}</p>
+            <p className="mt-1 text-[11px] text-[var(--wd-text-muted)]">
+              {unpaidInvoiceCount > 0 ? `${unpaidInvoiceCount} dok. · ` : ''}znana kwota w PLN
+            </p>
+            <InvoiceMoneyUnconverted summary={unpaidInvoiceSummary} formatMoney={formatInvoiceMoney} />
+            {uncertainPaymentCount > 0 && (
+              <p className="mt-2 text-[11px] font-semibold text-amber-700">
+                {uncertainPaymentCount} {invoiceDocumentLabel(uncertainPaymentCount)} z niepewnym statusem — pełne kwoty dokumentów, nie wyliczone saldo.
+              </p>
+            )}
           </div>
         )}
         {canViewCostReports && (
@@ -216,7 +239,9 @@ export function CompanyHealthView({
               <AlertTriangle size={16} className="text-amber-700" />
               <p className="data-label">Koszty oczekujące</p>
             </div>
-            <p className="num mt-3 text-xl font-bold">{formatMoney(unclassifiedWarningAmount)}</p>
+            <p className="num mt-3 text-xl font-bold">{formatInvoiceMoney(unclassifiedWarningSummary.plnAmount)}</p>
+            <p className="mt-1 text-[11px] text-[var(--wd-text-muted)]">Znana kwota w PLN</p>
+            <InvoiceMoneyUnconverted summary={unclassifiedWarningSummary} formatMoney={formatInvoiceMoney} />
           </div>
         )}
       </section>

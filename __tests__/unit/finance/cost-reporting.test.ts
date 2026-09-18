@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { buildBreakEvenReport, buildCostWarningTotal, filterConfidentialCostEvents, sumAllocatedCostsByCenter, summarizeSupplierSpend } from '@/lib/finance/cost-reporting'
+import { buildBreakEvenReport, buildCostWarningSummary, buildCostWarningTotal, filterConfidentialCostEvents, sumAllocatedCostsByCenter, summarizeSupplierSpend } from '@/lib/finance/cost-reporting'
 
 describe('summarizeSupplierSpend', () => {
   it('groups approved cost events by supplier NIP when available', () => {
@@ -17,12 +17,27 @@ describe('summarizeSupplierSpend', () => {
 })
 
 describe('buildCostWarningTotal', () => {
-  it('sums costs that can make reports incomplete', () => {
+  it('returns the known PLN portion for scalar compatibility', () => {
     expect(buildCostWarningTotal([
       { status: 'NEW', documentStatus: 'ACTIVE', currency: 'PLN', grossAmount: 100 },
       { status: 'MAPPED', documentStatus: 'CORRECTION', currency: 'PLN', grossAmount: 50 },
       { status: 'APPROVED', documentStatus: 'ACTIVE', currency: 'EUR', grossAmount: 200 },
-    ])).toBe(350)
+    ])).toBe(150)
+  })
+
+  it('keeps known PLN separate from nominal warning currencies', () => {
+    expect(buildCostWarningSummary([
+      { status: 'NEW', documentStatus: 'ACTIVE', currency: 'PLN', grossAmount: 100 },
+      { status: 'APPROVED', documentStatus: 'ACTIVE', currency: 'EUR', grossAmount: 20 },
+      { status: 'MAPPED', documentStatus: 'ACTIVE', currency: 'USD', grossAmount: 30, reportingGrossAmount: 120 },
+      { status: 'APPROVED', documentStatus: 'CORRECTION', currency: 'PLN', grossAmount: -5 },
+      { status: 'MAPPED', documentStatus: 'CORRECTION', currency: 'EUR', grossAmount: -10 },
+      { status: 'APPROVED', documentStatus: 'ACTIVE', currency: ' pln ', grossAmount: 999 },
+    ])).toEqual({
+      plnAmount: 220,
+      unconvertedCount: 2,
+      unconvertedByCurrency: [{ currency: 'EUR', amount: 10, count: 2 }],
+    })
   })
 })
 
@@ -77,5 +92,22 @@ describe('buildBreakEvenReport', () => {
     expect(report.byCostCenter.JAG.breakEvenTurnover).toBe(12000)
     expect(report.byCostCenter.JAG.delta).toBe(3000)
     expect(report.warningAmount).toBe(100)
+  })
+
+  it('preserves warning currency metadata in the report contract', () => {
+    const warningSummary = {
+      plnAmount: 100,
+      unconvertedCount: 1,
+      unconvertedByCurrency: [{ currency: 'EUR', amount: 20, count: 1 }],
+    }
+    const report = buildBreakEvenReport({
+      revenue: [],
+      allocatedCosts: [],
+      contributionMargins: {},
+      warningAmount: 100,
+      warningSummary,
+    })
+
+    expect(report.warningSummary).toEqual(warningSummary)
   })
 })

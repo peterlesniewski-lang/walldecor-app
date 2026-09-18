@@ -30,6 +30,16 @@ function installerPathIsAllowed(pathname: string): boolean {
     || pathname === '/api/account/change-password'
 }
 
+// These APIs enforce their own fresh session/key boundaries and return JSON 401.
+// The private AI worker uses a dedicated narrow key, never a browser session.
+export function requiresProxySession(pathname: string): boolean {
+  return pathname !== '/api/cashier' && pathname !== '/api/import/revenue'
+    && pathname !== '/api/ai/chat' && pathname !== '/api/knowledge/ai'
+    && !/^\/api\/finance\/invoice-import(?:\/|$)/.test(pathname)
+    && !/^\/api\/ai\/jobs(?:\/|$)/.test(pathname)
+    && !/^\/api\/internal\/ai-worker(?:\/|$)/.test(pathname)
+}
+
 export function installerBoundaryResponse(req: NextRequest, token: JWT | null) {
   if (token?.role !== 'INSTALLER' || installerPathIsAllowed(req.nextUrl.pathname)) return null
   if (req.nextUrl.pathname.startsWith('/api/')) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
@@ -81,7 +91,7 @@ export default withAuth(
   {
     callbacks: {
       // Require a valid JWT for all matched routes
-      authorized: ({ token }) => !!token,
+      authorized: ({ token, req }) => !!token || !requiresProxySession(req.nextUrl.pathname),
     },
     pages: {
       signIn: '/login',

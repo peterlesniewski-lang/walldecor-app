@@ -4,7 +4,35 @@ import { KsefInvoiceUpdateSchema } from '@/lib/validations/ksef-inbox'
 import { applySupplierRuleToNewInvoices } from '@/lib/finance/ksef-rule-application'
 import { requireFinanceAdmin } from '@/lib/finance/finance-access'
 import { roundMoney } from '@/lib/finance/ksef-inbox'
+import { withAiQueueMutation } from '@/lib/ai/queue'
+import {
+  assertLegacyInvoiceWriteAllowed,
+  invoiceImportReviewRequiredResponse,
+} from '@/lib/invoice-import/legacy-write-guard'
 import type { Prisma } from '@/generated/prisma'
+
+export async function GET(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string }> }
+) {
+  const auth = await requireFinanceAdmin()
+  if (auth.error) {
+    auth.error.headers.set('Cache-Control', 'private, no-store')
+    return auth.error
+  }
+
+  const { id } = await params
+  const invoice = await prisma.ksefInvoice.findUnique({
+    where: { id },
+    select: {
+      id: true, supplierName: true, supplierNip: true, invoiceNumber: true,
+      issueDate: true, grossAmount: true, currency: true, status: true,
+    },
+  })
+  const headers = { 'Cache-Control': 'private, no-store' }
+  if (!invoice) return NextResponse.json({ error: 'Invoice not found' }, { status: 404, headers })
+  return NextResponse.json({ invoice }, { headers })
+}
 
 async function replaceWholeInvoicePart(
   tx: Prisma.TransactionClient,
@@ -71,103 +99,27 @@ export async function PATCH(
   }
 
   const { id } = await params
-  const existing = await prisma.ksefInvoice.findUnique({ where: { id } })
-  if (!existing) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
-  if (existing.status === 'APPROVED') {
-    return NextResponse.json({ error: 'Zatwierdzonej faktury nie można edytować.' }, { status: 409 })
-  }
-
   const data = parsed.data
-  const hasTagClassification = Boolean(data.costCenterId && data.tagIds && data.tagIds.length > 0)
-  const hasClassification = Boolean(data.costCenterId && data.subCategoryId) || hasTagClassification
-  const status = data.status ?? (hasClassification ? 'MAPPED' : existing.status)
+  try {
+    const outcome = await withAiQueueMutation(prisma, () => new Date(), async (tx) => {
+      await assertLegacyInvoiceWriteAllowed(tx, id)
+      const existing = await tx.ksefInvoice.findUnique({ where: { id } })
+      if (!existing) return { kind: 'error' as const, status: 404, error: 'Invoice not found' }
+      if (existing.status === 'APPROVED') {
+        return { kind: 'error' as const, status: 409, error: 'Zatwierdzonej faktury nie można edytować.' }
+      }
 
-  const result = await prisma.$transaction(async (tx) => {
-    const invoice = await tx.ksefInvoice.update({
-      where: { id },
-      data: {
-        status,
-        costCenterId: data.costCenterId,
-        subCategoryId: data.subCategoryId ?? (hasTagClassification ? null : existing.subCategoryId),
-        notes: data.notes,
-      },
-      include: {
-        costCenter: true,
-        subCategory: { include: { category: true } },
-        supplierRule: true,
-        parts: {
-          include: {
-            tags: { include: { tag: true } },
-            allocations: true,
-          },
-          orderBy: { order: 'asc' },
-        },
-      },
-    })
-
-    if (hasTagClassification && data.costCenterId && data.tagIds) {
-      await replaceWholeInvoicePart(tx, {
-        invoiceId: id,
-        invoiceNumber: invoice.invoiceNumber,
-        grossAmount: invoice.reportingGrossAmount ?? invoice.grossAmount,
-        costCenterId: data.costCenterId,
-        tagIds: data.tagIds,
-      })
-    }
-
-    if (!hasClassification || !invoice.supplierNip || !data.costCenterId) {
-      const updatedInvoice = hasTagClassification
-        ? await tx.ksefInvoice.findUnique({
-            where: { id },
-            include: {
-              costCenter: true,
-              subCategory: { include: { category: true } },
-              supplierRule: true,
-              parts: {
-                include: {
-                  tags: { include: { tag: true } },
-                  allocations: true,
-                },
-                orderBy: { order: 'asc' },
-              },
-            },
-          })
-        : invoice
-      return { invoice: updatedInvoice, appliedCount: 0 }
-    }
-
-    if (data.tagIds && data.tagIds.length > 0) {
-      const existingRule = await tx.ksefSupplierRule.findFirst({
-        where: { supplierNip: invoice.supplierNip, active: true },
-        include: { tags: true },
-      })
-      const rule = existingRule
-        ? await tx.ksefSupplierRule.update({
-            where: { id: existingRule.id },
-            data: {
-              costCenterId: data.costCenterId,
-              subCategoryId: data.subCategoryId ?? null,
-              tags: {
-                deleteMany: {},
-                create: data.tagIds.map((tagId) => ({ tagId })),
-              },
-            },
-            include: { tags: true },
-          })
-        : await tx.ksefSupplierRule.create({
-            data: {
-              supplierNip: invoice.supplierNip,
-              supplierNamePattern: invoice.supplierName,
-              costCenterId: data.costCenterId,
-              subCategoryId: data.subCategoryId ?? null,
-              active: true,
-              tags: { create: data.tagIds.map((tagId) => ({ tagId })) },
-            },
-            include: { tags: true },
-          })
-      const appliedCount = await applySupplierRuleToNewInvoices(tx, rule)
-      const updatedInvoice = await tx.ksefInvoice.findUnique({
+      const hasTagClassification = Boolean(data.costCenterId && data.tagIds && data.tagIds.length > 0)
+      const hasClassification = Boolean(data.costCenterId && data.subCategoryId) || hasTagClassification
+      const status = data.status ?? (hasClassification ? 'MAPPED' : existing.status)
+      const invoice = await tx.ksefInvoice.update({
         where: { id },
+        data: {
+          status,
+          costCenterId: data.costCenterId,
+          subCategoryId: data.subCategoryId ?? (hasTagClassification ? null : existing.subCategoryId),
+          notes: data.notes,
+        },
         include: {
           costCenter: true,
           subCategory: { include: { category: true } },
@@ -181,37 +133,122 @@ export async function PATCH(
           },
         },
       })
-      return { invoice: updatedInvoice, appliedCount }
-    }
 
-    if (!data.subCategoryId) {
-      return { invoice, appliedCount: 0 }
-    }
+      if (hasTagClassification && data.costCenterId && data.tagIds) {
+        await replaceWholeInvoicePart(tx, {
+          invoiceId: id,
+          invoiceNumber: invoice.invoiceNumber,
+          grossAmount: invoice.reportingGrossAmount ?? invoice.grossAmount,
+          costCenterId: data.costCenterId,
+          tagIds: data.tagIds,
+        })
+      }
 
-    const existingRule = await tx.ksefSupplierRule.findFirst({
-      where: { supplierNip: invoice.supplierNip, active: true },
+      if (!hasClassification || !invoice.supplierNip || !data.costCenterId) {
+        const updatedInvoice = hasTagClassification
+          ? await tx.ksefInvoice.findUnique({
+              where: { id },
+              include: {
+                costCenter: true,
+                subCategory: { include: { category: true } },
+                supplierRule: true,
+                parts: {
+                  include: {
+                    tags: { include: { tag: true } },
+                    allocations: true,
+                  },
+                  orderBy: { order: 'asc' },
+                },
+              },
+            })
+          : invoice
+        return { kind: 'success' as const, result: { invoice: updatedInvoice, appliedCount: 0 } }
+      }
+
+      if (data.tagIds && data.tagIds.length > 0) {
+        const existingRule = await tx.ksefSupplierRule.findFirst({
+          where: { supplierNip: invoice.supplierNip, active: true },
+          include: { tags: true },
+        })
+        const rule = existingRule
+          ? await tx.ksefSupplierRule.update({
+              where: { id: existingRule.id },
+              data: {
+                costCenterId: data.costCenterId,
+                subCategoryId: data.subCategoryId ?? null,
+                tags: {
+                  deleteMany: {},
+                  create: data.tagIds.map((tagId) => ({ tagId })),
+                },
+              },
+              include: { tags: true },
+            })
+          : await tx.ksefSupplierRule.create({
+              data: {
+                supplierNip: invoice.supplierNip,
+                supplierNamePattern: invoice.supplierName,
+                costCenterId: data.costCenterId,
+                subCategoryId: data.subCategoryId ?? null,
+                active: true,
+                tags: { create: data.tagIds.map((tagId) => ({ tagId })) },
+              },
+              include: { tags: true },
+            })
+        const appliedCount = await applySupplierRuleToNewInvoices(tx, rule)
+        const updatedInvoice = await tx.ksefInvoice.findUnique({
+          where: { id },
+          include: {
+            costCenter: true,
+            subCategory: { include: { category: true } },
+            supplierRule: true,
+            parts: {
+              include: {
+                tags: { include: { tag: true } },
+                allocations: true,
+              },
+              orderBy: { order: 'asc' },
+            },
+          },
+        })
+        return { kind: 'success' as const, result: { invoice: updatedInvoice, appliedCount } }
+      }
+
+      if (!data.subCategoryId) {
+        return { kind: 'success' as const, result: { invoice, appliedCount: 0 } }
+      }
+
+      const existingRule = await tx.ksefSupplierRule.findFirst({
+        where: { supplierNip: invoice.supplierNip, active: true },
+      })
+      const rule = existingRule
+        ? await tx.ksefSupplierRule.update({
+            where: { id: existingRule.id },
+            data: {
+              costCenterId: data.costCenterId,
+              subCategoryId: data.subCategoryId,
+            },
+          })
+        : await tx.ksefSupplierRule.create({
+            data: {
+              supplierNip: invoice.supplierNip,
+              supplierNamePattern: invoice.supplierName,
+              costCenterId: data.costCenterId,
+              subCategoryId: data.subCategoryId,
+              active: true,
+            },
+          })
+
+      const appliedCount = await applySupplierRuleToNewInvoices(tx, rule)
+      return { kind: 'success' as const, result: { invoice, appliedCount } }
     })
-    const rule = existingRule
-      ? await tx.ksefSupplierRule.update({
-          where: { id: existingRule.id },
-          data: {
-            costCenterId: data.costCenterId,
-            subCategoryId: data.subCategoryId,
-          },
-        })
-      : await tx.ksefSupplierRule.create({
-          data: {
-            supplierNip: invoice.supplierNip,
-            supplierNamePattern: invoice.supplierName,
-            costCenterId: data.costCenterId,
-            subCategoryId: data.subCategoryId,
-            active: true,
-          },
-        })
 
-    const appliedCount = await applySupplierRuleToNewInvoices(tx, rule)
-    return { invoice, appliedCount }
-  })
-
-  return NextResponse.json(result)
+    if (outcome.kind === 'error') {
+      return NextResponse.json({ error: outcome.error }, { status: outcome.status })
+    }
+    return NextResponse.json(outcome.result)
+  } catch (error) {
+    const conflict = invoiceImportReviewRequiredResponse(error)
+    if (conflict) return conflict
+    throw error
+  }
 }

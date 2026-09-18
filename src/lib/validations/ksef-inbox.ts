@@ -28,13 +28,18 @@ const optionalNonNegativeNumber = z.preprocess(
   z.coerce.number().nonnegative().optional()
 )
 
+const optionalIsoDate = z.preprocess(
+  (value) => typeof value === 'string' ? value.trim() || undefined : value,
+  z.string().refine(isIsoDate, 'Podaj poprawną datę w formacie YYYY-MM-DD').optional()
+)
+
 export const KsefInvoiceCreateSchema = z.object({
   supplierName: z.string().trim().min(1, 'Podaj nazwę dostawcy'),
   supplierNip: z
     .string()
     .trim()
     .optional()
-    .transform((value) => normalizeSupplierNip(value)),
+    .transform((value) => value ?? ''),
   invoiceNumber: z.string().trim().min(1, 'Podaj numer faktury'),
   issueDate: z.string().trim().refine(isIsoDate, 'Data musi mieć format YYYY-MM-DD'),
   grossAmount: z.coerce.number().positive('Kwota brutto musi być większa od zera'),
@@ -65,6 +70,8 @@ export const KsefInvoiceQuerySchema = z.object({
   search: optionalTrimmedString,
   amountMin: optionalNonNegativeNumber,
   amountMax: optionalNonNegativeNumber,
+  issueDateFrom: optionalIsoDate,
+  issueDateTo: optionalIsoDate,
   sortBy: z.enum(VALID_KSEF_SORT_FIELDS).default('issueDate'),
   sortDir: z.enum(VALID_KSEF_SORT_DIRECTIONS).default('desc'),
 }).refine(
@@ -73,12 +80,20 @@ export const KsefInvoiceQuerySchema = z.object({
     message: 'Kwota od nie może być większa niż kwota do',
     path: ['amountMax'],
   }
+).refine(
+  (data) => !data.issueDateFrom || !data.issueDateTo || data.issueDateFrom <= data.issueDateTo,
+  { message: 'Data od nie może być późniejsza niż data do.', path: ['issueDateTo'] }
 )
 
 export const KsefInvoicePaymentSchema = z.object({
   paymentStatus: z.enum(VALID_PAYMENT_STATUSES),
   paidAt: z.string().datetime().optional().nullable(),
   dueDate: z.string().datetime().optional().nullable(),
+})
+
+export const KsefBulkPaymentSchema = z.object({
+  invoiceIds: z.array(z.string().trim().min(1).max(128)).min(1).max(200),
+  paidDate: z.string().refine(isIsoDate, 'Podaj poprawną datę płatności'),
 })
 
 export const KsefInvoiceCurrencyConversionSchema = z.object({

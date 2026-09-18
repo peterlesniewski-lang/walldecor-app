@@ -22,6 +22,20 @@ describe('normalizeSupplierNip', () => {
 })
 
 describe('KsefInvoiceCreateSchema', () => {
+  it.each([' DE 123-ABC ', ' GB1234567890 ', ' PL 525 000 71 33 '])(
+    'preserves the original tax identifier including letters and internal separators: %s', (supplierNip) => {
+      expect(KsefInvoiceCreateSchema.parse({
+        supplierName: 'Dostawca', supplierNip, invoiceNumber: 'FV/1', issueDate: '2026-09-10', grossAmount: 123,
+      }).supplierNip).toBe(supplierNip.trim())
+    },
+  )
+
+  it.each([undefined, '', '   '])('keeps an omitted or empty tax identifier empty for storage as null: %s', (supplierNip) => {
+    expect(KsefInvoiceCreateSchema.parse({
+      supplierName: 'Dostawca', supplierNip, invoiceNumber: 'FV/1', issueDate: '2026-09-10', grossAmount: 123,
+    }).supplierNip).toBe('')
+  })
+
   it('accepts a valid manually entered supplier invoice', () => {
     const result = KsefInvoiceCreateSchema.safeParse({
       supplierName: 'Google Cloud Poland sp. z o.o.',
@@ -229,7 +243,7 @@ describe('resolveSupplierRuleMatch', () => {
 
 describe('applySupplierRulesToNewInvoices', () => {
   it('does not auto-map foreign-currency invoices before PLN conversion', async () => {
-    const update = vi.fn()
+    const updateMany = vi.fn()
     const db = {
       ksefInvoice: {
         findMany: vi.fn().mockResolvedValue([
@@ -241,7 +255,7 @@ describe('applySupplierRulesToNewInvoices', () => {
             reportingGrossAmount: null,
           },
         ]),
-        update,
+        updateMany,
       },
     }
 
@@ -250,17 +264,20 @@ describe('applySupplierRulesToNewInvoices', () => {
     ])
 
     expect(applied).toBe(0)
-    expect(update).not.toHaveBeenCalled()
+    expect(updateMany).not.toHaveBeenCalled()
+    expect(db.ksefInvoice.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { status: 'NEW', invoiceImportDraft: { is: null } },
+    }))
   })
 
   it('marks rule conflicts without assigning supplier rule or classification', async () => {
-    const update = vi.fn()
+    const updateMany = vi.fn().mockResolvedValue({ count: 1 })
     const db = {
       ksefInvoice: {
         findMany: vi.fn().mockResolvedValue([
           { id: 'inv-1', supplierName: 'REMI Spółka Jawna', supplierNip: null },
         ]),
-        update,
+        updateMany,
       },
     }
 
@@ -270,8 +287,8 @@ describe('applySupplierRulesToNewInvoices', () => {
     ])
 
     expect(applied).toBe(0)
-    expect(update).toHaveBeenCalledWith({
-      where: { id: 'inv-1' },
+    expect(updateMany).toHaveBeenCalledWith({
+      where: { id: 'inv-1', status: 'NEW', invoiceImportDraft: { is: null } },
       data: {
         status: 'NEW',
         costCenterId: null,
@@ -280,6 +297,34 @@ describe('applySupplierRulesToNewInvoices', () => {
         ruleMatchStatus: 'CONFLICT',
       },
     })
+  })
+
+  it('does not rebuild tagged parts when an imported relation wins the conditional-update race', async () => {
+    const db = {
+      ksefInvoice: {
+        findMany: vi.fn().mockResolvedValue([{
+          id: 'inv-race', invoiceNumber: 'FV/1', grossAmount: 100,
+          supplierName: 'REMI Spółka Jawna', supplierNip: null,
+        }]),
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+      ksefInvoicePart: { findMany: vi.fn(), deleteMany: vi.fn(), create: vi.fn() },
+      ksefInvoicePartTag: { deleteMany: vi.fn(), createMany: vi.fn() },
+      ksefInvoicePartAllocation: { deleteMany: vi.fn(), create: vi.fn() },
+    }
+
+    const applied = await applySupplierRulesToNewInvoices(db as never, [{
+      id: 'rule', supplierNamePattern: 'remi', supplierNip: null,
+      costCenterId: 'GLOBAL', subCategoryId: null, active: true,
+      tags: [{ tagId: 'tag-fixed' }],
+    }])
+
+    expect(applied).toBe(0)
+    expect(db.ksefInvoice.updateMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: { id: 'inv-race', status: 'NEW', invoiceImportDraft: { is: null } },
+    }))
+    expect(db.ksefInvoicePart.findMany).not.toHaveBeenCalled()
+    expect(db.ksefInvoicePart.create).not.toHaveBeenCalled()
   })
 })
 

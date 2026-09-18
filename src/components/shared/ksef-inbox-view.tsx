@@ -1,20 +1,30 @@
 'use client'
 
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import { ArrowUpDown, CalendarClock, CheckCircle2, ChevronLeft, ChevronRight, CloudDownload, Eye, FilePlus2, RefreshCcw, Save, Search, Settings2, X } from 'lucide-react'
 import { parseKsefInvoiceXmlPreview, type KsefInvoiceXmlPreview } from '@/lib/finance/ksef-invoice-preview'
 import { TagChips } from '@/components/shared/tag-chips'
 import { KsefInvoicePartsEditor } from '@/components/shared/ksef-invoice-parts-editor'
-import { KsefPaymentSummary } from '@/components/shared/ksef-payment-summary'
+import { InvoicePaymentMoneySummary } from '@/components/shared/invoice-payment-money-summary'
+import { InvoiceImportWorkspace } from '@/components/invoice-import/invoice-import-workspace'
+import type { InvoiceMoneySummary } from '@/lib/finance/invoice-money'
+import { KsefSelectionBar } from '@/components/shared/ksef-selection-bar'
+import { KsefInvoiceTags } from '@/components/shared/ksef-invoice-tags'
+import { monthIssueDateRange } from '@/lib/finance/ksef-date-filter'
+import { warsawToday, type BulkPaymentResult } from '@/lib/finance/ksef-selection'
 
 export type KsefStatus = 'NEW' | 'MAPPED' | 'APPROVED' | 'IGNORED'
-export type KsefPaymentStatus = 'UNPAID' | 'PAID'
+export type KsefPaymentStatus = 'UNPAID' | 'PAID' | 'PARTIAL' | 'UNKNOWN'
 type KsefPaymentDeadline = 'OVERDUE' | 'DUE_0_7' | 'DUE_8_14' | 'DUE_15_30' | 'LATER' | 'MISSING_DUE_DATE'
 type KsefPageSize = 50 | 100 | 200
 type KsefSortBy = 'issueDate' | 'invoiceNumber' | 'supplierName' | 'grossAmount' | 'status' | 'paymentStatus' | 'dueDate' | 'costCenterId'
 type KsefSortDir = 'asc' | 'desc'
 type KsefInvoiceCounts = Record<KsefStatus, number>
-type KsefPaymentAging = Record<KsefPaymentDeadline, { count: number; grossAmount: number }>
+type KsefPaymentAgingInput = Record<KsefPaymentDeadline, {
+  count: number
+  grossAmount: number
+} & Partial<InvoiceMoneySummary>>
+type KsefPaymentAging = Record<KsefPaymentDeadline, InvoiceMoneySummary & { count: number; grossAmount: number }>
 
 interface CostCenterOption {
   id: string
@@ -36,6 +46,12 @@ interface CostTagGroupOption {
 
 interface KsefInvoiceRow {
   id: string
+  source?: string
+  invoiceImportDraft?: {
+    id: string
+    state: string
+    ksef?: { linkedCount: number; conflictCount: number }
+  } | null
   externalId: string | null
   supplierName: string
   supplierNip: string | null
@@ -96,8 +112,12 @@ interface KsefInvoiceListResponse {
   invoices: KsefInvoiceRow[]
   total: number
   grossAmountTotal: number
+  grossAmountSummary?: InvoiceMoneySummary
   unpaidAmountTotal?: number
-  paymentAging?: KsefPaymentAging
+  unpaidAmountSummary?: InvoiceMoneySummary
+  unpaidCount?: number
+  uncertainPaymentCount?: number
+  paymentAging?: KsefPaymentAgingInput
   page: number
   pageSize: KsefPageSize
   totalPages: number
@@ -108,7 +128,9 @@ interface KsefInvoiceFilters {
   search: string
   amountMin: string
   amountMax: string
-  paymentStatus: KsefPaymentStatus | 'ALL'
+  issueDateFrom: string
+  issueDateTo: string
+  paymentStatus: 'UNPAID' | 'PAID' | 'ALL'
   paymentDeadline: KsefPaymentDeadline | 'ALL'
 }
 
@@ -116,8 +138,12 @@ interface KsefInboxViewProps {
   initialInvoices: KsefInvoiceRow[]
   initialTotal: number
   initialGrossAmountTotal: number
+  initialGrossAmountSummary?: InvoiceMoneySummary
   initialUnpaidAmountTotal?: number
-  initialPaymentAging?: KsefPaymentAging
+  initialUnpaidAmountSummary?: InvoiceMoneySummary
+  initialUnpaidCount?: number
+  initialUncertainPaymentCount?: number
+  initialPaymentAging?: KsefPaymentAgingInput
   initialPage: number
   initialPageSize: KsefPageSize
   initialTotalPages: number
@@ -144,24 +170,53 @@ const STATUS_CLASSES: Record<KsefStatus, string> = {
 
 const PAGE_SIZE_OPTIONS: KsefPageSize[] = [50, 100, 200]
 const EMPTY_PAYMENT_AGING: KsefPaymentAging = {
-  OVERDUE: { count: 0, grossAmount: 0 },
-  DUE_0_7: { count: 0, grossAmount: 0 },
-  DUE_8_14: { count: 0, grossAmount: 0 },
-  DUE_15_30: { count: 0, grossAmount: 0 },
-  LATER: { count: 0, grossAmount: 0 },
-  MISSING_DUE_DATE: { count: 0, grossAmount: 0 },
+  OVERDUE: { count: 0, grossAmount: 0, plnAmount: 0, unconvertedCount: 0, unconvertedByCurrency: [] },
+  DUE_0_7: { count: 0, grossAmount: 0, plnAmount: 0, unconvertedCount: 0, unconvertedByCurrency: [] },
+  DUE_8_14: { count: 0, grossAmount: 0, plnAmount: 0, unconvertedCount: 0, unconvertedByCurrency: [] },
+  DUE_15_30: { count: 0, grossAmount: 0, plnAmount: 0, unconvertedCount: 0, unconvertedByCurrency: [] },
+  LATER: { count: 0, grossAmount: 0, plnAmount: 0, unconvertedCount: 0, unconvertedByCurrency: [] },
+  MISSING_DUE_DATE: { count: 0, grossAmount: 0, plnAmount: 0, unconvertedCount: 0, unconvertedByCurrency: [] },
+}
+
+function knownPlnSummary(plnAmount: number): InvoiceMoneySummary {
+  return { plnAmount, unconvertedCount: 0, unconvertedByCurrency: [] }
+}
+
+function normalizePaymentAging(paymentAging?: KsefPaymentAgingInput): KsefPaymentAging {
+  if (!paymentAging) return EMPTY_PAYMENT_AGING
+  return Object.fromEntries(Object.entries(EMPTY_PAYMENT_AGING).map(([bucket, empty]) => {
+    const summary = paymentAging[bucket as KsefPaymentDeadline]
+    return [bucket, summary ? {
+      ...summary,
+      plnAmount: summary.plnAmount ?? summary.grossAmount ?? 0,
+      unconvertedCount: summary.unconvertedCount ?? 0,
+      unconvertedByCurrency: summary.unconvertedByCurrency ?? [],
+    } : empty]
+  })) as KsefPaymentAging
+}
+
+function deriveUnpaidCount(paymentAging?: KsefPaymentAgingInput) {
+  if (!paymentAging) return null
+  const buckets = Object.keys(EMPTY_PAYMENT_AGING) as KsefPaymentDeadline[]
+  if (!buckets.every((bucket) => paymentAging[bucket] != null)) return null
+  return buckets.reduce((sum, bucket) => sum + paymentAging[bucket].count, 0)
 }
 const EMPTY_INVOICE_FILTERS: KsefInvoiceFilters = {
   search: '',
   amountMin: '',
   amountMax: '',
+  issueDateFrom: '',
+  issueDateTo: '',
   paymentStatus: 'ALL',
   paymentDeadline: 'ALL',
 }
-const PAYMENT_STATUS_LABELS: Record<KsefPaymentStatus | 'ALL', string> = {
+const PAYMENT_STATUS_LABELS: Record<KsefInvoiceFilters['paymentStatus'], string> = {
   ALL: 'Wszystkie',
   UNPAID: 'Do zapłaty',
   PAID: 'Zapłacone',
+}
+const PAYMENT_ROW_LABELS: Record<KsefPaymentStatus, string> = {
+  PAID: 'Zapłacona', UNPAID: 'Do zapłaty', PARTIAL: 'Częściowo zapłacona', UNKNOWN: 'Płatność nieustalona',
 }
 const PAYMENT_DEADLINE_LABELS: Record<KsefPaymentDeadline | 'ALL', string> = {
   ALL: 'Wszystkie',
@@ -239,9 +294,30 @@ function invoiceAllocationCostCenterId(invoice: KsefInvoiceRow) {
   return wholeAllocation?.costCenterId ?? invoice.costCenterId
 }
 
-async function readJson(response: Response) {
+class LegacyInvoiceReviewError extends Error {
+  constructor(readonly draftId: string, message: string) { super(message) }
+}
+
+type DuplicateInvoiceTarget = { invoiceId: string; draftId: string | null }
+type ExistingInvoiceSummary = Pick<KsefInvoiceRow, 'id' | 'supplierName' | 'supplierNip' | 'invoiceNumber' | 'issueDate' | 'grossAmount' | 'currency' | 'status'>
+const invoiceTargetId = (value: unknown): value is string => typeof value === 'string' && /^[A-Za-z0-9_-]{1,191}$/.test(value)
+
+class LegacyInvoiceDuplicateError extends Error {
+  constructor(readonly target: DuplicateInvoiceTarget) {
+    super('Ta faktura jest już zapisana. Otwórz istniejący dokument.')
+  }
+}
+
+async function readLegacyJson(response: Response) {
   const data = await response.json().catch(() => ({}))
   if (!response.ok) {
+    if (data.code === 'INVOICE_DUPLICATE' && invoiceTargetId(data.duplicate?.invoiceId)
+      && (data.duplicate.draftId === null || invoiceTargetId(data.duplicate.draftId))) {
+      throw new LegacyInvoiceDuplicateError(data.duplicate)
+    }
+    if (data.code === 'INVOICE_IMPORT_REVIEW_REQUIRED' && typeof data.draftId === 'string' && data.draftId.length <= 191) {
+      throw new LegacyInvoiceReviewError(data.draftId, 'Otwórz dokument, aby zmienić dane importowanej faktury.')
+    }
     throw new Error(data.error ?? 'Operacja nie powiodła się')
   }
   return data
@@ -267,6 +343,8 @@ function normalizeInvoiceFilters(filters: KsefInvoiceFilters): KsefInvoiceFilter
     search: filters.search.trim(),
     amountMin: filters.amountMin.trim(),
     amountMax: filters.amountMax.trim(),
+    issueDateFrom: filters.issueDateFrom,
+    issueDateTo: filters.issueDateTo,
     paymentStatus: filters.paymentStatus,
     paymentDeadline: filters.paymentDeadline,
   }
@@ -276,35 +354,53 @@ export function KsefInboxView({
   initialInvoices,
   initialTotal,
   initialGrossAmountTotal,
+  initialGrossAmountSummary,
   initialUnpaidAmountTotal = 0,
-  initialPaymentAging = EMPTY_PAYMENT_AGING,
+  initialUnpaidAmountSummary,
+  initialUnpaidCount,
+  initialUncertainPaymentCount = 0,
+  initialPaymentAging,
   initialPage,
   initialPageSize,
   initialTotalPages,
   initialCounts,
   initialRules,
   costCenters,
-  subCategories,
   costTagGroups = [],
 }: KsefInboxViewProps) {
   const [invoices, setInvoices] = useState(initialInvoices)
   const [rules, setRules] = useState(initialRules)
   const [tagGroups, setTagGroups] = useState(costTagGroups)
+  const [importWorkspace, setImportWorkspace] = useState<{ draftId?: string } | null>(null)
   const [statusFilter, setStatusFilter] = useState<KsefStatus | 'ALL'>('ALL')
   const [page, setPage] = useState(initialPage)
   const [pageSize, setPageSize] = useState<KsefPageSize>(initialPageSize)
   const [total, setTotal] = useState(initialTotal)
-  const [grossAmountTotal, setGrossAmountTotal] = useState(initialGrossAmountTotal)
-  const [unpaidAmountTotal, setUnpaidAmountTotal] = useState(initialUnpaidAmountTotal)
-  const [paymentAging, setPaymentAging] = useState(initialPaymentAging)
+  const [grossAmountSummary, setGrossAmountSummary] = useState(initialGrossAmountSummary ?? knownPlnSummary(initialGrossAmountTotal))
+  const [unpaidAmountSummary, setUnpaidAmountSummary] = useState(initialUnpaidAmountSummary ?? knownPlnSummary(initialUnpaidAmountTotal))
+  const [unpaidCount, setUnpaidCount] = useState<number | null>(initialUnpaidCount ?? deriveUnpaidCount(initialPaymentAging))
+  const [uncertainPaymentCount, setUncertainPaymentCount] = useState(initialUncertainPaymentCount)
+  const [paymentAging, setPaymentAging] = useState(normalizePaymentAging(initialPaymentAging))
   const [totalPages, setTotalPages] = useState(initialTotalPages)
   const [counts, setCounts] = useState<KsefInvoiceCounts>(initialCounts)
   const [filterForm, setFilterForm] = useState<KsefInvoiceFilters>(EMPTY_INVOICE_FILTERS)
   const [activeFilters, setActiveFilters] = useState<KsefInvoiceFilters>(EMPTY_INVOICE_FILTERS)
+  const [issueMonth, setIssueMonth] = useState('')
+  const [editingTagsId, setEditingTagsId] = useState<string | null>(null)
   const [sortBy, setSortBy] = useState<KsefSortBy>(DEFAULT_SORT_BY)
   const [sortDir, setSortDir] = useState<KsefSortDir>(DEFAULT_SORT_DIR)
   const [saving, setSaving] = useState<string | null>(null)
+  const [listLoading, setListLoading] = useState(false)
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkPaidDate, setBulkPaidDate] = useState(warsawToday)
+  const [bulkResult, setBulkResult] = useState<string | null>(null)
+  const bulkInFlight = useRef(false)
+  const selectableInvoices = invoices.filter((invoice) => !invoice.invoiceImportDraft)
+  const selectedInvoices = selectableInvoices.filter((invoice) => selectedIds.has(invoice.id))
+  const bulkBusy = saving === 'bulk-payment'
   const [error, setError] = useState<string | null>(null)
+  const [duplicateInvoice, setDuplicateInvoice] = useState<DuplicateInvoiceTarget | null>(null)
+  const [existingInvoice, setExistingInvoice] = useState<ExistingInvoiceSummary | null>(null)
   const [syncMessage, setSyncMessage] = useState<string | null>(null)
   const [contentPreview, setContentPreview] = useState<KsefInvoiceContentPreview | null>(null)
   const [partsEditorInvoice, setPartsEditorInvoice] = useState<KsefInvoiceRow | null>(null)
@@ -340,8 +436,47 @@ export function KsefInboxView({
   const hasActiveResultFilter = statusFilter !== 'ALL'
     || activeFilters.paymentStatus !== 'ALL'
     || activeFilters.paymentDeadline !== 'ALL'
-    || Boolean(activeFilters.search || activeFilters.amountMin || activeFilters.amountMax)
+    || Boolean(activeFilters.search || activeFilters.amountMin || activeFilters.amountMax || activeFilters.issueDateFrom || activeFilters.issueDateTo)
   const hasCostTags = tagGroups.some((group) => group.tags.length > 0)
+
+  async function readJson(response: Response) {
+    setDuplicateInvoice(null)
+    try { return await readLegacyJson(response) }
+    catch (failure) {
+      if (failure instanceof LegacyInvoiceReviewError) setImportWorkspace({ draftId: failure.draftId })
+      if (failure instanceof LegacyInvoiceDuplicateError) setDuplicateInvoice(failure.target)
+      throw failure
+    }
+  }
+
+  async function openDuplicateInvoice() {
+    if (!duplicateInvoice || saving !== null) return
+    if (duplicateInvoice.draftId) {
+      setError(null)
+      setImportWorkspace({ draftId: duplicateInvoice.draftId })
+      return
+    }
+    setSaving('existing-invoice')
+    try {
+      const response = await readLegacyJson(await fetch(`/api/finance/ksef/invoices/${duplicateInvoice.invoiceId}`, { cache: 'no-store' }))
+      const invoice = response.invoice
+      if (!invoice || invoice.id !== duplicateInvoice.invoiceId || typeof invoice.invoiceNumber !== 'string'
+        || typeof invoice.supplierName !== 'string' || typeof invoice.issueDate !== 'string'
+        || !Number.isFinite(new Date(invoice.issueDate).getTime())
+        || typeof invoice.grossAmount !== 'number' || !Number.isFinite(invoice.grossAmount)
+        || typeof invoice.currency !== 'string' || !/^[A-Z]{3}$/.test(invoice.currency)
+        || !Object.hasOwn(STATUS_LABELS, invoice.status)) {
+        throw new Error('Nie udało się odczytać istniejącej faktury. Spróbuj ponownie.')
+      }
+      setExistingInvoice(invoice)
+      setError(null)
+      setDuplicateInvoice(null)
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Nie udało się pobrać dokumentu.')
+    } finally {
+      setSaving(null)
+    }
+  }
 
   function replaceInvoice(updated: KsefInvoiceRow) {
     setInvoices((current) => current.map((invoice) => (invoice.id === updated.id ? updated : invoice)))
@@ -355,13 +490,17 @@ export function KsefInboxView({
   }
 
   function applyInvoicePage(response: KsefInvoiceListResponse) {
+    setSelectedIds(new Set())
+    setEditingTagsId(null)
     setInvoices(response.invoices)
     setPage(response.page)
     setPageSize(response.pageSize)
     setTotal(response.total)
-    setGrossAmountTotal(response.grossAmountTotal ?? 0)
-    setUnpaidAmountTotal(response.unpaidAmountTotal ?? 0)
-    setPaymentAging(response.paymentAging ?? EMPTY_PAYMENT_AGING)
+    setGrossAmountSummary(response.grossAmountSummary ?? knownPlnSummary(response.grossAmountTotal ?? 0))
+    setUnpaidAmountSummary(response.unpaidAmountSummary ?? knownPlnSummary(response.unpaidAmountTotal ?? 0))
+    setUnpaidCount(response.unpaidCount ?? deriveUnpaidCount(response.paymentAging))
+    setUncertainPaymentCount(response.uncertainPaymentCount ?? 0)
+    setPaymentAging(normalizePaymentAging(response.paymentAging))
     setTotalPages(response.totalPages)
     setCounts(response.counts)
     setClassification(buildClassificationState(response.invoices, costCenters))
@@ -392,22 +531,28 @@ export function KsefInboxView({
     if (targetFilters.search) params.set('search', targetFilters.search)
     if (targetFilters.amountMin) params.set('amountMin', targetFilters.amountMin)
     if (targetFilters.amountMax) params.set('amountMax', targetFilters.amountMax)
+    if (targetFilters.issueDateFrom) params.set('issueDateFrom', targetFilters.issueDateFrom)
+    if (targetFilters.issueDateTo) params.set('issueDateTo', targetFilters.issueDateTo)
     if (targetFilters.paymentStatus !== 'ALL') params.set('paymentStatus', targetFilters.paymentStatus)
     if (targetFilters.paymentDeadline !== 'ALL') params.set('paymentDeadline', targetFilters.paymentDeadline)
 
-    const response = await readJson(await fetch(`/api/finance/ksef/invoices?${params.toString()}`)) as KsefInvoiceListResponse
-    if (response.invoices.length === 0 && response.total > 0 && targetPage > response.totalPages) {
-      return refreshInvoices({
-        page: response.totalPages,
-        pageSize: targetPageSize,
-        statusFilter: targetStatus,
-        filters: targetFilters,
-        sortBy: targetSortBy,
-        sortDir: targetSortDir,
-      })
+    setListLoading(true)
+    try {
+      const response = await readJson(await fetch(`/api/finance/ksef/invoices?${params.toString()}`)) as KsefInvoiceListResponse
+      if (response.invoices.length === 0 && response.total > 0 && targetPage > response.totalPages) {
+        return await refreshInvoices({
+          page: response.totalPages,
+          pageSize: targetPageSize,
+          statusFilter: targetStatus,
+          filters: targetFilters,
+          sortBy: targetSortBy,
+          sortDir: targetSortDir,
+        })
+      }
+      return applyInvoicePage(response)
+    } finally {
+      setListLoading(false)
     }
-
-    return applyInvoicePage(response)
   }
 
   async function createCostTag(group: CostTagGroupOption, name: string) {
@@ -433,13 +578,16 @@ export function KsefInboxView({
     event.preventDefault()
     setError(null)
     setSyncMessage(null)
-    setSaving('filters')
     const nextFilters = normalizeInvoiceFilters(filterForm)
+    if (nextFilters.issueDateFrom && nextFilters.issueDateTo && nextFilters.issueDateFrom > nextFilters.issueDateTo) {
+      setError('Data od nie może być późniejsza niż data do.')
+      return
+    }
+    setSaving('filters')
     try {
+      await refreshInvoices({ page: 1, filters: nextFilters })
       setActiveFilters(nextFilters)
       setFilterForm(nextFilters)
-      setPage(1)
-      await refreshInvoices({ page: 1, filters: nextFilters })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nie udało się zastosować filtrów')
     } finally {
@@ -452,10 +600,10 @@ export function KsefInboxView({
     setSyncMessage(null)
     setSaving('filters')
     try {
+      await refreshInvoices({ page: 1, filters: EMPTY_INVOICE_FILTERS })
+      setIssueMonth('')
       setFilterForm(EMPTY_INVOICE_FILTERS)
       setActiveFilters(EMPTY_INVOICE_FILTERS)
-      setPage(1)
-      await refreshInvoices({ page: 1, filters: EMPTY_INVOICE_FILTERS })
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nie udało się wyczyścić filtrów')
     } finally {
@@ -480,6 +628,7 @@ export function KsefInboxView({
     setError(null)
     setSyncMessage(null)
     try {
+      setIssueMonth('')
       setFilterForm(EMPTY_INVOICE_FILTERS)
       setActiveFilters(EMPTY_INVOICE_FILTERS)
       setStatusFilter('ALL')
@@ -549,6 +698,7 @@ export function KsefInboxView({
         }),
       }))
       setStatusFilter('ALL')
+      setIssueMonth('')
       setFilterForm(EMPTY_INVOICE_FILTERS)
       setActiveFilters(EMPTY_INVOICE_FILTERS)
       await refreshInvoices({ page: 1, statusFilter: 'ALL', filters: EMPTY_INVOICE_FILTERS })
@@ -650,6 +800,43 @@ export function KsefInboxView({
     }
   }
 
+  async function paySelectedInvoices() {
+    if (bulkInFlight.current || saving || selectedInvoices.length === 0) return
+    bulkInFlight.current = true
+    setSaving('bulk-payment')
+    setError(null)
+    setBulkResult(null)
+    const submittedInvoices = [...selectedInvoices]
+    try {
+      const result = await readJson(await fetch('/api/finance/ksef/invoices/bulk-payment', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ invoiceIds: submittedInvoices.map((invoice) => invoice.id), paidDate: bulkPaidDate }),
+      })) as { results: BulkPaymentResult[]; paidAt: string }
+      const paid = result.results.filter((item) => item.outcome === 'paid')
+      const skipped = result.results.filter((item) => item.outcome === 'already_paid')
+      const failed = result.results.filter((item) => item.outcome === 'failed')
+      const completedIds = new Set([...paid, ...skipped].map((item) => item.id))
+      setInvoices((current) => current.map((invoice) => completedIds.has(invoice.id)
+        ? { ...invoice, paymentStatus: 'PAID', paidAt: invoice.paidAt ?? result.paidAt }
+        : invoice))
+      setSelectedIds(new Set(failed.map((item) => item.id)))
+      const failures = failed.map((item) => `${submittedInvoices.find((invoice) => invoice.id === item.id)?.invoiceNumber ?? item.id}: ${item.error}`).join(' ')
+      setBulkResult(`Oznaczono jako zapłacone: ${paid.length}. Już zapłacone: ${skipped.length}. Błędy: ${failed.length}.${failures ? ` ${failures}` : ''}`)
+      try {
+        const refreshed = await refreshInvoices()
+        setSelectedIds(new Set(failed.filter((item) => refreshed.some((invoice) => invoice.id === item.id)).map((item) => item.id)))
+      } catch {
+        setError('Płatności zapisano, ale nie udało się odświeżyć podsumowania. Odśwież stronę.')
+      }
+    } catch (err) {
+      setError(`${err instanceof Error ? err.message : 'Nie udało się potwierdzić wyniku operacji'}. Możesz ponowić zapis — już zapłacone faktury zostaną pominięte.`)
+    } finally {
+      bulkInFlight.current = false
+      setSaving(null)
+    }
+  }
+
   async function convertCurrency(event: React.FormEvent<HTMLFormElement>) {
     event.preventDefault()
     if (!conversionForm) return
@@ -730,11 +917,12 @@ export function KsefInboxView({
     try {
       const result = await readJson(await fetch('/api/finance/ksef/sync', { method: 'POST' }))
       setStatusFilter('ALL')
+      setIssueMonth('')
       setFilterForm(EMPTY_INVOICE_FILTERS)
       setActiveFilters(EMPTY_INVOICE_FILTERS)
       await refreshInvoices({ page: 1, statusFilter: 'ALL', filters: EMPTY_INVOICE_FILTERS })
       setSyncMessage(
-        `KSeF: pobrano ${result.fetched}, dodano ${result.imported}, zaktualizowano ${result.updated}, zmapowano regułami ${result.mappedByRules ?? 0}. XML faktur: pobrano ${result.xmlDetailsFetched ?? 0}, błędy ${result.xmlDetailsFailed ?? 0}.`
+        `KSeF: pobrano ${result.fetched}, dodano ${result.imported}, zaktualizowano ${result.updated}, powiązano z importem ${result.linked ?? 0}, wymaga rozstrzygnięcia ${result.conflicts ?? 0}, zmapowano regułami ${result.mappedByRules ?? 0}. XML faktur: pobrano ${result.xmlDetailsFetched ?? 0}, błędy ${result.xmlDetailsFailed ?? 0}.`
       )
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nie udało się zsynchronizować KSeF')
@@ -884,17 +1072,26 @@ export function KsefInboxView({
     )
   }
 
+  if (importWorkspace) return (
+    <InvoiceImportWorkspace initialDraftId={importWorkspace.draftId} costCenters={costCenters} tagGroups={tagGroups}
+      rules={rules.map((rule) => ({ ...rule, tagIds: rule.tags?.flatMap((entry) => entry.tagId ? [entry.tagId] : entry.tag ? [entry.tag.id] : []) ?? [] }))}
+      onClose={() => { setImportWorkspace(null); setError(null) }} onInvoicesChanged={async () => { await refreshInvoices() }} />
+  )
+
   return (
-    <div className="space-y-6">
+    <fieldset disabled={saving !== null || listLoading} aria-busy={saving !== null || listLoading} className="m-0 min-w-0 space-y-6 border-0 p-0">
       <header className="flex flex-wrap items-start justify-between gap-4">
         <div>
           <p className="data-label mb-1">Kondycja firmy</p>
           <h1 className="text-2xl font-semibold" style={{ color: 'var(--wd-dark)' }}>KSeF Inbox</h1>
           <p className="text-sm mt-1 max-w-2xl" style={{ color: 'var(--wd-text-muted)' }}>
-            Ręczny intake faktur zakupowych, klasyfikacja dostawców i zatwierdzanie kosztów do wykonania.
+            Faktury z KSeF oraz dokumenty dodane z pliku. Sprawdzenie danych, klasyfikacja i zatwierdzanie kosztów.
           </p>
         </div>
         <div className="space-y-3">
+          <button type="button" onClick={() => setImportWorkspace({})} className="inline-flex w-full items-center justify-center gap-2 rounded bg-[var(--wd-dark)] px-4 py-3 text-sm font-semibold text-white">
+            <FilePlus2 size={18} aria-hidden="true" />Dodaj faktury
+          </button>
           <div className="grid grid-cols-4 gap-2 text-center text-xs">
             {(['NEW', 'MAPPED', 'APPROVED', 'IGNORED'] as KsefStatus[]).map((status) => (
               <button
@@ -931,10 +1128,32 @@ export function KsefInboxView({
       </header>
 
       {error && (
-        <div className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
-          {error}
+        <div role="alert" className="rounded-lg border border-red-100 bg-red-50 px-4 py-3 text-sm font-medium text-red-700">
+          <p>{error}</p>
+          {duplicateInvoice && <button type="button" onClick={openDuplicateInvoice} disabled={saving !== null}
+            className="mt-3 rounded border border-current px-3 py-2 font-semibold hover:bg-white/60 focus-visible:outline-2 focus-visible:outline-offset-2 disabled:opacity-60">
+            {saving === 'existing-invoice' ? 'Otwieram dokument…' : 'Otwórz istniejący dokument'}
+          </button>}
         </div>
       )}
+
+      {existingInvoice && <section aria-label="Istniejąca faktura" className="rounded-lg border border-[var(--wd-border)] bg-white p-4">
+        <div className="flex items-start justify-between gap-4">
+          <div>
+            <p className="data-label">Istniejąca faktura · bez nowego zapisu</p>
+            <h2 className="mt-1 text-lg font-semibold">{existingInvoice.invoiceNumber}</h2>
+          </div>
+          <button type="button" aria-label="Zamknij podgląd istniejącej faktury" onClick={() => setExistingInvoice(null)}
+            className="rounded p-2 hover:bg-[var(--wd-surface-2)] focus-visible:outline-2 focus-visible:outline-offset-2"><X size={18} aria-hidden="true" /></button>
+        </div>
+        <dl className="mt-4 grid gap-4 text-sm sm:grid-cols-2 lg:grid-cols-4">
+          <div><dt className="text-[var(--wd-text-muted)]">Dostawca</dt><dd className="mt-1 font-semibold">{existingInvoice.supplierName}</dd></div>
+          <div><dt className="text-[var(--wd-text-muted)]">Numer podatkowy</dt><dd className="mt-1">{existingInvoice.supplierNip || 'Nie podano'}</dd></div>
+          <div><dt className="text-[var(--wd-text-muted)]">Data wystawienia</dt><dd className="mt-1">{isoDate(existingInvoice.issueDate)}</dd></div>
+          <div><dt className="text-[var(--wd-text-muted)]">Kwota oryginalna brutto</dt><dd className="num mt-1 font-semibold">{existingInvoice.grossAmount.toLocaleString('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })} {existingInvoice.currency}</dd></div>
+        </dl>
+        <p className="mt-4 text-sm font-medium">{STATUS_LABELS[existingInvoice.status]}</p>
+      </section>}
 
       {syncMessage && (
         <div className="rounded-lg border border-green-100 bg-green-50 px-4 py-3 text-sm font-medium text-green-700">
@@ -946,7 +1165,7 @@ export function KsefInboxView({
         <form onSubmit={addInvoice} className="rounded-lg border border-[var(--wd-border)] bg-white p-4">
           <div className="mb-4 flex items-center gap-2">
             <FilePlus2 size={18} className="text-green-700" />
-            <h2 className="text-base font-semibold">Dodaj fakturę</h2>
+            <h2 className="text-base font-semibold">Dodaj fakturę ręcznie bez pliku</h2>
           </div>
           <div className="grid grid-cols-2 gap-3 lg:grid-cols-3">
             <input className="rounded border border-[var(--wd-border)] px-3 py-2 text-sm lg:col-span-2" placeholder="Dostawca" value={invoiceForm.supplierName} onChange={(e) => setInvoiceForm({ ...invoiceForm, supplierName: e.target.value })} />
@@ -997,7 +1216,7 @@ export function KsefInboxView({
         </form>
       </section>
 
-      <section className="overflow-hidden rounded-lg border border-[var(--wd-border)] bg-white">
+      <section className="rounded-lg border border-[var(--wd-border)] bg-white">
         <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--wd-border)] px-4 py-3">
           <div>
             <h2 className="text-base font-semibold">Inbox faktur</h2>
@@ -1008,6 +1227,32 @@ export function KsefInboxView({
           {renderPaginationControls()}
         </div>
         <form onSubmit={applyInvoiceFilters} className="border-b border-[var(--wd-border)] bg-white px-4 py-3">
+          <div className="mb-3 grid items-end gap-3 border-b border-[var(--wd-border)] pb-3 sm:grid-cols-3 xl:grid-cols-[180px_180px_180px_1fr]">
+            <label className="block text-xs font-semibold text-[var(--wd-text-muted)]">
+              Miesiąc wystawienia
+              <input type="month" value={issueMonth} onChange={(event) => {
+                const month = event.target.value
+                setIssueMonth(month)
+                const range = monthIssueDateRange(month)
+                setFilterForm((current) => ({ ...current, issueDateFrom: range?.issueDateFrom ?? '', issueDateTo: range?.issueDateTo ?? '' }))
+              }} className="mt-1 w-full min-w-0 rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-normal text-[var(--wd-dark)]" />
+            </label>
+            <label className="block text-xs font-semibold text-[var(--wd-text-muted)]">
+              Data wystawienia od
+              <input type="date" value={filterForm.issueDateFrom} onChange={(event) => {
+                setIssueMonth('')
+                setFilterForm((current) => ({ ...current, issueDateFrom: event.target.value }))
+              }} className="mt-1 w-full min-w-0 rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-normal text-[var(--wd-dark)]" />
+            </label>
+            <label className="block text-xs font-semibold text-[var(--wd-text-muted)]">
+              Data wystawienia do
+              <input type="date" value={filterForm.issueDateTo} onChange={(event) => {
+                setIssueMonth('')
+                setFilterForm((current) => ({ ...current, issueDateTo: event.target.value }))
+              }} className="mt-1 w-full min-w-0 rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-normal text-[var(--wd-dark)]" />
+            </label>
+            <p className="pb-2 text-xs text-[var(--wd-text-muted)]">Wybierz miesiąc lub wpisz własny zakres, a następnie kliknij „Filtruj”.</p>
+          </div>
           <div className="grid gap-2 md:grid-cols-[minmax(220px,1fr)_140px_140px_140px_150px_auto] md:items-end">
             <label className="block text-xs font-semibold" style={{ color: 'var(--wd-text-muted)' }}>
               Dostawca lub NIP
@@ -1043,7 +1288,7 @@ export function KsefInboxView({
               <select
                 className="mt-1 w-full rounded border border-[var(--wd-border)] px-3 py-2 text-sm font-normal text-[var(--wd-dark)]"
                 value={filterForm.paymentStatus}
-                onChange={(event) => setFilterForm((current) => ({ ...current, paymentStatus: event.target.value as KsefPaymentStatus | 'ALL' }))}
+                onChange={(event) => setFilterForm((current) => ({ ...current, paymentStatus: event.target.value as KsefInvoiceFilters['paymentStatus'] }))}
               >
                 {Object.entries(PAYMENT_STATUS_LABELS).map(([value, label]) => (
                   <option key={value} value={value}>{label}</option>
@@ -1083,10 +1328,18 @@ export function KsefInboxView({
             </div>
           </div>
         </form>
+        {(activeFilters.issueDateFrom || activeFilters.issueDateTo) && (
+          <p className="border-b border-[var(--wd-border)] px-4 py-2 text-xs text-[var(--wd-text-muted)]">Okres wystawienia: <strong className="num text-[var(--wd-dark)]">{activeFilters.issueDateFrom || 'bez początku'} — {activeFilters.issueDateTo || 'bez końca'}</strong></p>
+        )}
+        <KsefSelectionBar invoices={selectedInvoices} paidDate={bulkPaidDate} busy={bulkBusy} disabled={saving !== null} onDateChange={setBulkPaidDate} onClear={() => setSelectedIds(new Set())} onPay={() => void paySelectedInvoices()} />
+        {bulkResult && <p role="status" className="border-b border-[var(--wd-border)] px-4 py-3 text-sm">{bulkResult}</p>}
         <div className="overflow-x-auto">
           <table className="w-full min-w-[1040px] text-left text-sm">
             <thead className="bg-gray-50 text-xs uppercase tracking-wide" style={{ color: 'var(--wd-text-muted)' }}>
               <tr>
+                <th className="w-10 px-3 py-3">
+                  <input type="checkbox" aria-label="Zaznacz wszystkie faktury na stronie" disabled={saving !== null || selectableInvoices.length === 0} checked={selectableInvoices.length > 0 && selectedInvoices.length === selectableInvoices.length} ref={(element) => { if (element) element.indeterminate = selectedInvoices.length > 0 && selectedInvoices.length < selectableInvoices.length }} onChange={(event) => setSelectedIds(event.target.checked ? new Set(selectableInvoices.map((invoice) => invoice.id)) : new Set())} className="h-4 w-4 cursor-pointer accent-[var(--wd-dark)]" />
+                </th>
                 <th className="px-4 py-3 text-right">Lp.</th>
                 <th className="px-4 py-3">{renderSortableHeader('Faktura', 'issueDate')}</th>
                 <th className="px-4 py-3">{renderSortableHeader('Dostawca', 'supplierName')}</th>
@@ -1100,7 +1353,7 @@ export function KsefInboxView({
             <tbody className="divide-y divide-[var(--wd-border)]">
               {invoices.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-8 text-center text-sm" colSpan={8} style={{ color: 'var(--wd-text-muted)' }}>
+                  <td className="px-4 py-8 text-center text-sm" colSpan={9} style={{ color: 'var(--wd-text-muted)' }}>
                     Brak faktur dla wybranego filtra.
                   </td>
                 </tr>
@@ -1110,17 +1363,45 @@ export function KsefInboxView({
                   tagIds: invoiceTagIds(invoice),
                 }
                 const approved = invoice.status === 'APPROVED'
-                const paymentStatus = invoice.paymentStatus ?? 'UNPAID'
+                const imported = invoice.invoiceImportDraft
+                const paymentStatus = invoice.paymentStatus ?? (imported ? 'UNKNOWN' : 'UNPAID')
                 const reportingAmount = invoice.reportingGrossAmount ?? null
                 const needsCurrencyConversion = invoice.currency !== 'PLN' && reportingAmount == null
                 return (
-                  <tr key={invoice.id} className="align-top">
+                  <tr key={invoice.id} className={`align-top ${selectedIds.has(invoice.id) ? 'bg-amber-50/60' : ''}`}>
+                    <td className="px-3 py-4">
+                      <input type="checkbox" aria-label={`Zaznacz fakturę ${invoice.invoiceNumber}`} checked={!imported && selectedIds.has(invoice.id)} disabled={Boolean(imported) || saving !== null} onChange={(event) => {
+                        if (imported) return
+                        const checked = event.target.checked
+                        setSelectedIds((current) => {
+                          const next = new Set(current)
+                          if (checked) next.add(invoice.id)
+                          else next.delete(invoice.id)
+                          return next
+                        })
+                      }} className="h-4 w-4 cursor-pointer accent-[var(--wd-dark)]" />
+                    </td>
                     <td className="px-4 py-3 text-right num text-xs font-semibold" style={{ color: 'var(--wd-text-muted)' }}>
                       {(page - 1) * pageSize + index + 1}
                     </td>
                     <td className="px-4 py-3">
                       <p className="font-semibold">{invoice.invoiceNumber}</p>
                       <p className="text-xs" style={{ color: 'var(--wd-text-muted)' }}>{isoDate(invoice.issueDate)}</p>
+                      {imported && (
+                        <div className="mt-1 flex flex-col items-start gap-1">
+                          <p className="text-xs text-[var(--wd-text-muted)]">Dodana z pliku</p>
+                          {(imported.ksef?.linkedCount ?? 0) > 0 && (
+                            <span className="inline-flex rounded-full border border-green-100 bg-green-50 px-2 py-0.5 text-[11px] font-semibold text-green-700">
+                              KSeF · powiązana
+                            </span>
+                          )}
+                          {(imported.ksef?.conflictCount ?? 0) > 0 && (
+                            <span className="inline-flex rounded-full border border-amber-100 bg-amber-50 px-2 py-0.5 text-[11px] font-semibold text-amber-700">
+                              KSeF · wymaga rozstrzygnięcia
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </td>
                     <td className="px-4 py-3">
                       <p className="font-medium">{invoice.supplierName}</p>
@@ -1141,11 +1422,11 @@ export function KsefInboxView({
                     </td>
                     <td className="px-4 py-3">
                       <span className={`inline-flex rounded-full border px-2 py-0.5 text-xs font-semibold ${STATUS_CLASSES[invoice.status]}`}>
-                        {STATUS_LABELS[invoice.status]}
+                        {imported && imported.state !== 'APPROVED' ? (imported.state === 'ARCHIVED' ? 'Poza kosztami · archiwum' : 'Poza kosztami · szkic') : STATUS_LABELS[invoice.status]}
                       </span>
                       <div className="mt-2 space-y-1">
                         <span className={`inline-flex rounded-full border px-2 py-0.5 text-[11px] font-semibold ${paymentStatus === 'PAID' ? 'border-green-100 bg-green-50 text-green-700' : 'border-amber-100 bg-amber-50 text-amber-700'}`}>
-                          {paymentStatus === 'PAID' ? 'Zapłacona' : 'Do zapłaty'}
+                          {PAYMENT_ROW_LABELS[paymentStatus] ?? 'Płatność nieustalona'}
                         </span>
                         <p className="text-[11px]" style={{ color: 'var(--wd-text-muted)' }}>
                           Termin: {invoice.dueDate ? isoDate(invoice.dueDate) : 'brak'}
@@ -1156,35 +1437,21 @@ export function KsefInboxView({
                       <CostCenterChips
                         options={costCenters}
                         value={rowClassification.costCenterId}
-                        disabled={approved}
+                        disabled={approved || Boolean(imported)}
                         onChange={(costCenterId) => setClassification((current) => ({ ...current, [invoice.id]: { ...rowClassification, costCenterId } }))}
                       />
                     </td>
                     <td className="px-4 py-3">
-                      {hasCostTags ? (
-                        <div className="max-h-44 min-w-56 overflow-y-auto pr-1">
-                          <TagChips
-                            groups={tagGroups}
-                            value={rowClassification.tagIds}
-                            disabled={approved}
-                            size="sm"
-                            onCreateTag={createCostTag}
-                            onChange={(tagIds) =>
-                              setClassification((current) => ({
-                                ...current,
-                                [invoice.id]: { ...rowClassification, tagIds },
-                              }))
-                            }
-                          />
-                        </div>
-                      ) : (
-                        <div className="min-w-48 rounded border border-dashed border-[var(--wd-border)] bg-gray-50 px-2 py-2 text-xs font-medium" style={{ color: 'var(--wd-text-muted)' }}>
-                          Brak tagów kosztowych
-                        </div>
-                      )}
+                      <KsefInvoiceTags groups={tagGroups} value={rowClassification.tagIds} savedValue={invoiceTagIds(invoice)}
+                        invoiceTags={invoice.parts?.flatMap((part) => part.tags.flatMap((entry) => entry.tag ? [entry.tag] : [])) ?? []}
+                        disabled={approved || Boolean(imported)} editing={!imported && editingTagsId === invoice.id}
+                        onToggle={() => setEditingTagsId((current) => current === invoice.id ? null : invoice.id)}
+                        onCreateTag={createCostTag}
+                        onChange={(tagIds) => setClassification((current) => ({ ...current, [invoice.id]: { ...rowClassification, tagIds } }))} />
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex flex-wrap justify-end gap-2">
+                        {imported ? <button type="button" onClick={() => setImportWorkspace({ draftId: imported.id })} className="inline-flex items-center gap-2 rounded border border-[var(--wd-border)] px-3 py-2 text-xs font-semibold hover:bg-[var(--wd-surface-2)]"><Eye size={15} aria-hidden="true" />Otwórz dokument</button> : <>
                         <button type="button" disabled={approved || saving === invoice.id} onClick={() => saveClassification(invoice.id)} className="rounded border border-[var(--wd-border)] p-2 hover:bg-gray-50 disabled:opacity-40" title="Zapisz klasyfikację">
                           <Save size={15} />
                         </button>
@@ -1236,8 +1503,9 @@ export function KsefInboxView({
                         <button type="button" disabled={approved || saving === `ignore-${invoice.id}`} onClick={() => ignoreInvoice(invoice.id)} className="rounded border border-[var(--wd-border)] px-2 py-1 text-xs font-semibold disabled:opacity-40">
                           Ignoruj
                         </button>
+                        </>}
                       </div>
-                      {conversionForm?.invoiceId === invoice.id && (
+                      {!imported && conversionForm?.invoiceId === invoice.id && (
                         <form onSubmit={convertCurrency} className="mt-2 grid min-w-[220px] gap-2 rounded border border-[var(--wd-border)] bg-gray-50 p-2">
                           <input
                             className="rounded border border-[var(--wd-border)] px-2 py-1 text-xs"
@@ -1286,12 +1554,14 @@ export function KsefInboxView({
           </table>
         </div>
         <div className="flex flex-wrap items-center justify-between gap-3 border-t border-[var(--wd-border)] px-4 py-3">
-          <KsefPaymentSummary
-            grossAmountTotal={grossAmountTotal}
-            grossAmountLabel={hasActiveResultFilter ? 'Suma wyników' : 'Suma faktur'}
-            unpaidAmountTotal={unpaidAmountTotal}
+          <InvoicePaymentMoneySummary
+            gross={grossAmountSummary}
+            grossLabel={hasActiveResultFilter ? 'Suma wyników' : 'Suma faktur'}
+            unpaid={unpaidAmountSummary}
+            unpaidCount={unpaidCount}
+            uncertainPaymentCount={uncertainPaymentCount}
             paymentAging={paymentAging}
-            formatMoney={(value) => money(value)}
+            formatMoney={money}
           />
           {renderPaginationControls()}
         </div>
@@ -1415,6 +1685,10 @@ export function KsefInboxView({
           formatMoney={money}
           onCreateTag={createCostTag}
           onClose={() => setPartsEditorInvoice(null)}
+          onReviewRequired={(draftId) => {
+            setPartsEditorInvoice(null)
+            setImportWorkspace({ draftId })
+          }}
           onSaved={(invoice) => {
             if (invoice) replaceInvoice(invoice as KsefInvoiceRow)
             setPartsEditorInvoice(null)
@@ -1438,6 +1712,6 @@ export function KsefInboxView({
           ))}
         </div>
       </section>
-    </div>
+    </fieldset>
   )
 }

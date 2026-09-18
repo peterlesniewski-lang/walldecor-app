@@ -19,19 +19,26 @@ describe('CompanyHealthView finance summaries', () => {
         cashByCurrency={[{ currency: 'PLN', amount: 123_000 }]}
         ksefInboxCount={4}
         unpaidInvoiceAmount={1250}
+        unpaidInvoiceSummary={{ plnAmount: 1250, unconvertedCount: 1, unconvertedByCurrency: [{ currency: 'EUR', amount: 20, count: 1 }] }}
+        unpaidInvoiceCount={3}
+        uncertainPaymentCount={2}
         unclassifiedWarningAmount={350}
+        unclassifiedWarningSummary={{ plnAmount: 350, unconvertedCount: 1, unconvertedByCurrency: [{ currency: 'GBP', amount: 10, count: 1 }] }}
       />
     )
 
     expect(screen.getByRole('link', { name: /KSeF Inbox/ })).toBeTruthy()
     expect(screen.getByText('KSeF do obsługi')).toBeTruthy()
     expect(screen.getAllByText('4').length).toBeGreaterThan(0)
-    expect(screen.getByText('Pozostało do zapłaty')).toBeTruthy()
+    expect(screen.getByText('Niezapłacone dokumenty')).toBeTruthy()
     expect(screen.getByText('1250 PLN')).toBeTruthy()
+    expect(screen.getByText('20 EUR · 1 dokument')).toBeTruthy()
+    expect(screen.getByText('2 dokumenty z niepewnym statusem — pełne kwoty dokumentów, nie wyliczone saldo.')).toBeTruthy()
     expect(screen.getByText('Kasa')).toBeTruthy()
     expect(screen.getByText('123 000 PLN')).toBeTruthy()
     expect(screen.getByText('Koszty oczekujące')).toBeTruthy()
     expect(screen.getByText('350 PLN')).toBeTruthy()
+    expect(screen.getByText('10 GBP · 1 dokument')).toBeTruthy()
   })
 
   it('shows only aggregate finance cards to managers', () => {

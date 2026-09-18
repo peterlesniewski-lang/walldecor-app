@@ -1,5 +1,5 @@
 import { execFileSync, spawnSync } from 'node:child_process'
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -71,6 +71,7 @@ function runEntrypoint(
       PATH: `${join(sandboxDir, 'bin')}:${process.env.PATH}`,
       CALL_LOG: callLog,
       DATABASE_URL: `file:${join(sandboxDir, 'runtime.db')}`,
+      WALLDECOR_SKIP_SEED: undefined,
       ...overrides,
     },
   })
@@ -78,6 +79,25 @@ function runEntrypoint(
 
 async function calls() {
   return readFile(callLog, 'utf8').catch(() => '')
+}
+
+function createManagedDatabase() {
+  const databasePath = join(sandboxDir, 'managed.db')
+  execFileSync('sqlite3', [
+    databasePath,
+    [
+      'CREATE TABLE "Employee" ("id" TEXT PRIMARY KEY);',
+      "INSERT INTO \"Employee\" (\"id\") VALUES ('existing-employee');",
+      'CREATE TABLE "_prisma_migrations" (',
+      '  "id" TEXT PRIMARY KEY,',
+      '  "finished_at" DATETIME,',
+      '  "rolled_back_at" DATETIME',
+      ');',
+      'INSERT INTO "_prisma_migrations" ("id", "finished_at", "rolled_back_at")',
+      "VALUES ('baseline', CURRENT_TIMESTAMP, NULL);",
+    ].join(' '),
+  ])
+  return databasePath
 }
 
 beforeEach(async () => {
@@ -89,6 +109,123 @@ afterEach(async () => {
 })
 
 describe('production Docker entrypoint', () => {
+  it('backs up and migrates an existing managed database before skipping seed and starting the server', async () => {
+    const databasePath = createManagedDatabase()
+
+    const result = runEntrypoint({
+      DATABASE_URL: `file:${databasePath}`,
+      WALLDECOR_SKIP_SEED: 'true',
+      SEED_EXIT: '29',
+    })
+
+    expect(result.status).toBe(0)
+    expect(await calls()).toBe(
+      [
+        'node ./node_modules/prisma/build/index.js migrate deploy',
+        'node .next/standalone/server.js',
+        '',
+      ].join('\n'),
+    )
+    expect(result.stdout).toMatch(
+      /Creating SQLite backup:[\s\S]*Running database migrations[\s\S]*Skipping database seed[\s\S]*Starting Next.js server/,
+    )
+    const backupNames = await readdir(join(sandboxDir, 'backups'))
+    expect(backupNames).toHaveLength(1)
+    expect(execFileSync('sqlite3', [
+      join(sandboxDir, 'backups', backupNames[0]),
+      'SELECT "id" FROM "Employee";',
+    ], { encoding: 'utf8' })).toBe('existing-employee\n')
+  })
+
+  it('still runs the seed when the flag is explicitly false', async () => {
+    const databasePath = createManagedDatabase()
+
+    const result = runEntrypoint({
+      DATABASE_URL: `file:${databasePath}`,
+      WALLDECOR_SKIP_SEED: 'false',
+    })
+
+    expect(result.status).toBe(0)
+    expect(await calls()).toBe(
+      [
+        'node ./node_modules/prisma/build/index.js migrate deploy',
+        'tsx prisma/seed.ts',
+        'node .next/standalone/server.js',
+        '',
+      ].join('\n'),
+    )
+  })
+
+  it.each(['', '1', '0', 'yes', 'TRUE', ' false '])(
+    'rejects invalid skip-seed value %j before any backup or database mutation',
+    async (flag) => {
+      const databasePath = createManagedDatabase()
+      const originalDatabase = await readFile(databasePath)
+
+      const result = runEntrypoint({
+        DATABASE_URL: `file:${databasePath}`,
+        WALLDECOR_SKIP_SEED: flag,
+      })
+
+      expect(result.status).not.toBe(0)
+      expect(result.stdout + result.stderr).toContain('WALLDECOR_SKIP_SEED must be true or false')
+      expect(await calls()).toBe('')
+      expect(await readdir(join(sandboxDir, 'backups')).catch(() => [])).toEqual([])
+      expect(await readFile(databasePath)).toEqual(originalDatabase)
+    },
+  )
+
+  it.each(['missing', 'zero-byte', 'empty-schema', 'history-only'])(
+    'refuses skipping seed for a %s database',
+    async (databaseKind) => {
+      let databasePath = join(sandboxDir, 'fresh.db')
+      if (databaseKind === 'zero-byte') await writeFile(databasePath, '')
+      if (databaseKind === 'empty-schema') {
+        execFileSync('sqlite3', [databasePath, 'PRAGMA user_version = 1;'])
+      }
+      if (databaseKind === 'history-only') {
+        databasePath = createManagedDatabase()
+        execFileSync('sqlite3', [databasePath, 'DROP TABLE "Employee";'])
+      }
+
+      const result = runEntrypoint({
+        DATABASE_URL: `file:${databasePath}`,
+        WALLDECOR_SKIP_SEED: 'true',
+      })
+
+      expect(result.status).not.toBe(0)
+      expect(result.stdout + result.stderr).toContain('Skipping seed requires an existing non-empty SQLite database')
+      expect(await calls()).toBe('')
+    },
+  )
+
+  it.each(['false', 'true'])('stops before migrations when the backup fails with skip-seed=%s', async (flag) => {
+    const databasePath = createManagedDatabase()
+    await writeExecutable(join(sandboxDir, 'bin/sqlite3'), '#!/bin/sh\nexit 31\n')
+
+    const result = runEntrypoint({
+      DATABASE_URL: `file:${databasePath}`,
+      WALLDECOR_SKIP_SEED: flag,
+    })
+
+    expect(result.status).toBe(31)
+    expect(result.stdout).toContain('Creating SQLite backup:')
+    expect(await calls()).toBe('')
+  })
+
+  it('stops before the server when migrations fail while seed is skipped', async () => {
+    const databasePath = createManagedDatabase()
+
+    const result = runEntrypoint({
+      DATABASE_URL: `file:${databasePath}`,
+      WALLDECOR_SKIP_SEED: 'true',
+      MIGRATE_EXIT: '23',
+    })
+
+    expect(result.status).toBe(23)
+    expect(await calls()).toBe('node ./node_modules/prisma/build/index.js migrate deploy\n')
+  })
+
   it('stops before seed and server when migrate deploy fails', async () => {
     const result = runEntrypoint({ MIGRATE_EXIT: '23' })
 
@@ -125,11 +262,11 @@ describe('production Docker entrypoint', () => {
     )
   })
 
-  it('fails fast for a non-empty legacy database without Prisma migration history', async () => {
+  it.each(['false', 'true'])('fails fast for a legacy database without migration history with skip-seed=%s', async (flag) => {
     const databasePath = join(sandboxDir, 'legacy.db')
     execFileSync('sqlite3', [databasePath, 'CREATE TABLE "Employee" ("id" TEXT PRIMARY KEY);'])
 
-    const result = runEntrypoint({ DATABASE_URL: `file:${databasePath}` })
+    const result = runEntrypoint({ DATABASE_URL: `file:${databasePath}`, WALLDECOR_SKIP_SEED: flag })
 
     expect(result.status).not.toBe(0)
     expect(result.stdout + result.stderr).toContain(
@@ -162,7 +299,7 @@ describe('production Docker entrypoint', () => {
     )
   })
 
-  it('fails fast when a non-empty database has no successful migration', async () => {
+  it.each(['false', 'true'])('fails fast without a successful migration with skip-seed=%s', async (flag) => {
     const databasePath = join(sandboxDir, 'unfinished-baseline.db')
     execFileSync('sqlite3', [
       databasePath,
@@ -176,7 +313,7 @@ describe('production Docker entrypoint', () => {
       ].join(' '),
     ])
 
-    const result = runEntrypoint({ DATABASE_URL: `file:${databasePath}` })
+    const result = runEntrypoint({ DATABASE_URL: `file:${databasePath}`, WALLDECOR_SKIP_SEED: flag })
 
     expect(result.status).not.toBe(0)
     expect(result.stdout + result.stderr).toContain(
@@ -185,7 +322,7 @@ describe('production Docker entrypoint', () => {
     expect(await calls()).toBe('')
   })
 
-  it('fails fast when Prisma records an unresolved failed migration', async () => {
+  it.each(['false', 'true'])('fails fast for an unresolved failed migration with skip-seed=%s', async (flag) => {
     const databasePath = join(sandboxDir, 'failed-migration.db')
     execFileSync('sqlite3', [
       databasePath,
@@ -203,7 +340,7 @@ describe('production Docker entrypoint', () => {
       ].join(' '),
     ])
 
-    const result = runEntrypoint({ DATABASE_URL: `file:${databasePath}` })
+    const result = runEntrypoint({ DATABASE_URL: `file:${databasePath}`, WALLDECOR_SKIP_SEED: flag })
 
     expect(result.status).not.toBe(0)
     expect(result.stdout + result.stderr).toContain(

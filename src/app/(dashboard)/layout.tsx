@@ -20,7 +20,7 @@ export default async function DashboardLayout({
     redirect('/change-password')
   }
 
-  const canUseAi = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
+  const canUseAi = session.user.role === 'ADMIN'
 
   return (
     <div className="flex h-screen overflow-hidden" style={{ background: 'var(--wd-off-white)' }}>
@@ -31,7 +31,7 @@ export default async function DashboardLayout({
           {children}
         </main>
       </div>
-      {canUseAi && <AiChatWidget />}
+      {canUseAi && <AiChatWidget role={session.user.role} />}
     </div>
   )
 }

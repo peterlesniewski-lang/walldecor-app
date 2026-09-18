@@ -5,6 +5,13 @@ import { PATCH } from '@/app/api/finance/ksef/invoices/[id]/route'
 import { applySupplierRuleToNewInvoices } from '@/lib/finance/ksef-rule-application'
 
 const txMock = vi.hoisted(() => ({
+  $executeRaw: vi.fn(async () => 1),
+  aiQueueLease: {
+    findUniqueOrThrow: vi.fn(async () => ({ id: 'shared-ai', updatedAt: new Date() })),
+  },
+  invoiceImportDraft: {
+    findUnique: vi.fn(async () => null),
+  },
   ksefInvoice: {
     update: vi.fn(),
     findUnique: vi.fn(),
@@ -88,12 +95,80 @@ describe('GET /api/finance/ksef/invoices', () => {
       orderBy: [{ grossAmount: 'asc' }, { issueDate: 'desc' }, { invoiceNumber: 'asc' }],
     }))
   })
+
+  it('reports only active known PLN and keeps unconverted and uncertain payment metadata', async () => {
+    prismaMock.ksefInvoice.findMany.mockReset()
+    prismaMock.ksefInvoice.findMany
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([
+        { currency: 'PLN', grossAmount: 100, reportingGrossAmount: null, paymentStatus: 'UNPAID', dueDate: null, documentStatus: 'ACTIVE', invoiceImportDraft: null },
+        { currency: 'EUR', grossAmount: 20, reportingGrossAmount: null, paymentStatus: 'UNKNOWN', dueDate: null, documentStatus: 'ACTIVE', invoiceImportDraft: null },
+        { currency: 'USD', grossAmount: 30, reportingGrossAmount: 120, paymentStatus: 'PARTIAL', dueDate: null, documentStatus: 'ACTIVE', invoiceImportDraft: { state: 'APPROVED' } },
+        { currency: 'PLN', grossAmount: 0, reportingGrossAmount: null, paymentStatus: 'PAID', dueDate: null, documentStatus: 'ACTIVE', invoiceImportDraft: null },
+        { currency: 'PLN', grossAmount: -2, reportingGrossAmount: null, paymentStatus: 'UNPAID', dueDate: null, documentStatus: 'CORRECTION', invoiceImportDraft: null },
+        { currency: 'EUR', grossAmount: 50, reportingGrossAmount: null, paymentStatus: 'UNPAID', dueDate: null, documentStatus: 'CANCELLED', invoiceImportDraft: null },
+        { currency: 'GBP', grossAmount: 70, reportingGrossAmount: null, paymentStatus: 'UNPAID', dueDate: null, documentStatus: 'ACTIVE', invoiceImportDraft: { state: 'ARCHIVED' } },
+      ])
+
+    const response = await LIST_INVOICES(new NextRequest('http://localhost/api/finance/ksef/invoices'))
+    const body = await response.json()
+
+    expect(body.grossAmountTotal).toBe(218)
+    expect(body.grossAmountSummary).toEqual({
+      plnAmount: 218,
+      unconvertedCount: 1,
+      unconvertedByCurrency: [{ currency: 'EUR', amount: 20, count: 1 }],
+    })
+    expect(body.unpaidAmountTotal).toBe(218)
+    expect(body.unpaidAmountSummary).toEqual({
+      plnAmount: 218,
+      unconvertedCount: 1,
+      unconvertedByCurrency: [{ currency: 'EUR', amount: 20, count: 1 }],
+    })
+    expect(body.unpaidCount).toBe(4)
+    expect(body.uncertainPaymentCount).toBe(2)
+    expect(prismaMock.ksefInvoice.findMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      include: expect.objectContaining({ invoiceImportDraft: { select: expect.objectContaining({ id: true, state: true, dataJson: true,
+        ksefReconciliations: { select: expect.objectContaining({ snapshotJson: true, snapshotHash: true }) },
+      }) } }),
+    }))
+    expect(body.paymentAging.MISSING_DUE_DATE).toEqual({
+      count: 4,
+      grossAmount: 218,
+      plnAmount: 218,
+      unconvertedCount: 1,
+      unconvertedByCurrency: [{ currency: 'EUR', amount: 20, count: 1 }],
+    })
+    expect(prismaMock.ksefInvoice.findMany).toHaveBeenNthCalledWith(2, expect.objectContaining({
+      select: expect.objectContaining({
+        currency: true,
+        documentStatus: true,
+        invoiceImportDraft: { select: { state: true } },
+      }),
+    }))
+  })
+
+  it('includes every non-paid status in deadline filters', async () => {
+    prismaMock.ksefInvoice.findMany.mockReset()
+    prismaMock.ksefInvoice.findMany
+      .mockResolvedValueOnce([{ id: 'unknown-1', dueDate: null }])
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce([])
+
+    const response = await LIST_INVOICES(new NextRequest('http://localhost/api/finance/ksef/invoices?paymentDeadline=MISSING_DUE_DATE'))
+
+    expect(response.status).toBe(200)
+    expect(prismaMock.ksefInvoice.findMany).toHaveBeenNthCalledWith(1, expect.objectContaining({
+      where: { AND: [{ paymentStatus: { not: 'PAID' } }] },
+    }))
+  })
 })
 
 describe('PATCH /api/finance/ksef/invoices/[id]', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    prismaMock.ksefInvoice.findUnique.mockResolvedValue({
+    txMock.invoiceImportDraft.findUnique.mockResolvedValue(null)
+    txMock.ksefInvoice.findUnique.mockResolvedValueOnce({
       id: 'invoice-1',
       status: 'NEW',
       supplierNip: '5250007133',
@@ -113,7 +188,7 @@ describe('PATCH /api/finance/ksef/invoices/[id]', () => {
       reportingGrossAmount: null,
       subCategoryId: null,
     })
-    txMock.ksefInvoice.findUnique.mockResolvedValue({
+    txMock.ksefInvoice.findUnique.mockResolvedValueOnce({
       id: 'invoice-1',
       status: 'MAPPED',
       parts: [],

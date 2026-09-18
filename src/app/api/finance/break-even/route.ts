@@ -1,7 +1,8 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { requireFinanceReportAccess } from '@/lib/finance/finance-access'
 import { prisma } from '@/lib/prisma'
-import { buildBreakEvenReport, buildCostWarningTotal } from '@/lib/finance/cost-reporting'
+import { buildBreakEvenReport, buildCostWarningSummary } from '@/lib/finance/cost-reporting'
+import { isActiveInvoiceMoneyRow } from '@/lib/finance/invoice-money-scope'
 import { buildRealizedCostSummary } from '@/lib/finance/realized-costs'
 
 function costEventMonthDateRange(year: number, month: number) {
@@ -46,7 +47,14 @@ export async function GET(req: NextRequest) {
       orderBy: [{ costCenterId: 'asc' }, { effectiveFrom: 'desc' }],
     }),
     prisma.ksefInvoice.findMany({
-      select: { status: true, documentStatus: true, currency: true, grossAmount: true, reportingGrossAmount: true },
+      select: {
+        status: true,
+        documentStatus: true,
+        currency: true,
+        grossAmount: true,
+        reportingGrossAmount: true,
+        invoiceImportDraft: { select: { state: true } },
+      },
     }),
   ])
 
@@ -63,11 +71,13 @@ export async function GET(req: NextRequest) {
     }
   }
 
+  const warningSummary = buildCostWarningSummary(warningInvoices.filter(isActiveInvoiceMoneyRow))
   const report = buildBreakEvenReport({
     revenue: revenue.map((row) => ({ costCenterId: row.costCenterId, amount: row.amount })),
     allocatedCosts: realizedCosts.breakEvenCostRows,
     contributionMargins,
-    warningAmount: buildCostWarningTotal(warningInvoices),
+    warningAmount: warningSummary.plnAmount,
+    warningSummary,
   })
 
   return NextResponse.json({ report, year, month })

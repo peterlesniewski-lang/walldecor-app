@@ -3,6 +3,7 @@ import { redirect } from 'next/navigation'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { RevenueTabs } from '@/components/shared/revenue-tabs'
+import { revenueWarsawToday } from '@/lib/validations/revenue'
 
 interface PageProps {
   searchParams: Promise<{ year?: string; costCenterId?: string; tab?: string }>
@@ -13,42 +14,24 @@ export default async function RevenuePage({ searchParams }: PageProps) {
   if (!session) redirect('/login')
   if (session.user.role !== 'ADMIN') redirect('/finance')
 
-  const { year: yearParam, costCenterId: ccParam, tab: tabParam } = await searchParams
-  const year = yearParam ? parseInt(yearParam, 10) : new Date().getFullYear()
-  const costCenterId = ccParam ?? 'GLOBAL'
-  const activeTab = tabParam === 'actuals' ? 'actuals' : 'plan'
-
-  const isGlobal = costCenterId === 'GLOBAL'
-
-  const [rawPlan, rawActuals] = await Promise.all([
-    prisma.revenueBudget.findMany({ where: isGlobal ? { year } : { year, costCenterId } }),
-    prisma.revenue.findMany({ where: isGlobal ? { year } : { year, costCenterId } }),
-  ])
-
-  const planEntries: Record<string, number> = {}
-  for (const e of rawPlan) {
-    const key = `${e.channel}_${e.month}`
-    planEntries[key] = (planEntries[key] ?? 0) + e.amount
-  }
-
-  const actualEntries: Record<string, number> = {}
-  for (const e of rawActuals) {
-    const key = `${e.channel}_${e.month}`
-    actualEntries[key] = (actualEntries[key] ?? 0) + e.amount
-  }
-
-  const canEditPlan = session.user.role === 'ADMIN' && !isGlobal
-  const canEditActuals = session.user.role === 'ADMIN' && !isGlobal
+  const { year: yearParam, costCenterId: centerParam } = await searchParams
+  const requestedYear = Number(yearParam)
+  const year = Number.isInteger(requestedYear) && requestedYear >= 2020 && requestedYear <= 2100
+    ? requestedYear : Number(revenueWarsawToday().slice(0, 4))
+  const costCenterId = centerParam === 'JAG' || centerParam === 'PUL' ? centerParam : 'GLOBAL'
+  const isCompany = costCenterId === 'GLOBAL'
+  const entries = await prisma.revenue.findMany({
+    where: isCompany ? { year } : { year, costCenterId },
+    orderBy: [{ month: 'asc' }, { costCenterId: 'asc' }, { channel: 'asc' }],
+    select: { year: true, month: true, costCenterId: true, channel: true, amount: true, asOfDate: true },
+  })
 
   return (
     <RevenueTabs
-      planEntries={planEntries}
-      actualEntries={actualEntries}
+      entries={entries}
       year={year}
       costCenterId={costCenterId}
-      activeTab={activeTab}
-      canEditPlan={canEditPlan}
-      canEditActuals={canEditActuals}
+      editable={session.user.role === 'ADMIN' && !isCompany}
     />
   )
 }

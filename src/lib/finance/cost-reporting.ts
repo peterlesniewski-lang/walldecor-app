@@ -1,4 +1,5 @@
 import { roundMoney } from '@/lib/finance/ksef-inbox'
+import { summarizeInvoiceMoney, type InvoiceMoneySummary } from '@/lib/finance/invoice-money'
 
 export interface SupplierSpendInput {
   supplierName: string | null
@@ -42,15 +43,18 @@ export function summarizeSupplierSpend(events: SupplierSpendInput[]) {
   return [...rows.values()].sort((a, b) => b.grossAmount - a.grossAmount)
 }
 
-export function buildCostWarningTotal(invoices: CostWarningInvoiceInput[]) {
-  return roundMoney(invoices.reduce((sum, invoice) => {
+export function buildCostWarningSummary(invoices: CostWarningInvoiceInput[]) {
+  return summarizeInvoiceMoney(invoices.filter((invoice) => {
     const needsDecision = invoice.status === 'NEW' || invoice.status === 'MAPPED'
     const unresolvedCorrection = invoice.documentStatus === 'CORRECTION' && invoice.status !== 'APPROVED'
-    const unconvertedCurrency = invoice.currency !== 'PLN' && invoice.reportingGrossAmount == null
+    const unconvertedCurrency = invoice.currency.trim().toUpperCase() !== 'PLN' && invoice.reportingGrossAmount == null
     return needsDecision || unresolvedCorrection || unconvertedCurrency
-      ? sum + invoice.grossAmount
-      : sum
-  }, 0))
+  }))
+}
+
+/** Compatibility scalar: known reporting PLN only. */
+export function buildCostWarningTotal(invoices: CostWarningInvoiceInput[]) {
+  return buildCostWarningSummary(invoices).plnAmount
 }
 
 export function filterConfidentialCostEvents<T extends { isConfidential: boolean }>(events: T[], role: string | undefined) {
@@ -78,6 +82,7 @@ export interface BreakEvenReportInput {
   allocatedCosts: Array<{ costCenterId: string; fixedCosts: number; variableCosts: number; cogs: number }>
   contributionMargins: Record<string, number>
   warningAmount: number
+  warningSummary?: InvoiceMoneySummary
 }
 
 export function buildBreakEvenReport(input: BreakEvenReportInput) {
@@ -107,6 +112,11 @@ export function buildBreakEvenReport(input: BreakEvenReportInput) {
   return {
     byCostCenter,
     warningAmount: input.warningAmount,
+    warningSummary: input.warningSummary ?? {
+      plnAmount: input.warningAmount,
+      unconvertedCount: 0,
+      unconvertedByCurrency: [],
+    },
   }
 }
 

@@ -38,7 +38,7 @@ RUN npm run build -- --webpack
 
 # Stage 3: Runner
 FROM base AS runner
-RUN apk add --no-cache libc6-compat openssl sqlite wget
+RUN apk add --no-cache libc6-compat openssl sqlite wget poppler-utils
 WORKDIR /app
 
 ENV NODE_ENV=production

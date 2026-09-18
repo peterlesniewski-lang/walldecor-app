@@ -1,12 +1,15 @@
 'use client'
 import { useState, useRef } from 'react'
+import { useRouter } from 'next/navigation'
 import Papa from 'papaparse'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/input'
+import styles from './revenue-ui.module.css'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
 type DataModule = 'costs' | 'revenue'
 type CostsType = 'budget' | 'actuals'
-type RevenueType = 'plan' | 'actuals'
 type Step = 'upload' | 'map' | 'done'
 
 interface FieldMapping {
@@ -26,7 +29,7 @@ interface Props {
 // ─── Constants ────────────────────────────────────────────────────────────────
 
 const COSTS_FIELDS = ['rok', 'miesiac', 'centrum_kosztow', 'kategoria', 'podkategoria', 'kwota'] as const
-const REVENUE_FIELDS = ['rok', 'miesiac', 'centrum_kosztow', 'kanal', 'kwota'] as const
+const REVENUE_FIELDS = ['rok', 'miesiac', 'centrum_kosztow', 'kanal', 'kwota', 'stan_na_dzien'] as const
 
 const FIELD_LABELS: Record<string, string> = {
   rok: 'Rok',
@@ -36,6 +39,7 @@ const FIELD_LABELS: Record<string, string> = {
   podkategoria: 'Podkategoria',
   kanal: 'Kanał',
   kwota: 'Kwota',
+  stan_na_dzien: 'Stan na dzień (opcjonalnie)',
 }
 
 const FIELD_HINTS: Record<string, string> = {
@@ -46,6 +50,7 @@ const FIELD_HINTS: Record<string, string> = {
   podkategoria: 'nazwa podkategorii z systemu',
   kanal: 'SALON / MONTAZ / ECOMMERCE',
   kwota: 'liczba ≥ 0, przecinek lub kropka',
+  stan_na_dzien: 'RRRR-MM-DD; brak daty usuwa poprzednią informację o aktualności',
 }
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
@@ -72,7 +77,7 @@ function applyMapping(
     const m = mapping[field]
     if (!m) { result[field] = ''; continue }
     const raw = m.mode === 'column' ? (row[m.value] ?? '') : m.value
-    result[field] = field === 'kwota' ? normalizeKwota(raw) : raw.trim()
+    result[field] = field === 'kwota' && fields.includes('kategoria') ? normalizeKwota(raw) : raw.trim()
   }
   return result
 }
@@ -94,13 +99,13 @@ function buildInitialMapping(
 // ─── Component ────────────────────────────────────────────────────────────────
 
 export function CsvColumnMapper({ userRole }: Props) {
+  const router = useRouter()
   const isAdmin = userRole === 'ADMIN'
   const canImport = isAdmin
 
   // Module + type
   const [module, setModule] = useState<DataModule>('costs')
   const [costsType, setCostsType] = useState<CostsType>('actuals')
-  const [revenueType, setRevenueType] = useState<RevenueType>('actuals')
 
   // CSV state
   const [step, setStep] = useState<Step>('upload')
@@ -117,12 +122,10 @@ export function CsvColumnMapper({ userRole }: Props) {
   const fileRef = useRef<HTMLInputElement>(null)
 
   const fields = module === 'costs' ? COSTS_FIELDS : REVENUE_FIELDS
-  const dataType = module === 'costs' ? costsType : revenueType
+  const dataType = module === 'costs' ? costsType : 'actuals'
   const apiPath = module === 'costs' ? '/api/import/costs' : '/api/import/revenue'
 
-  // Auth: for budget/plan type only admin can import
-  const canImportThisType =
-    dataType === 'budget' || dataType === 'plan' ? isAdmin : canImport
+  const canImportThisType = dataType === 'budget' ? isAdmin : canImport
 
   // ── File upload ──────────────────────────────────────────────────────────────
 
@@ -174,7 +177,7 @@ export function CsvColumnMapper({ userRole }: Props) {
 
   // ── Validation of mapping completeness ──────────────────────────────────────
 
-  const missingFields = fields.filter((f) => !mapping[f]?.value)
+  const missingFields = fields.filter((f) => f !== 'stan_na_dzien' && !mapping[f]?.value)
 
   // ── Preview rows ─────────────────────────────────────────────────────────────
 
@@ -185,6 +188,7 @@ export function CsvColumnMapper({ userRole }: Props) {
   const handleImport = async () => {
     setImporting(true)
     setResult(null)
+    setParseError(null)
 
     const transformed = rows.map((row) => applyMapping(row, fields, mapping))
 
@@ -195,10 +199,12 @@ export function CsvColumnMapper({ userRole }: Props) {
         body: JSON.stringify({ type: dataType, rows: transformed }),
       })
       const data = await res.json()
+      if (!res.ok) throw new Error(typeof data.error === 'string' ? data.error : 'Nie udało się zaimportować danych.')
       setResult({ imported: data.imported ?? 0, errors: data.errors ?? [] })
       setStep('done')
-    } catch {
-      setParseError('Błąd połączenia z serwerem.')
+      if (data.imported > 0) router.refresh()
+    } catch (cause) {
+      setParseError(cause instanceof Error ? cause.message : 'Błąd połączenia z serwerem.')
     } finally {
       setImporting(false)
     }
@@ -207,167 +213,138 @@ export function CsvColumnMapper({ userRole }: Props) {
   // ── Render ───────────────────────────────────────────────────────────────────
 
   return (
-    <div className="space-y-5">
+    <div className={`${styles.theme} ${styles.stack}`}>
 
       {/* Module + type selectors — always visible */}
-      <div className="flex flex-wrap gap-4 items-start">
+      <div className={styles.toolbar}>
         {/* Module */}
-        <div className="space-y-1">
-          <p className="text-xs text-gray-400 uppercase tracking-wider font-medium">Moduł</p>
-          <div className="flex gap-1 p-1 bg-gray-100 rounded-lg">
+        <div className={styles.compactStack}>
+          <p className={styles.eyebrow}>Moduł</p>
+          <div className={styles.segmented}>
             {(['costs', 'revenue'] as DataModule[]).map((m) => (
-              <button
+              <Button
                 key={m}
                 onClick={() => { setModule(m); reset() }}
-                className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                  module === m ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
-                }`}
+                className={styles.segment} aria-pressed={module === m}
               >
                 {m === 'costs' ? 'Koszty' : 'Przychody'}
-              </button>
+              </Button>
             ))}
           </div>
         </div>
 
         {/* Type */}
-        <div className="space-y-1">
-          <p className="text-xs text-gray-400 uppercase tracking-wider font-medium">Typ danych</p>
-          <div className="flex gap-1 p-1 bg-gray-100 rounded-lg">
+        <div className={styles.compactStack}>
+          <p className={styles.eyebrow}>Typ danych</p>
+          <div className={styles.segmented}>
             {module === 'costs'
               ? (['actuals', 'budget'] as CostsType[]).map((t) => (
-                  <button
+                  <Button
                     key={t}
                     onClick={() => { setCostsType(t); reset() }}
-                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                      costsType === t ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
-                    }`}
+                    className={styles.segment} aria-pressed={costsType === t}
                   >
                     {t === 'budget' ? 'Plan budżetowy' : 'Wykonanie'}
-                  </button>
+                  </Button>
                 ))
-              : (['actuals', 'plan'] as RevenueType[]).map((t) => (
-                  <button
-                    key={t}
-                    onClick={() => { setRevenueType(t); reset() }}
-                    className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                      revenueType === t ? 'bg-white shadow-sm text-gray-900' : 'text-gray-500 hover:text-gray-700'
-                    }`}
-                  >
-                    {t === 'plan' ? 'Plan sprzedaży' : 'Wykonanie'}
-                  </button>
-                ))}
+              : <span className={styles.segmentLabel}>Rzeczywiste obroty brutto</span>}
           </div>
         </div>
       </div>
 
       {!canImportThisType && (
-        <div className="px-3 py-2 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm">
-          Import {dataType === 'budget' || dataType === 'plan' ? 'planu' : 'wykonania'} wymaga roli{' '}
+        <div className={styles.warning}>
+          Import {dataType === 'budget' ? 'budżetu kosztów' : 'wykonania'} wymaga roli{' '}
           ADMIN.
         </div>
       )}
 
       {/* ── Step: upload ── */}
       {step === 'upload' && canImportThisType && (
-        <div className="space-y-3">
-          <label className="flex items-center gap-3 w-fit px-4 py-3 rounded-xl border-2 border-dashed border-gray-200 text-sm text-gray-500 hover:border-[var(--wd-sand)] hover:text-gray-700 cursor-pointer transition-colors">
-            <svg className="w-5 h-5 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+        <div className={styles.compactStack}>
+          <label className={styles.upload}>
+            <svg className={styles.icon} aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
             </svg>
             Wgraj dowolny plik CSV — zmapujesz kolumny w następnym kroku
-            <input ref={fileRef} type="file" accept=".csv" className="hidden" onChange={handleFile} />
+            <input ref={fileRef} type="file" accept=".csv" className="sr-only" onChange={handleFile} />
           </label>
           {parseError && (
-            <p className="text-sm text-red-600">{parseError}</p>
+            <p role="alert" className={styles.error}>{parseError}</p>
           )}
         </div>
       )}
 
       {/* ── Step: map ── */}
       {step === 'map' && (
-        <div className="space-y-5">
+        <div className={styles.stack}>
           {/* File info + reset */}
-          <div className="flex items-center gap-2 text-sm text-gray-500">
-            <svg className="w-4 h-4 text-gray-400" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <div className={styles.fileInfo}>
+            <svg className={styles.icon} aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
             </svg>
-            <span className="font-medium text-gray-700">{fileName}</span>
-            <span className="text-gray-400">— {rows.length} wierszy, {headers.length} kolumn</span>
-            <button onClick={reset} className="ml-auto text-xs text-gray-400 hover:text-gray-600 underline underline-offset-2">
+            <span className={styles.strong}>{fileName}</span>
+            <span>— {rows.length} wierszy, {headers.length} kolumn</span>
+            <Button onClick={reset} className={styles.textButton}>
               zmień plik
-            </button>
+            </Button>
           </div>
 
           {/* Mapping table */}
-          <div className="rounded-xl border border-[var(--wd-border)] overflow-hidden">
-            <table className="w-full text-sm">
+          <div className={styles.tableShell}>
+            <table className={`${styles.table} ${styles.mappingTable}`}>
               <thead>
-                <tr style={{ background: 'var(--wd-surface-2)' }}>
-                  <th className="text-left px-4 py-2.5 font-semibold text-xs uppercase tracking-wider text-gray-400 w-40">
+                <tr>
+                  <th>
                     Pole w systemie
                   </th>
-                  <th className="text-left px-4 py-2.5 font-semibold text-xs uppercase tracking-wider text-gray-400">
+                  <th>
                     Źródło
                   </th>
-                  <th className="text-left px-4 py-2.5 font-semibold text-xs uppercase tracking-wider text-gray-400 w-48">
+                  <th>
                     Podgląd (wiersz 1)
                   </th>
                 </tr>
               </thead>
               <tbody>
-                {fields.map((field, i) => {
+                {fields.map((field) => {
                   const m = mapping[field] ?? { mode: 'column', value: '' }
                   const preview = previewRows[0]?.[field] ?? '—'
-                  const isEmpty = !m.value
+                  const isEmpty = !m.value && field !== 'stan_na_dzien'
                   return (
-                    <tr
-                      key={field}
-                      className="border-t"
-                      style={{ borderColor: 'var(--wd-border)', background: i % 2 === 1 ? 'color-mix(in srgb, var(--wd-surface-2) 40%, transparent)' : undefined }}
-                    >
+                    <tr key={field}>
                       {/* Field name */}
-                      <td className="px-4 py-3">
-                        <div className="font-medium text-gray-800">{FIELD_LABELS[field]}</div>
-                        <div className="text-xs text-gray-400 mt-0.5">{FIELD_HINTS[field]}</div>
+                      <td>
+                        <div className={styles.strong}>{FIELD_LABELS[field]}</div>
+                        <div className={styles.help}>{field === 'kwota' && module === 'revenue' ? 'Kwota brutto narastająco po korektach; może być ujemna' : FIELD_HINTS[field]}</div>
                       </td>
 
                       {/* Source selector */}
-                      <td className="px-4 py-3">
-                        <div className="flex flex-col gap-1.5">
+                      <td>
+                        <div className={styles.compactStack}>
                           {/* Mode toggle */}
-                          <div className="flex gap-1 text-xs">
-                            <button
+                          <div className={styles.tabs}>
+                            <Button
                               onClick={() => setFieldMode(field, 'column')}
-                              className={`px-2 py-0.5 rounded border text-xs transition-colors ${
-                                m.mode === 'column'
-                                  ? 'border-[var(--wd-sand)] bg-[var(--wd-sand)] text-gray-800'
-                                  : 'border-gray-200 text-gray-400 hover:border-gray-300'
-                              }`}
+                              className={styles.segment} aria-pressed={m.mode === 'column'}
                             >
                               kolumna CSV
-                            </button>
-                            <button
+                            </Button>
+                            <Button
                               onClick={() => setFieldMode(field, 'constant')}
-                              className={`px-2 py-0.5 rounded border text-xs transition-colors ${
-                                m.mode === 'constant'
-                                  ? 'border-[var(--wd-sand)] bg-[var(--wd-sand)] text-gray-800'
-                                  : 'border-gray-200 text-gray-400 hover:border-gray-300'
-                              }`}
+                              className={styles.segment} aria-pressed={m.mode === 'constant'}
                             >
                               stała wartość
-                            </button>
+                            </Button>
                           </div>
 
                           {/* Value input */}
                           {m.mode === 'column' ? (
                             <select
                               value={m.value}
+                              aria-label={`Kolumna CSV: ${FIELD_LABELS[field]}`}
                               onChange={(e) => setFieldValue(field, e.target.value)}
-                              className={`px-2 py-1.5 text-sm border rounded-lg outline-none bg-white transition-colors ${
-                                isEmpty
-                                  ? 'border-amber-300 focus:border-amber-400'
-                                  : 'border-gray-200 focus:border-[var(--wd-sand)]'
-                              }`}
+                              className={`${styles.input} ${isEmpty ? styles.inputMissing : ''}`}
                             >
                               <option value="">— wybierz kolumnę —</option>
                               {headers.map((h) => (
@@ -375,30 +352,21 @@ export function CsvColumnMapper({ userRole }: Props) {
                               ))}
                             </select>
                           ) : (
-                            <input
+                            <Input
                               type="text"
                               value={m.value}
+                              aria-label={`Stała wartość: ${FIELD_LABELS[field]}`}
                               onChange={(e) => setFieldValue(field, e.target.value)}
                               placeholder={`stała wartość...`}
-                              className={`px-2 py-1.5 text-sm border rounded-lg outline-none transition-colors ${
-                                isEmpty
-                                  ? 'border-amber-300 focus:border-amber-400'
-                                  : 'border-gray-200 focus:border-[var(--wd-sand)]'
-                              }`}
+                              className={`${styles.input} ${isEmpty ? styles.inputMissing : ''}`}
                             />
                           )}
                         </div>
                       </td>
 
                       {/* Preview */}
-                      <td className="px-4 py-3">
-                        <span className={`font-mono text-xs px-1.5 py-0.5 rounded ${
-                          isEmpty
-                            ? 'text-amber-500 bg-amber-50'
-                            : preview
-                              ? 'text-gray-700 bg-gray-100'
-                              : 'text-gray-300'
-                        }`}>
+                      <td>
+                        <span className={`${styles.previewValue} ${isEmpty ? styles.previewMissing : ''}`}>
                           {isEmpty ? 'nie zmapowane' : preview || '(puste)'}
                         </span>
                       </td>
@@ -411,24 +379,24 @@ export function CsvColumnMapper({ userRole }: Props) {
 
           {/* Preview table (3 rows) */}
           {missingFields.length === 0 && (
-            <div className="space-y-2">
-              <p className="text-xs text-gray-400 uppercase tracking-wider font-medium">
+            <div className={styles.compactStack}>
+              <p className={styles.eyebrow}>
                 Podgląd po transformacji (pierwsze 3 wiersze)
               </p>
-              <div className="overflow-x-auto rounded-lg border border-[var(--wd-border)]">
-                <table className="text-xs w-full">
+              <div className={styles.tableShell}>
+                <table className={`${styles.table} ${styles.previewTable}`}>
                   <thead>
-                    <tr style={{ background: 'var(--wd-surface-2)' }}>
+                    <tr>
                       {fields.map((f) => (
-                        <th key={f} className="px-3 py-2 text-left font-medium text-gray-400">{f}</th>
+                        <th key={f}>{f}</th>
                       ))}
                     </tr>
                   </thead>
                   <tbody>
                     {previewRows.map((row, i) => (
-                      <tr key={i} className="border-t" style={{ borderColor: 'var(--wd-border)' }}>
+                      <tr key={i}>
                         {fields.map((f) => (
-                          <td key={f} className="px-3 py-1.5 font-mono text-gray-600">{row[f] || '—'}</td>
+                          <td key={f}>{row[f] || '—'}</td>
                         ))}
                       </tr>
                     ))}
@@ -440,47 +408,42 @@ export function CsvColumnMapper({ userRole }: Props) {
 
           {/* Warnings */}
           {missingFields.length > 0 && (
-            <p className="text-xs text-amber-600">
+            <p className={styles.warning}>
               Uzupełnij mapowanie dla: {missingFields.map((f) => FIELD_LABELS[f]).join(', ')}
             </p>
           )}
 
           {parseError && (
-            <p className="text-sm text-red-600">{parseError}</p>
+            <p role="alert" className={styles.error}>{parseError}</p>
           )}
 
           {/* Import button */}
-          <button
+          <Button
             onClick={handleImport}
             disabled={importing || missingFields.length > 0}
-            className="flex items-center gap-2 px-5 py-2.5 rounded-lg text-sm font-medium bg-[var(--wd-dark)] text-white hover:opacity-90 disabled:opacity-40 transition-opacity"
+            aria-busy={importing}
+            className={`${styles.button} ${styles.primary}`}
           >
-            {importing ? (
-              <span className="inline-block w-4 h-4 border-2 border-white border-t-transparent rounded-full animate-spin" />
-            ) : (
-              <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            {!importing && (
+              <svg className={styles.icon} aria-hidden="true" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
               </svg>
             )}
-            Importuj {rows.length} wierszy
-          </button>
+            {importing ? 'Importowanie…' : `Importuj ${rows.length} wierszy`}
+          </Button>
         </div>
       )}
 
       {/* ── Step: done ── */}
       {step === 'done' && result && (
-        <div className="space-y-4">
-          <div className={`px-4 py-3 rounded-xl border text-sm space-y-2 ${
-            result.errors.length === 0
-              ? 'bg-green-50 border-green-200'
-              : 'bg-amber-50 border-amber-200'
-          }`}>
-            <p className={`font-semibold ${result.errors.length === 0 ? 'text-green-700' : 'text-amber-700'}`}>
+        <div className={styles.stack}>
+          <div role="status" className={result.errors.length === 0 ? styles.status : styles.warning}>
+            <p className={styles.strong}>
               Zaimportowano {result.imported} z {rows.length} wierszy
               {result.errors.length > 0 && ` — ${result.errors.length} błędów`}
             </p>
             {result.errors.length > 0 && (
-              <ul className="text-xs space-y-0.5 text-amber-600">
+              <ul className={styles.resultList}>
                 {result.errors.slice(0, 8).map((e, i) => (
                   <li key={i}>Wiersz {e.row}: {e.message}</li>
                 ))}
@@ -490,12 +453,12 @@ export function CsvColumnMapper({ userRole }: Props) {
               </ul>
             )}
           </div>
-          <button
+          <Button
             onClick={reset}
-            className="text-sm text-gray-500 hover:text-gray-700 underline underline-offset-2"
+            className={styles.textButton}
           >
             Importuj kolejny plik
-          </button>
+          </Button>
         </div>
       )}
     </div>

@@ -2,10 +2,18 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import * as approvalRoute from '@/app/api/finance/ksef/invoices/[id]/approve/route'
 
 const txMock = vi.hoisted(() => ({
+  $executeRaw: vi.fn(async () => 1),
+  aiQueueLease: {
+    findUniqueOrThrow: vi.fn(async () => ({ id: 'shared-ai', updatedAt: new Date() })),
+  },
+  invoiceImportDraft: {
+    findUnique: vi.fn(async () => null),
+  },
   costEvent: {
     updateMany: vi.fn(),
   },
   ksefInvoice: {
+    findUnique: vi.fn(),
     update: vi.fn(),
   },
 }))
@@ -30,7 +38,8 @@ vi.mock('@/lib/finance/finance-access', () => ({
 describe('DELETE /api/finance/ksef/invoices/[id]/approve', () => {
   beforeEach(() => {
     vi.clearAllMocks()
-    prismaMock.ksefInvoice.findUnique.mockResolvedValue({
+    txMock.invoiceImportDraft.findUnique.mockResolvedValue(null)
+    txMock.ksefInvoice.findUnique.mockResolvedValue({
       id: 'invoice-1',
       status: 'APPROVED',
       costEvent: { id: 'event-1', status: 'APPROVED' },

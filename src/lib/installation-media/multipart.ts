@@ -58,6 +58,8 @@ export async function parseInstallationMultipart(
   try {
     parser = Busboy({
       headers: { 'content-type': contentType },
+      // Browser FormData filenames use UTF-8 even without filename*=.
+      defParamCharset: 'utf8',
       limits: {
         fileSize: INSTALLATION_MAX_FILE_BYTES,
         files: 1,
