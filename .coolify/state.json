@@ -1,0 +1,22 @@
+{
+  "context": "wallvps",
+  "application_uuid": "pwc0sk0w8cw8k8wkgwokgogk",
+  "project_uuid": "gws8gs8wg480wkww8k00cwgo",
+  "environment_uuid": "bckogwk400o8kg8ks08cs8c4",
+  "server_uuid": "tgso04og4wcwk0oc0o84s8gw",
+  "url": "https://app.walldecor.pl",
+  "deployed_commit": "fcbdcd297d06db4f6419f1e7498531aa5bf41048",
+  "deployment_uuid": "k4k0g44ow0gg0gs0ko0k4s4w",
+  "status": "finished",
+  "verified_at": "2026-09-18",
+  "verified": [
+    "health200",
+    "authenticated_break_even_report",
+    "source_picker_prefill",
+    "margin_editor",
+    "sqlite_integrity_ok",
+    "foreign_keys_empty",
+    "failed_migrations_zero",
+    "new_settings_empty"
+  ]
+}
