@@ -46,6 +46,10 @@
 .sectionHelp { color: #655e55; margin: 0 0 16px; }
 .questions { display: grid; gap: 12px; }
 .questionGroup { display: grid; gap: 12px; padding: 2px 0 4px; }
+.questionHierarchy { min-inline-size: 0; margin-inline-start: min(calc(var(--question-depth, 0) * 16px), 64px); }
+@media (max-width: 640px) {
+  .questionHierarchy { margin-inline-start: min(calc(var(--question-depth, 0) * 8px), 24px); }
+}
 .question { min-inline-size: 0; background: var(--paper); border: 1px solid rgba(39,37,34,.14); border-radius: 16px; padding: 16px; box-shadow: 0 2px 5px rgba(39,37,34,.035); }
 .questionTitle { box-sizing: border-box; display: block; float: left; inline-size: 100%; max-inline-size: 100%; margin: 0; padding: 0; font-size: 16px; font-weight: 650; line-height: 1.35; overflow-wrap: anywhere; text-wrap: pretty; }
 .questionBody { clear: both; min-inline-size: 0; }
@@ -86,3 +90,15 @@
 @keyframes reveal { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 @media (prefers-reduced-motion: reduce) { .section { animation: none; } .choice, .submit, .secondary { transition: none; } }
 @media (max-width: 430px) { .shell { padding: 16px 12px 40px; } .choiceGrid { grid-template-columns: 1fr; } .map, .question { border-radius: 14px; } .handoff { align-items: flex-start; flex-direction: column; } }
+.questionInvalid {
+  outline: 2px solid #a63026;
+  outline-offset: 5px;
+  border-radius: 8px;
+  scroll-margin-block: 32px;
+}
+
+.questionError {
+  color: #8b241b;
+  font-weight: 700;
+  margin: 8px 0 12px;
+}

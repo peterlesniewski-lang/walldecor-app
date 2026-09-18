@@ -2,7 +2,7 @@ import { spawnSync } from 'node:child_process'
 import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
-import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import { PrismaClient } from '@/generated/prisma'
 import {
   CalendarConflictError,
@@ -138,6 +138,18 @@ afterAll(async () => {
 })
 
 describe('installation calendar outbox', () => {
+  beforeEach(() => {
+    // Service requeues and batch claims must share the fixtures' clock. Real
+    // dates would make earlier RETRY jobs eligible and steal a later claim.
+    // Leave I/O timers real; heartbeat tests explicitly fake their intervals.
+    vi.useFakeTimers({ toFake: ['Date'] })
+    vi.setSystemTime(new Date('2026-09-14T10:01:00.000Z'))
+  })
+
+  afterEach(() => {
+    vi.useRealTimers()
+  })
+
   it('exposes the durable claim and worker public API', () => {
     expect(claimNextIntegrationJob).toBeTypeOf('function')
     expect(processInstallationCalendarJob).toBeTypeOf('function')

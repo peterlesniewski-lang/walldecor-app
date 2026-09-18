@@ -7,7 +7,7 @@ import { InstallationClarificationPanel } from '@/components/installations/insta
 afterEach(() => { vi.unstubAllGlobals(); vi.restoreAllMocks() })
 
 describe('installation detail client-link and clarification panels', () => {
-  it('shows a one-time URL only after the editor really generates it', async () => {
+  it('shows a newly generated URL after the editor rotates the previous link', async () => {
     const user = userEvent.setup()
     const confirm = vi.spyOn(window, 'confirm').mockReturnValue(true)
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
@@ -36,12 +36,13 @@ describe('installation detail client-link and clarification panels', () => {
     await user.click(screen.getByText('Zarządzaj linkiem'))
     await user.click(screen.getByRole('button', { name: 'Przedłuż o 14 dni' }))
     expect(fetchMock).toHaveBeenCalledWith('/api/installations/order-1/client-link', expect.objectContaining({ method: 'PATCH' }))
-    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toMatchObject({ action: 'EXTEND', linkId: 'link-1' })
+    expect(JSON.parse(String(fetchMock.mock.calls.find((call) => call[1]?.method === 'PATCH')?.[1]?.body))).toMatchObject({ action: 'EXTEND', linkId: 'link-1' })
     expect(screen.queryByText(/\/m\//)).toBeNull()
   })
 
   it('keeps generation unavailable until the order has exactly one form snapshot, without disabling an existing link lifecycle', async () => {
     const user = userEvent.setup()
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
     render(<ClientLinkPanel orderId="order-1" canEdit canGenerate={false} initialLinks={[{ id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: null, sentById: null }]} />)
 
     expect(screen.getByText('Najpierw wybierz formularz dla tego zlecenia.')).not.toBeNull()
@@ -56,12 +57,13 @@ describe('installation detail client-link and clarification panels', () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       link: { id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: '2026-08-23T08:15:00.000Z', sentById: 'owner-user' },
     }), { status: 200 }))
+    fetchMock.mockImplementationOnce(() => new Promise<Response>(() => {}))
     vi.stubGlobal('fetch', fetchMock)
     render(<ClientLinkPanel orderId="order-1" canEdit initialLinks={[{ id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: null, sentById: null }]} />)
 
     await user.click(screen.getByRole('button', { name: 'Oznacz jako wysłany' }))
     expect(fetchMock).toHaveBeenCalledWith('/api/installations/order-1/client-link', expect.objectContaining({ method: 'PATCH' }))
-    expect(JSON.parse(String(fetchMock.mock.calls[0][1]?.body))).toEqual({ action: 'MARK_SENT', linkId: 'link-1' })
+    expect(JSON.parse(String(fetchMock.mock.calls.find((call) => call[1]?.method === 'PATCH')?.[1]?.body))).toEqual({ action: 'MARK_SENT', linkId: 'link-1' })
     const status = await screen.findByRole('status')
     expect(status.getAttribute('aria-live')).toBe('polite')
     expect(status.tabIndex).toBe(-1)
@@ -72,6 +74,7 @@ describe('installation detail client-link and clarification panels', () => {
   })
 
   it('keeps sent and client-opened timestamps visible together', () => {
+    vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
     const sentAt = '2026-08-23T08:15:00.000Z'
     const openedAt = '2026-08-23T09:30:00.000Z'
     render(<ClientLinkPanel orderId="order-1" canEdit initialLinks={[{

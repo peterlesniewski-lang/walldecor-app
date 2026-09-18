@@ -199,7 +199,7 @@ test('admin sends an anonymous client link through autosave, clarification and i
   await expect(linkPanel.getByRole('status').filter({ hasText: 'Wysłano:' })).toBeFocused()
   await expectOrderFormStatus(page, orderId, 'Wysłany · czeka na klienta')
   await page.goto(`/installations/${orderId}`)
-  await expect(linkPanel.locator('output')).toHaveCount(0)
+  await expect(linkPanel.locator('output')).toHaveText(clientUrl!)
 
   const clientContext = await browser.newContext({ baseURL: 'http://localhost:3000', viewport: { width: 375, height: 812 } })
   const client = await clientContext.newPage()

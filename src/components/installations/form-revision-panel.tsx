@@ -111,6 +111,7 @@ export function InstallationFormRevisionPanel({
           return <ClientQuestionRenderer
             key={question.key}
             question={question}
+            questions={preview.questions}
             value={answer?.value}
             mode="readonly"
             fileContent={question.type === 'FILE' ? <PreviewFileContent revision={preview} question={question} files={files} /> : undefined}

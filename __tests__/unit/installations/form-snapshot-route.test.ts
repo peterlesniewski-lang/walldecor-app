@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   session: null as null | { user: { id: string; role: string; employeeId?: string | null } },
   editable: vi.fn(),
   createSnapshot: vi.fn(),
+  replaceSnapshot: vi.fn(),
 }))
 
 vi.mock('next-auth', () => ({ getServerSession: vi.fn(async () => mocks.session) }))
@@ -13,16 +14,40 @@ vi.mock('@/lib/prisma', () => ({ prisma: {} }))
 vi.mock('@/lib/installations/room-route-access', () => ({ editableInstallationOrder: mocks.editable }))
 vi.mock('@/lib/installations/catalog-service', () => ({
   createInstallationOrderFormSnapshot: mocks.createSnapshot,
+  replaceUnusedInstallationOrderFormSnapshot: mocks.replaceSnapshot,
   InstallationCatalogValidationError: class InstallationCatalogValidationError extends Error { fieldErrors = { form: 'invalid' } },
 }))
 
-import { POST } from '@/app/api/installations/[id]/form-snapshot/route'
+import { POST, PATCH } from '@/app/api/installations/[id]/form-snapshot/route'
 
 describe('installation form snapshot route', () => {
+  it.each([403, 409])('rejects replacement when access helper returns %s', async (status) => {
+    mocks.session = { user: { id: 'owner', role: 'EMPLOYEE' } }
+    mocks.editable.mockResolvedValue({ response: new Response('{}', { status }) })
+    const response = await PATCH(new NextRequest('http://test/api/installations/o/form-snapshot', { method: 'PATCH', body: JSON.stringify({ templateId: 't2', expectedSnapshotId: 's1' }) }), { params: Promise.resolve({ id: 'o' }) })
+    expect(response.status).toBe(status)
+    expect(mocks.replaceSnapshot).not.toHaveBeenCalled()
+  })
+  it('rejects replacement without the expected snapshot identity', async () => {
+    mocks.session = { user: { id: 'owner', role: 'EMPLOYEE' } }
+    const response = await PATCH(new NextRequest('http://test/api/installations/o/form-snapshot', { method: 'PATCH', body: JSON.stringify({ templateId: 't2' }) }), { params: Promise.resolve({ id: 'o' }) })
+    expect(response.status).toBe(400)
+    expect(mocks.replaceSnapshot).not.toHaveBeenCalled()
+  })
+  it('requires editable access and the current snapshot identity for replacement', async () => {
+    const request = () => new NextRequest('http://test/api/installations/order-1/form-snapshot', { method: 'PATCH', body: JSON.stringify({ templateId: 't2', expectedSnapshotId: 's1' }) })
+    const params = { params: Promise.resolve({ id: 'order-1' }) }
+    expect((await PATCH(request(), params)).status).toBe(401)
+    mocks.session = { user: { id: 'owner', role: 'EMPLOYEE' } }
+    mocks.replaceSnapshot.mockResolvedValue({ id: 's2' })
+    expect((await PATCH(request(), params)).status).toBe(200)
+    expect(mocks.replaceSnapshot).toHaveBeenCalledWith(expect.anything(), { orderId: 'order-1', templateId: 't2', expectedSnapshotId: 's1' }, 'owner')
+  })
   beforeEach(() => {
     mocks.session = null
     mocks.editable.mockClear()
     mocks.createSnapshot.mockClear()
+    mocks.replaceSnapshot.mockClear()
     mocks.editable.mockResolvedValue({ order: { id: 'order-1' } })
     mocks.createSnapshot.mockResolvedValue({ id: 'snapshot-1', orderId: 'order-1', templateId: 'template-v1', templateVersion: 1 })
   })

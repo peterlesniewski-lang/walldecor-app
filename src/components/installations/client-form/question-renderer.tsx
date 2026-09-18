@@ -1,15 +1,18 @@
 'use client'
 
-import { useId, type ReactNode } from 'react'
+import { useId, type CSSProperties, type ReactNode } from 'react'
 import { displayFormAnswer } from '@/lib/installations/form-answer-display'
 import type { FormAnswerValue, FormQuestion } from '@/lib/installations/form-visibility'
 import styles from './client-installation-form.module.css'
 
 type ClientQuestionRendererBaseProps = {
   question: FormQuestion
+  questions?: readonly FormQuestion[]
   value: FormAnswerValue | undefined
   fileContent?: ReactNode
   idPrefix?: string
+  error?: string
+  errorId?: string
 }
 
 export type ClientQuestionRendererProps = ClientQuestionRendererBaseProps & ({
@@ -44,7 +47,33 @@ function ReadonlyQuestion({ question, value, fileContent }: Pick<ClientQuestionR
   </article>
 }
 
+/** Presentation only: follow actual parent keys, never the visible list index. */
+function questionDepth(question: FormQuestion, questions: readonly FormQuestion[]): number {
+  const byKey = new Map(questions.map((item) => [item.key, item]))
+  const visited = new Set([question.key])
+  let current = question
+  let depth = 0
+  while (current.condition) {
+    const parent = byKey.get(current.condition.questionKey)
+    if (!parent || visited.has(parent.key)) return 0
+    visited.add(parent.key)
+    depth += 1
+    current = parent
+  }
+  return depth
+}
+
 export function ClientQuestionRenderer(props: ClientQuestionRendererProps) {
+  const generatedErrorId = useId()
+  const errorId = props.errorId ?? `${generatedErrorId}-error`
+  const depth = questionDepth(props.question, props.questions ?? [])
+  return <div className={`${styles.questionHierarchy} ${props.error ? styles.questionInvalid : ''}`} data-question-error={props.error ? 'true' : undefined} data-question-depth={depth} style={{ '--question-depth': depth } as CSSProperties}>
+    <QuestionContent {...props} errorId={errorId} />
+    {props.error && <p id={errorId} className={styles.questionError}><span aria-hidden="true">⚠ </span>{props.error}</p>}
+  </div>
+}
+
+function QuestionContent(props: ClientQuestionRendererProps) {
   const generatedId = useId()
   const { question, value, fileContent, idPrefix } = props
   if (props.mode === 'readonly') return <ReadonlyQuestion question={question} value={value} fileContent={fileContent} />
@@ -52,25 +81,26 @@ export function ClientQuestionRenderer(props: ClientQuestionRendererProps) {
   const { onChange } = props
   const change = (next: FormAnswerValue | null) => onChange(next)
   const inputId = `${idPrefix ?? generatedId}-${question.key}`
+  const validation = { 'aria-invalid': props.error ? true as const : undefined, 'aria-describedby': props.error ? props.errorId : undefined }
 
   if (question.type === 'FILE') return <>{fileContent}</>
 
-  if (question.type === 'YES_NO_UNKNOWN') return <fieldset className={styles.question}>
+  if (question.type === 'YES_NO_UNKNOWN') return <fieldset className={styles.question} {...validation}>
     <legend className={styles.questionTitle}>{question.label}<RequiredMark question={question} /></legend>
     <div className={styles.questionBody}>
       {question.help && <p className={styles.help}>{question.help}</p>}
-      <div className={styles.choiceGrid}>{([['YES', 'Tak'], ['NO', 'Nie'], ['UNKNOWN', 'Nie wiem']] as const).map(([choice, label]) => <button type="button" key={choice} className={styles.choice} aria-pressed={value === choice} onClick={() => change(choice)}>{label}</button>)}</div>
+      <div className={styles.choiceGrid}>{([['YES', 'Tak'], ['NO', 'Nie'], ['UNKNOWN', 'Nie wiem']] as const).map(([choice, label]) => <button type="button" key={choice} className={styles.choice} {...validation} aria-pressed={value === choice} onClick={() => change(choice)}>{label}</button>)}</div>
       <OptionalClear question={question} value={value} onChange={change} kind="choice" />
     </div>
   </fieldset>
 
   if (question.type === 'MULTI') {
     const selected = Array.isArray(value) ? value : []
-    return <fieldset className={styles.question}>
+    return <fieldset className={styles.question} {...validation}>
       <legend className={styles.questionTitle}>{question.label}<RequiredMark question={question} /></legend>
       <div className={styles.questionBody}>
         {question.help && <p className={styles.help}>{question.help}</p>}
-        <div className={styles.checkList}>{(question.options ?? []).map((option) => <label className={styles.check} key={option}><input type="checkbox" checked={selected.includes(option)} onChange={() => change(selected.includes(option) ? selected.filter((item) => item !== option) : [...selected, option])} />{option}</label>)}</div>
+        <div className={styles.checkList}>{(question.options ?? []).map((option) => <label className={styles.check} key={option}><input type="checkbox" {...validation} checked={selected.includes(option)} onChange={() => change(selected.includes(option) ? selected.filter((item) => item !== option) : [...selected, option])} />{option}</label>)}</div>
         <OptionalClear question={question} value={value} onChange={change} kind="choice" />
       </div>
     </fieldset>
@@ -79,7 +109,7 @@ export function ClientQuestionRenderer(props: ClientQuestionRendererProps) {
   if (question.type === 'SINGLE') return <div className={styles.question}>
     <label className={styles.questionTitle} htmlFor={inputId}>{question.label}<RequiredMark question={question} /></label>
     <div className={styles.questionBody}>
-      <select id={inputId} className={styles.field} value={typeof value === 'string' ? value : ''} onChange={(event) => change(event.target.value || null)}><option value="">Wybierz odpowiedź</option>{(question.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}</select>
+      <select id={inputId} {...validation} className={styles.field} value={typeof value === 'string' ? value : ''} onChange={(event) => change(event.target.value || null)}><option value="">Wybierz odpowiedź</option>{(question.options ?? []).map((option) => <option key={option} value={option}>{option}</option>)}</select>
       <OptionalClear question={question} value={value} onChange={change} kind="choice" />
     </div>
   </div>
@@ -89,8 +119,8 @@ export function ClientQuestionRenderer(props: ClientQuestionRendererProps) {
     <label className={styles.questionTitle} htmlFor={inputId}>{question.label}<RequiredMark question={question} /></label>
     <div className={styles.questionBody}>
       {multiline
-        ? <textarea id={inputId} className={styles.field} value={typeof value === 'string' ? value : ''} onChange={(event) => change(event.target.value || null)} />
-        : <input id={inputId} className={styles.field} inputMode="decimal" value={typeof value === 'string' ? value : ''} onChange={(event) => change(event.target.value || null)} />}
+        ? <textarea id={inputId} {...validation} className={styles.field} value={typeof value === 'string' ? value : ''} onChange={(event) => change(event.target.value || null)} />
+        : <input id={inputId} {...validation} className={styles.field} inputMode="decimal" value={typeof value === 'string' ? value : ''} onChange={(event) => change(event.target.value || null)} />}
       <OptionalClear question={question} value={value} onChange={change} kind="answer" />
     </div>
   </div>

@@ -22,6 +22,133 @@ const projection = {
 }
 
 describe('client installation form', () => {
+  it('shows backend question errors, focuses the first, and clears corrected errors', async () => {
+    const ready = { ...projection, submission: { ...projection.submission, answers: [{ questionKey: 'glify', value: 'YES', isUnknown: false }] } }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Uzupełnij odpowiedzi.', fieldErrors: { 'glify-cm': 'Podaj wymiar.', referencja: 'Dodaj wymagany plik.' } }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(ready), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: [] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={ready} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Wyślij formularz' }))
+    await act(async () => {})
+    const dimension = screen.getByLabelText(/Ile cm ma glif/)
+    expect(dimension.getAttribute('aria-invalid')).toBe('true')
+    expect(document.getElementById(dimension.getAttribute('aria-describedby')!)?.textContent).toContain('Podaj wymiar.')
+    expect(document.activeElement).toBe(dimension)
+    expect(screen.getByLabelText('Dodaj plik: Zdjęcie referencyjne').getAttribute('aria-invalid')).toBe('true')
+    fireEvent.change(dimension, { target: { value: 'nieliczba' } })
+    expect(screen.getByText('Podaj wymiar.')).not.toBeNull()
+    fireEvent.change(dimension, { target: { value: '12' } })
+    expect(screen.queryByText('Podaj wymiar.')).toBeNull()
+    expect(screen.getByText('Dodaj wymagany plik.')).not.toBeNull()
+  })
+
+  it('discards errors for a hidden branch and clears FILE errors only after successful file readback', async () => {
+    const ready = { ...projection, submission: { ...projection.submission, answers: [{ questionKey: 'glify', value: 'YES', isUnknown: false }] } }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Uzupełnij odpowiedzi.', fieldErrors: { 'glify-cm': 'Podaj wymiar.', referencja: 'Dodaj wymagany plik.' } }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(ready), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: [{ id: 'f1', originalFilename: 'pokoj.jpg' }] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={ready} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Wyślij formularz' }))
+    await act(async () => {})
+    fireEvent.click(screen.getByRole('button', { name: 'Nie' }))
+    fireEvent.click(screen.getByRole('button', { name: 'Tak' }))
+    expect(screen.queryByText('Podaj wymiar.')).toBeNull()
+    fireEvent.change(screen.getByLabelText('Dodaj plik: Zdjęcie referencyjne'), { target: { files: [new File(['photo'], 'pokoj.jpg', { type: 'image/jpeg' })] } })
+    await act(async () => {})
+    expect(screen.getByText('pokoj.jpg')).not.toBeNull()
+    expect(screen.queryByText('Dodaj wymagany plik.')).toBeNull()
+  })
+
+  it('uses the submitted snapshot after an autosave conflict instead of unsaved local answers', async () => {
+    vi.useFakeTimers()
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('{}', { status: 409 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ ...projection, canStartCorrection: true, submission: {
+        ...projection.submission, status: 'SUBMITTED', submittedAt: '2026-09-18T10:00:00Z', answers: [{ questionKey: 'glify', value: 'NO', isUnknown: false }],
+      } }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={projection} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Nie wiem' }))
+    act(() => { vi.advanceTimersByTime(550) })
+    await act(async () => {})
+    expect(screen.getByText('Nie')).not.toBeNull()
+    expect(screen.queryByText('Nie wiem')).toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(2)
+  })
+
+  it.each([true, false])('uses confirmed file presence (%s) when a late FILE error arrives', async (confirmed) => {
+    const ready = { ...projection, submission: { ...projection.submission, answers: [{ questionKey: 'glify', value: 'NO', isUnknown: false }] } }
+    let finishSubmit!: (response: Response) => void
+    const fetchMock = vi.fn()
+      .mockImplementationOnce(() => new Promise<Response>((resolve) => { finishSubmit = resolve }))
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: confirmed ? [{ id: 'f1', originalFilename: 'potwierdzone.jpg' }] : [] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(ready), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: confirmed ? [{ id: 'f1', originalFilename: 'potwierdzone.jpg' }] : [] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={ready} />)
+    fireEvent.click(screen.getByRole('button', { name: 'Wyślij formularz' }))
+    await act(async () => {})
+    fireEvent.change(screen.getByLabelText('Dodaj plik: Zdjęcie referencyjne'), { target: { files: [new File(['photo'], 'potwierdzone.jpg', { type: 'image/jpeg' })] } })
+    await act(async () => {})
+    if (confirmed) expect(screen.getByText('potwierdzone.jpg')).not.toBeNull()
+    await act(async () => { finishSubmit(new Response(JSON.stringify({ error: 'Uzupełnij odpowiedzi.', fieldErrors: { referencja: 'Dodaj wymagany plik.' } }), { status: 400 })) })
+    expect(screen.queryByText('Dodaj wymagany plik.') === null).toBe(confirmed)
+    expect(screen.getByLabelText('Dodaj plik: Zdjęcie referencyjne').getAttribute('aria-invalid')).toBe(confirmed ? null : 'true')
+  })
+
+  it('displays submitted frozen answers without starting a correction or autosave', async () => {
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={{ ...projection, canStartCorrection: true, submission: {
+      ...projection.submission, status: 'SUBMITTED', submittedAt: '2026-09-18T10:00:00Z', answers: [
+        { questionKey: 'glify', value: 'YES', isUnknown: false }, { questionKey: 'glify-cm', value: '12.5', isUnknown: false },
+      ],
+    } }} />)
+    expect(screen.getByText('Czy są glify?')).not.toBeNull()
+    expect(screen.getByText('Tak')).not.toBeNull()
+    expect(screen.getByText('12.5')).not.toBeNull()
+    expect(screen.queryByRole('textbox')).toBeNull()
+    expect(screen.queryByLabelText('Dodaj plik: Zdjęcie referencyjne')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Zgłoś korektę' })).not.toBeNull()
+    await act(async () => {})
+    expect(fetchMock).not.toHaveBeenCalled()
+  })
+
+  it('keeps a new FILE error when a previously listed file was removed in another tab', async () => {
+    const ready = { ...projection, submission: { ...projection.submission, answers: [{ questionKey: 'glify', value: 'NO', isUnknown: false }] } }
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response('{}', { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: [{ id: 'f1', originalFilename: 'usuniete.jpg' }] }), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Uzupełnij odpowiedzi.', fieldErrors: { referencja: 'Dodaj wymagany plik.' } }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(ready), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: [] }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={ready} />)
+    fireEvent.change(screen.getByLabelText('Dodaj plik: Zdjęcie referencyjne'), { target: { files: [new File(['photo'], 'usuniete.jpg', { type: 'image/jpeg' })] } })
+    await act(async () => {})
+    expect(screen.getByText('usuniete.jpg')).not.toBeNull()
+    fireEvent.click(screen.getByRole('button', { name: 'Wyślij formularz' }))
+    await act(async () => {})
+    expect(screen.getByText('Dodaj wymagany plik.')).not.toBeNull()
+    expect(screen.queryByText('usuniete.jpg')).toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(5)
+    fetchMock
+      .mockResolvedValueOnce(new Response(JSON.stringify({ error: 'Uzupełnij odpowiedzi.', fieldErrors: { referencja: 'Dodaj wymagany plik.' } }), { status: 400 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify(ready), { status: 200 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({ files: [] }), { status: 200 }))
+    fireEvent.click(screen.getByRole('button', { name: 'Wyślij formularz' }))
+    await act(async () => {})
+    expect(screen.getByText('Dodaj wymagany plik.')).not.toBeNull()
+    expect(fetchMock).toHaveBeenCalledTimes(8)
+  })
+
   afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals() })
   it('uses the job map and reveals cm only for YES while UNKNOWN is a clear nonblocking state', async () => {
     const user = userEvent.setup()

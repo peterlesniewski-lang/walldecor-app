@@ -31,8 +31,14 @@ describe('room scope editor order products and measurements UI', () => {
     const height = screen.getByLabelText('Wysokość pomiaru dla Tapetowanie') as HTMLInputElement
     expect(width.labels?.[0]?.textContent).toBe('Szerokość')
     expect(height.labels?.[0]?.textContent).toBe('Wysokość')
-    expect(screen.getByRole('button', { name: 'Dodaj pomiar do Tapetowanie' }).textContent).toBe('Dodaj pomiar')
-    expect(screen.getByRole('button', { name: 'Dodaj produkt do Tapetowanie' }).textContent).toBe('Dodaj produkt')
+    expect(screen.getByRole('button', { name: 'Zapisz pomiar do Tapetowanie' }).textContent).toBe('Zapisz pomiar')
+    expect(screen.getByRole('button', { name: 'Zapisz produkt do Tapetowanie' }).textContent).toBe('Zapisz produkt')
+    expect(screen.getByRole('button', { name: 'Dodaj kolejną pracę w Salon' }).textContent).toBe('Dodaj kolejną pracę')
+  })
+
+  it('offers the first work item in a room without scopes', () => {
+    render(createElement(RoomScopeEditor, { orderId: 'order-1', initialRooms: [{ ...baseRooms[0], scopes: [] }], catalog, canEdit: true }))
+    expect(screen.getByRole('button', { name: 'Dodaj pracę w Salon' }).textContent).toBe('Dodaj pracę')
   })
 
   it('creates a scope from an active work type, not from a free-text name', async () => {
@@ -44,7 +50,7 @@ describe('room scope editor order products and measurements UI', () => {
     render(createElement(RoomScopeEditor, { orderId: 'order-1', initialRooms: baseRooms, catalog, canEdit: true }))
 
     await user.selectOptions(screen.getByLabelText('Rodzaj prac dla Salon'), 'category-trim')
-    await user.click(screen.getByRole('button', { name: 'Dodaj zakres w Salon' }))
+    await user.click(screen.getByRole('button', { name: 'Dodaj kolejną pracę w Salon' }))
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
     expect(fetchMock.mock.calls[0]?.[0]).toBe('/api/installations/order-1/rooms/room-1/scopes')
@@ -60,7 +66,7 @@ describe('room scope editor order products and measurements UI', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(createElement(RoomScopeEditor, { orderId: 'order-1', initialRooms: baseRooms, catalog, canEdit: true }))
 
-    const add = screen.getByRole('button', { name: 'Dodaj produkt do Tapetowanie' })
+    const add = screen.getByRole('button', { name: 'Zapisz produkt do Tapetowanie' })
     expect(add).toHaveProperty('disabled', true)
     await user.type(screen.getByLabelText('Nazwa produktu dla Tapetowanie'), 'Tapeta na zamówienie')
     await user.type(screen.getByLabelText('Producent produktu dla Tapetowanie'), 'WallDecor')
@@ -89,7 +95,7 @@ describe('room scope editor order products and measurements UI', () => {
     await user.type(screen.getByLabelText('Szerokość pomiaru dla Tapetowanie'), '240')
     await user.type(screen.getByLabelText('Wysokość pomiaru dla Tapetowanie'), '260')
     await user.selectOptions(screen.getByLabelText('Jednostka pomiaru dla Tapetowanie'), 'CM')
-    await user.click(screen.getByRole('button', { name: 'Dodaj pomiar do Tapetowanie' }))
+    await user.click(screen.getByRole('button', { name: 'Zapisz pomiar do Tapetowanie' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
     expect(JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({ kind: 'RECTANGLE', elementName: 'Ściana', value: '240', secondaryValue: '260', unit: 'CM', scopeId: 'scope-1' })
 
@@ -97,7 +103,7 @@ describe('room scope editor order products and measurements UI', () => {
     await user.type(screen.getByLabelText('Nazwa pomiaru dla Tapetowanie'), 'Listwa')
     await user.type(screen.getByLabelText('Wartość pomiaru dla Tapetowanie'), '3')
     await user.selectOptions(screen.getByLabelText('Jednostka pomiaru dla Tapetowanie'), 'MB')
-    await user.click(screen.getByRole('button', { name: 'Dodaj pomiar do Tapetowanie' }))
+    await user.click(screen.getByRole('button', { name: 'Zapisz pomiar do Tapetowanie' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(4))
     expect(JSON.parse((fetchMock.mock.calls[2]?.[1] as RequestInit).body as string)).toEqual({ kind: 'SINGLE', elementName: 'Listwa', value: '3', unit: 'MB', scopeId: 'scope-1' })
   })
@@ -113,7 +119,7 @@ describe('room scope editor order products and measurements UI', () => {
     await user.type(screen.getByLabelText('Nazwa pomiaru w Salon'), 'Pomiar przeniesiony')
     await user.type(screen.getByLabelText('Wartość pomiaru w Salon'), '18')
     await user.selectOptions(screen.getByLabelText('Zakres pomiaru w Salon'), 'scope-1')
-    await user.click(screen.getByRole('button', { name: 'Dodaj pomiar' }))
+    await user.click(screen.getByRole('button', { name: 'Zapisz pomiar' }))
 
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
     expect(JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({ kind: 'SINGLE', elementName: 'Pomiar przeniesiony', value: '18', unit: 'CM', scopeId: 'scope-1' })

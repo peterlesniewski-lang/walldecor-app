@@ -66,6 +66,16 @@ function sameAnswerValue(left: PendingAnswerValue | undefined, right: PendingAns
   return Array.isArray(left) && Array.isArray(right) && left.length === right.length && left.every((value, index) => value === right[index])
 }
 
+function hasValidAnswer(question: Question, value: AnswerValue | undefined) {
+  if (question.type === 'FILE' || value === undefined) return false
+  if (question.type === 'MULTI') return Array.isArray(value) && value.length > 0 && new Set(value).size === value.length && value.every((item) => question.options?.includes(item))
+  if (typeof value !== 'string') return false
+  if (question.type === 'YES_NO_UNKNOWN') return ['YES', 'NO', 'UNKNOWN'].includes(value)
+  if (question.type === 'SINGLE') return Boolean(question.options?.includes(value))
+  if (question.type === 'NUMBER' || question.type === 'DIMENSION') return /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value.trim().replace(',', '.'))
+  return value.trim().length > 0
+}
+
 function JobMap({ rooms }: Pick<ClientFormProjection, 'rooms'>) {
   return <aside className={styles.map} aria-label="Mapa zlecenia">
     <h2>Mapa zlecenia</h2>
@@ -84,6 +94,10 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
   const [answers, setAnswers] = useState<Record<string, AnswerValue>>(() => mapAnswers(initialProjection.submission))
   const [saveState, setSaveState] = useState<'saved' | 'saving' | 'error'>('saved')
   const [error, setError] = useState('')
+  const [fieldErrors, setFieldErrors] = useState<Record<string, string>>({})
+  const [validationAttempt, setValidationAttempt] = useState(0)
+  const formRef = useRef<HTMLFormElement>(null)
+  const focusErrorRef = useRef(false)
   const [submitting, setSubmitting] = useState(false)
   const [visitFeeAccepted, setVisitFeeAccepted] = useState(Boolean(initialProjection.visitFee?.clientAcceptedAt))
   const answersRef = useRef(answers)
@@ -100,6 +114,13 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
 
   useEffect(() => { answersRef.current = answers }, [answers])
   useEffect(() => { submissionRef.current = projection.submission }, [projection.submission])
+  useEffect(() => {
+    if (!focusErrorRef.current) return
+    focusErrorRef.current = false
+    const first = formRef.current?.querySelector<HTMLElement>('[data-question-error="true"]')
+    first?.scrollIntoView?.({ behavior: 'smooth', block: 'center' })
+    first?.querySelector<HTMLElement>('input, textarea, select, button')?.focus({ preventScroll: true })
+  }, [fieldErrors])
   // A 409 may refresh this screen with any different legal snapshot field.
   // In that case the customer must explicitly tick the confirmation again;
   // only a persisted acceptance can carry state between fee snapshots.
@@ -112,7 +133,12 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
   useEffect(() => () => { if (timerRef.current) clearTimeout(timerRef.current) }, [])
 
   function adoptSubmission(submission: Submission, preservePending = false) {
-    const pendingAnswers = preservePending
+    if (submission.status === 'SUBMITTED') {
+      pendingRef.current = {}
+      autosaveAttemptRef.current = null
+      if (timerRef.current) clearTimeout(timerRef.current)
+    }
+    const pendingAnswers = preservePending && submission.status === 'DRAFT'
       ? Object.fromEntries(Object.entries(pendingRef.current).flatMap(([key, value]) => value === null ? [] : [[key, value]]))
       : {}
     const nextAnswers = { ...mapAnswers(submission), ...pendingAnswers }
@@ -127,6 +153,11 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
     if (!response.ok) return null
     const latest = await response.json() as ClientFormProjection
     if (!latest?.submission) return null
+    if (latest.submission.status === 'SUBMITTED') {
+      pendingRef.current = {}
+      autosaveAttemptRef.current = null
+      if (timerRef.current) clearTimeout(timerRef.current)
+    }
     submissionRef.current = latest.submission
     const pendingAnswers = Object.fromEntries(Object.entries(pendingRef.current).flatMap(([key, value]) => value === null ? [] : [[key, value]]))
     answersRef.current = { ...mapAnswers(latest.submission), ...pendingAnswers }
@@ -223,6 +254,11 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
     else next[questionKey] = value
     answersRef.current = next
     setAnswers(next)
+    const nextVisible = evaluateVisibleFormQuestions(projection.form.questions, next)
+    setFieldErrors((current) => Object.fromEntries(Object.entries(current).filter(([key]) => {
+      const question = nextVisible.find((item) => item.key === key)
+      return question && !hasValidAnswer(question, next[key])
+    })))
     pendingRef.current[questionKey] = value
     submitAttemptRef.current = null
     // A local change is not saved until the queue reaches the server.  Mark it
@@ -253,7 +289,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(attempt),
       })
-      const data = await response.json() as Submission | { error?: string }
+      const data = await response.json() as Submission | { error?: string; fieldErrors?: Record<string, string> }
       if (!response.ok) {
         const message = 'error' in data && typeof data.error === 'string' ? data.error : 'Nie udało się wysłać formularza.'
         // A concrete 4xx means this exact request did not commit. Rebase on
@@ -267,6 +303,15 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
             return
           }
           submitAttemptRef.current = null
+          const currentQuestions = latest?.form.questions ?? projection.form.questions
+          const currentVisible = evaluateVisibleFormQuestions(currentQuestions, answersRef.current)
+          const receivedErrors = 'fieldErrors' in data ? data.fieldErrors : undefined
+          focusErrorRef.current = true
+          setValidationAttempt((current) => current + 1)
+          setFieldErrors(Object.fromEntries(currentVisible.flatMap((question) => {
+            const message = receivedErrors?.[question.key]
+            return typeof message === 'string' && !hasValidAnswer(question, answersRef.current[question.key]) ? [[question.key, message]] : []
+          })))
           setError(response.status === 409
             ? 'Formularz został zapisany w nowszej wersji. Odświeżyliśmy dane — sprawdź je i spróbuj ponownie.'
             : message)
@@ -275,6 +320,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
         throw new Error(message)
       }
       submitAttemptRef.current = null
+      setFieldErrors({})
       adoptSubmission(data as Submission); setSaveState('saved')
     } catch (caught) {
       const latest = await reloadLatestProjection().catch(() => null)
@@ -298,7 +344,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
       if (!response.ok) throw new Error('Nie udało się rozpocząć korekty.')
       const draft = await response.json() as Submission
       correctionMutationIdRef.current = null
-      pendingRef.current = {}; adoptSubmission(draft); setSaveState('saved')
+      pendingRef.current = {}; setFieldErrors({}); adoptSubmission(draft); setSaveState('saved')
     } catch (caught) { setError(caught instanceof Error ? caught.message : 'Nie udało się rozpocząć korekty.') } finally { setSubmitting(false) }
   }
 
@@ -353,12 +399,15 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
           </>}
         </section>}
         {error && <p role="alert" className={styles.error}>{error}</p>}
-      </section> : <form className={styles.form} onSubmit={(event) => { event.preventDefault(); void submit() }}>
+      </section> : <form ref={formRef} className={styles.form} onSubmit={(event) => { event.preventDefault(); void submit() }}>
         <section className={styles.section} aria-labelledby="questions-heading">
           <h2 id="questions-heading" className={styles.sectionHeading}>Krótka rozmowa o miejscu montażu</h2>
           <p className={styles.sectionHelp}>Odpowiadaj po kolei. Formularz zapisuje zmiany automatycznie.</p>
           <div className={styles.questions}>{groups.map((group, index) => <div className={styles.questionGroup} key={group.map((question) => question.key).join(':')} aria-label={`Część ${index + 1} formularza`}>
-            {group.map((question) => <ClientQuestionRenderer key={question.key} question={question} value={answers[question.key]} mode="interactive" onChange={(value) => queueAnswer(question.key, value)} fileContent={question.type === 'FILE' ? <ClientFileControl token={token} question={question} loadExistingFiles={projection.submission.revisionNumber > 1} /> : undefined} />)}
+            {group.map((question) => <ClientQuestionRenderer key={question.key} question={question} questions={projection.form.questions} value={answers[question.key]} mode="interactive" error={fieldErrors[question.key]} errorId={`question-error-${question.key}`} onChange={(value) => queueAnswer(question.key, value)} fileContent={question.type === 'FILE' ? <ClientFileControl token={token} question={question} error={fieldErrors[question.key]} errorId={`question-error-${question.key}`} validationAttempt={validationAttempt} onFilesPresent={() => setFieldErrors((current) => {
+              if (!current[question.key]) return current
+              const next = { ...current }; delete next[question.key]; return next
+            })} loadExistingFiles={projection.submission.revisionNumber > 1} /> : undefined} />)}
           </div>)}</div>
         </section>
         {unknownSelected && <p className={styles.unknown}><strong>Ustalimy przed montażem.</strong> Nie musisz teraz wpisywać przybliżonego wymiaru.</p>}
@@ -387,23 +436,37 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
         {error && <p role="alert" className={styles.error}>{error}</p>}
         <button type="submit" className={styles.submit} disabled={submitting || (requiresVisitFeeAcceptance && !visitFeeAccepted)}>{submitting ? 'Wysyłanie…' : 'Wyślij formularz'}</button>
       </form>}
+      {submitted && <section className={styles.section} aria-labelledby="submitted-answers-heading">
+        <h2 id="submitted-answers-heading" className={styles.sectionHeading}>Wysłane odpowiedzi</h2>
+        <div className={styles.questions}>{visible.map((question) => <ClientQuestionRenderer key={question.key} question={question} questions={projection.form.questions} value={answers[question.key]} mode="readonly" fileContent={question.type === 'FILE' ? <p className={styles.fileNotice}>Podgląd plików nie jest dostępny w tej wersji formularza. W razie pytań skontaktuj się z WallDecor.</p> : undefined} />)}</div>
+      </section>}
     </div>
   </main>
 }
 
-function ClientFileControl({ token, question, loadExistingFiles }: { token: string; question: Question; loadExistingFiles: boolean }) {
+function ClientFileControl({ token, question, loadExistingFiles, error, errorId, validationAttempt, onFilesPresent }: { token: string; question: Question; loadExistingFiles: boolean; error?: string; errorId: string; validationAttempt: number; onFilesPresent: () => void }) {
   const [files, setFiles] = useState<Array<{ id: string; originalFilename: string }>>([])
   const [uploading, setUploading] = useState(false)
   const [message, setMessage] = useState('')
   const [handoff, setHandoff] = useState<null | { id: string; qrSvg: string; expiresAt: string }>(null)
+  const onFilesPresentRef = useRef(onFilesPresent)
+  onFilesPresentRef.current = onFilesPresent
 
   const refreshFiles = useCallback(async () => {
     const response = await fetch(`/api/public/installations/${encodeURIComponent(token)}/files?questionKey=${encodeURIComponent(question.key)}`, { cache: 'no-store' })
     if (!response.ok) return false
     const data = await response.json() as { files?: Array<{ id: string; originalFilename: string }> }
     setFiles(data.files ?? [])
+    if (data.files?.length) onFilesPresentRef.current()
     return true
   }, [question.key, token])
+
+  // A late submit may precede an upload, or another tab may have removed a
+  // previously listed file. Reconcile each validation attempt with a fresh
+  // server list; cached presence alone never dismisses a new FILE error.
+  useEffect(() => {
+    if (error) void refreshFiles().catch(() => false)
+  }, [error, validationAttempt, refreshFiles])
 
   // A FILE control can mount with files inherited from a submitted revision
   // after the customer explicitly opens a correction. Load them without
@@ -464,7 +527,7 @@ function ClientFileControl({ token, question, loadExistingFiles }: { token: stri
     <p className={styles.fileNotice}>Dodaj plik, jeśli go masz. Zdjęcie można też przekazać z telefonu — nie musisz robić go teraz.</p>
     <label className={styles.filePicker}>
       <span>{uploading ? 'Dodawanie pliku…' : 'Wybierz plik'}</span>
-      <input aria-label={`Dodaj plik: ${question.label}`} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" disabled={uploading} onChange={(event) => void upload(event.currentTarget.files?.[0])} />
+      <input aria-label={`Dodaj plik: ${question.label}`} aria-invalid={error ? true : undefined} aria-describedby={error ? errorId : undefined} type="file" accept="image/jpeg,image/png,image/webp,application/pdf" disabled={uploading} onChange={(event) => void upload(event.currentTarget.files?.[0])} />
     </label>
     <button type="button" className={styles.secondary} disabled={uploading || Boolean(handoff)} onClick={() => void createHandoff()}>Dodaj z telefonu</button>
     {handoff && <section className={styles.handoff} aria-label={`Kod telefonu: ${question.label}`}>

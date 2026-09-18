@@ -193,7 +193,7 @@ export function InstallationOrderDetail({
       </section>
       {canEditActiveOrder && <section id="client-form" data-card-section aria-labelledby="client-form-heading" className="scroll-mt-6 rounded-2xl border p-4 sm:p-6" style={{ background: 'var(--wd-white)', borderColor: 'rgba(30,30,30,.12)' }}>
         <h2 id="client-form-heading" className="text-xl font-extrabold">Formularz klienta</h2>
-        <InstallationFormSnapshotPanel orderId={order.id} publishedTemplates={publishedTemplates} initialSnapshot={formSnapshot} canEdit={canEditActiveOrder} isArchived={isArchived} onSelected={(snapshot) => { setSelectedSnapshot(snapshot); router.refresh() }} />
+        <InstallationFormSnapshotPanel orderId={order.id} publishedTemplates={publishedTemplates} initialSnapshot={formSnapshot} canEdit={canEditActiveOrder} isArchived={isArchived} canReplace={clientLinks.length === 0 && formRevisions.length === 0} onSelected={(snapshot) => { setSelectedSnapshot(snapshot); router.refresh() }} />
         <ClientLinkPanel orderId={order.id} initialLinks={clientLinks} canEdit canGenerate={selectedSnapshot !== null} />
         <InstallationFormRevisionPanel revisions={formRevisions} files={files} />
       </section>}
