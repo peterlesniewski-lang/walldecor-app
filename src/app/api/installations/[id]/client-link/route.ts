@@ -5,6 +5,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { editableInstallationOrder } from '@/lib/installations/room-route-access'
 import { installationPublicUrl } from '@/lib/installations/public-url'
+import { ClientLinkDecryptionError, ClientLinkEncryptionConfigurationError } from '@/lib/installations/client-link-crypto'
 import {
   createClientLink,
   extendClientLink,
@@ -13,6 +14,7 @@ import {
   InstallationClientLinkValidationError,
   markClientLinkSent,
   revokeClientLink,
+  retrieveCurrentClientLink,
 } from '@/lib/installations/client-link'
 
 type Params = { params: Promise<{ id: string }> }
@@ -48,6 +50,33 @@ async function editableSession(orderId: string): Promise<
   return { session: session as { user: { id: string } } }
 }
 
+function encryptionFailure(error: unknown) {
+  if (error instanceof ClientLinkEncryptionConfigurationError) return NextResponse.json({ error: error.message, code: 'CLIENT_LINK_ENCRYPTION_UNAVAILABLE' }, { status: 503, headers: { 'Cache-Control': 'no-store' } })
+  if (error instanceof ClientLinkDecryptionError) return NextResponse.json({ error: error.message, code: 'CLIENT_LINK_DECRYPTION_FAILED' }, { status: 503, headers: { 'Cache-Control': 'no-store' } })
+  return null
+}
+
+export async function GET(req: NextRequest, { params }: Params) {
+  const { id } = await params
+  const access = await editableSession(id)
+  if ('response' in access) {
+    access.response.headers.set('Cache-Control', 'no-store')
+    return access.response
+  }
+  try {
+    const current = await retrieveCurrentClientLink(prisma, id)
+    return NextResponse.json({
+      link: current.link ? safeLink(current.link) : null,
+      url: current.token ? installationPublicUrl(`/m/${current.token}`, req.nextUrl.origin) : null,
+      reason: current.reason,
+    }, { headers: { 'Cache-Control': 'no-store' } })
+  } catch (error) {
+    const failure = encryptionFailure(error)
+    if (failure) return failure
+    return NextResponse.json({ error: 'Nie udało się odczytać linku klienta.' }, { status: 500, headers: { 'Cache-Control': 'no-store' } })
+  }
+}
+
 export async function POST(req: NextRequest, { params }: Params) {
   const { id } = await params
   const access = await editableSession(id)
@@ -56,16 +85,18 @@ export async function POST(req: NextRequest, { params }: Params) {
     const parsed = createSchema.safeParse(await req.json())
     if (!parsed.success) return NextResponse.json({ error: 'Podaj poprawną datę wygaśnięcia.' }, { status: 400 })
     const created = await createClientLink(prisma, { orderId: id, createdById: access.session.user.id, expiresAt: parsed.data.expiresAt })
-    // This is intentionally the only route response containing the plaintext URL.
+    // Plaintext URLs are returned only through this editor-authorized endpoint.
     return NextResponse.json({
       link: safeLink(created.link),
       url: installationPublicUrl(`/m/${created.token}`, req.nextUrl.origin),
     }, { status: 201, headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
+    const failure = encryptionFailure(error)
+    if (failure) return failure
     if (error instanceof InstallationClientLinkPrerequisiteError) return NextResponse.json({ error: 'Najpierw przypnij dokładnie jeden formularz klienta do zlecenia.' }, { status: 409 })
     if (error instanceof InstallationClientLinkValidationError) return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: 400 })
     if (error instanceof SyntaxError) return NextResponse.json({ error: 'Podaj poprawną datę wygaśnięcia.' }, { status: 400 })
-    throw error
+    return NextResponse.json({ error: 'Nie udało się utworzyć linku klienta.' }, { status: 500, headers: { 'Cache-Control': 'no-store' } })
   }
 }
 
@@ -91,10 +122,12 @@ export async function PATCH(req: NextRequest, { params }: Params) {
       url: installationPublicUrl(`/m/${created.token}`, req.nextUrl.origin),
     }, { status: 201, headers: { 'Cache-Control': 'no-store' } })
   } catch (error) {
+    const failure = encryptionFailure(error)
+    if (failure) return failure
     if (error instanceof InstallationClientLinkPrerequisiteError) return NextResponse.json({ error: 'Najpierw przypnij dokładnie jeden formularz klienta do zlecenia.' }, { status: 409 })
     if (error instanceof InstallationClientLinkNotFoundError) return NextResponse.json({ error: 'Nie znaleziono linku.' }, { status: 404 })
     if (error instanceof InstallationClientLinkValidationError) return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: 400 })
     if (error instanceof SyntaxError) return NextResponse.json({ error: 'Działanie dla linku jest niepoprawne.' }, { status: 400 })
-    throw error
+    return NextResponse.json({ error: 'Nie udało się zaktualizować linku klienta.' }, { status: 500, headers: { 'Cache-Control': 'no-store' } })
   }
 }

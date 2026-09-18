@@ -41,6 +41,7 @@ export function TemplateTestPreview({ questions, onClose }: TemplateTestPreviewP
         ? <ClientQuestionRenderer
             key={question.key}
             question={question}
+            questions={questions}
             value={answers[question.key]}
             mode="readonly"
             idPrefix="template-test"
@@ -49,6 +50,7 @@ export function TemplateTestPreview({ questions, onClose }: TemplateTestPreviewP
         : <ClientQuestionRenderer
             key={question.key}
             question={question}
+            questions={questions}
             value={answers[question.key]}
             mode="interactive"
             idPrefix="template-test"

@@ -14,6 +14,7 @@ import {
   createCatalogType,
   createInstallationFormTemplate,
   createInstallationOrderFormSnapshot,
+  replaceUnusedInstallationOrderFormSnapshot,
   createInstallationRoom,
   createInstallationScope,
   createNextInstallationFormTemplateDraft,
@@ -82,6 +83,28 @@ afterAll(async () => {
 })
 
 describe('installation catalog, templates and room history use real SQLite', () => {
+  it('replaces only an unused selection, preserves an audit and rejects stale edits or any existing link', async () => {
+    const order = await db.installationOrder.findUniqueOrThrow({ where: { id: orderId } })
+    const fresh = await createInstallationOrder(db, {
+      client: { name: 'Zmiana formularza', email: 'replace@example.test', phone: '+48501555555' },
+      address: { street: 'Testowa', buildingNumber: '1', postalCode: '00-001', city: 'Warszawa' },
+      primaryEmployeeId: order.primaryEmployeeId, backupEmployeeId: order.backupEmployeeId,
+    }, 'catalog-admin')
+    const first = await createInstallationFormTemplate(db, { name: 'Pierwszy wybór', questions: [{ key: 'a', type: 'TEXT', label: 'Pierwsze' }] })
+    const second = await createInstallationFormTemplate(db, { name: 'Drugi wybór', questions: [{ key: 'b', type: 'TEXT', label: 'Drugie' }] })
+    await publishInstallationFormTemplate(db, first.id, 'catalog-admin')
+    await publishInstallationFormTemplate(db, second.id, 'catalog-admin')
+    const original = await createInstallationOrderFormSnapshot(db, { orderId: fresh.id, templateId: first.id }, 'catalog-admin')
+    const changed = await replaceUnusedInstallationOrderFormSnapshot(db, { orderId: fresh.id, templateId: second.id, expectedSnapshotId: original.id }, 'catalog-admin')
+    expect(changed.templateId).toBe(second.id)
+    expect(changed.id).not.toBe(original.id)
+    const audit = await db.installationAuditEvent.findFirstOrThrow({ where: { orderId: fresh.id, action: 'INSTALLATION_FORM_TEMPLATE_CHANGED' } })
+    expect(JSON.parse(audit.beforeJson!).schemaJson).toBe(original.schemaJson)
+    await expect(replaceUnusedInstallationOrderFormSnapshot(db, { orderId: fresh.id, templateId: first.id, expectedSnapshotId: original.id }, 'catalog-admin')).rejects.toThrow()
+    await db.installationClientLink.create({ data: { orderId: fresh.id, tokenHash: 'a'.repeat(64), expiresAt: new Date('2020-01-01'), revokedAt: new Date(), createdById: 'catalog-admin' } })
+    await expect(replaceUnusedInstallationOrderFormSnapshot(db, { orderId: fresh.id, templateId: first.id, expectedSnapshotId: changed.id }, 'catalog-admin')).rejects.toThrow(/link/)
+    expect((await db.installationOrderFormSnapshot.findUniqueOrThrow({ where: { orderId: fresh.id } })).id).toBe(changed.id)
+  })
   it('persists a normalized dynamic catalog, reorders it, and excludes archived entries from new selection', async () => {
     const category = await createCatalogCategory(db, { name: '  Tapety  ' })
     const type = await createCatalogType(db, { categoryId: category.id, name: '  Winylowe ' })

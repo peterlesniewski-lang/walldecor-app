@@ -3,11 +3,12 @@ import { NextResponse } from 'next/server'
 import { Prisma, PrismaClient } from '@/generated/prisma'
 import { isClientVisitFeeActive } from './delegation-service'
 import { createVisitFeeSnapshotDigest } from './visit-fee-snapshot'
+import { decryptClientLinkToken, encryptClientLinkToken } from './client-link-crypto'
 
 const CLIENT_LINK_SECRET_BYTES = 32
 const CLIENT_LINK_SECRET_PATTERN = /^[A-Za-z0-9_-]{43}$/
 
-/** A 256-bit, URL-safe secret. Only its SHA-256 digest is persisted. */
+/** A 256-bit, URL-safe secret. Public authentication uses its SHA-256 digest. */
 export function createClientLinkSecret(): string {
   return randomBytes(CLIENT_LINK_SECRET_BYTES).toString('base64url')
 }
@@ -120,6 +121,8 @@ export async function createClientLink(
   }
   const token = createClientLinkSecret()
   const tokenHash = hashClientLinkSecret(token)
+  // Configuration/encryption must succeed before any predecessor can be revoked.
+  const tokenCiphertext = encryptClientLinkToken(token, { orderId: input.orderId, tokenHash })
   const now = new Date()
   const link = await db.$transaction(async (tx) => {
     await getActiveOrderSnapshot(tx, input.orderId, true)
@@ -128,7 +131,7 @@ export async function createClientLink(
       data: { revokedAt: now },
     })
     const created = await tx.installationClientLink.create({
-      data: { orderId: input.orderId, tokenHash, expiresAt: input.expiresAt, createdById: input.createdById },
+      data: { orderId: input.orderId, tokenHash, tokenCiphertext, expiresAt: input.expiresAt, createdById: input.createdById },
     })
     await tx.installationAuditEvent.create({
       data: {
@@ -141,6 +144,17 @@ export async function createClientLink(
     return created
   })
   return { token, link }
+}
+
+/** Internal editor-only retrieval. Never use this result in list or RSC DTOs. */
+export async function retrieveCurrentClientLink(db: InstallationDb, orderId: string) {
+  const link = await db.installationClientLink.findFirst({
+    where: { orderId, revokedAt: null, expiresAt: { gt: new Date() } },
+    orderBy: [{ createdAt: 'desc' }, { id: 'desc' }],
+  })
+  if (!link) return { link: null, token: null, reason: 'NO_ACTIVE_LINK' as const }
+  if (!link.tokenCiphertext) return { link, token: null, reason: 'LEGACY_HASH_ONLY' as const }
+  return { link, token: decryptClientLinkToken(link.tokenCiphertext, { orderId, tokenHash: link.tokenHash }), reason: null }
 }
 
 export async function revokeClientLink(db: PrismaClient, linkId: string, actorId: string, expectedOrderId?: string) {

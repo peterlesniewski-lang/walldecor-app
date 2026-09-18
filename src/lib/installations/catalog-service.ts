@@ -507,6 +507,40 @@ export async function createInstallationOrderFormSnapshot(db: PrismaClient, inpu
   })
 }
 
+/** Correct an unused selection only. A new identity makes stale editors fail closed. */
+export async function replaceUnusedInstallationOrderFormSnapshot(db: PrismaClient, input: {
+  orderId: string; templateId: string; expectedSnapshotId: string
+}, actorId: string) {
+  return db.$transaction(async (tx) => {
+    await assertActiveInstallationOrder(tx, input.orderId)
+    const current = await tx.installationOrderFormSnapshot.findUnique({ where: { orderId: input.orderId } })
+    if (!current || current.id !== input.expectedSnapshotId) {
+      throw new InstallationCatalogValidationError({ form: 'Wybór formularza zmienił się. Odśwież kartę przed kolejną zmianą.' }, 409)
+    }
+    const [links, submissions, files] = await Promise.all([
+      tx.installationClientLink.count({ where: { orderId: input.orderId } }),
+      tx.installationFormSubmission.count({ where: { orderId: input.orderId } }),
+      tx.installationFile.count({ where: { orderId: input.orderId, OR: [{ purpose: 'CLIENT_QUESTION' }, { clientLinkId: { not: null } }, { formSubmissionId: { not: null } }, { questionKey: { not: null } }] } }),
+    ])
+    if (links || submissions || files) {
+      throw new InstallationCatalogValidationError({ form: 'Formularz można zmienić tylko przed utworzeniem linku lub rozpoczęciem odpowiedzi klienta. Dotychczasowe dane pozostają bez zmian.' }, 409)
+    }
+    const template = await getTemplateOrThrow(tx, input.templateId)
+    if (template.status !== 'PUBLISHED') validationError('templateId', 'Wybierz opublikowany formularz.')
+    const questions = parsedPersistedQuestions(template.id, template.questionDefinitions)
+    const replacement = await tx.installationOrderFormSnapshot.update({
+      where: { id: current.id },
+      data: {
+        id: randomUUID(), templateId: template.id, templateVersion: template.version,
+        schemaJson: JSON.stringify({ familyId: template.familyId, templateId: template.id, name: template.name, version: template.version, questions }),
+        createdById: actorId, createdAt: new Date(),
+      },
+    })
+    await audit(tx, input.orderId, actorId, 'INSTALLATION_FORM_TEMPLATE_CHANGED', JSON.stringify(current), JSON.stringify(replacement))
+    return replacement
+  })
+}
+
 const roomInclude = {
   scopes: {
     orderBy: [{ sortOrder: 'asc' }, { createdAt: 'asc' }],

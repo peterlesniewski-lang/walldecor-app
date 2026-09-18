@@ -561,8 +561,20 @@ export async function submitClientForm(db: PrismaClient, token: string, input: S
     if (submission.status !== 'DRAFT') throw new InstallationFormValidationError({ form: 'Ten szkic formularza nie jest dostępny.' })
     if (submission.draftVersion !== input.draftVersion) throw new InstallationFormConflictError()
     const values = mergedDraftAnswers(submission.answers, [])
-    validateVisibleSubmission(questions, values)
-    await validateRequiredVisibleFiles(tx, submission, questions, values)
+    const fieldErrors: Record<string, string> = {}
+    try {
+      validateVisibleSubmission(questions, values)
+    } catch (error) {
+      if (!(error instanceof InstallationFormValidationError)) throw error
+      Object.assign(fieldErrors, error.fieldErrors)
+    }
+    try {
+      await validateRequiredVisibleFiles(tx, submission, questions, values)
+    } catch (error) {
+      if (!(error instanceof InstallationFormValidationError)) throw error
+      Object.assign(fieldErrors, error.fieldErrors)
+    }
+    if (Object.keys(fieldErrors).length > 0) throw new InstallationFormValidationError(fieldErrors)
     await requireAndRecordVisitFeeAcceptance(tx, link.orderId, input)
     const clarificationCandidates = createClarificationCandidates(questions, submission.answers)
     const submittedAt = new Date()

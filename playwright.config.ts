@@ -20,6 +20,8 @@ if (!validateInstallationCalendarE2eDatabase({
 process.env.E2E_DATABASE_URL = e2eDatabaseUrl
 process.env.DATABASE_URL = e2eDatabaseUrl
 process.env.WALLDECOR_E2E_PRIVATE_DIRECTORY_OWNED = 'true'
+// Only this isolated Playwright database/server uses this fixture key.
+process.env.INSTALLATION_CLIENT_LINK_ENCRYPTION_KEY = Buffer.alloc(32, 92).toString('base64')
 process.env.ADMIN_USERNAME ??= 'admin'
 process.env.ADMIN_PASSWORD ??= 'ChangeMe123!'
 

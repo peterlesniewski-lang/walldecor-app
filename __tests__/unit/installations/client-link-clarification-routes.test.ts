@@ -6,6 +6,7 @@ const mocks = vi.hoisted(() => ({
   editable: vi.fn(),
   accessible: vi.fn(),
   createLink: vi.fn(),
+  retrieveLink: vi.fn(),
   extendLink: vi.fn(),
   markSent: vi.fn(),
   revokeLink: vi.fn(),
@@ -25,6 +26,7 @@ vi.mock('@/lib/installations/http-access', () => ({
 }))
 vi.mock('@/lib/installations/client-link', () => ({
   createClientLink: mocks.createLink,
+  retrieveCurrentClientLink: mocks.retrieveLink,
   extendClientLink: mocks.extendLink,
   markClientLinkSent: mocks.markSent,
   revokeClientLink: mocks.revokeLink,
@@ -39,7 +41,8 @@ vi.mock('@/lib/installations/form-service', () => ({
   InstallationClarificationValidationError: class InstallationClarificationValidationError extends Error { fieldErrors = { form: 'bad' } },
 }))
 
-import { POST, PATCH } from '@/app/api/installations/[id]/client-link/route'
+import { GET, POST, PATCH } from '@/app/api/installations/[id]/client-link/route'
+import { ClientLinkDecryptionError, ClientLinkEncryptionConfigurationError } from '@/lib/installations/client-link-crypto'
 import { GET as listClarifications } from '@/app/api/installations/[id]/clarifications/route'
 import { PATCH as resolve } from '@/app/api/installations/[id]/clarifications/[clarificationId]/route'
 
@@ -54,12 +57,56 @@ describe('client-link and clarification internal routes', () => {
     mocks.accessible.mockReset().mockResolvedValue({ order: { id: 'order-1' } })
     const link = { id: 'link-1', expiresAt: new Date('2027-01-01'), revokedAt: null, createdAt: new Date(), lastOpenedAt: null, sentAt: null, sentById: null }
     mocks.createLink.mockReset().mockResolvedValue({ token: 'b'.repeat(43), link })
+    mocks.retrieveLink.mockReset().mockResolvedValue({ token: 'b'.repeat(43), reason: null, link: { ...link, tokenHash: 'private-hash', tokenCiphertext: 'private-ciphertext' } })
     mocks.extendLink.mockReset().mockResolvedValue(link)
     mocks.markSent.mockReset().mockResolvedValue({ ...link, sentAt: new Date('2026-08-23T08:00:00.000Z'), sentById: 'owner-user' })
     mocks.revokeLink.mockReset().mockResolvedValue(link)
     mocks.listLinks.mockReset().mockResolvedValue([{ id: 'link-1' }])
     mocks.listClarifications.mockReset().mockResolvedValue([{ id: 'clarification-1', status: 'OPEN' }])
     mocks.resolveClarification.mockReset().mockResolvedValue({ id: 'clarification-1', status: 'RESOLVED' })
+  })
+
+  it('retrieves URLs only for editors, disables caching including denial, and excludes stored secrets', async () => {
+    const req = new NextRequest('http://test/api/installations/order-1/client-link')
+    const denied = await GET(req, orderParams)
+    expect(denied.status).toBe(401)
+    expect(denied.headers.get('cache-control')).toBe('no-store')
+    expect(mocks.retrieveLink).not.toHaveBeenCalled()
+    mocks.session = { user: { id: 'installer-user', role: 'INSTALLER' } }
+    mocks.editable.mockResolvedValueOnce({ response: new Response('{}', { status: 403 }) })
+    expect((await GET(req, orderParams)).status).toBe(403)
+    expect(mocks.retrieveLink).not.toHaveBeenCalled()
+    mocks.session = { user: { id: 'owner-user', role: 'EMPLOYEE' } }
+    const response = await GET(req, orderParams)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    const data = await response.json()
+    expect(data.url).toBe(`http://test/m/${'b'.repeat(43)}`)
+    expect(data.link).not.toHaveProperty('tokenHash')
+    expect(data.link).not.toHaveProperty('tokenCiphertext')
+  })
+
+  it('returns explicit legacy/no-active reasons and safe distinct retrieval failures', async () => {
+    mocks.session = { user: { id: 'owner-user', role: 'EMPLOYEE' } }
+    const req = new NextRequest('http://test/api/installations/order-1/client-link')
+    for (const reason of ['LEGACY_HASH_ONLY', 'NO_ACTIVE_LINK']) {
+      mocks.retrieveLink.mockResolvedValueOnce({ link: null, token: null, reason })
+      expect(await (await GET(req, orderParams)).json()).toMatchObject({ url: null, reason })
+    }
+    for (const [error, code] of [[new ClientLinkDecryptionError(), 'CLIENT_LINK_DECRYPTION_FAILED'], [new ClientLinkEncryptionConfigurationError(), 'CLIENT_LINK_ENCRYPTION_UNAVAILABLE']] as const) {
+      mocks.retrieveLink.mockRejectedValueOnce(error)
+      const response = await GET(req, orderParams)
+      expect(response.status).toBe(503)
+      expect(response.headers.get('cache-control')).toBe('no-store')
+      expect(await response.json()).toMatchObject({ code })
+    }
+  })
+
+  it('does not rethrow ORM failures that could include stored link credentials', async () => {
+    mocks.session = { user: { id: 'owner-user', role: 'EMPLOYEE' } }
+    mocks.createLink.mockRejectedValue(new Error('Sensitive ORM arguments'))
+    const response = await POST(new NextRequest('http://test/api/installations/order-1/client-link', { method: 'POST', body: JSON.stringify({ expiresAt: '2027-01-01T00:00:00.000Z' }) }), orderParams)
+    expect(response.status).toBe(500)
+    expect(await response.text()).not.toContain('Sensitive')
   })
 
   it('requires authentication and active editable access before generating a one-time client URL', async () => {

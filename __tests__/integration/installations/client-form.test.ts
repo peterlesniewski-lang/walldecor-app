@@ -111,6 +111,7 @@ afterAll(async () => {
 })
 
 describe('client form uses a real SQLite revision history', () => {
+
   it('keeps the public projection minimal and stores only the token hash', async () => {
     const projection = await loadPublicInstallationProjection(db, linkToken)
     const serialized = JSON.stringify(projection)
@@ -546,5 +547,35 @@ describe('client form uses a real SQLite revision history', () => {
     expect(serialized).not.toContain(link.token)
     expect(serialized).not.toContain('Prywatna treść ustalenia')
     expect(serialized).not.toContain(unassigned.id)
+  })
+  it('returns missing text and FILE errors together and excludes READY files', async () => {
+    const backup = await db.employee.findFirstOrThrow({ where: { email: 'form.backup@example.test' } })
+    const order = await createInstallationOrder(db, {
+      client: { name: 'Walidacja klienta', email: 'validation@example.test', phone: '+48 501 444 558' },
+      address: { street: 'Testowa', buildingNumber: '12', postalCode: '00-002', city: 'Warszawa' },
+      primaryEmployeeId: ownerId, backupEmployeeId: backup.id,
+    }, 'form-admin')
+    const draft = await createInstallationFormTemplate(db, { name: 'Łączna walidacja', actorId: 'form-admin', questions: [
+      { key: 'opis', type: 'TEXT', label: 'Opis', required: true },
+      { key: 'zdjecie', type: 'FILE', label: 'Zdjęcie', required: true },
+    ] })
+    const template = await publishInstallationFormTemplate(db, draft.id, 'form-admin')
+    await createInstallationOrderFormSnapshot(db, { orderId: order.id, templateId: template.id }, 'form-admin')
+    const link = await createClientLink(db, { orderId: order.id, createdById: 'form-admin', expiresAt: futureDate() })
+    const initial = await loadPublicInstallationProjection(db, link.token)
+    const request = { revisionNumber: initial.submission.revisionNumber, draftVersion: initial.submission.draftVersion, clientMutationId: 'combined-validation-0001' }
+    await expect(submitClientForm(db, link.token, request)).rejects.toMatchObject({ fieldErrors: {
+      opis: 'To pytanie wymaga odpowiedzi.', zdjecie: 'Dodaj wymagany plik przed wysłaniem formularza.',
+    } })
+    const submission = await db.installationFormSubmission.findUniqueOrThrow({ where: { draftKey: order.id } })
+    expect(submission.status).toBe('DRAFT')
+    const storedLink = await db.installationClientLink.findUniqueOrThrow({ where: { tokenHash: hashClientLinkSecret(link.token) } })
+    await db.installationFile.create({ data: {
+      id: 'combined-validation-ready-file', orderId: order.id, formSubmissionId: submission.id, clientLinkId: storedLink.id,
+      purpose: 'CLIENT_QUESTION', questionKey: 'zdjecie', originalFilename: 'gotowe.png', contentType: 'image/png', source: 'WEB', createdById: 'PUBLIC_CLIENT', updatedAt: new Date(),
+    } })
+    await db.installationFile.update({ where: { id: 'combined-validation-ready-file' }, data: { status: 'READY', byteSize: 1, sha256: 'b'.repeat(64) } })
+    const failure = await submitClientForm(db, link.token, { ...request, clientMutationId: 'combined-validation-0002' }).catch((error) => error)
+    expect(failure.fieldErrors).toEqual({ opis: 'To pytanie wymaga odpowiedzi.' })
   })
 })

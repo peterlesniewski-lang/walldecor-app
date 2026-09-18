@@ -116,7 +116,7 @@ describe('Task 2 corrective UI invariants', () => {
 
     await user.type(screen.getByLabelText('Nazwa pomiaru w Salon'), 'Szerokość glifu')
     await user.type(screen.getByLabelText('Wartość pomiaru w Salon'), '12.5')
-    await user.click(screen.getByRole('button', { name: 'Dodaj pomiar' }))
+    await user.click(screen.getByRole('button', { name: 'Zapisz pomiar' }))
 
     const request = fetchMock.mock.calls[0]?.[1] as RequestInit
     const body = JSON.parse(request.body as string)

@@ -1242,6 +1242,7 @@ model InstallationClientLink {
   orderId      String
   order        InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
   tokenHash    String            @unique
+  tokenCiphertext String?
   expiresAt    DateTime
   revokedAt    DateTime?
   sentAt       DateTime?
