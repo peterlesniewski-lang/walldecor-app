@@ -64,7 +64,19 @@ async function loadWarningInvoices(year: number, month: number) {
   return prisma.ksefInvoice.findMany({ where: { issueDate: breakEvenMonthRange(year, month) }, select: {
     status: true, documentStatus: true, currency: true, grossAmount: true, reportingGrossAmount: true,
     invoiceImportDraft: { select: { state: true } },
+    costEvent: { select: { status: true, documentStatus: true, eventDate: true } },
   } }).then((rows) => rows.filter(isActiveInvoiceMoneyRow))
+}
+
+function missingInvoiceCostWarnings(invoices: Awaited<ReturnType<typeof loadWarningInvoices>>, year: number, month: number) {
+  const range = breakEvenMonthRange(year, month)
+  const missingCount = invoices.filter((invoice) => {
+    if (invoice.status !== 'APPROVED') return false
+    const event = invoice.costEvent
+    return !event || event.status !== 'APPROVED' || !['ACTIVE', 'CORRECTION'].includes(event.documentStatus)
+      || !(event.eventDate >= range.gte && event.eventDate < range.lt)
+  }).length
+  return missingCount ? [`Zatwierdzone faktury bez aktywnego kosztu w wybranym miesiącu: ${missingCount}. Sprawdź powiązanie i datę kosztu.`] : []
 }
 
 export async function loadBreakEvenReport(year: number, month: number): Promise<BreakEvenResponse> {
@@ -90,13 +102,13 @@ export async function loadBreakEvenReport(year: number, month: number): Promise<
       prisma.revenue.findMany({ where: { year: y, month: m, costCenterId: { in: ['JAG', 'PUL'] } } }),
       prisma.breakEvenRevenueBasis.findMany({ where: { year: y, month: m } }), loadBreakEvenSources(y, m), loadWarningInvoices(y, m),
     ])
-    const warnings = [...source.warnings]
+    const warnings = [...source.warnings, ...missingInvoiceCostWarnings(invoices, y, m)]
     if (invoices.some((invoice) => invoice.status !== 'APPROVED')) warnings.push('Nie wszystkie aktywne faktury zostały zatwierdzone i sklasyfikowane.')
     if (invoices.some((invoice) => invoice.currency.trim().toUpperCase() !== 'PLN' && invoice.reportingGrossAmount == null)) warnings.push('Faktury walutowe bez przeliczenia na PLN.')
     return { period: breakEvenPeriod(y, m), revenue: rows, bases, sources: source.sources, warnings }
   }))
   const report = calculateBreakEven({ year, month, margins, fixedCosts, matches, revenue, revenueBases,
-    sources: sourceResult.sources, sourceWarnings: sourceResult.warnings,
+    sources: sourceResult.sources, sourceWarnings: [...sourceResult.warnings, ...missingInvoiceCostWarnings(warningInvoices, year, month)],
     historicalSuggestion: calculateHistoricalSuggestion(historicalMonths), warningSummary: buildCostWarningSummary(warningInvoices) })
   return { year, month, report, settings: { margins, fixedCosts } }
 }

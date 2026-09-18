@@ -55,6 +55,42 @@ describe('report data loading', () => {
     Object.values(prismaMock).forEach((model) => model.findMany.mockResolvedValue([]))
     prismaMock.breakEvenMarginSetting.findMany.mockResolvedValue([{ id: 'margin', margin: 0.4, effectiveFrom: new Date('2026-01-01T00:00:00Z'), note: null }])
   })
+  function completeHistory() {
+    prismaMock.revenue.findMany.mockResolvedValue([{ costCenterId: 'JAG', amount: 1230 }, { costCenterId: 'PUL', amount: 1230 }])
+    prismaMock.breakEvenRevenueBasis.findMany.mockImplementation(async ({ where }) => ['JAG', 'PUL'].map((costCenterId) => ({ id: costCenterId, ...where, costCenterId, netAmount: 1000, grossAmountSnapshot: 1230 })))
+    prismaMock.costEvent.findMany.mockResolvedValue([event({ parts: [{ ...event().parts[0], tags: [{ tag: { slug: 'goods' } }] }] })])
+    prismaMock.ksefInvoice.findMany.mockImplementation(async ({ where }) => [{ status: 'APPROVED', documentStatus: 'ACTIVE', currency: 'PLN', grossAmount: 1230, reportingGrossAmount: null, invoiceImportDraft: null, costEvent: { status: 'APPROVED', documentStatus: 'ACTIVE', eventDate: where.issueDate.gte } }])
+  }
+  it('makes a historical suggestion only when approved invoices have active costs in their month', async () => {
+    completeHistory()
+    const result = await loadBreakEvenReport(2026, 9)
+    expect(result.report.historicalSuggestion.status).toBe('available')
+    expect(result.report.historicalSuggestion.margin).toBe(0.5)
+    expect(prismaMock.ksefInvoice.findMany).toHaveBeenCalledWith(expect.objectContaining({ select: expect.objectContaining({ costEvent: { select: { status: true, documentStatus: true, eventDate: true } } }) }))
+  })
+  it.each([
+    ['missing', null],
+    ['voided status', { status: 'VOID', documentStatus: 'ACTIVE', eventDate: new Date('2026-07-01T00:00:00Z') }],
+    ['cancelled document', { status: 'APPROVED', documentStatus: 'CANCELLED', eventDate: new Date('2026-07-01T00:00:00Z') }],
+    ['another month', { status: 'APPROVED', documentStatus: 'ACTIVE', eventDate: new Date('2026-08-01T00:00:00Z') }],
+  ])('blocks apparently complete history when an approved invoice cost is %s', async (_label, costEvent) => {
+    completeHistory()
+    prismaMock.ksefInvoice.findMany.mockImplementation(async ({ where }) => [
+      { status: 'APPROVED', documentStatus: 'ACTIVE', currency: 'PLN', grossAmount: 1230, reportingGrossAmount: null, invoiceImportDraft: null, costEvent: { status: 'APPROVED', documentStatus: 'ACTIVE', eventDate: where.issueDate.gte } },
+      ...(where.issueDate.gte.getUTCMonth() === 6 ? [{ status: 'APPROVED', documentStatus: 'ACTIVE', currency: 'PLN', grossAmount: 999, reportingGrossAmount: null, invoiceImportDraft: null, costEvent }] : []),
+    ])
+    const result = await loadBreakEvenReport(2026, 9)
+    expect(result.report.historicalSuggestion.status).toBe('incomplete')
+    expect(result.report.historicalSuggestion.margin).toBeNull()
+    expect(result.report.historicalSuggestion.warnings).toContain('2026-07: Zatwierdzone faktury bez aktywnego kosztu w wybranym miesiącu: 1. Sprawdź powiązanie i datę kosztu.')
+  })
+  it('warns in the current report when an approved invoice has no reporting cost', async () => {
+    completeHistory()
+    prismaMock.ksefInvoice.findMany.mockImplementation(async ({ where }) => [{ status: 'APPROVED', documentStatus: 'ACTIVE', currency: 'PLN', grossAmount: 1230, reportingGrossAmount: null, invoiceImportDraft: null, costEvent: where.issueDate.gte.getUTCMonth() === 8 ? null : { status: 'APPROVED', documentStatus: 'ACTIVE', eventDate: where.issueDate.gte } }])
+    const result = await loadBreakEvenReport(2026, 9)
+    expect(result.report.warnings.join(' ')).toContain('Zatwierdzone faktury bez aktywnego kosztu')
+    expect(result.report.historicalSuggestion.status).toBe('available')
+  })
   it('retains PLN warning total and separates unconverted currencies within selected month', async () => {
     prismaMock.ksefInvoice.findMany.mockResolvedValue([
       { status: 'NEW', documentStatus: 'ACTIVE', currency: 'PLN', grossAmount: 100, reportingGrossAmount: null, invoiceImportDraft: null },

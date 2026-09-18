@@ -30,19 +30,33 @@ No agent may revert another's work. No visible control may be a placeholder. Eve
 
 ## Observable acceptance gates
 
-- [ ] Anonymous and non-admin callers cannot read or change break-even data.
-- [ ] Admin creates a margin and sees the same value applied to both salons; a future setting does not change an earlier report; editing/deleting persists.
-- [ ] Admin creates an expected rent expense; its net value contributes before an invoice is assigned.
-- [ ] Admin chooses an approved allocated source invoice; expected value is replaced, never added to actual. Duplicate assignment is rejected. Unlink restores expected.
-- [ ] Admin edits and archives a recurring expense; report and persisted records agree.
-- [ ] Admin enters monthly net revenue corresponding to gross Przychody; ratio produces an estimated gross target. Updating gross invalidates stale net. Clearing net leaves an explicit missing state.
-- [ ] Report always exposes missing HR, unknown VAT/net, missing margin and incomplete history as applicable.
-- [ ] Variable/goods/one-off classification, voided documents, corrections, shared invoice allocations and effective month boundaries have meaningful unit tests.
-- [ ] Clean-database browser flow covers login, create/read/edit/archive/unlink, reload, server restart and access denial. No direct database mutation to make user workflow pass.
-- [ ] Finance regressions, focused typecheck, production build, and browser acceptance pass. Final review assesses spec first then code quality; fix actionable findings.
+- [x] Anonymous and non-admin callers cannot read or change break-even data.
+- [x] Admin creates a margin and sees the same value applied to both salons; a future setting does not change an earlier report; editing/deleting persists.
+- [x] Admin creates an expected rent expense; its net value contributes before an invoice is assigned.
+- [x] Admin chooses an approved allocated source invoice; expected value is replaced, never added to actual. A repeated identical assignment remains one link; cross-template duplicate assignment is rejected. Unlink restores expected.
+- [x] Admin edits and archives a recurring expense; report and persisted records agree.
+- [x] Admin enters monthly net revenue corresponding to gross Przychody; ratio produces an estimated gross target. Updating gross invalidates stale net. Clearing net leaves an explicit missing state.
+- [x] Report always exposes missing HR, unknown VAT/net, missing margin and incomplete history as applicable.
+- [x] Variable/goods/one-off classification, voided documents, corrections, shared invoice allocations and effective month boundaries have meaningful unit tests.
+- [x] Clean-database browser flow covers login, create/read/edit/archive/unlink, reload, server restart and access denial. No direct database mutation to make user workflow pass.
+- [x] Finance regressions, focused typecheck, production build, and browser acceptance pass. Final review assesses spec first then code quality; fix actionable findings.
 
 ## Evidence
 
 Initial unchanged baseline: `npm test -- __tests__/unit/finance/breakeven.test.ts __tests__/unit/finance/realized-costs.test.ts` — 8 tests pass.
 
-Final commands/results and acceptance artifacts will be recorded after execution.
+## Verification on 2026-09-18
+
+- `npm test -- __tests__/unit/finance`: 44 files, 409 tests passed; `/private/tmp/wd-break-even-finance-final.log`.
+- `npm run typecheck:app`: passed.
+- `npm run build -- --webpack`: passed, matching the Docker build mode; `/private/tmp/wd-break-even-build.log`.
+- Merged current production/main `98f79762871e36f3df03c9cb2cd0143e29548083`, preserving the installation changes.
+- Independent spec and code reviews closed findings concerning month serialization, invalid zero net sales, cent-level stale snapshots, editing assignment overrides, and missing historical invoice costs.
+- Production context verified: `wallvps`, Root Team, My first project, production, application `pwc0sk0w8cw8k8wkgwokgogk`, `https://app.walldecor.pl`. SQLite and skip-seed checks passed without printing environment values.
+- SQLite backup: `/data/backups/breakeven-20260918-gNmkJi/before.db`. Directory mode 700, files mode 600. Rehearsal used a separate `rehearsal.db` in that directory.
+- Exact additive migration SHA256: `17c39b452ae1e21649b7bd631c76836cb63473e60102a8849aab7c62a0fb4d62`. Rehearsal passed integrity and foreign-key checks, retained row counts in all existing tables, and created exactly four new tables. Production data was not changed by rehearsal.
+- Rollback: redeploy the preceding application commit; additive tables may remain. Do not restore the full backup over subsequent business writes.
+
+Browser acceptance: `node --preserve-symlinks scripts/validate-break-even.mjs --confirm-synthetic-local` — PASS, ten acceptance groups, clean synthetic database, actual production build and server restart. Artifact: `test-results/break-even-1789733002651/report.json`; desktop/mobile screenshots in the same directory. SQLite integrity `ok`, no foreign-key violations, no browser page errors or horizontal mobile overflow. This covered authenticated CRUD, source selection, actual/expected replacement, future-month isolation, stale net rejection and access denial. Failed preliminary harness runs concerned fixture username normalization, select label matching and synchronization of post-save readbacks; no sample records touched production.
+
+Deployment evidence will be appended after execution.
