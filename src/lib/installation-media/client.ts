@@ -109,8 +109,38 @@ async function json(response: Response) {
   }
 }
 
-function responseError(response: Response, fallback: string) {
+/** Settles on abort, so a caller never waits past the request timeout. */
+function untilAborted(signal: AbortSignal) {
+  let stop: () => void = () => undefined
+  const aborted = new Promise<void>((resolve) => {
+    if (signal.aborted) return resolve()
+    signal.addEventListener('abort', () => resolve(), { once: true })
+    stop = resolve
+  })
+  return { aborted, stop }
+}
+
+/** Explicitly cancels a body we will not use (non-2xx or a 404 delete), so a
+ * slow or never-ending error stream cannot hold the connection. Its contents
+ * are never read: they may echo request headers, including the bearer token. */
+async function discardResponseBody(response: Response, signal: AbortSignal) {
+  if (!response.body || response.body.locked) return
+  const { aborted, stop } = untilAborted(signal)
+  try {
+    await Promise.race([response.body.cancel().catch(() => undefined), aborted])
+  } finally {
+    stop()
+  }
+}
+
+async function responseError(response: Response, signal: AbortSignal, fallback: string) {
+  await discardResponseBody(response, signal)
   return new InstallationMediaClientError(fallback, response.status)
+}
+
+function isServiceRejection(error: unknown) {
+  return error instanceof InstallationMediaClientError && error.status !== undefined
+    && (error.status < 200 || error.status > 299)
 }
 
 function ensureResponseReadNotAborted(signal: AbortSignal) {
@@ -214,6 +244,8 @@ export function createPrivateMediaClient(config: PrivateMediaConfig) {
       if (controller.signal.aborted) throw new InstallationMediaClientError(`Prywatny serwer plików przekroczył limit czasu: ${label}.`)
       return result
     } catch (error) {
+      // A non-2xx answer is definitive; a timeout while discarding its body must not mask the status.
+      if (isServiceRejection(error)) throw error
       if (controller.signal.aborted) throw new InstallationMediaClientError(`Prywatny serwer plików przekroczył limit czasu: ${label}.`)
       if (error instanceof InstallationMediaClientError) throw error
       throw new InstallationMediaClientError(`Nie udało się połączyć z prywatnym serwerem plików: ${label}.`)
@@ -236,7 +268,7 @@ export function createPrivateMediaClient(config: PrivateMediaConfig) {
           body: input.bytes as unknown as BodyInit,
           signal,
         })
-        if (!response.ok) throw responseError(response, 'Prywatny serwer plików odrzucił przesyłanie.')
+        if (!response.ok) throw await responseError(response, signal, 'Prywatny serwer plików odrzucił przesyłanie.')
         const payload = await json(response) as Record<string, unknown>
         const result = {
           fileId: requireText(payload.file_id, 'file_id'),
@@ -257,7 +289,7 @@ export function createPrivateMediaClient(config: PrivateMediaConfig) {
         const signed = await request(`${baseUrl}/private/v1/files/${encodeURIComponent(fileId)}/signed-download`, {
           method: 'POST', headers: privateHeaders(config.token), signal,
         })
-        if (!signed.ok) throw responseError(signed, 'Nie można przygotować prywatnego pobrania.')
+        if (!signed.ok) throw await responseError(signed, signal, 'Nie można przygotować prywatnego pobrania.')
         return json(signed) as Promise<Record<string, unknown>>
       })
       const exp = signature.expires_at
@@ -268,7 +300,7 @@ export function createPrivateMediaClient(config: PrivateMediaConfig) {
       url.searchParams.set('sig', sig)
       return timedRequest('download', async (signal) => {
         const response = await request(url, { headers: privateHeaders(config.token), signal })
-        if (!response.ok) throw responseError(response, 'Nie można pobrać prywatnego pliku.')
+        if (!response.ok) throw await responseError(response, signal, 'Nie można pobrać prywatnego pliku.')
         return boundedResponse(response, signal, expected)
       })
     },
@@ -278,7 +310,8 @@ export function createPrivateMediaClient(config: PrivateMediaConfig) {
         const response = await request(`${baseUrl}/private/v1/files/${encodeURIComponent(fileId)}`, {
           method: 'DELETE', headers: privateHeaders(config.token), signal,
         })
-        if (!response.ok && response.status !== 404) throw responseError(response, 'Nie można usunąć prywatnego pliku.')
+        if (response.status === 404) return discardResponseBody(response, signal)
+        if (!response.ok) throw await responseError(response, signal, 'Nie można usunąć prywatnego pliku.')
         await consumeDeleteResponse(response, signal)
       })
     },
