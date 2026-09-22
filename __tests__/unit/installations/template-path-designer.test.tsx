@@ -1,3 +1,5 @@
+import { readFileSync } from 'node:fs'
+import { resolve } from 'node:path'
 import { useEffect, useState } from 'react'
 import { act, render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
@@ -382,6 +384,66 @@ describe('TemplatePathDesigner', () => {
     expect(deepestBranch?.dataset.pathIndent).toBe('none')
     expect(deepestBranch?.style.marginLeft).toBe('0px')
     expect(deepestBranch?.style.paddingInlineStart).toBe('0px')
+  })
+
+  it('paints each child branch with the same tone as its parent frame', () => {
+    const fourth: FormQuestion = {
+      key: 'dostep',
+      type: 'YES_NO_UNKNOWN',
+      label: 'Czy jest dostęp?',
+      condition: { questionKey: 'strona', equals: 'Lewa' },
+    }
+    const fifth: FormQuestion = {
+      key: 'uwaga',
+      type: 'TEXT',
+      label: 'Dodatkowa uwaga',
+      condition: { questionKey: 'dostep', equals: 'YES' },
+    }
+    const { container } = renderDesigner([root, child, singleChild, fourth, fifth])
+
+    const toneOf = (label: string) => screen.getByRole('article', { name: `Pytanie: ${label}` }).closest('.wd-template-node')?.getAttribute('data-branch-tone')
+    const branchOf = (label: string) => screen.getByRole('article', { name: `Pytanie: ${label}` }).closest('.wd-template-branch')
+
+    expect(toneOf('Czy są okna?')).toBe('0')
+    expect(branchOf('Czy są glify?')?.getAttribute('data-parent-tone')).toBe('0')
+    expect(toneOf('Czy są glify?')).toBe('1')
+    expect(branchOf('Która strona?')?.getAttribute('data-parent-tone')).toBe('1')
+    expect(toneOf('Która strona?')).toBe('2')
+    expect(branchOf('Czy jest dostęp?')?.getAttribute('data-parent-tone')).toBe('2')
+    expect(toneOf('Czy jest dostęp?')).toBe('3')
+    expect(branchOf('Dodatkowa uwaga')?.getAttribute('data-parent-tone')).toBe('3')
+    expect(branchOf('Dodatkowa uwaga')?.getAttribute('data-path-indent')).toBe('none')
+    expect(toneOf('Dodatkowa uwaga')).toBe('0')
+    expect(container.querySelector('.wd-template-branch[tabindex]')).toBeNull()
+  })
+
+  it('keeps keyboard focus on the child control inside the matching parent branch', () => {
+    renderDesigner([root, child])
+    const edit = screen.getByRole('button', { name: 'Edytuj pytanie Czy są glify?' })
+    edit.focus()
+
+    expect(document.activeElement).toBe(edit)
+    expect(edit.closest('.wd-template-branch')?.getAttribute('tabindex')).toBeNull()
+    expect(edit.closest('.wd-template-branch')?.getAttribute('data-parent-tone')).toBe(
+      screen.getByRole('article', { name: 'Pytanie: Czy są okna?' }).closest('.wd-template-node')?.getAttribute('data-branch-tone'),
+    )
+  })
+
+  it('shares one accent between the parent frame and its leading line, including hover and focus', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/app/globals.css'), 'utf8')
+    const designer = css.slice(css.indexOf('/* Installation template path designer'), css.indexOf('.data-table tbody td'))
+
+    expect(designer).toContain('border: 1px solid var(--wd-branch-accent, rgba(39,37,34,.15))')
+    expect(designer).toContain('.wd-template-branches:has(> .wd-template-branch)::before { background: var(--wd-branch-accent)')
+    expect(designer).toContain('.wd-template-branch[data-path-indent="step"] > .wd-template-branch__line { background: var(--wd-branch-accent, rgba(39,37,34,.2))')
+    expect(designer).toContain('.wd-template-branch__label { color: var(--wd-branch-accent, #5d554b)')
+    expect(designer).toContain('.wd-template-branch:hover > .wd-template-branch__heading,')
+    expect(designer).toContain('.wd-template-branch:focus-within > .wd-template-branch__heading { background: var(--wd-branch-wash, transparent); border-radius: 10px; }')
+    expect(designer).toContain('.wd-template-branch:has(> .wd-template-branch__children .wd-template-branch:hover) > .wd-template-branch__heading')
+    expect(designer).toContain('@media (prefers-reduced-motion: reduce)')
+    expect(designer).toContain('@media (forced-colors: active)')
+    expect(designer).not.toContain('overflow-x')
+    expect(designer).toContain('.wd-template-button:focus-visible { outline: 3px solid rgba(189,116,24,.4); outline-offset: 2px; }')
   })
 
   it('collapses and expands a question branch without changing the draft model', async () => {

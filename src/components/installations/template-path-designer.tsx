@@ -32,6 +32,10 @@ const riskTone: Record<NonNullable<FormQuestion['riskLevel']>, string> = {
   HIGH: 'wd-template-pill--high',
 }
 
+function branchTone(depth: number): string {
+  return String(((depth % 4) + 4) % 4)
+}
+
 function descendantsLabel(count: number): string {
   if (count === 1) return 'pytanie podrzędne'
   const lastDigit = count % 10
@@ -203,7 +207,7 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
 
   function renderBranch(branch: QuestionTreeBranch<FormQuestion>, parent: FormQuestion, depth: number) {
     const indented = depth <= 3
-    return <div className="wd-template-branch" key={`${parent.key}-${branch.value}`} data-path-depth={depth} data-path-indent={indented ? 'step' : 'none'} style={{ marginLeft: indented ? '16px' : '0px', paddingInlineStart: '0px' }}>
+    return <div className="wd-template-branch" key={`${parent.key}-${branch.value}`} data-path-depth={depth} data-path-indent={indented ? 'step' : 'none'} data-parent-tone={branchTone(depth - 1)} style={{ marginLeft: indented ? '16px' : '0px', paddingInlineStart: '0px' }}>
       <div className="wd-template-branch__line" aria-hidden />
       <div className="wd-template-branch__heading">
         <span className="wd-template-branch__label">Odpowiedź: {branch.label}</span>
@@ -218,7 +222,7 @@ export function TemplatePathDesigner({ draftId = 'local-draft', questions, busy,
 
   function renderNode(node: QuestionTreeNode<FormQuestion>, depth: number, siblings: readonly QuestionTreeNode<FormQuestion>[], index: number, placement: QuestionPlacement) {
     const question = node.question
-    return <div className="wd-template-node" key={hasDuplicateKeys ? `${placement.parentKey ?? 'root'}:${placement.equals ?? 'root'}:${index}:${question.key}` : question.key}>
+    return <div className="wd-template-node" data-branch-tone={branchTone(depth)} key={hasDuplicateKeys ? `${placement.parentKey ?? 'root'}:${placement.equals ?? 'root'}:${index}:${question.key}` : question.key}>
       <article className="wd-template-card" aria-label={`Pytanie: ${question.label}`}>
         <div className="wd-template-card__body">
           <div className="wd-template-card__copy"><span className="wd-template-card__number">{depth + 1}</span><h4>{question.label}</h4>{question.help && <p>{question.help}</p>}</div>
