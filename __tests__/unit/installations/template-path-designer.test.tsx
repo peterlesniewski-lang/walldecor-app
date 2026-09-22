@@ -446,6 +446,26 @@ describe('TemplatePathDesigner', () => {
     expect(designer).toContain('.wd-template-button:focus-visible { outline: 3px solid rgba(189,116,24,.4); outline-offset: 2px; }')
   })
 
+  it('dims only questions outside the active parent and child path', () => {
+    const css = readFileSync(resolve(process.cwd(), 'src/app/globals.css'), 'utf8')
+    const designer = css.slice(css.indexOf('/* Installation template path designer'), css.indexOf('.data-table tbody td'))
+    const hoverStart = designer.indexOf('@media (hover: hover) and (pointer: fine)')
+    const hoverEnd = designer.indexOf('@media (prefers-reduced-motion: reduce)')
+    const hoverMedia = designer.slice(hoverStart, hoverEnd)
+    const withoutHoverMedia = `${designer.slice(0, hoverStart)}${designer.slice(hoverEnd)}`
+
+    expect(designer).toContain('--wd-path-muted: 0.78;')
+    expect(hoverMedia).toContain('.wd-template-map:has(.wd-template-node:hover) > .wd-template-node:not(:hover)')
+    expect(hoverMedia).toContain('.wd-template-node:has(> .wd-template-branches:hover) > .wd-template-branches > .wd-template-branch:not(:hover)')
+    expect(hoverMedia).toContain('.wd-template-branch:has(> .wd-template-branch__children:hover) > .wd-template-branch__children > .wd-template-node:not(:hover)')
+    expect(hoverMedia).toContain('opacity: var(--wd-path-muted);')
+    expect(withoutHoverMedia).toContain('.wd-template-map:has(.wd-template-node:focus-within) > .wd-template-node:not(:focus-within)')
+    expect(withoutHoverMedia).toContain('.wd-template-node:has(> .wd-template-branches:focus-within) > .wd-template-branches > .wd-template-branch:not(:focus-within)')
+    expect(withoutHoverMedia).toContain('.wd-template-branch:has(> .wd-template-branch__children:focus-within) > .wd-template-branch__children > .wd-template-node:not(:focus-within)')
+    expect(withoutHoverMedia).toContain('opacity: var(--wd-path-muted);')
+    expect(designer).toContain('.wd-template-node,\n  .wd-template-branch { transition: none; }')
+  })
+
   it('collapses and expands a question branch without changing the draft model', async () => {
     const user = userEvent.setup()
     const onPersist = vi.fn().mockResolvedValue(undefined)
