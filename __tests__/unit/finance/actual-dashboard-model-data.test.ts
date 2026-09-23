@@ -4,6 +4,7 @@ import { loadActualDashboardModel } from '@/lib/finance/actual-dashboard-model-d
 
 const db = vi.hoisted(() => ({
   revenue: { findMany: vi.fn() },
+  breakEvenRevenueBasis: { findMany: vi.fn() },
   actualEntry: { findMany: vi.fn() },
   costEvent: { findMany: vi.fn() },
   ksefInvoice: { findMany: vi.fn() },
@@ -25,11 +26,15 @@ describe('financial-only dashboard loader', () => {
     expect(model.selected).toMatchObject({ revenue: null, result: null, costs: 0, complete: false })
     expect(model.yoy).toBeNull()
     expect(db.revenue.findMany.mock.calls).toEqual([
-      [{ where: { year: 2026, month: { lte: 8 } } }],
-      [{ where: { year: 2025, month: { lte: 8 } } }],
+      [{ where: { year: 2026 } }],
+      [{ where: { year: 2025, month: 8 } }],
+    ])
+    expect(db.breakEvenRevenueBasis.findMany.mock.calls).toEqual([
+      [{ where: { year: 2026 } }],
+      [{ where: { year: 2025, month: 8 } }],
     ])
     expect(db.costEvent.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
-      status: 'APPROVED', eventDate: { gte: new Date('2026-01-01T00:00:00Z'), lt: new Date('2026-09-01T00:00:00Z') },
+      status: 'APPROVED', eventDate: { gte: new Date('2026-01-01T00:00:00Z'), lt: new Date('2027-01-01T00:00:00Z') },
     } }))
     expect(db.ksefInvoice.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
       status: { in: ['NEW', 'MAPPED'] }, documentStatus: { not: 'CANCELLED' },

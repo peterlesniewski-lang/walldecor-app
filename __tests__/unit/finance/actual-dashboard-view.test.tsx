@@ -59,6 +59,28 @@ describe('actual dashboard view', () => {
     expect(screen.queryByText(/Brak zapisanych kosztów dla tego miesiąca/)).toBeNull()
   })
 
+  it('selects a month from the year chart and posts an entered net that is not gross divided by 1.23', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, json: async () => ({ ok: true }) })
+    vi.stubGlobal('fetch', fetchMock)
+    const props = fixture([{ year: 2026, month: 8, costCenterId: 'JAG', channel: 'SALON', amount: 123, asOfDate: '2026-08-31' }])
+    render(<DashboardView {...props} />)
+    expect(screen.getByRole('region', { name: 'Wykres stycznia do grudnia' }).querySelectorAll('button')).toHaveLength(12)
+    expect(screen.getByRole('button', { name: /Sierpień 2026/ }).getAttribute('aria-pressed')).toBe('true')
+    expect(screen.getAllByText('Brak pełnego netto').length).toBeGreaterThan(0)
+    expect(screen.queryByText('100,00 zł')).toBeNull()
+    expect(screen.getByText(/Koszty pracownicze nie są włączone/)).toBeTruthy()
+    expect(screen.queryByText(/Zysk netto/)).toBeNull()
+    await user.click(screen.getByRole('button', { name: /Lipiec 2026/ }))
+    expect(push).toHaveBeenCalledWith('/dashboard?year=2026&month=7')
+    await user.type(screen.getByLabelText('Sprzedaż netto — Jagiellońska'), '80')
+    await user.click(screen.getByRole('button', { name: 'Zapisz sprzedaż netto' }))
+    expect(fetchMock).toHaveBeenCalledWith('/api/finance/break-even/settings', expect.objectContaining({
+      method: 'POST', body: JSON.stringify({ action: 'revenue.save', year: 2026, month: 8, costCenterId: 'JAG', netAmount: 80 }),
+    }))
+    vi.unstubAllGlobals()
+  })
+
   it('applies the selected year and month to the shared route', async () => {
     const user = userEvent.setup()
     render(<DashboardView {...fixture()} />)

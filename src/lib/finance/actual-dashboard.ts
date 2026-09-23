@@ -1,6 +1,7 @@
 import { COST_CENTER_CHANNELS, CHANNEL_LABELS, type RevenueChannel } from '@/lib/validations/revenue'
+import { buildMonthNet, type DashboardCostEvent, type DashboardRevenueBasis, type MonthNet } from '@/lib/finance/ceo-net'
 import { FINANCE_COST_CENTERS, type FinanceCostCenterId } from '@/lib/finance/company-health'
-import { buildRealizedCostSummary, type RealizedActualEntryInput, type RealizedCostEventInput } from '@/lib/finance/realized-costs'
+import { buildRealizedCostSummary, isActualEntryInRealizedCostScope, isCostEventInRealizedCostScope, type RealizedActualEntryInput } from '@/lib/finance/realized-costs'
 import { roundMoney } from '@/lib/finance/ksef-inbox'
 
 export interface DashboardPeriod { year: number; month: number }
@@ -32,16 +33,19 @@ export interface DashboardMonth {
   partialMonth: boolean
   futureMonth: boolean
   channels: DashboardChannel[]
+  net: MonthNet
 }
 export interface DashboardInput {
   period: DashboardPeriod
   today: string
   revenue: DashboardRevenue[]
   previousRevenue: DashboardRevenue[]
+  revenueBases?: DashboardRevenueBasis[]
+  previousRevenueBases?: DashboardRevenueBasis[]
   actualEntries: RealizedActualEntryInput[]
-  costEvents: RealizedCostEventInput[]
+  costEvents: DashboardCostEvent[]
   previousActualEntries: RealizedActualEntryInput[]
-  previousCostEvents: RealizedCostEventInput[]
+  previousCostEvents: DashboardCostEvent[]
   waitingInvoices: Array<{ currency: string; grossAmount: number; reportingGrossAmount?: number | null }>
   /** Explicit company-level confirmation; never inferred from the existence of a cost row. */
   closedPeriods?: DashboardPeriod[]
@@ -109,9 +113,20 @@ export function buildActualDashboard(input: DashboardInput) {
       periodClosed, pendingDocumentCount, costsConfirmed,
       complete: channels.every((channel) => channel.status === 'complete') && costsConfirmed && !partialMonth && !futureMonth,
       partialMonth, futureMonth, channels,
+      net: buildMonthNet({
+        year: reportYear,
+        month: reportMonth,
+        revenueRows: rows.map((row) => ({ costCenterId: row.costCenterId, amount: row.amount })),
+        bases: reportYear === year ? input.revenueBases ?? [] : input.previousRevenueBases ?? [],
+        costEvents: (reportYear === year ? input.costEvents : input.previousCostEvents).filter((event) => event.status === 'APPROVED' && isCostEventInRealizedCostScope(event.eventDate) && event.eventDate.getUTCFullYear() === reportYear && event.eventDate.getUTCMonth() + 1 === reportMonth),
+        legacyEntryCount: (reportYear === year ? input.actualEntries : input.previousActualEntries).filter((entry) => entry.year === reportYear && entry.month === reportMonth && isActualEntryInRealizedCostScope(entry.year, entry.month)).length,
+        costsConfirmed,
+        futureMonth,
+      }),
     }
   }
-  const months = Array.from({ length: month }, (_, index) => makeMonth(year, index + 1, input.revenue, realized))
+  const yearMonths = Array.from({ length: 12 }, (_, index) => makeMonth(year, index + 1, input.revenue, realized))
+  const months = yearMonths.slice(0, month)
   const selected = months[month - 1]
   const previous = makeMonth(year - 1, month, input.previousRevenue, previousRealized)
   const ytdRevenue = months.some((row) => row.revenue !== null) ? sum(months.map((row) => row.revenue ?? 0)) : null
@@ -124,6 +139,7 @@ export function buildActualDashboard(input: DashboardInput) {
     return {
       costCenterId, revenue, costs, result: revenue === null ? null : roundMoney(revenue - costs),
       complete: selected.channels.filter((row) => row.costCenterId === costCenterId).every((row) => row.status === 'complete') && selected.costsConfirmed && !selected.partialMonth && !selected.futureMonth,
+      net: selected.net.centers.find((center) => center.costCenterId === costCenterId) ?? selected.net.centers[0],
     }
   })
   const unconverted = new Map<string, number>()
@@ -133,10 +149,22 @@ export function buildActualDashboard(input: DashboardInput) {
     else if (invoice.currency === 'PLN') waitingPln += invoice.grossAmount
     else unconverted.set(invoice.currency, (unconverted.get(invoice.currency) ?? 0) + invoice.grossAmount)
   }
+  const ytdNetMonths = months.filter((row) => !row.futureMonth && row.net.resultNet !== null && row.net.revenueNet !== null && row.net.costsNet !== null)
+  const ytdNetOmitted = months.filter((row) => row.futureMonth || row.net.resultNet === null).map((row) => row.month)
   return {
-    period: input.period, today: input.today, selected, months, byCenter,
+    period: input.period, today: input.today, selected, months, yearMonths, byCenter,
     ytd: { revenue: ytdRevenue, costs: ytdCosts, result: ytdRevenue === null ? null : roundMoney(ytdRevenue - ytdCosts), complete: months.every((row) => row.complete) },
+    ytdNet: {
+      revenue: ytdNetMonths.length ? sum(ytdNetMonths.map((row) => row.net.revenueNet ?? 0)) : null,
+      costs: ytdNetMonths.length ? sum(ytdNetMonths.map((row) => row.net.costsNet ?? 0)) : null,
+      result: ytdNetMonths.length ? sum(ytdNetMonths.map((row) => row.net.resultNet ?? 0)) : null,
+      complete: months.length > 0 && ytdNetOmitted.length === 0,
+      omittedMonths: ytdNetOmitted,
+    },
     yoy: selected.complete && previous.complete ? { previous, revenueDelta: roundMoney(selected.revenue! - previous.revenue!), resultDelta: roundMoney(selected.result! - previous.result!) } : null,
+    yoyNet: selected.complete && previous.complete && selected.net.resultNet !== null && previous.net.resultNet !== null && selected.net.revenueNet !== null && previous.net.revenueNet !== null
+      ? { revenueDelta: roundMoney(selected.net.revenueNet - previous.net.revenueNet), resultDelta: roundMoney(selected.net.resultNet - previous.net.resultNet) }
+      : null,
     yoyReason: selected.partialMonth ? 'Miesiąc w toku — bez porównania z pełnym miesiącem poprzedniego roku.' : 'Brak porównywalnych pełnych danych rzeczywistych za oba miesiące: wymagane pełne przychody oraz potwierdzone koszty zamkniętych okresów bez oczekujących dokumentów.',
     waiting: { count: input.waitingInvoices.length, plnAmount: roundMoney(waitingPln), unconverted: [...unconverted].map(([currency, amount]) => ({ currency, amount: roundMoney(amount) })) },
   }

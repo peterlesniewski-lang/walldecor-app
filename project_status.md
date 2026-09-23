@@ -1,6 +1,14 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-09-12 (import faktur i wspólne AI — implementacja w toku)
+**Ostatnia aktualizacja:** 2026-09-22 (pulpit CEO: wykres roczny i widok netto)
+
+## Pulpit CEO — wykres roczny i netto (2026-09-22)
+
+Gałąź `w-walldecor-app-wdro-roczny-wy`. Na `/` i `/dashboard` (tylko ADMIN) pod nagłówkiem „Finanse firmy” jest wykres styczeń–grudzień. Kliknięcie słupka ustawia `?year=&month=` i przeładowuje karty poniżej. Układ kart, kasy i alertów został. `/finance` nie dostało tego widoku.
+
+Sprzedaż netto bierze się z `BreakEvenRevenueBasis` i obowiązuje tylko, gdy snapshot brutto jest równy aktualnej sumie kanałów salonu. Brak albo nieaktualny snapshot daje formularz zapisu przez istniejące `revenue.save`. Koszt netto firmy to suma netto dokumentów (`netAmount`, a gdy go nie ma — brutto minus zapisany VAT). Brak, waluta bez PLN i wpisy sprzed kwietnia 2026 nie są zamieniane na zero ani na brutto/1,23. Podział na salony przy kilku częściach faktury jest oznaczony jako niepewny. Różnica nazywa się „Różnica po znanych kosztach netto”. `employeeCostReadiness()` zwraca brak rozliczeń HR.
+
+Odbiór lokalny: testy jednostkowe pulpitu i netto, test SQLite loadera, `next build`, Playwright (zapis 8 500 zł przy brutto 10 300 zł, odczyt po przeładowaniu, zmiana miesiąca, pracownik nie wchodzi na pulpit).
 
 ## Bieżąca praca: faktury spoza KSeF i wspólne AI
 
