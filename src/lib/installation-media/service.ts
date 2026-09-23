@@ -246,7 +246,7 @@ async function compensateStoredFile(
 
 async function storeFile(
   db: PrismaClient,
-  target: { orderId: string; roomId?: string | null; scopeId?: string | null; formSubmissionId?: string | null; clientLinkId?: string | null; mobileHandoffId?: string | null; questionKey?: string | null; purpose: 'CLIENT_QUESTION' | 'MISMATCH_EVIDENCE' | 'INTERNAL_PROJECT'; source: 'WEB' | 'MOBILE_QR' | 'INTERNAL'; actorId: string },
+  target: { orderId: string; roomId?: string | null; scopeId?: string | null; formSubmissionId?: string | null; clientLinkId?: string | null; acceptanceProtocolId?: string | null; mobileHandoffId?: string | null; questionKey?: string | null; purpose: 'CLIENT_QUESTION' | 'MISMATCH_EVIDENCE' | 'INTERNAL_PROJECT'; source: 'WEB' | 'MOBILE_QR' | 'INTERNAL'; actorId: string },
   input: UploadInput,
   media: InstallationMediaAdapter,
 ) {
@@ -260,6 +260,7 @@ async function storeFile(
       scopeId: target.scopeId ?? null,
       formSubmissionId: target.formSubmissionId ?? null,
       clientLinkId: target.clientLinkId ?? null,
+      acceptanceProtocolId: target.acceptanceProtocolId ?? null,
       mobileHandoffId: target.mobileHandoffId ?? null,
       purpose: target.purpose,
       questionKey: target.questionKey ?? null,
@@ -294,6 +295,34 @@ async function storeFile(
     await compensateStoredFile(db, target.orderId, fileId, target.actorId, error, media)
     throw error
   }
+}
+
+export async function createAcceptancePhotoFile(
+  db: PrismaClient,
+  protocolId: string,
+  installerId: string,
+  input: UploadInput,
+  media: InstallationMediaAdapter,
+) {
+  const protocol = await db.installationAcceptanceProtocol.findFirst({ where: { id: protocolId, installerId, status: 'DRAFT' }, select: { id: true, orderId: true } })
+  if (!protocol) throw new InstallationMediaAccessError()
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(input.contentType)) {
+    throw new InstallationMediaValidationError({ file: 'Zdjęcie musi być plikiem JPG, PNG albo WebP.' })
+  }
+  return storeFile(db, {
+    orderId: protocol.orderId, acceptanceProtocolId: protocol.id,
+    purpose: 'INTERNAL_PROJECT', source: 'INTERNAL', actorId: installerId,
+  }, input, media)
+}
+
+export async function listAcceptancePhotoFiles(db: InstallationDb, protocolId: string, installerId: string) {
+  const protocol = await db.installationAcceptanceProtocol.findFirst({ where: { id: protocolId, installerId }, select: { id: true } })
+  if (!protocol) throw new InstallationMediaAccessError()
+  return db.installationFile.findMany({
+    where: { acceptanceProtocolId: protocolId, purpose: 'INTERNAL_PROJECT', status: 'READY', softDeletedAt: null },
+    select: { id: true, originalFilename: true, contentType: true, byteSize: true, sha256: true },
+    orderBy: { createdAt: 'asc' },
+  })
 }
 
 export async function createClientQuestionFile(db: PrismaClient, token: string, input: { questionKey: string } & UploadInput, media: InstallationMediaAdapter) {

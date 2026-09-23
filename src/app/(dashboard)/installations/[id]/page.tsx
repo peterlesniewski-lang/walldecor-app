@@ -20,8 +20,11 @@ import { listInstallationVisits } from '@/lib/installations/visit-service'
 import { listScopeInstallerAssignments } from '@/lib/installations/scope-assignment-service'
 import { InstallationOrderDetail } from '@/components/installations/order-detail'
 import { getInstallerInstallationCardData } from '@/lib/installations/installer-card-data'
+import { listAcceptanceCandidates } from '@/lib/installations/acceptance-protocol'
+import { Bricolage_Grotesque } from 'next/font/google'
 
 type Params = { params: Promise<{ id: string }> }
+const acceptanceDisplay = Bricolage_Grotesque({ variable: '--font-acceptance-display', subsets: ['latin', 'latin-ext'], weight: ['700', '800'] })
 
 export default async function InstallationOrderPage({ params }: Params) {
   const session = await getServerSession(authOptions)
@@ -33,7 +36,8 @@ export default async function InstallationOrderPage({ params }: Params) {
   if (viewer.role === 'INSTALLER') {
     const card = await getInstallerInstallationCardData(prisma, id, viewer)
     if (!card) notFound()
-    return <InstallationOrderDetail order={card.order} rooms={card.rooms} visits={card.visits} employees={[]} canEdit={false} canArchive={false} catalog={[]} clientLinks={[]} clarifications={[]} formRevisions={[]} files={[]} scopeAssignments={[]} />
+    const acceptanceCandidates = await listAcceptanceCandidates(prisma, id, viewer.employeeId!)
+    return <div className={acceptanceDisplay.variable}><InstallationOrderDetail order={card.order} rooms={card.rooms} visits={card.visits} employees={[]} canEdit={false} canArchive={false} catalog={[]} clientLinks={[]} clarifications={[]} formRevisions={[]} files={[]} scopeAssignments={[]} acceptanceCandidates={acceptanceCandidates} /></div>
   }
   const order = await getInstallationOrder(prisma, id)
   if (!order) notFound()

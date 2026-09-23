@@ -837,6 +837,7 @@ model Employee {
   installationDelegations   InstallationDelegation[]
   installationOrderAssignments InstallationOrderInstaller[]
   installationScopeAssignments InstallationScopeAssignment[]
+  acceptanceProtocols InstallationAcceptanceProtocol[]
 
   createdAt DateTime @default(now())
 }
@@ -881,6 +882,7 @@ model InstallationOrder {
   clarifications        InstallationClarification[]
   rooms                 InstallationRoom[]
   visits                InstallationVisit[]
+  acceptanceProtocols   InstallationAcceptanceProtocol[]
   visitScopes           InstallationVisitScope[]
   scopeAssignments      InstallationScopeAssignment[]
   visitFeePolicyId      String?
@@ -1003,6 +1005,7 @@ model InstallationVisit {
   cancelledAt DateTime?
   completedAt DateTime?
   scopes      InstallationVisitScope[]
+  acceptanceProtocols InstallationAcceptanceProtocol[]
   syncStates  IntegrationSyncState[]
   outbox      IntegrationOutbox[]
   createdById String
@@ -1010,6 +1013,32 @@ model InstallationVisit {
   updatedAt   DateTime @updatedAt
 
   @@index([orderId, status, startsAt])
+}
+
+model InstallationAcceptanceProtocol {
+  id                    String   @id @default(cuid())
+  orderId               String
+  order                 InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  visitId               String
+  visit                 InstallationVisit @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  groupKey              String
+  revision              Int      @default(1)
+  previousId            String?
+  installerId           String
+  installer             Employee @relation(fields: [installerId], references: [id], onDelete: Restrict)
+  status                String   @default("DRAFT")
+  snapshotJson          String
+  resultsJson           String?
+  contentHash           String?
+  installerSignature    Bytes?
+  installerSignedAt     DateTime?
+  photoFiles            InstallationFile[]
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([visitId, groupKey, revision])
+  @@index([orderId, status])
+  @@index([installerId, createdAt])
 }
 
 model InstallationVisitScope {
@@ -1353,6 +1382,8 @@ model InstallationFile {
   formSubmission    InstallationFormSubmission? @relation("InstallationFileSubmission", fields: [formSubmissionId], references: [id], onDelete: Restrict)
   clientLinkId      String?
   clientLink        InstallationClientLink? @relation("InstallationFileClientLink", fields: [clientLinkId], references: [id], onDelete: Restrict)
+  acceptanceProtocolId String?
+  acceptanceProtocol InstallationAcceptanceProtocol? @relation(fields: [acceptanceProtocolId], references: [id], onDelete: Restrict)
   mobileHandoffId   String?
   mobileHandoff     MobileUploadHandoff? @relation(fields: [mobileHandoffId], references: [id], onDelete: Restrict)
   purpose           String
@@ -1382,6 +1413,7 @@ model InstallationFile {
   @@index([scopeId, createdAt])
   @@index([formSubmissionId, questionKey])
   @@index([clientLinkId, questionKey])
+  @@index([acceptanceProtocolId])
   @@index([mobileHandoffId])
   @@index([remoteDeleteStatus, remoteDeleteNextAttemptAt])
 }
