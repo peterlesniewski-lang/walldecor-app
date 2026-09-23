@@ -1,5 +1,19 @@
 # CLAUDE.md — Zasady budowania aplikacji WallDecor
 
+## Agent skills
+
+### Issue tracker
+
+Zadania i specyfikacje są prowadzone w GitHub Issues repozytorium `peterlesniewski-lang/walldecor-app`. See `docs/agents/issue-tracker.md`.
+
+### Triage labels
+
+Triage używa etykiet `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human` i `wontfix`. See `docs/agents/triage-labels.md`.
+
+### Domain docs
+
+Single-context: `CONTEXT.md` w katalogu głównym i decyzje w `docs/adr/`. See `docs/agents/domain.md`.
+
 ## Kontekst projektu
 
 Aplikacja budżetowo-HR dla firmy WallDecor (salony dekoracyjne).
