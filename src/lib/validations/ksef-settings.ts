@@ -6,6 +6,10 @@ export const KSEF_SETTING_KEYS = [
   'ksef_company_nip',
   'ksef_token',
   'ksef_sync_from',
+  'ksef_auto_sync_enabled',
+  'ksef_auto_sync_last_run_at',
+  'ksef_auto_sync_last_status',
+  'ksef_auto_sync_last_message',
 ] as const
 
 export const KsefSettingsUpdateSchema = z.object({
@@ -16,6 +20,7 @@ export const KsefSettingsUpdateSchema = z.object({
     .trim()
     .regex(/^\d{10}$/, 'NIP musi mieć 10 cyfr'),
   token: z.string().trim().optional(),
+  autoSync: z.boolean().optional(),
   syncFrom: z
     .string()
     .trim()

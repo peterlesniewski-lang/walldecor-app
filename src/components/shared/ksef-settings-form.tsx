@@ -10,6 +10,13 @@ interface KsefSettingsValues {
   companyNip: string
   syncFrom: string
   token: string
+  autoSync: boolean
+}
+
+interface LastAutoSync {
+  at?: string
+  status: 'OK' | 'ERROR' | 'SKIPPED' | null
+  message: string | null
 }
 
 interface KsefSettingsResponse {
@@ -19,6 +26,19 @@ interface KsefSettingsResponse {
   syncFrom?: string
   hasToken?: boolean
   tokenPreview?: string | null
+  autoSync?: boolean
+  autoSyncHours?: number[]
+  lastAutoSync?: LastAutoSync | null
+}
+
+const AUTO_SYNC_STATUS_COLOR: Record<string, string> = {
+  OK: '#2A7D4F',
+  ERROR: '#B42318',
+  SKIPPED: 'var(--wd-text-muted)',
+}
+
+function formatHours(hours: number[]) {
+  return hours.map((hour) => `${String(hour).padStart(2, '0')}:00`).join(' i ')
 }
 
 const DEFAULT_VALUES: KsefSettingsValues = {
@@ -27,12 +47,15 @@ const DEFAULT_VALUES: KsefSettingsValues = {
   companyNip: '',
   syncFrom: '2026-02-01',
   token: '',
+  autoSync: true,
 }
 
 export function KsefSettingsForm() {
   const [values, setValues] = useState<KsefSettingsValues>(DEFAULT_VALUES)
   const [hasToken, setHasToken] = useState(false)
   const [tokenPreview, setTokenPreview] = useState<string | null>(null)
+  const [autoSyncHours, setAutoSyncHours] = useState<number[]>([])
+  const [lastAutoSync, setLastAutoSync] = useState<LastAutoSync | null>(null)
   const [loading, setLoading] = useState(true)
   const [saving, setSaving] = useState(false)
   const [saved, setSaved] = useState(false)
@@ -49,7 +72,10 @@ export function KsefSettingsForm() {
           companyNip: data.companyNip ?? prev.companyNip,
           syncFrom: data.syncFrom ?? prev.syncFrom,
           token: '',
+          autoSync: data.autoSync ?? prev.autoSync,
         }))
+        setAutoSyncHours(data.autoSyncHours ?? [])
+        setLastAutoSync(data.lastAutoSync ?? null)
         setHasToken(data.hasToken ?? false)
         setTokenPreview(data.tokenPreview ?? null)
       })
@@ -75,6 +101,7 @@ export function KsefSettingsForm() {
         companyNip: values.companyNip.replace(/\D/g, ''),
         syncFrom: values.syncFrom,
         token: values.token.trim() || undefined,
+        autoSync: values.autoSync,
       }
       const response = await fetch('/api/settings/ksef', {
         method: 'PATCH',
@@ -124,6 +151,39 @@ export function KsefSettingsForm() {
           />
           Aktywna
         </label>
+      </div>
+
+      <div className="rounded-lg border border-[var(--wd-border)] bg-white px-4 py-3">
+        <div className="flex items-center justify-between">
+          <div>
+            <p className="text-sm font-semibold" style={{ color: 'var(--wd-dark)' }}>
+              Automatyczna synchronizacja
+            </p>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--wd-text-muted)' }}>
+              {autoSyncHours.length > 0
+                ? `Faktury pobierane codziennie o ${formatHours(autoSyncHours)} (czas polski), bez klikania przycisku.`
+                : 'Faktury pobierane automatycznie 2 razy na dobę.'}
+            </p>
+          </div>
+          <label className="flex items-center gap-2 text-sm font-medium">
+            <input
+              type="checkbox"
+              checked={values.autoSync}
+              onChange={(event) => update('autoSync', event.target.checked)}
+            />
+            Włączona
+          </label>
+        </div>
+        {lastAutoSync?.at && (
+          <p className="text-xs mt-2" style={{ color: 'var(--wd-text-muted)' }}>
+            Ostatnie uruchomienie:{' '}
+            {new Date(lastAutoSync.at).toLocaleString('pl-PL', { dateStyle: 'short', timeStyle: 'short' })}
+            {' — '}
+            <span style={{ color: AUTO_SYNC_STATUS_COLOR[lastAutoSync.status ?? ''] ?? 'inherit' }}>
+              {lastAutoSync.message}
+            </span>
+          </p>
+        )}
       </div>
 
       <div className="grid grid-cols-3 gap-4">

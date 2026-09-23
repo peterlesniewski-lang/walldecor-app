@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { KSEF_AUTO_SYNC_HOURS } from '@/lib/finance/ksef-auto-sync'
 import {
   KSEF_SETTING_KEYS,
   KsefSettingsUpdateSchema,
@@ -39,6 +40,15 @@ export async function GET() {
     syncFrom: map.get('ksef_sync_from') ?? DEFAULTS.syncFrom,
     hasToken: token.length > 0,
     tokenPreview: maskSecret(token),
+    autoSync: map.get('ksef_auto_sync_enabled') !== 'false',
+    autoSyncHours: [...KSEF_AUTO_SYNC_HOURS],
+    lastAutoSync: map.has('ksef_auto_sync_last_run_at')
+      ? {
+          at: map.get('ksef_auto_sync_last_run_at'),
+          status: map.get('ksef_auto_sync_last_status') ?? null,
+          message: map.get('ksef_auto_sync_last_message') ?? null,
+        }
+      : null,
   })
 }
 
@@ -78,6 +88,16 @@ export async function PATCH(req: NextRequest) {
       create: { key: 'ksef_sync_from', value: data.syncFrom },
     }),
   ]
+
+  if (data.autoSync !== undefined) {
+    writes.push(
+      prisma.appSetting.upsert({
+        where: { key: 'ksef_auto_sync_enabled' },
+        update: { value: String(data.autoSync) },
+        create: { key: 'ksef_auto_sync_enabled', value: String(data.autoSync) },
+      })
+    )
+  }
 
   if (data.token && data.token.length > 0) {
     writes.push(
