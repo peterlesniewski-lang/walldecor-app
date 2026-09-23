@@ -1,7 +1,7 @@
 'use client'
 
 import Link from 'next/link'
-import { useRef, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 import { useRouter } from 'next/navigation'
 import type { AcceptanceResult, AcceptanceSnapshot, AcceptanceWorkResult } from '@/lib/installations/acceptance-protocol'
 import { formatWarsawDateTime } from '@/lib/installations/visit-time'
@@ -23,9 +23,17 @@ export function InstallerProtocolEditor({ protocol, initialPhotos }: { protocol:
   const [results, setResults] = useState<AcceptanceResult[]>(protocol.results.length ? protocol.results : protocol.snapshot.items.map((item) => ({ scopeId: item.scopeId, result: 'DONE', note: '' })))
   const [busy, setBusy] = useState(false)
   const [uploading, setUploading] = useState(false)
+  const [handoffBusy, setHandoffBusy] = useState(false)
+  const [emailBusy, setEmailBusy] = useState(false)
+  const [emailLinks, setEmailLinks] = useState<Array<{ id: string; recipientEmail: string | null; expiresAt: string; sentAt: string | null; revokedAt: string | null }>>([])
   const [photos, setPhotos] = useState(initialPhotos)
   const [error, setError] = useState('')
   const signed = protocol.status !== 'DRAFT'
+  useEffect(() => {
+    if (!signed) return
+    fetch(`/api/installations/${protocol.orderId}/protocols/${protocol.id}/email-link`).then((response) => response.ok ? response.json() : null)
+      .then((body) => { if (body?.links) setEmailLinks(body.links) }).catch(() => {})
+  }, [protocol.id, protocol.orderId, signed])
 
   function updateResult(scopeId: string, change: Partial<AcceptanceResult>) {
     setResults((current) => current.map((item) => item.scopeId === scopeId ? { ...item, ...change } : item))
@@ -104,6 +112,41 @@ export function InstallerProtocolEditor({ protocol, initialPhotos }: { protocol:
     }
   }
 
+  async function openClientView() {
+    setHandoffBusy(true); setError('')
+    try {
+      const response = await fetch(`/api/installations/${protocol.orderId}/protocols/${protocol.id}/onsite-link`, { method: 'POST' })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error ?? 'Nie udało się otworzyć widoku klienta.')
+      window.location.assign(body.path)
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : 'Nie udało się otworzyć widoku klienta.')
+      setHandoffBusy(false)
+    }
+  }
+
+  async function sendEmailLink() {
+    setEmailBusy(true); setError('')
+    try {
+      const response = await fetch(`/api/installations/${protocol.orderId}/protocols/${protocol.id}/email-link`, { method: 'POST' })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error ?? 'Nie udało się wysłać linku.')
+      setEmailLinks((current) => [{ id: body.sent.linkId, recipientEmail: body.sent.recipientEmail, expiresAt: body.sent.expiresAt, sentAt: body.sent.sentAt, revokedAt: null }, ...current.map((link) => ({ ...link, revokedAt: link.revokedAt ?? new Date().toISOString() }))])
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Nie udało się wysłać linku.') }
+    finally { setEmailBusy(false) }
+  }
+
+  async function revokeEmailLink(linkId: string) {
+    setEmailBusy(true); setError('')
+    try {
+      const response = await fetch(`/api/installations/${protocol.orderId}/protocols/${protocol.id}/email-link`, { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ linkId }) })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error ?? 'Nie udało się cofnąć linku.')
+      setEmailLinks((current) => current.map((link) => link.id === linkId ? { ...link, revokedAt: new Date().toISOString() } : link))
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Nie udało się cofnąć linku.') }
+    finally { setEmailBusy(false) }
+  }
+
   return (
     <main className="mx-auto max-w-3xl px-4 py-8 sm:py-12" style={{ color: 'var(--wd-dark)' }}>
       <Link className="text-sm font-bold underline underline-offset-4" href={`/installations/${protocol.orderId}#acceptance`}>← Wróć do karty montażu</Link>
@@ -112,7 +155,7 @@ export function InstallerProtocolEditor({ protocol, initialPhotos }: { protocol:
         <h1 className="mt-3 text-4xl font-bold tracking-tight sm:text-5xl" style={{ fontFamily: 'var(--font-acceptance-display)' }}>{protocol.snapshot.workType}</h1>
         <p className="mt-3 text-sm">{protocol.snapshot.address} · {protocol.snapshot.installerName}</p>
         <p className="mt-1 text-sm font-semibold">Wizyta: {protocol.snapshot.visitStartsAt ? formatWarsawDateTime(protocol.snapshot.visitStartsAt) : 'data nieustalona'}</p>
-        <p className="mt-1 text-sm" style={{ color: 'var(--wd-text-muted)' }}>{signed ? 'Podpis wykonawcy został zapisany. Protokół oczekuje na odbiór klienta.' : 'Zaznacz rzeczywisty wynik każdej pracy, a następnie podpisz.'}</p>
+        <p className="mt-1 text-sm" style={{ color: 'var(--wd-text-muted)' }}>{protocol.status === 'INSTALLER_SIGNED' ? 'Podpis wykonawcy został zapisany. Protokół oczekuje na decyzję klienta.' : signed ? 'Protokół został utrwalony.' : 'Zaznacz rzeczywisty wynik każdej pracy, a następnie podpisz.'}</p>
       </header>
       <div className="mt-7 space-y-4">
         {protocol.snapshot.items.map((item, index) => {
@@ -149,6 +192,22 @@ export function InstallerProtocolEditor({ protocol, initialPhotos }: { protocol:
         <button type="button" onClick={clearSignature} className="mt-2 text-sm font-bold underline underline-offset-4">Wyczyść podpis</button>
         {error && <p role="alert" className="mt-3 text-sm font-bold text-red-800">{error}</p>}
         <button type="button" disabled={busy || uploading} onClick={sign} className="mt-6 min-h-12 w-full rounded-full px-6 font-bold text-white disabled:opacity-50" style={{ background: 'var(--wd-dark)' }}>{busy ? 'Zapisywanie…' : 'Podpisz protokół'}</button>
+      </section>}
+      {protocol.status === 'INSTALLER_SIGNED' && <section className="mt-8 rounded-xl border-2 p-5" style={{ borderColor: 'var(--wd-dark)', background: 'var(--wd-sand-light)' }}>
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Przekaż klientowi</h2>
+        <p className="mt-2 text-sm">Otwórz oddzielny widok odbioru i przekaż telefon klientowi lub jego przedstawicielowi. Widok pokazuje wyłącznie protokół.</p>
+        {error && <p role="alert" className="mt-3 text-sm font-bold text-red-800">{error}</p>}
+        <button type="button" disabled={handoffBusy} onClick={openClientView} className="mt-5 min-h-12 w-full rounded-full px-6 font-bold text-white disabled:opacity-50" style={{ background: 'var(--wd-dark)' }}>{handoffBusy ? 'Otwieranie…' : 'Otwórz widok klienta na tym telefonie'}</button>
+      </section>}
+      {signed && <section className="mt-6 rounded-xl border border-black/15 bg-white p-5">
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Link dla klienta</h2>
+        <p className="mt-2 text-sm">Wyślij osobny link do tego protokołu na adres e-mail z karty montażu. Jest ważny przez 90 dni.</p>
+        {emailLinks.find((link) => !link.revokedAt && new Date(link.expiresAt) > new Date()) && <p className="mt-3 text-sm font-semibold">Aktywny link wysłano do {emailLinks.find((link) => !link.revokedAt && new Date(link.expiresAt) > new Date())?.recipientEmail}.</p>}
+        {error && <p role="alert" className="mt-3 text-sm font-bold text-red-800">{error}</p>}
+        <div className="mt-4 flex flex-wrap gap-3">
+          <button type="button" disabled={emailBusy} onClick={sendEmailLink} className="min-h-11 rounded-full px-5 text-sm font-bold text-white disabled:opacity-50" style={{ background: 'var(--wd-dark)' }}>{emailBusy ? 'Przetwarzanie…' : 'Wyślij link e-mailem'}</button>
+          {emailLinks.filter((link) => !link.revokedAt && new Date(link.expiresAt) > new Date()).map((link) => <button key={link.id} type="button" disabled={emailBusy} onClick={() => revokeEmailLink(link.id)} className="min-h-11 rounded-full border border-black/30 px-5 text-sm font-bold disabled:opacity-50">Cofnij link</button>)}
+        </div>
       </section>}
     </main>
   )

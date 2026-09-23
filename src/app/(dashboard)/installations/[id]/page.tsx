@@ -22,6 +22,7 @@ import { InstallationOrderDetail } from '@/components/installations/order-detail
 import { getInstallerInstallationCardData } from '@/lib/installations/installer-card-data'
 import { listAcceptanceCandidates } from '@/lib/installations/acceptance-protocol'
 import { Bricolage_Grotesque } from 'next/font/google'
+import type { AcceptanceSnapshot } from '@/lib/installations/acceptance-protocol'
 
 type Params = { params: Promise<{ id: string }> }
 const acceptanceDisplay = Bricolage_Grotesque({ variable: '--font-acceptance-display', subsets: ['latin', 'latin-ext'], weight: ['700', '800'] })
@@ -53,7 +54,7 @@ export default async function InstallationOrderPage({ params }: Params) {
   ])
   // Client answers, evidence and link management are coordinator-only.
   const coordinatorData = canCoordinateClientForm ? await (async () => {
-    const [employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches] = await Promise.all([
+    const [employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches, protocols] = await Promise.all([
       prisma.employee.findMany({
         where: { active: true },
         select: { id: true, firstName: true, lastName: true, email: true },
@@ -70,8 +71,20 @@ export default async function InstallationOrderPage({ params }: Params) {
       getInstallationVisitFeeView(prisma, id),
       listInstallationFiles(prisma, id),
       listInstallationMismatchesForEvidence(prisma, id),
+      prisma.installationAcceptanceProtocol.findMany({ where: { orderId: id }, select: {
+        id: true, revision: true, status: true, snapshotJson: true, clientNote: true,
+        clientLinks: { where: { channel: 'EMAIL' }, select: { id: true, recipientEmail: true, expiresAt: true, revokedAt: true, sentAt: true }, orderBy: { createdAt: 'desc' } },
+      }, orderBy: { createdAt: 'desc' } }),
     ])
-    return { employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches }
+    const acceptanceProtocols = protocols.map((protocol) => {
+      const snapshot = JSON.parse(protocol.snapshotJson) as AcceptanceSnapshot
+      return {
+        id: protocol.id, revision: protocol.revision, status: protocol.status,
+        workType: snapshot.workType, visitStartsAt: snapshot.visitStartsAt, clientNote: protocol.clientNote,
+        links: protocol.clientLinks.map((link) => ({ ...link, expiresAt: link.expiresAt.toISOString(), revokedAt: link.revokedAt?.toISOString() ?? null, sentAt: link.sentAt?.toISOString() ?? null })),
+      }
+    })
+    return { employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches, acceptanceProtocols }
   })() : null
 
   // The coordinator model needs Decimal serialization at the client boundary.
@@ -96,6 +109,7 @@ export default async function InstallationOrderPage({ params }: Params) {
     ownership={coordinatorData?.ownership ?? null}
     visitFee={coordinatorData?.visitFee ?? null}
     files={coordinatorData?.files ?? []}
+    acceptanceProtocols={coordinatorData?.acceptanceProtocols ?? []}
     mismatches={coordinatorData?.mismatches ?? []}
     canManageGovernance={canManageGovernance}
     visits={visits}

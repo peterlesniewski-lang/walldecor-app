@@ -166,7 +166,7 @@ export async function getAcceptanceProtocol(db: InstallationDb, protocolId: stri
   return present(row)
 }
 
-async function signatureBytes(dataUrl: string) {
+export async function signatureBytes(dataUrl: string) {
   const match = /^data:image\/png;base64,([A-Za-z0-9+/]+={0,2})$/.exec(dataUrl)
   if (!match) throw new AcceptanceProtocolError('VALIDATION', 'Złóż podpis przed zapisaniem protokołu.')
   const bytes = Buffer.from(match[1], 'base64')

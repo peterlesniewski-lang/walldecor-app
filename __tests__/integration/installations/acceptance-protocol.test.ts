@@ -8,6 +8,7 @@ import { createAcceptanceDraft, getAcceptanceProtocol, listAcceptanceCandidates,
 import { createAcceptancePhotoFile, listAcceptancePhotoFiles } from '@/lib/installation-media/service'
 import { createHash } from 'node:crypto'
 import sharp from 'sharp'
+import { dispatchAcceptanceEmailLink, issueAcceptanceLink, publicAcceptanceProjection, revokeAcceptanceLink, submitClientAcceptance } from '@/lib/installations/acceptance-client'
 
 const directory = mkdtempSync(path.join(tmpdir(), 'walldecor-acceptance-'))
 const databasePath = path.join(directory, 'acceptance.db')
@@ -101,6 +102,23 @@ describe('protokół odbioru prac', () => {
     await expect(signAcceptanceProtocol(db, draft.id, installerId, { results: signed.results, signature })).rejects.toThrow()
   })
 
+  it('lets the client decide on a separate link and freezes the signed response', async () => {
+    const protocol = await db.installationAcceptanceProtocol.findFirstOrThrow({ where: { visitId, groupKey: `category:${wallpaperCategoryId}` } })
+    const { token, link } = await issueAcceptanceLink(db, protocol.id, installerId, 'ONSITE')
+    const publicView = await publicAcceptanceProjection(db, token)
+    expect(publicView.snapshot.items).toHaveLength(2)
+    expect(JSON.stringify(publicView)).not.toContain('owner@example.test')
+    await expect(submitClientAcceptance(db, token, { decision: 'ACCEPTED_WITH_REMARKS', firstName: 'Jan', lastName: 'Klient', relationship: 'klient', note: '', signature })).rejects.toThrow('Uwagi')
+    await expect(submitClientAcceptance(db, token, { decision: 'ACCEPTED', firstName: 'Jan', lastName: 'Klient', relationship: 'klient', note: '', signature: null })).rejects.toThrow('podpisu')
+    const response = await submitClientAcceptance(db, token, { decision: 'ACCEPTED_WITH_REMARKS', firstName: 'Jan', lastName: 'Klient', relationship: 'klient', note: 'Poprawić narożnik.', signature })
+    expect(response.decision).toBe('ACCEPTED_WITH_REMARKS')
+    expect((await publicAcceptanceProjection(db, token)).clientNote).toBe('Poprawić narożnik.')
+    await expect(submitClientAcceptance(db, token, { decision: 'ACCEPTED', firstName: 'Jan', lastName: 'Klient', relationship: 'klient', note: '', signature })).rejects.toThrow('nie oczekuje')
+    await expect(db.installationAcceptanceProtocol.update({ where: { id: protocol.id }, data: { clientNote: 'zmiana' } })).rejects.toThrow()
+    await db.installationAcceptanceLink.update({ where: { id: link.id }, data: { expiresAt: new Date('2020-01-01') } })
+    await expect(publicAcceptanceProjection(db, token)).rejects.toThrow('Nie znaleziono')
+  })
+
   it('accepts an optional private photo before signing and locks its association afterward', async () => {
     const draft = await createAcceptanceDraft(db, { orderId, visitId, groupKey: `category:${stuccoCategoryId}`, installerId })
     expect(await db.installationAcceptanceProtocol.count({ where: { id: draft.id } })).toBe(1)
@@ -117,6 +135,24 @@ describe('protokół odbioru prac', () => {
     const signed = await signAcceptanceProtocol(db, draft.id, installerId, { results: [{ scopeId: stuccoScopeId, result: 'DONE', note: '' }], signature })
     expect(signed.contentHash).toMatch(/^[a-f0-9]{64}$/)
     await expect(createAcceptancePhotoFile(db, draft.id, installerId, { filename: 'pozniej.png', contentType: 'image/png', bytes }, media)).rejects.toThrow()
+
+    const messages: string[] = []
+    const first = await dispatchAcceptanceEmailLink(db, draft.id, installerId, 'https://app.example.test', async (email) => { messages.push(email.text) })
+    const firstLink = await db.installationAcceptanceLink.findUniqueOrThrow({ where: { id: first.linkId } })
+    expect(firstLink.tokenHash).toMatch(/^[a-f0-9]{64}$/)
+    expect(firstLink.sentAt).not.toBeNull()
+    expect(messages[0]).toContain('https://app.example.test/p/')
+    expect(firstLink.expiresAt.getTime() - firstLink.createdAt.getTime()).toBeGreaterThan(89 * 24 * 60 * 60_000)
+    await expect(dispatchAcceptanceEmailLink(db, draft.id, installerId, 'https://app.example.test', async () => { throw new Error('SMTP failed') })).rejects.toThrow('Nie udało się wysłać')
+    expect((await db.installationAcceptanceLink.findUniqueOrThrow({ where: { id: first.linkId } })).revokedAt).toBeNull()
+    const second = await dispatchAcceptanceEmailLink(db, draft.id, installerId, 'https://app.example.test', async (email) => { messages.push(email.text) })
+    expect(second.linkId).not.toBe(first.linkId)
+    expect((await db.installationAcceptanceLink.findUniqueOrThrow({ where: { id: first.linkId } })).revokedAt).not.toBeNull()
+    await revokeAcceptanceLink(db, second.linkId)
+    expect((await db.installationAcceptanceLink.findUniqueOrThrow({ where: { id: second.linkId } })).revokedAt).not.toBeNull()
+    const secondToken = messages[1]?.match(/\/p\/([A-Za-z0-9_-]{43})/)?.[1]
+    expect(secondToken).toBeTruthy()
+    await expect(publicAcceptanceProjection(db, secondToken!)).rejects.toThrow('Nie znaleziono')
   })
 
   it('creates a separate protocol on the next visit and rejects ambiguous ownership or a cancelled visit', async () => {

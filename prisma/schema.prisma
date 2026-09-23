@@ -1032,6 +1032,16 @@ model InstallationAcceptanceProtocol {
   contentHash           String?
   installerSignature    Bytes?
   installerSignedAt     DateTime?
+  clientDecision        String?
+  clientFirstName       String?
+  clientLastName        String?
+  clientRelationship    String?
+  clientNote            String?
+  clientSignature       Bytes?
+  clientRespondedAt     DateTime?
+  clientResponseHash    String?
+  clientResponseMetaJson String?
+  clientLinks           InstallationAcceptanceLink[]
   photoFiles            InstallationFile[]
   createdAt             DateTime @default(now())
   updatedAt             DateTime @updatedAt
@@ -1039,6 +1049,22 @@ model InstallationAcceptanceProtocol {
   @@unique([visitId, groupKey, revision])
   @@index([orderId, status])
   @@index([installerId, createdAt])
+}
+
+model InstallationAcceptanceLink {
+  id           String   @id @default(cuid())
+  protocolId   String
+  protocol     InstallationAcceptanceProtocol @relation(fields: [protocolId], references: [id], onDelete: Restrict)
+  tokenHash    String   @unique
+  channel      String
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  sentAt       DateTime?
+  recipientEmail String?
+  createdAt    DateTime @default(now())
+  lastOpenedAt DateTime?
+
+  @@index([protocolId, channel, revokedAt])
 }
 
 model InstallationVisitScope {
