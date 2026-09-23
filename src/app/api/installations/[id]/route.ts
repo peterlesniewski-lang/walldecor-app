@@ -98,6 +98,9 @@ export async function DELETE(_req: NextRequest, { params }: Params) {
     const order = await archiveInstallationOrder(prisma, id, session.user.id)
     return NextResponse.json(order)
   } catch (error) {
+    if (error instanceof InstallationOrderValidationError) {
+      return NextResponse.json({ error: error.fieldErrors.acceptance ?? error.message, fieldErrors: error.fieldErrors }, { status: 409 })
+    }
     if (error instanceof InstallationOrderNotFoundError) {
       return NextResponse.json({ error: 'Not found' }, { status: 404 })
     }
