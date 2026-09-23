@@ -208,7 +208,7 @@ export function InstallationOrderDetail({
         <InstallationVisitsPanel orderId={order.id} visits={visits} scopes={visitScopes} employees={employees} canEdit={canEditActiveOrder} canForceOverwrite={canManageGovernance && !isArchived} />
       </section>
       {!editableOrder && <InstallerProtocolPanel orderId={order.id} candidates={acceptanceCandidates} />}
-      {editableOrder && <CoordinatorAcceptancePanel orderId={order.id} protocols={acceptanceProtocols} />}
+      {editableOrder && <CoordinatorAcceptancePanel orderId={order.id} protocols={acceptanceProtocols} canManage={canEditActiveOrder} />}
       {canEditActiveOrder && <section id="attachments" data-card-section className="scroll-mt-6" aria-label="Załączniki zlecenia">
         <InstallationFilesPanel orderId={order.id} initialFiles={files} mismatches={mismatches} rooms={cardRooms.map((room) => ({ id: room.id, name: room.name, scopes: room.scopes.map((scope) => ({ id: scope.id, name: scope.name })) }))} canEdit={canEditActiveOrder} onChanged={() => router.refresh()} />
       </section>}

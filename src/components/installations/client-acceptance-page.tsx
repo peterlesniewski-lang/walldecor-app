@@ -20,7 +20,8 @@ export function ClientAcceptancePage({ token, protocol }: { token: string; proto
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
   const [saved, setSaved] = useState<ClientDecision | null>(protocol.clientDecision)
-  const canRespond = protocol.status === 'INSTALLER_SIGNED' && !saved
+  const canRespond = protocol.status === 'INSTALLER_SIGNED' && protocol.isLatest && !saved
+  const canDownload = Boolean(saved || ['ACCEPTED', 'ACCEPTED_WITH_REMARKS', 'REFUSED', 'UNILATERAL'].includes(protocol.status))
 
   function point(event: React.PointerEvent<HTMLCanvasElement>) {
     const canvas = canvasRef.current!
@@ -96,6 +97,14 @@ export function ClientAcceptancePage({ token, protocol }: { token: string; proto
           </article>
         })}</div>
       </section>
+      {protocol.unilateral && <section className="mt-8 border-2 border-[#8a4e21] bg-[#fff0da] p-5">
+        <p className="text-xs font-extrabold uppercase tracking-[0.2em]">Oddzielny zapis wykonawcy</p>
+        <h2 className="mt-2 text-xl font-extrabold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Protokół jednostronny</h2>
+        <p className="mt-2 text-sm">{protocol.unilateral.circumstances}</p>
+        <p className="mt-2 text-sm font-bold">Ten zapis nie oznacza odbioru przez klienta.</p>
+      </section>}
+      {protocol.photos.length > 0 && <section className="mt-8"><h2 className="text-xl font-extrabold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Zdjęcia dokumentacyjne</h2><ul className="mt-3 space-y-2 text-sm">{protocol.photos.map((photo) => <li key={photo.id}><a className="font-bold underline underline-offset-4" href={`/api/public/acceptance/${token}/photos/${photo.id}`} target="_blank" rel="noreferrer">{photo.name}</a></li>)}</ul></section>}
+      {!protocol.isLatest && <p className="mt-8 border border-[#8a4e21] bg-[#fff0da] p-5 text-sm font-bold">To wcześniejsza wersja. Poproś o nowy link, aby potwierdzić aktualny zakres.</p>}
       {saved ? <section className="mt-8 border-2 border-[#1b3029] bg-[#e6eee4] p-6" role="status">
         <p className="text-xs font-extrabold uppercase tracking-[0.22em]">Odpowiedź zapisana</p>
         <h2 className="mt-2 text-2xl font-extrabold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>{decisionNames[saved]}</h2>
@@ -122,6 +131,10 @@ export function ClientAcceptancePage({ token, protocol }: { token: string; proto
         {error && <p role="alert" className="mt-4 text-sm font-bold text-red-800">{error}</p>}
         <button type="submit" disabled={busy} className="mt-5 min-h-13 w-full bg-[#1b3029] px-6 py-3 font-bold text-white disabled:opacity-50">{busy ? 'Zapisywanie…' : 'Potwierdź decyzję'}</button>
       </form> : <p className="mt-8 border border-[#9eaa9e] bg-white p-5 text-sm">Ten protokół nie oczekuje już na odpowiedź.</p>}
+      {canDownload && <div className="mt-6 flex flex-wrap gap-3">
+        <a href={`/api/public/acceptance/${token}/pdf`} className="inline-flex min-h-12 items-center bg-[#1b3029] px-5 text-sm font-bold text-white">Pobierz PDF protokołu</a>
+        {protocol.unilateral && <a href={`/api/public/acceptance/${token}/pdf?kind=UNILATERAL`} className="inline-flex min-h-12 items-center border border-[#1b3029] px-5 text-sm font-bold">Pobierz PDF jednostronny</a>}
+      </div>}
       <footer className="mt-12 border-t border-[#9eaa9e] pt-4 text-xs text-[#4d6157]">WallDecor · Protokół odbioru prac</footer>
     </div>
   </main>

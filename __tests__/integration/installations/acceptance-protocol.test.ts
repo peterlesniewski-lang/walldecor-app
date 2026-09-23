@@ -4,11 +4,14 @@ import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, describe, expect, it } from 'vitest'
 import { PrismaClient } from '@/generated/prisma'
-import { createAcceptanceDraft, getAcceptanceProtocol, listAcceptanceCandidates, signAcceptanceProtocol } from '@/lib/installations/acceptance-protocol'
+import { createAcceptanceDraft, createAcceptanceRevision, getAcceptanceProtocol, listAcceptanceCandidates, signAcceptanceProtocol } from '@/lib/installations/acceptance-protocol'
 import { createAcceptancePhotoFile, listAcceptancePhotoFiles } from '@/lib/installation-media/service'
 import { createHash } from 'node:crypto'
 import sharp from 'sharp'
 import { dispatchAcceptanceEmailLink, issueAcceptanceLink, publicAcceptanceProjection, revokeAcceptanceLink, submitClientAcceptance } from '@/lib/installations/acceptance-client'
+import { createUnilateralDraft, signUnilateralProtocol } from '@/lib/installations/acceptance-unilateral'
+import { dispatchPendingAcceptanceAlerts } from '@/lib/installations/acceptance-alerts'
+import { getOrCreateAcceptancePdf } from '@/lib/installations/acceptance-pdf'
 
 const directory = mkdtempSync(path.join(tmpdir(), 'walldecor-acceptance-'))
 const databasePath = path.join(directory, 'acceptance.db')
@@ -41,6 +44,10 @@ beforeAll(async () => {
   ])
   installerId = installer.id
   secondInstallerId = backup.id
+  await Promise.all([
+    db.user.create({ data: { email: owner.email, name: 'Anna Opiekun', role: 'EMPLOYEE', employeeId: owner.id, passwordHash: 'test' } }),
+    db.user.create({ data: { email: 'admin@example.test', name: 'Administrator', role: 'ADMIN', passwordHash: 'test' } }),
+  ])
   const order = await db.installationOrder.create({ data: {
     number: 'MON-ACCEPT-1', client: { create: { name: 'Klient', email: 'client@example.test', phone: '+48 500 100 100' } },
     addressStreet: 'Testowa', addressBuildingNumber: '1', addressPostalCode: '00-001', addressCity: 'Warszawa',
@@ -113,16 +120,51 @@ describe('protokół odbioru prac', () => {
     const response = await submitClientAcceptance(db, token, { decision: 'ACCEPTED_WITH_REMARKS', firstName: 'Jan', lastName: 'Klient', relationship: 'klient', note: 'Poprawić narożnik.', signature })
     expect(response.decision).toBe('ACCEPTED_WITH_REMARKS')
     expect((await publicAcceptanceProjection(db, token)).clientNote).toBe('Poprawić narożnik.')
+    expect(await db.installationAcceptanceInvoiceTask.count({ where: { orderId } })).toBe(0)
+    const pdf = await getOrCreateAcceptancePdf(db, protocol.id, 'ACCEPTANCE', { async download() { throw new Error('No photos expected') } })
+    expect(Buffer.from(pdf.bytes).subarray(0, 4).toString()).toBe('%PDF')
+    expect((await getOrCreateAcceptancePdf(db, protocol.id, 'ACCEPTANCE', { async download() { throw new Error('No photos expected') } })).sha256).toBe(pdf.sha256)
+    await expect(db.installationAcceptanceDocument.update({ where: { id: pdf.id }, data: { sha256: 'changed' } })).rejects.toThrow()
+    expect(await db.installationAcceptanceAlert.count({ where: { protocolId: protocol.id, kind: 'ACCEPTED_WITH_REMARKS' } })).toBe(2)
+    const dispatched = await dispatchPendingAcceptanceAlerts(db, protocol.id, async () => {})
+    expect(dispatched).toEqual({ sent: 2, failed: 0 })
+    expect((await dispatchPendingAcceptanceAlerts(db, protocol.id, async () => {})).sent).toBe(0)
     await expect(submitClientAcceptance(db, token, { decision: 'ACCEPTED', firstName: 'Jan', lastName: 'Klient', relationship: 'klient', note: '', signature })).rejects.toThrow('nie oczekuje')
     await expect(db.installationAcceptanceProtocol.update({ where: { id: protocol.id }, data: { clientNote: 'zmiana' } })).rejects.toThrow()
     await db.installationAcceptanceLink.update({ where: { id: link.id }, data: { expiresAt: new Date('2020-01-01') } })
     await expect(publicAcceptanceProjection(db, token)).rejects.toThrow('Nie znaleziono')
+
+    await db.installationScope.update({ where: { id: wallpaperScopeIds[0] }, data: { name: 'Tapeta po poprawce' } })
+    const revision = await createAcceptanceRevision(db, protocol.id, 'test-coordinator')
+    expect(revision.revision).toBe(2)
+    expect(revision.snapshot.items[0].scopeName).toBe('Tapeta po poprawce')
+    expect(revision.previousId).toBe(protocol.id)
+    await expect(createAcceptanceRevision(db, protocol.id, 'test-coordinator')).rejects.toThrow('najnowszą wersję')
+    expect((await listAcceptanceCandidates(db, orderId, installerId)).find((candidate) => candidate.visitId === visitId && candidate.groupKey === `category:${wallpaperCategoryId}`)?.id).toBe(revision.id)
+    await signAcceptanceProtocol(db, revision.id, installerId, { results: wallpaperScopeIds.map((scopeId) => ({ scopeId, result: 'DONE', note: '' })), signature })
+    const newLink = await issueAcceptanceLink(db, revision.id, installerId, 'ONSITE')
+    await submitClientAcceptance(db, newLink.token, { decision: 'ACCEPTED', firstName: 'Jan', lastName: 'Klient', relationship: 'klient', note: '', signature })
+    const revisedPdf = await getOrCreateAcceptancePdf(db, revision.id, 'ACCEPTANCE', { async download() { throw new Error('No photos expected') } })
+    expect(revisedPdf.sha256).not.toBe(pdf.sha256)
+    expect((await getOrCreateAcceptancePdf(db, protocol.id, 'ACCEPTANCE', { async download() { throw new Error('No photos expected') } })).sha256).toBe(pdf.sha256)
+    const invoiceTask = await db.installationAcceptanceInvoiceTask.findUniqueOrThrow({ where: { visitId_groupKey: { visitId, groupKey: `category:${wallpaperCategoryId}` } } })
+    expect(invoiceTask.title).toBe('Wystawić fakturę')
+    expect(invoiceTask.status).toBe('PENDING')
+    expect(invoiceTask.acceptedProtocolId).toBe(revision.id)
+    expect(await db.installationAcceptanceInvoiceTask.count({ where: { orderId } })).toBe(1)
+    const third = await createAcceptanceRevision(db, revision.id, 'test-coordinator')
+    expect((await db.installationAcceptanceInvoiceTask.findUniqueOrThrow({ where: { id: invoiceTask.id } })).status).toBe('ON_HOLD')
+    await signAcceptanceProtocol(db, third.id, installerId, { results: wallpaperScopeIds.map((scopeId) => ({ scopeId, result: 'DONE', note: '' })), signature })
+    const thirdLink = await issueAcceptanceLink(db, third.id, installerId, 'ONSITE')
+    await submitClientAcceptance(db, thirdLink.token, { decision: 'ACCEPTED', firstName: 'Jan', lastName: 'Klient', relationship: 'klient', note: '', signature })
+    expect((await db.installationAcceptanceInvoiceTask.findUniqueOrThrow({ where: { id: invoiceTask.id } })).status).toBe('PENDING')
+    expect(await db.installationAcceptanceInvoiceTask.count({ where: { orderId } })).toBe(1)
   })
 
   it('accepts an optional private photo before signing and locks its association afterward', async () => {
     const draft = await createAcceptanceDraft(db, { orderId, visitId, groupKey: `category:${stuccoCategoryId}`, installerId })
     expect(await db.installationAcceptanceProtocol.count({ where: { id: draft.id } })).toBe(1)
-    const bytes = new Uint8Array([1, 2, 3, 4])
+    const bytes = new Uint8Array(await sharp({ create: { width: 300, height: 200, channels: 3, background: '#b7aa8d' } }).png().toBuffer())
     const media = {
       async upload({ fileId, jobId, contentType }: { fileId: string; jobId: string; contentType: string }) {
         return { fileId, jobId, contentType, byteSize: bytes.byteLength, sha256: createHash('sha256').update(bytes).digest('hex') }
@@ -153,6 +195,20 @@ describe('protokół odbioru prac', () => {
     const secondToken = messages[1]?.match(/\/p\/([A-Za-z0-9_-]{43})/)?.[1]
     expect(secondToken).toBeTruthy()
     await expect(publicAcceptanceProjection(db, secondToken!)).rejects.toThrow('Nie znaleziono')
+    const refusal = await issueAcceptanceLink(db, draft.id, installerId, 'ONSITE')
+    await submitClientAcceptance(db, refusal.token, { decision: 'REFUSED', firstName: 'Jan', lastName: 'Klient', relationship: 'klient', note: 'Brak akceptacji efektu.', signature: null })
+    expect(await db.installationAcceptanceAlert.count({ where: { protocolId: draft.id, kind: 'REFUSED' } })).toBe(2)
+    expect((await dispatchPendingAcceptanceAlerts(db, draft.id, async () => { throw new Error('SMTP unavailable') })).failed).toBe(2)
+    expect((await dispatchPendingAcceptanceAlerts(db, draft.id, async () => {})).sent).toBe(2)
+    const unilateral = await createUnilateralDraft(db, draft.id, installerId)
+    await expect(signUnilateralProtocol(db, unilateral.id, installerId, { reason: 'ABSENT', circumstances: 'Klient był nieobecny na miejscu.', signature })).rejects.toThrow('Stan odbioru')
+    const signedUnilateral = await signUnilateralProtocol(db, unilateral.id, installerId, { reason: 'REFUSAL', circumstances: 'Klient odmówił odbioru z powodu widocznego łączenia listew.', signature })
+    expect(signedUnilateral.contentHash).toMatch(/^[a-f0-9]{64}$/)
+    const unilateralPdf = await getOrCreateAcceptancePdf(db, draft.id, 'UNILATERAL', media)
+    expect(Buffer.from(unilateralPdf.bytes).subarray(0, 4).toString()).toBe('%PDF')
+    expect(await db.installationAcceptanceAlert.count({ where: { protocolId: draft.id, kind: 'UNILATERAL' } })).toBe(2)
+    expect(await db.installationAcceptanceInvoiceTask.count({ where: { acceptedProtocolId: draft.id } })).toBe(0)
+    await expect(signUnilateralProtocol(db, unilateral.id, installerId, { reason: 'REFUSAL', circumstances: 'Ponowienie odmowy.', signature })).rejects.toThrow('już podpisany')
   })
 
   it('creates a separate protocol on the next visit and rejects ambiguous ownership or a cancelled visit', async () => {
@@ -170,5 +226,44 @@ describe('protokół odbioru prac', () => {
     await expect(getAcceptanceProtocol(db, draft.id, secondInstallerId)).rejects.toThrow('Nie znaleziono')
     await db.installationVisit.update({ where: { id: next.id }, data: { status: 'CANCELLED' } })
     await expect(signAcceptanceProtocol(db, draft.id, installerId, { results: wallpaperScopeIds.map((scopeId) => ({ scopeId, result: 'DONE', note: '' })), signature })).rejects.toThrow('odwołana')
+  })
+
+  it.each(['ABSENT', 'NO_RESPONSE'] as const)('keeps %s unilateral evidence separate from client acceptance', async (reason) => {
+    const visit = await db.installationVisit.create({ data: {
+      orderId, status: 'CONFIRMED', startsAt: new Date(reason === 'ABSENT' ? '2026-09-23T16:00:00Z' : '2026-09-23T18:00:00Z'), endsAt: new Date(reason === 'ABSENT' ? '2026-09-23T17:00:00Z' : '2026-09-23T19:00:00Z'), createdById: 'test',
+      scopes: { create: { orderId, scopeId: stuccoScopeId } },
+    } })
+    const draft = await createAcceptanceDraft(db, { orderId, visitId: visit.id, groupKey: `category:${stuccoCategoryId}`, installerId })
+    await signAcceptanceProtocol(db, draft.id, installerId, { results: [{ scopeId: stuccoScopeId, result: 'DONE', note: '' }], signature })
+    const link = await issueAcceptanceLink(db, draft.id, installerId, 'ONSITE')
+    const unilateral = await createUnilateralDraft(db, draft.id, installerId)
+    await signUnilateralProtocol(db, unilateral.id, installerId, { reason, circumstances: reason === 'ABSENT' ? 'Klient nie był obecny po zakończeniu prac.' : 'Klient nie odpowiedział na prośbę o odbiór na miejscu.', signature })
+    expect((await db.installationAcceptanceProtocol.findUniqueOrThrow({ where: { id: draft.id } })).status).toBe('UNILATERAL')
+    expect((await db.installationAcceptanceUnilateral.findUniqueOrThrow({ where: { id: unilateral.id } })).signature).not.toBeNull()
+    await expect(submitClientAcceptance(db, link.token, { decision: 'ACCEPTED', firstName: 'Jan', lastName: 'Klient', relationship: 'klient', note: '', signature })).rejects.toThrow('nie oczekuje')
+    expect(await db.installationAcceptanceAlert.count({ where: { protocolId: draft.id, kind: 'UNILATERAL' } })).toBe(2)
+  })
+
+  it('closes the open work type across correction visits only after a fresh client signature', async () => {
+    const groupKey = `category:${stuccoCategoryId}`
+    const openBefore = await db.installationAcceptanceProtocol.findMany({ where: { orderId, groupKey }, orderBy: { visit: { startsAt: 'asc' } } })
+    expect(openBefore.map((item) => item.status)).toEqual(['REFUSED', 'UNILATERAL', 'UNILATERAL'])
+    expect(openBefore[1].resolvesProtocolId).toBe(openBefore[0].id)
+    expect(openBefore[2].resolvesProtocolId).toBe(openBefore[1].id)
+    expect(await db.installationAcceptanceResolution.count()).toBe(0)
+    const visit = await db.installationVisit.create({ data: {
+      orderId, status: 'CONFIRMED', startsAt: new Date('2026-09-23T20:00:00Z'), endsAt: new Date('2026-09-23T20:30:00Z'), createdById: 'test',
+      scopes: { create: { orderId, scopeId: stuccoScopeId } },
+    } })
+    const draft = await createAcceptanceDraft(db, { orderId, visitId: visit.id, groupKey, installerId })
+    expect(draft.resolvesProtocolId).toBe(openBefore[2].id)
+    expect(await db.installationAcceptanceInvoiceTask.count({ where: { orderId, groupKey } })).toBe(0)
+    await signAcceptanceProtocol(db, draft.id, installerId, { results: [{ scopeId: stuccoScopeId, result: 'DONE', note: '' }], signature })
+    const link = await issueAcceptanceLink(db, draft.id, installerId, 'ONSITE')
+    await submitClientAcceptance(db, link.token, { decision: 'ACCEPTED', firstName: 'Jan', lastName: 'Klient', relationship: 'klient', note: '', signature })
+    const resolutions = await db.installationAcceptanceResolution.findMany({ where: { resolvingProtocolId: draft.id } })
+    expect(resolutions.map((item) => item.priorProtocolId).sort()).toEqual(openBefore.map((item) => item.id).sort())
+    expect(await db.installationAcceptanceInvoiceTask.count({ where: { orderId, groupKey, acceptedProtocolId: draft.id } })).toBe(1)
+    await expect(createAcceptanceRevision(db, openBefore[0].id, 'test-coordinator')).rejects.toThrow('z kolejnej wizyty')
   })
 })

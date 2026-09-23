@@ -16,12 +16,21 @@ export type AcceptanceCandidate = {
   blockedReason: string | null
 }
 
+const statusName: Record<string, string> = {
+  DRAFT: 'szkic', INSTALLER_SIGNED: 'podpis wykonawcy złożony', ACCEPTED: 'odebrano',
+  ACCEPTED_WITH_REMARKS: 'odebrano z uwagami', REFUSED: 'odmowa odbioru', UNILATERAL: 'protokół jednostronny',
+}
+
 export function InstallerProtocolPanel({ orderId, candidates }: { orderId: string; candidates: AcceptanceCandidate[] }) {
   const router = useRouter()
   const [busy, setBusy] = useState<string | null>(null)
   const [error, setError] = useState('')
 
   async function open(candidate: AcceptanceCandidate) {
+    if (candidate.status) {
+      router.push(`/installations/${orderId}/protocols/${candidate.id}`)
+      return
+    }
     setBusy(candidate.id)
     setError('')
     try {
@@ -52,7 +61,7 @@ export function InstallerProtocolPanel({ orderId, candidates }: { orderId: strin
             <div>
               <p className="text-xs font-bold uppercase tracking-wider" style={{ color: '#8C5718' }}>{candidate.startsAt ? formatWarsawDateTime(candidate.startsAt) : 'Wizyta'}</p>
               <h3 className="mt-1 text-lg font-extrabold" style={{ color: 'var(--wd-dark)' }}>{candidate.workType}</h3>
-              <p className="text-sm" style={{ color: 'var(--wd-text-muted)' }}>{candidate.scopeCount} {candidate.scopeCount === 1 ? 'praca' : 'prace'} · {candidate.status === 'INSTALLER_SIGNED' ? 'podpis wykonawcy złożony' : candidate.status === 'DRAFT' ? 'szkic' : 'do przygotowania'}</p>
+              <p className="text-sm" style={{ color: 'var(--wd-text-muted)' }}>{candidate.scopeCount} {candidate.scopeCount === 1 ? 'praca' : 'prace'} · {candidate.status ? statusName[candidate.status] ?? candidate.status : 'do przygotowania'}</p>
               {candidate.blockedReason && <p className="mt-1 max-w-md text-sm font-semibold" style={{ color: '#8C5718' }}>{candidate.blockedReason}</p>}
             </div>
             <button type="button" onClick={() => open(candidate)} disabled={busy !== null || Boolean(candidate.blockedReason)}

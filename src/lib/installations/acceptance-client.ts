@@ -3,6 +3,8 @@ import { Prisma, type PrismaClient } from '@/generated/prisma'
 import { AcceptanceProtocolError, signatureBytes, type AcceptanceResult, type AcceptanceSnapshot } from './acceptance-protocol'
 import { sendEmail, type OutboundEmail } from '@/lib/email/outbound-email'
 import { installationPublicUrl } from './public-url'
+import { queueAcceptanceAlerts } from './acceptance-alerts'
+import { ensureAcceptanceInvoiceTask } from './acceptance-invoice-task'
 
 type InstallationDb = PrismaClient | Prisma.TransactionClient
 type Channel = 'ONSITE' | 'EMAIL'
@@ -95,13 +97,24 @@ async function resolveLink(db: InstallationDb, token: string) {
   return link
 }
 
+export async function resolvePublicAcceptanceProtocol(db: InstallationDb, token: string) {
+  const link = await resolveLink(db, token)
+  return { protocolId: link.protocolId, status: link.protocol.status }
+}
+
 export async function publicAcceptanceProjection(db: PrismaClient, token: string) {
   const link = await resolveLink(db, token)
   await db.installationAcceptanceLink.updateMany({ where: { id: link.id, revokedAt: null, expiresAt: { gt: new Date() } }, data: { lastOpenedAt: new Date() } })
   const protocol = link.protocol
+  const newest = await db.installationAcceptanceProtocol.findFirst({ where: { visitId: protocol.visitId, groupKey: protocol.groupKey }, orderBy: { revision: 'desc' }, select: { id: true } })
+  const unilateral = await db.installationAcceptanceUnilateral.findUnique({ where: { protocolId: protocol.id }, include: {
+    photoFiles: { where: { status: 'READY', softDeletedAt: null }, select: { id: true, originalFilename: true }, orderBy: { createdAt: 'asc' } },
+  } })
+  const photos = await db.installationFile.findMany({ where: { acceptanceProtocolId: protocol.id, status: 'READY', softDeletedAt: null }, select: { id: true, originalFilename: true }, orderBy: { createdAt: 'asc' } })
   return {
     protocolId: protocol.id,
     revision: protocol.revision,
+    isLatest: newest?.id === protocol.id,
     status: protocol.status,
     snapshot: JSON.parse(protocol.snapshotJson) as AcceptanceSnapshot,
     results: JSON.parse(protocol.resultsJson ?? '[]') as AcceptanceResult[],
@@ -112,6 +125,11 @@ export async function publicAcceptanceProjection(db: PrismaClient, token: string
     clientRelationship: protocol.clientRelationship,
     clientNote: protocol.clientNote,
     clientRespondedAt: protocol.clientRespondedAt?.toISOString() ?? null,
+    unilateral: unilateral?.status === 'SIGNED' ? { reason: unilateral.reason, circumstances: unilateral.circumstances, signedAt: unilateral.signedAt?.toISOString() ?? null } : null,
+    photos: [
+      ...photos.map((photo) => ({ id: photo.id, name: photo.originalFilename, kind: 'ACCEPTANCE' as const })),
+      ...(unilateral?.status === 'SIGNED' ? unilateral.photoFiles.map((photo) => ({ id: photo.id, name: photo.originalFilename, kind: 'UNILATERAL' as const })) : []),
+    ],
   }
 }
 
@@ -150,6 +168,8 @@ export async function submitClientAcceptance(db: PrismaClient, token: string, in
       },
     })
     if (updated.count !== 1) throw new AcceptanceProtocolError('CONFLICT', 'Odpowiedź została już zapisana.')
-    return { decision: input.decision, respondedAt: respondedAt.toISOString(), responseHash }
+    if (input.decision === 'ACCEPTED_WITH_REMARKS' || input.decision === 'REFUSED') await queueAcceptanceAlerts(tx, protocol.id, input.decision)
+    if (input.decision === 'ACCEPTED') await ensureAcceptanceInvoiceTask(tx, protocol.id)
+    return { protocolId: protocol.id, decision: input.decision, respondedAt: respondedAt.toISOString(), responseHash }
   })
 }

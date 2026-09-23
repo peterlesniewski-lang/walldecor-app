@@ -8,6 +8,7 @@ import { formatWarsawDateTime } from '@/lib/installations/visit-time'
 
 type Protocol = {
   id: string
+  revision: number
   orderId: string
   status: string
   snapshot: AcceptanceSnapshot
@@ -15,7 +16,7 @@ type Protocol = {
   installerSignedAt: Date | string | null
 }
 
-export function InstallerProtocolEditor({ protocol, initialPhotos }: { protocol: Protocol; initialPhotos: Array<{ id: string; name: string }> }) {
+export function InstallerProtocolEditor({ protocol, initialPhotos, unilateral }: { protocol: Protocol; initialPhotos: Array<{ id: string; name: string }>; unilateral: { id: string; status: string } | null }) {
   const router = useRouter()
   const canvasRef = useRef<HTMLCanvasElement>(null)
   const drawing = useRef(false)
@@ -25,10 +26,16 @@ export function InstallerProtocolEditor({ protocol, initialPhotos }: { protocol:
   const [uploading, setUploading] = useState(false)
   const [handoffBusy, setHandoffBusy] = useState(false)
   const [emailBusy, setEmailBusy] = useState(false)
+  const [unilateralBusy, setUnilateralBusy] = useState(false)
   const [emailLinks, setEmailLinks] = useState<Array<{ id: string; recipientEmail: string | null; expiresAt: string; sentAt: string | null; revokedAt: string | null }>>([])
   const [photos, setPhotos] = useState(initialPhotos)
   const [error, setError] = useState('')
   const signed = protocol.status !== 'DRAFT'
+  useEffect(() => {
+    const refresh = () => router.refresh()
+    window.addEventListener('focus', refresh)
+    return () => window.removeEventListener('focus', refresh)
+  }, [router])
   useEffect(() => {
     if (!signed) return
     fetch(`/api/installations/${protocol.orderId}/protocols/${protocol.id}/email-link`).then((response) => response.ok ? response.json() : null)
@@ -147,11 +154,22 @@ export function InstallerProtocolEditor({ protocol, initialPhotos }: { protocol:
     finally { setEmailBusy(false) }
   }
 
+  async function openUnilateral() {
+    if (unilateral) { window.location.assign(`/installations/${protocol.orderId}/protocols/${protocol.id}/unilateral`); return }
+    setUnilateralBusy(true); setError('')
+    try {
+      const response = await fetch(`/api/installations/${protocol.orderId}/protocols/${protocol.id}/unilateral`, { method: 'POST' })
+      const body = await response.json()
+      if (!response.ok) throw new Error(body.error ?? 'Nie udało się przygotować protokołu jednostronnego.')
+      window.location.assign(`/installations/${protocol.orderId}/protocols/${protocol.id}/unilateral`)
+    } catch (cause) { setError(cause instanceof Error ? cause.message : 'Nie udało się przygotować protokołu jednostronnego.'); setUnilateralBusy(false) }
+  }
+
   return (
     <main className="mx-auto max-w-3xl px-4 py-8 sm:py-12" style={{ color: 'var(--wd-dark)' }}>
       <Link className="text-sm font-bold underline underline-offset-4" href={`/installations/${protocol.orderId}#acceptance`}>← Wróć do karty montażu</Link>
       <header className="mt-8 border-b-2 pb-7" style={{ borderColor: 'var(--wd-dark)' }}>
-        <p className="text-xs font-black uppercase tracking-[0.24em]" style={{ color: '#8C5718' }}>{protocol.snapshot.orderNumber} · protokół wykonawcy</p>
+        <p className="text-xs font-black uppercase tracking-[0.24em]" style={{ color: '#8C5718' }}>{protocol.snapshot.orderNumber} · protokół wykonawcy · wersja {protocol.revision}</p>
         <h1 className="mt-3 text-4xl font-bold tracking-tight sm:text-5xl" style={{ fontFamily: 'var(--font-acceptance-display)' }}>{protocol.snapshot.workType}</h1>
         <p className="mt-3 text-sm">{protocol.snapshot.address} · {protocol.snapshot.installerName}</p>
         <p className="mt-1 text-sm font-semibold">Wizyta: {protocol.snapshot.visitStartsAt ? formatWarsawDateTime(protocol.snapshot.visitStartsAt) : 'data nieustalona'}</p>
@@ -178,7 +196,7 @@ export function InstallerProtocolEditor({ protocol, initialPhotos }: { protocol:
       <section className="mt-6 rounded-xl border border-black/15 bg-white p-5">
         <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Zdjęcia prac</h2>
         <p className="mt-1 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Zdjęcia są opcjonalne. Protokół możesz podpisać bez nich.</p>
-        {photos.length > 0 && <ul className="mt-3 list-inside list-disc text-sm">{photos.map((photo) => <li key={photo.id}>{photo.name}</li>)}</ul>}
+        {photos.length > 0 && <ul className="mt-3 list-inside list-disc text-sm">{photos.map((photo) => <li key={photo.id}>{signed ? <a className="underline underline-offset-4" href={`/api/installations/${protocol.orderId}/protocols/${protocol.id}/photos/${photo.id}`} target="_blank" rel="noreferrer">{photo.name}</a> : photo.name}</li>)}</ul>}
         {!signed && <label className="mt-4 inline-flex min-h-11 cursor-pointer items-center rounded-full border border-black/30 px-5 text-sm font-bold">
           {uploading ? 'Przesyłanie zdjęcia…' : 'Dodaj zdjęcie'}
           <input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) void uploadPhoto(file); event.target.value = '' }} />
@@ -199,6 +217,12 @@ export function InstallerProtocolEditor({ protocol, initialPhotos }: { protocol:
         {error && <p role="alert" className="mt-3 text-sm font-bold text-red-800">{error}</p>}
         <button type="button" disabled={handoffBusy} onClick={openClientView} className="mt-5 min-h-12 w-full rounded-full px-6 font-bold text-white disabled:opacity-50" style={{ background: 'var(--wd-dark)' }}>{handoffBusy ? 'Otwieranie…' : 'Otwórz widok klienta na tym telefonie'}</button>
       </section>}
+      {['INSTALLER_SIGNED', 'REFUSED', 'UNILATERAL'].includes(protocol.status) && <section className="mt-6 rounded-xl border border-amber-800 bg-amber-50 p-5">
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>{protocol.status === 'REFUSED' ? 'Klient odmówił odbioru' : unilateral?.status === 'SIGNED' ? 'Protokół jednostronny podpisany' : 'Klient nie może potwierdzić na miejscu?'}</h2>
+        <p className="mt-2 text-sm">{protocol.status === 'REFUSED' ? 'Sporządź osobny protokół jednostronny z opisem odmowy.' : 'Przy nieobecności lub braku odpowiedzi zapisz okoliczności w osobnym protokole. Nie będzie to odbiór klienta.'}</p>
+        {error && <p role="alert" className="mt-3 text-sm font-bold text-red-800">{error}</p>}
+        <button type="button" disabled={unilateralBusy} onClick={openUnilateral} className="mt-4 min-h-11 rounded-full border border-amber-900 px-5 text-sm font-bold disabled:opacity-50">{unilateralBusy ? 'Otwieranie…' : unilateral ? 'Otwórz protokół jednostronny' : 'Przygotuj protokół jednostronny'}</button>
+      </section>}
       {signed && <section className="mt-6 rounded-xl border border-black/15 bg-white p-5">
         <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Link dla klienta</h2>
         <p className="mt-2 text-sm">Wyślij osobny link do tego protokołu na adres e-mail z karty montażu. Jest ważny przez 90 dni.</p>
@@ -209,6 +233,10 @@ export function InstallerProtocolEditor({ protocol, initialPhotos }: { protocol:
           {emailLinks.filter((link) => !link.revokedAt && new Date(link.expiresAt) > new Date()).map((link) => <button key={link.id} type="button" disabled={emailBusy} onClick={() => revokeEmailLink(link.id)} className="min-h-11 rounded-full border border-black/30 px-5 text-sm font-bold disabled:opacity-50">Cofnij link</button>)}
         </div>
       </section>}
+      {['ACCEPTED', 'ACCEPTED_WITH_REMARKS', 'REFUSED', 'UNILATERAL'].includes(protocol.status) && <div className="mt-6 flex flex-wrap gap-3">
+        <a href={`/api/installations/${protocol.orderId}/protocols/${protocol.id}/pdf`} className="inline-flex min-h-11 items-center rounded-full px-5 text-sm font-bold text-white" style={{ background: 'var(--wd-dark)' }}>Pobierz PDF protokołu</a>
+        {unilateral?.status === 'SIGNED' && <a href={`/api/installations/${protocol.orderId}/protocols/${protocol.id}/pdf?kind=UNILATERAL`} className="inline-flex min-h-11 items-center rounded-full border border-black/30 px-5 text-sm font-bold">Pobierz PDF jednostronny</a>}
+      </div>}
     </main>
   )
 }

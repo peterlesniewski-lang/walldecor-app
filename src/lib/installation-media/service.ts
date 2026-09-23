@@ -246,7 +246,7 @@ async function compensateStoredFile(
 
 async function storeFile(
   db: PrismaClient,
-  target: { orderId: string; roomId?: string | null; scopeId?: string | null; formSubmissionId?: string | null; clientLinkId?: string | null; acceptanceProtocolId?: string | null; mobileHandoffId?: string | null; questionKey?: string | null; purpose: 'CLIENT_QUESTION' | 'MISMATCH_EVIDENCE' | 'INTERNAL_PROJECT'; source: 'WEB' | 'MOBILE_QR' | 'INTERNAL'; actorId: string },
+  target: { orderId: string; roomId?: string | null; scopeId?: string | null; formSubmissionId?: string | null; clientLinkId?: string | null; acceptanceProtocolId?: string | null; unilateralProtocolId?: string | null; mobileHandoffId?: string | null; questionKey?: string | null; purpose: 'CLIENT_QUESTION' | 'MISMATCH_EVIDENCE' | 'INTERNAL_PROJECT'; source: 'WEB' | 'MOBILE_QR' | 'INTERNAL'; actorId: string },
   input: UploadInput,
   media: InstallationMediaAdapter,
 ) {
@@ -261,6 +261,7 @@ async function storeFile(
       formSubmissionId: target.formSubmissionId ?? null,
       clientLinkId: target.clientLinkId ?? null,
       acceptanceProtocolId: target.acceptanceProtocolId ?? null,
+      unilateralProtocolId: target.unilateralProtocolId ?? null,
       mobileHandoffId: target.mobileHandoffId ?? null,
       purpose: target.purpose,
       questionKey: target.questionKey ?? null,
@@ -323,6 +324,31 @@ export async function listAcceptancePhotoFiles(db: InstallationDb, protocolId: s
     select: { id: true, originalFilename: true, contentType: true, byteSize: true, sha256: true },
     orderBy: { createdAt: 'asc' },
   })
+}
+
+export async function createUnilateralPhotoFile(db: PrismaClient, unilateralId: string, installerId: string, input: UploadInput, media: InstallationMediaAdapter) {
+  const unilateral = await db.installationAcceptanceUnilateral.findFirst({ where: { id: unilateralId, status: 'DRAFT', protocol: { installerId } }, select: { id: true, protocol: { select: { orderId: true } } } })
+  if (!unilateral) throw new InstallationMediaAccessError()
+  if (!['image/jpeg', 'image/png', 'image/webp'].includes(input.contentType)) throw new InstallationMediaValidationError({ file: 'Zdjęcie musi być plikiem JPG, PNG albo WebP.' })
+  return storeFile(db, { orderId: unilateral.protocol.orderId, unilateralProtocolId: unilateral.id, purpose: 'INTERNAL_PROJECT', source: 'INTERNAL', actorId: installerId }, input, media)
+}
+
+export async function listUnilateralPhotoFiles(db: InstallationDb, unilateralId: string, installerId: string) {
+  const unilateral = await db.installationAcceptanceUnilateral.findFirst({ where: { id: unilateralId, protocol: { installerId } }, select: { id: true } })
+  if (!unilateral) throw new InstallationMediaAccessError()
+  return db.installationFile.findMany({ where: { unilateralProtocolId: unilateralId, status: 'READY', softDeletedAt: null }, select: { id: true, originalFilename: true, contentType: true, byteSize: true, sha256: true }, orderBy: { createdAt: 'asc' } })
+}
+
+export async function getSignedAcceptancePhoto(db: InstallationDb, protocolId: string, fileId: string) {
+  const file = await db.installationFile.findFirst({ where: {
+    id: fileId, status: 'READY', softDeletedAt: null,
+    OR: [
+      { acceptanceProtocolId: protocolId, acceptanceProtocol: { status: { not: 'DRAFT' } } },
+      { unilateralProtocol: { protocolId, status: 'SIGNED' } },
+    ],
+  } })
+  if (!file || !['image/jpeg', 'image/png', 'image/webp'].includes(file.contentType)) throw new InstallationMediaAccessError()
+  return file
 }
 
 export async function createClientQuestionFile(db: PrismaClient, token: string, input: { questionKey: string } & UploadInput, media: InstallationMediaAdapter) {

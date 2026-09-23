@@ -27,6 +27,39 @@ import type { AcceptanceSnapshot } from '@/lib/installations/acceptance-protocol
 type Params = { params: Promise<{ id: string }> }
 const acceptanceDisplay = Bricolage_Grotesque({ variable: '--font-acceptance-display', subsets: ['latin', 'latin-ext'], weight: ['700', '800'] })
 
+async function loadAcceptanceProtocols(orderId: string) {
+  const [protocols, invoiceTasks] = await Promise.all([
+    prisma.installationAcceptanceProtocol.findMany({ where: { orderId }, select: {
+      id: true, visitId: true, groupKey: true, revision: true, status: true, snapshotJson: true, resultsJson: true, clientNote: true,
+      resolutionAsPrior: { select: { resolvingProtocolId: true } },
+      unilateral: { select: { status: true } },
+      alerts: { select: { emailStatus: true } },
+      clientLinks: { where: { channel: 'EMAIL' }, select: { id: true, recipientEmail: true, expiresAt: true, revokedAt: true, sentAt: true }, orderBy: { createdAt: 'desc' } },
+    }, orderBy: { createdAt: 'desc' } }),
+    prisma.installationAcceptanceInvoiceTask.findMany({ where: { orderId }, select: { id: true, visitId: true, groupKey: true, title: true, status: true } }),
+  ])
+  const latestByGroup = new Map<string, number>()
+  const invoiceTaskByGroup = new Map(invoiceTasks.map((task) => [`${task.visitId}:${task.groupKey}`, { id: task.id, title: task.title, status: task.status }]))
+  for (const protocol of protocols) {
+    const key = `${protocol.visitId}:${protocol.groupKey}`
+    latestByGroup.set(key, Math.max(latestByGroup.get(key) ?? 0, protocol.revision))
+  }
+  return protocols.map((protocol) => {
+    const snapshot = JSON.parse(protocol.snapshotJson) as AcceptanceSnapshot
+    return {
+      id: protocol.id, revision: protocol.revision, status: protocol.status,
+      isLatest: protocol.revision === latestByGroup.get(`${protocol.visitId}:${protocol.groupKey}`),
+      resolvedByProtocolId: protocol.resolutionAsPrior?.resolvingProtocolId ?? null,
+      invoiceTask: invoiceTaskByGroup.get(`${protocol.visitId}:${protocol.groupKey}`) ?? null,
+      hasIncompleteWorks: Boolean(protocol.resultsJson && (JSON.parse(protocol.resultsJson) as Array<{ result: string }>).some((result) => result.result !== 'DONE')),
+      unilateralStatus: protocol.unilateral?.status ?? null,
+      failedAlerts: protocol.alerts.filter((alert) => alert.emailStatus === 'FAILED').length,
+      workType: snapshot.workType, visitStartsAt: snapshot.visitStartsAt, clientNote: protocol.clientNote,
+      links: protocol.clientLinks.map((link) => ({ ...link, expiresAt: link.expiresAt.toISOString(), revokedAt: link.revokedAt?.toISOString() ?? null, sentAt: link.sentAt?.toISOString() ?? null })),
+    }
+  })
+}
+
 export default async function InstallationOrderPage({ params }: Params) {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
@@ -47,14 +80,15 @@ export default async function InstallationOrderPage({ params }: Params) {
 
   const canCoordinateClientForm = canEditInstallationOrder(viewer, order)
   const canManageGovernance = viewer.role === 'ADMIN' || viewer.role === 'MANAGER'
-  const [rooms, visits, scopeAssignments] = await Promise.all([
+  const [rooms, visits, scopeAssignments, acceptanceProtocols] = await Promise.all([
     getInstallationOrderRooms(prisma, id),
     listInstallationVisits(prisma, id),
     listScopeInstallerAssignments(prisma, id),
+    loadAcceptanceProtocols(id),
   ])
   // Client answers, evidence and link management are coordinator-only.
   const coordinatorData = canCoordinateClientForm ? await (async () => {
-    const [employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches, protocols] = await Promise.all([
+    const [employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches] = await Promise.all([
       prisma.employee.findMany({
         where: { active: true },
         select: { id: true, firstName: true, lastName: true, email: true },
@@ -71,20 +105,8 @@ export default async function InstallationOrderPage({ params }: Params) {
       getInstallationVisitFeeView(prisma, id),
       listInstallationFiles(prisma, id),
       listInstallationMismatchesForEvidence(prisma, id),
-      prisma.installationAcceptanceProtocol.findMany({ where: { orderId: id }, select: {
-        id: true, revision: true, status: true, snapshotJson: true, clientNote: true,
-        clientLinks: { where: { channel: 'EMAIL' }, select: { id: true, recipientEmail: true, expiresAt: true, revokedAt: true, sentAt: true }, orderBy: { createdAt: 'desc' } },
-      }, orderBy: { createdAt: 'desc' } }),
     ])
-    const acceptanceProtocols = protocols.map((protocol) => {
-      const snapshot = JSON.parse(protocol.snapshotJson) as AcceptanceSnapshot
-      return {
-        id: protocol.id, revision: protocol.revision, status: protocol.status,
-        workType: snapshot.workType, visitStartsAt: snapshot.visitStartsAt, clientNote: protocol.clientNote,
-        links: protocol.clientLinks.map((link) => ({ ...link, expiresAt: link.expiresAt.toISOString(), revokedAt: link.revokedAt?.toISOString() ?? null, sentAt: link.sentAt?.toISOString() ?? null })),
-      }
-    })
-    return { employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches, acceptanceProtocols }
+    return { employees, catalog, templates, formSnapshot, clientLinks, clarifications, readiness, formRevisions, ownership, visitFee, files, mismatches }
   })() : null
 
   // The coordinator model needs Decimal serialization at the client boundary.
@@ -93,7 +115,7 @@ export default async function InstallationOrderPage({ params }: Params) {
     visitFeeGrossAmount: order.visitFeeGrossAmount?.toFixed(2) ?? null,
   }
 
-  return <InstallationOrderDetail
+  return <div className={acceptanceDisplay.variable}><InstallationOrderDetail
     order={clientOrder}
     employees={coordinatorData?.employees ?? []}
     canEdit={canCoordinateClientForm}
@@ -109,10 +131,10 @@ export default async function InstallationOrderPage({ params }: Params) {
     ownership={coordinatorData?.ownership ?? null}
     visitFee={coordinatorData?.visitFee ?? null}
     files={coordinatorData?.files ?? []}
-    acceptanceProtocols={coordinatorData?.acceptanceProtocols ?? []}
+    acceptanceProtocols={acceptanceProtocols}
     mismatches={coordinatorData?.mismatches ?? []}
     canManageGovernance={canManageGovernance}
     visits={visits}
     scopeAssignments={scopeAssignments}
-  />
+  /></div>
 }

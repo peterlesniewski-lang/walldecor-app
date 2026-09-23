@@ -22,5 +22,6 @@ export default async function InstallerProtocolPage({ params }: Params) {
   const protocol = await getAcceptanceProtocol(prisma, protocolId, viewer.employeeId).catch(() => null)
   if (!protocol || protocol.orderId !== id) notFound()
   const photos = await listAcceptancePhotoFiles(prisma, protocolId, viewer.employeeId)
-  return <div className={acceptanceDisplay.variable}><InstallerProtocolEditor protocol={protocol} initialPhotos={photos.map(({ id: photoId, originalFilename }) => ({ id: photoId, name: originalFilename }))} /></div>
+  const unilateral = await prisma.installationAcceptanceUnilateral.findUnique({ where: { protocolId }, select: { id: true, status: true } })
+  return <div className={acceptanceDisplay.variable}><InstallerProtocolEditor protocol={protocol} unilateral={unilateral} initialPhotos={photos.map(({ id: photoId, originalFilename }) => ({ id: photoId, name: originalFilename }))} /></div>
 }
