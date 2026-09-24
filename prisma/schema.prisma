@@ -837,6 +837,7 @@ model Employee {
   installationDelegations   InstallationDelegation[]
   installationOrderAssignments InstallationOrderInstaller[]
   installationScopeAssignments InstallationScopeAssignment[]
+  acceptanceProtocols InstallationAcceptanceProtocol[]
 
   createdAt DateTime @default(now())
 }
@@ -881,6 +882,7 @@ model InstallationOrder {
   clarifications        InstallationClarification[]
   rooms                 InstallationRoom[]
   visits                InstallationVisit[]
+  acceptanceProtocols   InstallationAcceptanceProtocol[]
   visitScopes           InstallationVisitScope[]
   scopeAssignments      InstallationScopeAssignment[]
   visitFeePolicyId      String?
@@ -900,6 +902,7 @@ model InstallationOrder {
   visitFeeClientUserAgent String?
   mismatches            InstallationMismatch[]
   billingTasks          InstallationBillingTask[]
+  acceptanceInvoiceTasks InstallationAcceptanceInvoiceTask[]
   files                 InstallationFile[]
   mismatchEvidenceFiles InstallationMismatchEvidence[]
   mobileUploadHandoffs  MobileUploadHandoff[]
@@ -1003,6 +1006,7 @@ model InstallationVisit {
   cancelledAt DateTime?
   completedAt DateTime?
   scopes      InstallationVisitScope[]
+  acceptanceProtocols InstallationAcceptanceProtocol[]
   syncStates  IntegrationSyncState[]
   outbox      IntegrationOutbox[]
   createdById String
@@ -1010,6 +1014,149 @@ model InstallationVisit {
   updatedAt   DateTime @updatedAt
 
   @@index([orderId, status, startsAt])
+}
+
+model InstallationAcceptanceProtocol {
+  id                    String   @id @default(cuid())
+  orderId               String
+  order                 InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  visitId               String
+  visit                 InstallationVisit @relation(fields: [visitId], references: [id], onDelete: Restrict)
+  groupKey              String
+  revision              Int      @default(1)
+  previousId            String?
+  resolvesProtocolId    String?
+  resolvesProtocol      InstallationAcceptanceProtocol? @relation("AcceptanceRemediation", fields: [resolvesProtocolId], references: [id], onDelete: Restrict)
+  remediatedBy          InstallationAcceptanceProtocol[] @relation("AcceptanceRemediation")
+  installerId           String
+  installer             Employee @relation(fields: [installerId], references: [id], onDelete: Restrict)
+  status                String   @default("DRAFT")
+  snapshotJson          String
+  resultsJson           String?
+  contentHash           String?
+  installerSignature    Bytes?
+  installerSignedAt     DateTime?
+  clientDecision        String?
+  clientFirstName       String?
+  clientLastName        String?
+  clientRelationship    String?
+  clientNote            String?
+  clientSignature       Bytes?
+  clientRespondedAt     DateTime?
+  clientResponseHash    String?
+  clientResponseMetaJson String?
+  clientLinks           InstallationAcceptanceLink[]
+  unilateral            InstallationAcceptanceUnilateral?
+  alerts                InstallationAcceptanceAlert[]
+  documents             InstallationAcceptanceDocument[]
+  invoiceTaskAsAccepted InstallationAcceptanceInvoiceTask? @relation("AcceptedAcceptanceInvoiceTask")
+  resolutionAsPrior     InstallationAcceptanceResolution? @relation("AcceptanceResolutionPrior")
+  resolutionAsResolving InstallationAcceptanceResolution[] @relation("AcceptanceResolutionResolving")
+  photoFiles            InstallationFile[]
+  createdAt             DateTime @default(now())
+  updatedAt             DateTime @updatedAt
+
+  @@unique([visitId, groupKey, revision])
+  @@index([orderId, status])
+  @@index([installerId, createdAt])
+  @@index([resolvesProtocolId])
+}
+
+model InstallationAcceptanceLink {
+  id           String   @id @default(cuid())
+  protocolId   String
+  protocol     InstallationAcceptanceProtocol @relation(fields: [protocolId], references: [id], onDelete: Restrict)
+  tokenHash    String   @unique
+  channel      String
+  expiresAt    DateTime
+  revokedAt    DateTime?
+  sentAt       DateTime?
+  recipientEmail String?
+  createdAt    DateTime @default(now())
+  lastOpenedAt DateTime?
+
+  @@index([protocolId, channel, revokedAt])
+}
+
+model InstallationAcceptanceUnilateral {
+  id             String   @id @default(cuid())
+  protocolId     String   @unique
+  protocol       InstallationAcceptanceProtocol @relation(fields: [protocolId], references: [id], onDelete: Restrict)
+  status         String   @default("DRAFT")
+  reason         String?
+  circumstances  String?
+  signature      Bytes?
+  signedAt       DateTime?
+  contentHash    String?
+  photoFiles     InstallationFile[]
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+}
+
+model InstallationAcceptanceAlert {
+  id             String   @id @default(cuid())
+  protocolId     String
+  protocol       InstallationAcceptanceProtocol @relation(fields: [protocolId], references: [id], onDelete: Restrict)
+  eventKey       String   @unique
+  kind           String
+  recipientUserId String?
+  recipientEmail String
+  notificationId String?
+  title          String
+  message        String
+  emailStatus    String   @default("PENDING")
+  emailAttempts  Int      @default(0)
+  emailLeaseUntil DateTime?
+  emailSentAt    DateTime?
+  lastEmailError String?
+  createdAt      DateTime @default(now())
+
+  @@index([emailStatus, emailLeaseUntil])
+  @@index([protocolId, kind])
+}
+
+model InstallationAcceptanceDocument {
+  id         String   @id @default(cuid())
+  protocolId String
+  protocol   InstallationAcceptanceProtocol @relation(fields: [protocolId], references: [id], onDelete: Restrict)
+  kind       String
+  bytes      Bytes
+  sha256     String
+  createdAt  DateTime @default(now())
+
+  @@unique([protocolId, kind])
+}
+
+model InstallationAcceptanceInvoiceTask {
+  id                 String   @id @default(cuid())
+  orderId            String
+  order              InstallationOrder @relation(fields: [orderId], references: [id], onDelete: Restrict)
+  visitId            String
+  groupKey           String
+  acceptedProtocolId String   @unique
+  acceptedProtocol   InstallationAcceptanceProtocol @relation("AcceptedAcceptanceInvoiceTask", fields: [acceptedProtocolId], references: [id], onDelete: Restrict)
+  assignedEmployeeId String
+  title              String   @default("Wystawić fakturę")
+  status             String   @default("PENDING")
+  completedAt        DateTime?
+  completedById      String?
+  createdAt          DateTime @default(now())
+  updatedAt          DateTime @updatedAt
+
+  @@unique([visitId, groupKey])
+  @@index([orderId, status])
+  @@index([assignedEmployeeId, status])
+}
+
+model InstallationAcceptanceResolution {
+  id                  String   @id @default(cuid())
+  priorProtocolId     String   @unique
+  priorProtocol       InstallationAcceptanceProtocol @relation("AcceptanceResolutionPrior", fields: [priorProtocolId], references: [id], onDelete: Restrict)
+  resolvingProtocolId String
+  resolvingProtocol   InstallationAcceptanceProtocol @relation("AcceptanceResolutionResolving", fields: [resolvingProtocolId], references: [id], onDelete: Restrict)
+  createdAt           DateTime @default(now())
+
+  @@index([resolvingProtocolId])
 }
 
 model InstallationVisitScope {
@@ -1353,6 +1500,10 @@ model InstallationFile {
   formSubmission    InstallationFormSubmission? @relation("InstallationFileSubmission", fields: [formSubmissionId], references: [id], onDelete: Restrict)
   clientLinkId      String?
   clientLink        InstallationClientLink? @relation("InstallationFileClientLink", fields: [clientLinkId], references: [id], onDelete: Restrict)
+  acceptanceProtocolId String?
+  acceptanceProtocol InstallationAcceptanceProtocol? @relation(fields: [acceptanceProtocolId], references: [id], onDelete: Restrict)
+  unilateralProtocolId String?
+  unilateralProtocol InstallationAcceptanceUnilateral? @relation(fields: [unilateralProtocolId], references: [id], onDelete: Restrict)
   mobileHandoffId   String?
   mobileHandoff     MobileUploadHandoff? @relation(fields: [mobileHandoffId], references: [id], onDelete: Restrict)
   purpose           String
@@ -1382,6 +1533,8 @@ model InstallationFile {
   @@index([scopeId, createdAt])
   @@index([formSubmissionId, questionKey])
   @@index([clientLinkId, questionKey])
+  @@index([acceptanceProtocolId])
+  @@index([unilateralProtocolId])
   @@index([mobileHandoffId])
   @@index([remoteDeleteStatus, remoteDeleteNextAttemptAt])
 }
