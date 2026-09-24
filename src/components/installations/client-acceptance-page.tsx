@@ -71,21 +71,21 @@ export function ClientAcceptancePage({ token, protocol }: { token: string; proto
     finally { setBusy(false) }
   }
 
-  return <main className="min-h-screen px-4 py-6 sm:py-10" style={{ background: 'radial-gradient(circle at 90% 0%, #e4ddc8 0, transparent 30%), repeating-linear-gradient(0deg, transparent 0, transparent 39px, rgba(28,64,50,.035) 40px), #f7f5ee', color: '#1b3029', fontFamily: 'var(--font-acceptance-sans)' }}>
+  return <main className="min-h-screen px-4 py-6 sm:py-10" style={{ background: 'radial-gradient(circle at 90% 0%, #e4ddc8 0, transparent 30%), repeating-linear-gradient(0deg, transparent 0, transparent 39px, rgba(28,64,50,.035) 40px), #f7f5ee', color: '#1b3029', fontFamily: 'var(--font-client-sans)' }}>
     <div className="mx-auto max-w-2xl">
       <header className="border-b-2 border-[#1b3029] pb-6">
         <div className="flex items-center justify-between gap-4">
           <span className="text-xs font-extrabold uppercase tracking-[0.25em]">WallDecor / odbiór prac</span>
           <span className="rounded-full border border-[#1b3029] px-3 py-1 text-xs font-bold">Wersja {protocol.revision}</span>
         </div>
-        <h1 className="mt-9 text-4xl font-extrabold leading-tight sm:text-5xl" style={{ fontFamily: 'var(--font-acceptance-display)' }}>{protocol.snapshot.workType}</h1>
+        <h1 className="mt-9 text-4xl font-extrabold leading-tight sm:text-5xl" style={{ fontFamily: 'var(--font-client-display)' }}>{protocol.snapshot.workType}</h1>
         <p className="mt-3 text-sm leading-6">Protokół {protocol.snapshot.orderNumber} · {protocol.snapshot.address}</p>
         <p className="text-sm">Wizyta: {protocol.snapshot.visitStartsAt ? formatWarsawDateTime(protocol.snapshot.visitStartsAt) : 'data nieustalona'}</p>
         <p className="text-sm">Wykonawca: {protocol.snapshot.installerName}</p>
       </header>
       <section className="mt-8">
         <p className="text-xs font-extrabold uppercase tracking-[0.22em] text-[#9a5b22]">01 / zakres i wynik</p>
-        <h2 className="mt-2 text-2xl font-extrabold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Sprawdź wykonane prace</h2>
+        <h2 className="mt-2 text-2xl font-extrabold" style={{ fontFamily: 'var(--font-client-display)' }}>Sprawdź wykonane prace</h2>
         <div className="mt-5 space-y-3">{protocol.snapshot.items.map((item) => {
           const result = protocol.results.find((entry) => entry.scopeId === item.scopeId)
           return <article key={item.scopeId} className="border-l-4 border-[#1b3029] bg-white/90 px-5 py-4 shadow-[3px_3px_0_#d4cbb6]">
@@ -99,19 +99,19 @@ export function ClientAcceptancePage({ token, protocol }: { token: string; proto
       </section>
       {protocol.unilateral && <section className="mt-8 border-2 border-[#8a4e21] bg-[#fff0da] p-5">
         <p className="text-xs font-extrabold uppercase tracking-[0.2em]">Oddzielny zapis wykonawcy</p>
-        <h2 className="mt-2 text-xl font-extrabold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Protokół jednostronny</h2>
+        <h2 className="mt-2 text-xl font-extrabold" style={{ fontFamily: 'var(--font-client-display)' }}>Protokół jednostronny</h2>
         <p className="mt-2 text-sm">{protocol.unilateral.circumstances}</p>
         <p className="mt-2 text-sm font-bold">Ten zapis nie oznacza odbioru przez klienta.</p>
       </section>}
-      {protocol.photos.length > 0 && <section className="mt-8"><h2 className="text-xl font-extrabold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Zdjęcia dokumentacyjne</h2><ul className="mt-3 space-y-2 text-sm">{protocol.photos.map((photo) => <li key={photo.id}><a className="font-bold underline underline-offset-4" href={`/api/public/acceptance/${token}/photos/${photo.id}`} target="_blank" rel="noreferrer">{photo.name}</a></li>)}</ul></section>}
+      {protocol.photos.length > 0 && <section className="mt-8"><h2 className="text-xl font-extrabold" style={{ fontFamily: 'var(--font-client-display)' }}>Zdjęcia dokumentacyjne</h2><ul className="mt-3 space-y-2 text-sm">{protocol.photos.map((photo) => <li key={photo.id}><a className="font-bold underline underline-offset-4" href={`/api/public/acceptance/${token}/photos/${photo.id}`} target="_blank" rel="noreferrer">{photo.name}</a></li>)}</ul></section>}
       {!protocol.isLatest && <p className="mt-8 border border-[#8a4e21] bg-[#fff0da] p-5 text-sm font-bold">To wcześniejsza wersja. Poproś o nowy link, aby potwierdzić aktualny zakres.</p>}
       {saved ? <section className="mt-8 border-2 border-[#1b3029] bg-[#e6eee4] p-6" role="status">
         <p className="text-xs font-extrabold uppercase tracking-[0.22em]">Odpowiedź zapisana</p>
-        <h2 className="mt-2 text-2xl font-extrabold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>{decisionNames[saved]}</h2>
+        <h2 className="mt-2 text-2xl font-extrabold" style={{ fontFamily: 'var(--font-client-display)' }}>{decisionNames[saved]}</h2>
         <p className="mt-2 text-sm">Dziękujemy. Treść protokołu i odpowiedź zostały utrwalone.</p>
       </section> : canRespond ? <form className="mt-9 border-t-2 border-[#1b3029] pt-8" onSubmit={submit}>
         <p className="text-xs font-extrabold uppercase tracking-[0.22em] text-[#9a5b22]">02 / decyzja klienta</p>
-        <h2 className="mt-2 text-2xl font-extrabold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Potwierdzenie odbioru</h2>
+        <h2 className="mt-2 text-2xl font-extrabold" style={{ fontFamily: 'var(--font-client-display)' }}>Potwierdzenie odbioru</h2>
         <fieldset className="mt-5 space-y-2"><legend className="mb-2 text-sm font-bold">Wybierz odpowiedź</legend>
           {([['ACCEPTED', 'Odbieram'], ['ACCEPTED_WITH_REMARKS', 'Odbieram z uwagami'], ['REFUSED', 'Nie odbieram']] as const).map(([value, label]) =>
             <label key={value} className={`flex min-h-14 cursor-pointer items-center gap-3 border px-4 py-3 text-sm font-bold ${decision === value ? 'border-[#1b3029] bg-[#dfebe2]' : 'border-[#9eaa9e] bg-white'}`}>

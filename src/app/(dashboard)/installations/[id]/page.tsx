@@ -21,11 +21,10 @@ import { listScopeInstallerAssignments } from '@/lib/installations/scope-assignm
 import { InstallationOrderDetail } from '@/components/installations/order-detail'
 import { getInstallerInstallationCardData } from '@/lib/installations/installer-card-data'
 import { listAcceptanceCandidates } from '@/lib/installations/acceptance-protocol'
-import { Bricolage_Grotesque } from 'next/font/google'
+import { clientDisplay } from '@/app/fonts'
 import type { AcceptanceSnapshot } from '@/lib/installations/acceptance-protocol'
 
 type Params = { params: Promise<{ id: string }> }
-const acceptanceDisplay = Bricolage_Grotesque({ variable: '--font-acceptance-display', subsets: ['latin', 'latin-ext'], weight: ['700', '800'] })
 
 async function loadAcceptanceProtocols(orderId: string) {
   const [protocols, invoiceTasks] = await Promise.all([
@@ -71,7 +70,7 @@ export default async function InstallationOrderPage({ params }: Params) {
     const card = await getInstallerInstallationCardData(prisma, id, viewer)
     if (!card) notFound()
     const acceptanceCandidates = await listAcceptanceCandidates(prisma, id, viewer.employeeId!)
-    return <div className={acceptanceDisplay.variable}><InstallationOrderDetail order={card.order} rooms={card.rooms} visits={card.visits} employees={[]} canEdit={false} canArchive={false} catalog={[]} clientLinks={[]} clarifications={[]} formRevisions={[]} files={[]} scopeAssignments={[]} acceptanceCandidates={acceptanceCandidates} /></div>
+    return <div className={clientDisplay.variable}><InstallationOrderDetail order={card.order} rooms={card.rooms} visits={card.visits} employees={[]} canEdit={false} canArchive={false} catalog={[]} clientLinks={[]} clarifications={[]} formRevisions={[]} files={[]} scopeAssignments={[]} acceptanceCandidates={acceptanceCandidates} /></div>
   }
   const order = await getInstallationOrder(prisma, id)
   if (!order) notFound()
@@ -115,7 +114,7 @@ export default async function InstallationOrderPage({ params }: Params) {
     visitFeeGrossAmount: order.visitFeeGrossAmount?.toFixed(2) ?? null,
   }
 
-  return <div className={acceptanceDisplay.variable}><InstallationOrderDetail
+  return <div className={clientDisplay.variable}><InstallationOrderDetail
     order={clientOrder}
     employees={coordinatorData?.employees ?? []}
     canEdit={canCoordinateClientForm}

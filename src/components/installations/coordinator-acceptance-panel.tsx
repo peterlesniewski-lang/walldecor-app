@@ -81,7 +81,7 @@ export function CoordinatorAcceptancePanel({ orderId, protocols, canManage }: { 
   }
   return <section id="acceptance" className="scroll-mt-6 rounded-2xl border border-black/15 bg-white p-5 sm:p-6" aria-labelledby="coordinator-acceptance-heading">
     <p className="text-xs font-extrabold uppercase tracking-[0.2em]" style={{ color: '#8C5718' }}>Po montażu</p>
-    <h2 id="coordinator-acceptance-heading" className="mt-2 text-2xl font-extrabold" style={{ color: 'var(--wd-dark)', fontFamily: 'var(--font-acceptance-display)' }}>Protokoły odbioru</h2>
+    <h2 id="coordinator-acceptance-heading" className="mt-2 text-2xl font-extrabold" style={{ color: 'var(--wd-dark)', fontFamily: 'var(--font-client-display)' }}>Protokoły odbioru</h2>
     {protocols.length === 0 && <p className="mt-4 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Wykonawcy nie przygotowali jeszcze protokołów.</p>}
     <div className="mt-4 divide-y divide-black/10">{protocols.map((protocol) => {
       const activeLinks = protocol.links.filter((link) => !link.revokedAt && new Date(link.expiresAt) > new Date())

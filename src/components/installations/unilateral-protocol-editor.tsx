@@ -72,12 +72,12 @@ export function UnilateralProtocolEditor({ unilateral, photos: initialPhotos }: 
     <Link href={`/installations/${unilateral.orderId}/protocols/${unilateral.protocolId}`} className="text-sm font-bold underline underline-offset-4">← Wróć do protokołu prac</Link>
     <header className="mt-8 border-b-2 pb-7" style={{ borderColor: 'var(--wd-dark)' }}>
       <p className="text-xs font-black uppercase tracking-[0.22em] text-amber-900">Oddzielny dokument wykonawcy</p>
-      <h1 className="mt-3 text-4xl font-bold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Protokół jednostronny</h1>
+      <h1 className="mt-3 text-4xl font-bold" style={{ fontFamily: 'var(--font-client-display)' }}>Protokół jednostronny</h1>
       <p className="mt-3 text-sm">{unilateral.snapshot.orderNumber} · {unilateral.snapshot.workType} · {unilateral.snapshot.address}</p>
       <p className="mt-1 text-sm">Wizyta: {unilateral.snapshot.visitStartsAt ? formatWarsawDateTime(unilateral.snapshot.visitStartsAt) : 'data nieustalona'}</p>
       <p className="mt-3 max-w-xl text-sm font-semibold">To zapis wykonawcy. Nie potwierdza odbioru przez klienta i pozostawia sprawę otwartą.</p>
     </header>
-    {signed ? <section className="mt-8 border-2 border-amber-800 bg-amber-50 p-5"><h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Dokument podpisany</h2><p className="mt-2 text-sm">{labels[reason]} · {circumstances}</p>{photos.length > 0 && <ul className="mt-3 list-inside list-disc text-sm">{photos.map((photo) => <li key={photo.id}><a className="underline underline-offset-4" href={`/api/installations/${unilateral.orderId}/protocols/${unilateral.protocolId}/photos/${photo.id}`} target="_blank" rel="noreferrer">{photo.name}</a></li>)}</ul>}<a href={`/api/installations/${unilateral.orderId}/protocols/${unilateral.protocolId}/pdf?kind=UNILATERAL`} className="mt-5 inline-flex min-h-11 items-center rounded-full bg-amber-900 px-5 text-sm font-bold text-white">Pobierz PDF jednostronny</a></section> : <div className="mt-8 space-y-6">
+    {signed ? <section className="mt-8 border-2 border-amber-800 bg-amber-50 p-5"><h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-client-display)' }}>Dokument podpisany</h2><p className="mt-2 text-sm">{labels[reason]} · {circumstances}</p>{photos.length > 0 && <ul className="mt-3 list-inside list-disc text-sm">{photos.map((photo) => <li key={photo.id}><a className="underline underline-offset-4" href={`/api/installations/${unilateral.orderId}/protocols/${unilateral.protocolId}/photos/${photo.id}`} target="_blank" rel="noreferrer">{photo.name}</a></li>)}</ul>}<a href={`/api/installations/${unilateral.orderId}/protocols/${unilateral.protocolId}/pdf?kind=UNILATERAL`} className="mt-5 inline-flex min-h-11 items-center rounded-full bg-amber-900 px-5 text-sm font-bold text-white">Pobierz PDF jednostronny</a></section> : <div className="mt-8 space-y-6">
       <section className="rounded-xl border border-black/15 bg-white p-5">
         <label htmlFor="unilateral-reason" className="text-sm font-bold">Przyczyna</label>
         <select id="unilateral-reason" value={reason} onChange={(event) => setReason(event.target.value as UnilateralReason)} disabled={unilateral.clientDecision === 'REFUSED'} className="mt-2 min-h-12 w-full border border-black/25 bg-white px-3">
@@ -87,12 +87,12 @@ export function UnilateralProtocolEditor({ unilateral, photos: initialPhotos }: 
         <textarea id="unilateral-circumstances" value={circumstances} onChange={(event) => setCircumstances(event.target.value)} maxLength={3000} rows={4} className="mt-2 w-full border border-black/25 bg-white p-3" />
       </section>
       <section className="rounded-xl border border-black/15 bg-white p-5">
-        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Zdjęcia (opcjonalnie)</h2>
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-client-display)' }}>Zdjęcia (opcjonalnie)</h2>
         {photos.length > 0 && <ul className="mt-3 list-inside list-disc text-sm">{photos.map((photo) => <li key={photo.id}>{photo.name}</li>)}</ul>}
         <label className="mt-4 inline-flex min-h-11 cursor-pointer items-center rounded-full border border-black/30 px-5 text-sm font-bold">{uploading ? 'Przesyłanie…' : 'Dodaj zdjęcie'}<input type="file" accept="image/jpeg,image/png,image/webp" disabled={uploading} className="sr-only" onChange={(event) => { const file = event.target.files?.[0]; if (file) void upload(file); event.target.value = '' }} /></label>
       </section>
       <section className="rounded-xl border border-black/15 bg-white p-5">
-        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Podpis wykonawcy</h2>
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-client-display)' }}>Podpis wykonawcy</h2>
         <canvas ref={canvasRef} width={650} height={180} aria-label="Pole podpisu protokołu jednostronnego" onPointerDown={start} onPointerMove={move} onPointerUp={() => { drawing.current = false }} onPointerCancel={() => { drawing.current = false }} className="mt-4 h-40 w-full touch-none border border-dashed border-black/35 bg-white" />
         <button type="button" onClick={clearSignature} className="mt-2 text-sm font-bold underline underline-offset-4">Wyczyść podpis</button>
         {error && <p role="alert" className="mt-3 text-sm font-bold text-red-800">{error}</p>}

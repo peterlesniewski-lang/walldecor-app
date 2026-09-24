@@ -170,7 +170,7 @@ export function InstallerProtocolEditor({ protocol, initialPhotos, unilateral }:
       <Link className="text-sm font-bold underline underline-offset-4" href={`/installations/${protocol.orderId}#acceptance`}>← Wróć do karty montażu</Link>
       <header className="mt-8 border-b-2 pb-7" style={{ borderColor: 'var(--wd-dark)' }}>
         <p className="text-xs font-black uppercase tracking-[0.24em]" style={{ color: '#8C5718' }}>{protocol.snapshot.orderNumber} · protokół wykonawcy · wersja {protocol.revision}</p>
-        <h1 className="mt-3 text-4xl font-bold tracking-tight sm:text-5xl" style={{ fontFamily: 'var(--font-acceptance-display)' }}>{protocol.snapshot.workType}</h1>
+        <h1 className="mt-3 text-4xl font-bold tracking-tight sm:text-5xl" style={{ fontFamily: 'var(--font-client-display)' }}>{protocol.snapshot.workType}</h1>
         <p className="mt-3 text-sm">{protocol.snapshot.address} · {protocol.snapshot.installerName}</p>
         <p className="mt-1 text-sm font-semibold">Wizyta: {protocol.snapshot.visitStartsAt ? formatWarsawDateTime(protocol.snapshot.visitStartsAt) : 'data nieustalona'}</p>
         <p className="mt-1 text-sm" style={{ color: 'var(--wd-text-muted)' }}>{protocol.status === 'INSTALLER_SIGNED' ? 'Podpis wykonawcy został zapisany. Protokół oczekuje na decyzję klienta.' : signed ? 'Protokół został utrwalony.' : 'Zaznacz rzeczywisty wynik każdej pracy, a następnie podpisz.'}</p>
@@ -194,7 +194,7 @@ export function InstallerProtocolEditor({ protocol, initialPhotos, unilateral }:
         })}
       </div>
       <section className="mt-6 rounded-xl border border-black/15 bg-white p-5">
-        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Zdjęcia prac</h2>
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-client-display)' }}>Zdjęcia prac</h2>
         <p className="mt-1 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Zdjęcia są opcjonalne. Protokół możesz podpisać bez nich.</p>
         {photos.length > 0 && <ul className="mt-3 list-inside list-disc text-sm">{photos.map((photo) => <li key={photo.id}>{signed ? <a className="underline underline-offset-4" href={`/api/installations/${protocol.orderId}/protocols/${protocol.id}/photos/${photo.id}`} target="_blank" rel="noreferrer">{photo.name}</a> : photo.name}</li>)}</ul>}
         {!signed && <label className="mt-4 inline-flex min-h-11 cursor-pointer items-center rounded-full border border-black/30 px-5 text-sm font-bold">
@@ -203,7 +203,7 @@ export function InstallerProtocolEditor({ protocol, initialPhotos, unilateral }:
         </label>}
       </section>
       {!signed && <section className="mt-8 rounded-xl border border-black/15 bg-white p-5">
-        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Podpis wykonawcy</h2>
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-client-display)' }}>Podpis wykonawcy</h2>
         <p className="mt-1 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Podpisujesz przedstawiony wyżej stan prac.</p>
         <canvas ref={canvasRef} width={650} height={180} aria-label="Pole podpisu wykonawcy" onPointerDown={start} onPointerMove={move} onPointerUp={() => { drawing.current = false }} onPointerCancel={() => { drawing.current = false }}
           className="mt-4 h-40 w-full touch-none rounded-lg border border-dashed border-black/35 bg-white" />
@@ -212,19 +212,19 @@ export function InstallerProtocolEditor({ protocol, initialPhotos, unilateral }:
         <button type="button" disabled={busy || uploading} onClick={sign} className="mt-6 min-h-12 w-full rounded-full px-6 font-bold text-white disabled:opacity-50" style={{ background: 'var(--wd-dark)' }}>{busy ? 'Zapisywanie…' : 'Podpisz protokół'}</button>
       </section>}
       {protocol.status === 'INSTALLER_SIGNED' && <section className="mt-8 rounded-xl border-2 p-5" style={{ borderColor: 'var(--wd-dark)', background: 'var(--wd-sand-light)' }}>
-        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Przekaż klientowi</h2>
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-client-display)' }}>Przekaż klientowi</h2>
         <p className="mt-2 text-sm">Otwórz oddzielny widok odbioru i przekaż telefon klientowi lub jego przedstawicielowi. Widok pokazuje wyłącznie protokół.</p>
         {error && <p role="alert" className="mt-3 text-sm font-bold text-red-800">{error}</p>}
         <button type="button" disabled={handoffBusy} onClick={openClientView} className="mt-5 min-h-12 w-full rounded-full px-6 font-bold text-white disabled:opacity-50" style={{ background: 'var(--wd-dark)' }}>{handoffBusy ? 'Otwieranie…' : 'Otwórz widok klienta na tym telefonie'}</button>
       </section>}
       {['INSTALLER_SIGNED', 'REFUSED', 'UNILATERAL'].includes(protocol.status) && <section className="mt-6 rounded-xl border border-amber-800 bg-amber-50 p-5">
-        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>{protocol.status === 'REFUSED' ? 'Klient odmówił odbioru' : unilateral?.status === 'SIGNED' ? 'Protokół jednostronny podpisany' : 'Klient nie może potwierdzić na miejscu?'}</h2>
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-client-display)' }}>{protocol.status === 'REFUSED' ? 'Klient odmówił odbioru' : unilateral?.status === 'SIGNED' ? 'Protokół jednostronny podpisany' : 'Klient nie może potwierdzić na miejscu?'}</h2>
         <p className="mt-2 text-sm">{protocol.status === 'REFUSED' ? 'Sporządź osobny protokół jednostronny z opisem odmowy.' : 'Przy nieobecności lub braku odpowiedzi zapisz okoliczności w osobnym protokole. Nie będzie to odbiór klienta.'}</p>
         {error && <p role="alert" className="mt-3 text-sm font-bold text-red-800">{error}</p>}
         <button type="button" disabled={unilateralBusy} onClick={openUnilateral} className="mt-4 min-h-11 rounded-full border border-amber-900 px-5 text-sm font-bold disabled:opacity-50">{unilateralBusy ? 'Otwieranie…' : unilateral ? 'Otwórz protokół jednostronny' : 'Przygotuj protokół jednostronny'}</button>
       </section>}
       {signed && <section className="mt-6 rounded-xl border border-black/15 bg-white p-5">
-        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-acceptance-display)' }}>Link dla klienta</h2>
+        <h2 className="text-2xl font-bold" style={{ fontFamily: 'var(--font-client-display)' }}>Link dla klienta</h2>
         <p className="mt-2 text-sm">Wyślij osobny link do tego protokołu na adres e-mail z karty montażu. Jest ważny przez 90 dni.</p>
         {emailLinks.find((link) => !link.revokedAt && new Date(link.expiresAt) > new Date()) && <p className="mt-3 text-sm font-semibold">Aktywny link wysłano do {emailLinks.find((link) => !link.revokedAt && new Date(link.expiresAt) > new Date())?.recipientEmail}.</p>}
         {error && <p role="alert" className="mt-3 text-sm font-bold text-red-800">{error}</p>}

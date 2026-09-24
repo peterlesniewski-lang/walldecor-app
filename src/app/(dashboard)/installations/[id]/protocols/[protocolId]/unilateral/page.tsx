@@ -1,4 +1,4 @@
-import { Bricolage_Grotesque } from 'next/font/google'
+import { clientDisplay } from '@/app/fonts'
 import { getServerSession } from 'next-auth'
 import { notFound, redirect } from 'next/navigation'
 import { authOptions } from '@/lib/auth'
@@ -9,7 +9,6 @@ import { getUnilateralProtocol } from '@/lib/installations/acceptance-unilateral
 import { listUnilateralPhotoFiles } from '@/lib/installation-media/service'
 import { UnilateralProtocolEditor } from '@/components/installations/unilateral-protocol-editor'
 
-const display = Bricolage_Grotesque({ variable: '--font-acceptance-display', subsets: ['latin', 'latin-ext'], weight: ['700', '800'] })
 type Params = { params: Promise<{ id: string; protocolId: string }> }
 
 export default async function UnilateralPage({ params }: Params) {
@@ -24,5 +23,5 @@ export default async function UnilateralPage({ params }: Params) {
   const document = await getUnilateralProtocol(prisma, unilateral.id, viewer.employeeId).catch(() => null)
   if (!document || document.orderId !== id) notFound()
   const photos = await listUnilateralPhotoFiles(prisma, unilateral.id, viewer.employeeId)
-  return <div className={display.variable}><UnilateralProtocolEditor unilateral={document} photos={photos.map((photo) => ({ id: photo.id, name: photo.originalFilename }))} /></div>
+  return <div className={clientDisplay.variable}><UnilateralProtocolEditor unilateral={document} photos={photos.map((photo) => ({ id: photo.id, name: photo.originalFilename }))} /></div>
 }

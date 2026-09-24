@@ -7,10 +7,9 @@ import { getAcceptanceProtocol } from '@/lib/installations/acceptance-protocol'
 import { InstallerProtocolEditor } from '@/components/installations/installer-protocol-editor'
 import { listAcceptancePhotoFiles } from '@/lib/installation-media/service'
 import { getInstallerInstallationCardData } from '@/lib/installations/installer-card-data'
-import { Bricolage_Grotesque } from 'next/font/google'
+import { clientDisplay } from '@/app/fonts'
 
 type Params = { params: Promise<{ id: string; protocolId: string }> }
-const acceptanceDisplay = Bricolage_Grotesque({ variable: '--font-acceptance-display', subsets: ['latin', 'latin-ext'], weight: ['700', '800'] })
 
 export default async function InstallerProtocolPage({ params }: Params) {
   const session = await getServerSession(authOptions)
@@ -23,5 +22,5 @@ export default async function InstallerProtocolPage({ params }: Params) {
   if (!protocol || protocol.orderId !== id) notFound()
   const photos = await listAcceptancePhotoFiles(prisma, protocolId, viewer.employeeId)
   const unilateral = await prisma.installationAcceptanceUnilateral.findUnique({ where: { protocolId }, select: { id: true, status: true } })
-  return <div className={acceptanceDisplay.variable}><InstallerProtocolEditor protocol={protocol} unilateral={unilateral} initialPhotos={photos.map(({ id: photoId, originalFilename }) => ({ id: photoId, name: originalFilename }))} /></div>
+  return <div className={clientDisplay.variable}><InstallerProtocolEditor protocol={protocol} unilateral={unilateral} initialPhotos={photos.map(({ id: photoId, originalFilename }) => ({ id: photoId, name: originalFilename }))} /></div>
 }

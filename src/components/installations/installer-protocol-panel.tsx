@@ -51,7 +51,7 @@ export function InstallerProtocolPanel({ orderId, candidates }: { orderId: strin
     <section id="acceptance" aria-labelledby="acceptance-heading" className="scroll-mt-6 overflow-hidden rounded-2xl border border-[color:var(--wd-dark)] bg-[color:var(--wd-white)]">
       <div className="border-b border-[color:var(--wd-dark)] px-5 py-5 sm:px-7" style={{ background: 'linear-gradient(125deg, var(--wd-sand-light), var(--wd-white) 70%)' }}>
         <span className="text-[11px] font-black uppercase tracking-[0.22em]" style={{ color: '#8C5718' }}>Po wykonaniu montażu</span>
-        <h2 id="acceptance-heading" className="mt-2 text-2xl font-bold tracking-tight" style={{ color: 'var(--wd-dark)', fontFamily: 'var(--font-acceptance-display)' }}>Protokoły odbioru</h2>
+        <h2 id="acceptance-heading" className="mt-2 text-2xl font-bold tracking-tight" style={{ color: 'var(--wd-dark)', fontFamily: 'var(--font-client-display)' }}>Protokoły odbioru</h2>
         <p className="mt-1 max-w-xl text-sm" style={{ color: 'var(--wd-text-muted)' }}>Jeden protokół obejmuje jeden rodzaj prac wykonanych podczas wizyty, również w kilku pomieszczeniach.</p>
       </div>
       <div className="divide-y divide-black/10">
