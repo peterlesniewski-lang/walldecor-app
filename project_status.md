@@ -9,6 +9,8 @@
 - [x] Harmonogram w procesie serwera: `src/instrumentation.ts` → `src/lib/finance/ksef-auto-sync.ts` (sprawdzenie co 5 min, jeden przebieg na slot, nadrabianie slotu pominiętego po restarcie). Działa w imieniu pierwszego aktywnego ADMIN.
 - [x] Ustawienia → KSeF: przełącznik „Automatyczna synchronizacja” (`ksef_auto_sync_enabled`, domyślnie włączona) i status ostatniego uruchomienia (`ksef_auto_sync_last_*`). Zmienna `KSEF_AUTO_SYNC=off` wyłącza harmonogram na poziomie serwera, `=on` włącza go w dev.
 - [x] Testy: `__tests__/unit/finance/ksef-auto-sync.test.ts` (16), pełny pakiet 2998 PASS, typecheck i build PASS, smoke test standalone — harmonogram zapisał wynik slotu.
+- [x] **Wdrożone na produkcję 2026-09-23** (PR #11, `412d639`). Pierwszy przebieg automatyczny: slot 15:00, status OK — pobrano 925, nowe 1, zaktualizowane 924.
+- [x] Fix builda Coolify (`47b8b0b`): `next/font/google` padał w Dockerze (`google/loader.js:122`, brak URL pliku czcionki od Google). Czcionki self-hosted w `src/app/fonts/` (woff2 latin+latin-ext, licencje OFL) przez `next/font/local` w `src/app/fonts.ts` — build nie zależy już od fonts.googleapis.com.
 
 ## Bieżąca praca: faktury spoza KSeF i wspólne AI
 
