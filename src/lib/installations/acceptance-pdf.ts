@@ -131,7 +131,7 @@ export async function renderAcceptancePdf(input: {
   return Buffer.from(doc.output('arraybuffer'))
 }
 
-export async function getOrCreateAcceptancePdf(db: PrismaClient, protocolId: string, kind: AcceptancePdfKind, media: Pick<PrivateMediaClient, 'download'> = privateMediaClientFromEnvironment()) {
+export async function getOrCreateAcceptancePdf(db: PrismaClient, protocolId: string, kind: AcceptancePdfKind, media?: Pick<PrivateMediaClient, 'download'>) {
   const existing = await db.installationAcceptanceDocument.findUnique({ where: { protocolId_kind: { protocolId, kind } } })
   if (existing) return existing
   const protocol = await db.installationAcceptanceProtocol.findUnique({ where: { id: protocolId }, include: {
@@ -146,7 +146,10 @@ export async function getOrCreateAcceptancePdf(db: PrismaClient, protocolId: str
     throw new AcceptanceProtocolError('CONFLICT', 'Protokół jednostronny nie został podpisany.')
   }
   const photoFiles = kind === 'UNILATERAL' ? protocol.unilateral!.photoFiles : protocol.photoFiles
-  const photos = await Promise.all(photoFiles.map(async (file) => ({ name: file.originalFilename, bytes: await photoThumbnail(media, file) })))
+  const photoMedia = photoFiles.length > 0 ? (media ?? privateMediaClientFromEnvironment()) : null
+  const photos = photoMedia
+    ? await Promise.all(photoFiles.map(async (file) => ({ name: file.originalFilename, bytes: await photoThumbnail(photoMedia, file) })))
+    : []
   const bytes = await renderAcceptancePdf({
     snapshot: JSON.parse(protocol.snapshotJson) as AcceptanceSnapshot,
     results: JSON.parse(protocol.resultsJson) as AcceptanceResult[], status: protocol.status,

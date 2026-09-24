@@ -121,7 +121,7 @@ describe('protokół odbioru prac', () => {
     expect(response.decision).toBe('ACCEPTED_WITH_REMARKS')
     expect((await publicAcceptanceProjection(db, token)).clientNote).toBe('Poprawić narożnik.')
     expect(await db.installationAcceptanceInvoiceTask.count({ where: { orderId } })).toBe(0)
-    const pdf = await getOrCreateAcceptancePdf(db, protocol.id, 'ACCEPTANCE', { async download() { throw new Error('No photos expected') } })
+    const pdf = await getOrCreateAcceptancePdf(db, protocol.id, 'ACCEPTANCE')
     expect(Buffer.from(pdf.bytes).subarray(0, 4).toString()).toBe('%PDF')
     expect((await getOrCreateAcceptancePdf(db, protocol.id, 'ACCEPTANCE', { async download() { throw new Error('No photos expected') } })).sha256).toBe(pdf.sha256)
     await expect(db.installationAcceptanceDocument.update({ where: { id: pdf.id }, data: { sha256: 'changed' } })).rejects.toThrow()
