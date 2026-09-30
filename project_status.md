@@ -1,6 +1,24 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-09-12 (import faktur i wspólne AI — implementacja w toku)
+**Ostatnia aktualizacja:** 2026-09-22 (HR: miesięczne rozliczenia wynagrodzeń — ekran administratora, lokalnie)
+
+## HR: miesięczne rozliczenia wynagrodzeń — 22.09.2026 (gałąź `monthly-salary-settlement`, lokalnie)
+
+```
+[x] Schemat + migracja 20260922120000_hr_payroll_settlements (grosze Int, CHECK-i, triggery niezmienności, 1 obowiązująca wersja / pracownik-miesiąc)
+[x] Podstawa wynagrodzenia z datą obowiązywania (tylko dopisywanie, cofanie z powodem)
+[x] Szkic rozliczenia: nadgodziny z kalendarza HR (tylko zatwierdzone TimeEntry), wypłata vs czas wolny, wykrywanie zmian kalendarza
+[x] Premie i korekty z historią zmian (przed/po/powód/autor)
+[x] Dane kadrowej osobno: ostateczne brutto, netto, pełny koszt pracodawcy (bez wyliczania); zmiana danych po potwierdzeniu je unieważnia
+[x] Zatwierdzenie → niezmienna wersja; korekta = nowa wersja zastępująca poprzednią (brak podwójnego kosztu)
+[x] API /api/hr/payroll/* tylko ADMIN (+ reguła w proxy), UI /hr/payroll i /hr/payroll/[id]
+[x] Kontrakt dla etapów 2 i 3: src/lib/payroll/contracts.ts (getEffectivePayrollCosts, getOwnPayrollStatements)
+[ ] Etap 2: prywatny ekran „Moje wynagrodzenia” (EMPLOYEE, employeeId z sesji)
+[ ] Etap 3: przekazanie kosztu do finansów / Break-even (upsert po sourceKey)
+```
+
+Wyniki: Vitest 3034 PASS, integracja płac 35/35 i E2E 3/3 na świeżej bazie (z restartem serwera i odmową dostępu), typecheck i build PASS.
+Szczegóły i ograniczenia: [docs/evidence/2026-09-22-payroll-settlement.md](docs/evidence/2026-09-22-payroll-settlement.md). Kontrakt: [docs/plans/2026-09-22-payroll-data-contract.md](docs/plans/2026-09-22-payroll-data-contract.md).
 
 ## Bieżąca praca: faktury spoza KSeF i wspólne AI
 
@@ -372,6 +390,8 @@ M10 — Operacje / Playbook         [x] MVP start (2026-05-18)
 ---
 
 ## Następna sesja
+
+**HR — wynagrodzenia (22.09.2026):** decyzja o commit/push gałęzi `monthly-salary-settlement`. Następnie etap 2 („Moje wynagrodzenia”) i etap 3 (koszty do finansów/Break-even) według kontraktu w `docs/plans/2026-09-22-payroll-data-contract.md`. Otwarte decyzje: czy pracownik widzi pełny koszt pracodawcy, alokacja kosztu pracowników GLOBAL, los starego `SalaryHistory`.
 
 **Finanse (10.09.2026):** commit/push gałęzi zatwierdzony przez właściciela. Wdrożenie i aktywacja kas to osobne kroki wymagające decyzji, kopii bazy, odczytu po migracji i potwierdzenia danych startowych. Historyczny backlog poniżej pozostaje poza tym zakresem.
 

@@ -16,6 +16,7 @@ import {
   Target,
   ChartPie,
   ClipboardList,
+  WalletCards,
   type LucideIcon,
 } from 'lucide-react'
 import { NavItem } from './nav-item'
@@ -57,6 +58,7 @@ export const NAV_SECTIONS: Array<{ label: string | null; items: NavSectionItem[]
       { href: '/hr/employees', label: 'Pracownicy', icon: Users },
       { href: '/hr/leave', label: 'Urlopy', icon: CalendarOff },
       { href: '/hr/time-tracking', label: 'Czas pracy', icon: Clock },
+      { href: '/hr/payroll', label: 'Wynagrodzenia', icon: WalletCards, roles: ['ADMIN'] },
     ],
   },
   {

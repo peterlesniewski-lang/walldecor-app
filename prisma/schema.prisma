@@ -838,6 +838,10 @@ model Employee {
   installationOrderAssignments InstallationOrderInstaller[]
   installationScopeAssignments InstallationScopeAssignment[]
 
+  // Payroll (ADMIN-only; never include from generic employee queries)
+  payrollBaseSalaries PayrollBaseSalary[]
+  payrollSettlements  PayrollSettlement[]
+
   createdAt DateTime @default(now())
 }
 
@@ -1736,6 +1740,154 @@ model OvertimeRequest {
   approvedAt   DateTime?
   createdAt    DateTime  @default(now())
   updatedAt    DateTime  @updatedAt
+}
+
+// ─── HR Payroll (monthly salary settlement) ──────────────────────────────────
+// Money is stored as integer grosze. The migration adds CHECK constraints,
+// immutability triggers and a partial unique index (one effective approved
+// version per employee-month) that Prisma cannot express.
+
+// basis: MONTHLY_GROSS | HOURLY_GROSS. Append-only; mistakes are revoked, not edited.
+model PayrollBaseSalary {
+  id            String    @id @default(cuid())
+  employeeId    String
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  amountGrosze  Int
+  basis         String
+  effectiveFrom String    // "YYYY-MM-DD"
+  note          String?
+  createdById   String
+  createdAt     DateTime  @default(now())
+  revokedAt     DateTime?
+  revokedById   String?
+  revokeReason  String?
+
+  @@index([employeeId, effectiveFrom])
+}
+
+// status: DRAFT | APPROVED. `revision` guards concurrent edits.
+model PayrollSettlement {
+  id                        String    @id @default(cuid())
+  employeeId                String
+  employee                  Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  year                      Int
+  month                     Int
+  status                    String    @default("DRAFT")
+  revision                  Int       @default(1)
+  baseSalaryGrosze          Int?
+  baseBasis                 String?
+  baseSegmentsJson          String    @default("[]")
+  approvedWorkedMinutes     Int       @default(0)
+  pendingEntryCount         Int       @default(0)
+  calendarFingerprint       String?
+  calendarSyncedAt          DateTime?
+  finalGrossGrosze          Int?
+  finalNetGrosze            Int?
+  employerCostGrosze        Int?
+  payrollOfficeReference    String?
+  payrollOfficeConfirmedAt  DateTime?
+  payrollOfficeConfirmedById String?
+  currentVersionNumber      Int       @default(0)
+  createdById               String
+  createdAt                 DateTime  @default(now())
+  updatedAt                 DateTime  @updatedAt
+
+  overtimeLines PayrollOvertimeLine[]
+  adjustments   PayrollAdjustment[]
+  versions      PayrollSettlementVersion[]
+  auditEvents   PayrollAuditEvent[]
+
+  @@unique([employeeId, year, month])
+  @@index([year, month])
+}
+
+// Snapshot of a calendar TimeEntry with overtime. entryStatus mirrors TimeEntry.status
+// at sync time; only "approved" + PAYOUT is payable. resolution: PAYOUT | TIME_OFF.
+model PayrollOvertimeLine {
+  id               String            @id @default(cuid())
+  settlementId     String
+  settlement       PayrollSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  timeEntryId      String
+  date             String            // "YYYY-MM-DD" (Europe/Warsaw business date)
+  overtimeMinutes  Int
+  entryStatus      String
+  isSaturday       Boolean           @default(false)
+  resolution       String?
+  resolutionSource String?           // OVERTIME_REQUEST | ADMIN
+
+  @@unique([settlementId, timeEntryId])
+}
+
+// kind: BONUS (> 0) | CORRECTION (!= 0). Soft-deleted to keep history.
+model PayrollAdjustment {
+  id           String            @id @default(cuid())
+  settlementId String
+  settlement   PayrollSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  kind         String
+  label        String
+  amountGrosze Int
+  note         String?
+  createdById  String
+  createdAt    DateTime          @default(now())
+  updatedAt    DateTime          @updatedAt
+  deletedAt    DateTime?
+  deletedById  String?
+
+  @@index([settlementId])
+}
+
+// Immutable approved snapshot. Exactly one row per employee-month has supersededAt = null;
+// downstream finance must read only that row (see src/lib/payroll/contracts.ts).
+model PayrollSettlementVersion {
+  id                     String            @id @default(cuid())
+  settlementId           String
+  settlement             PayrollSettlement @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  employeeId             String
+  year                   Int
+  month                  Int
+  versionNumber          Int
+  costCenterId           String
+  employmentType         String?
+  baseSalaryGrosze       Int
+  baseBasis              String
+  bonusesGrosze          Int
+  correctionsGrosze      Int
+  payoutOvertimeMinutes  Int
+  timeOffOvertimeMinutes Int
+  approvedWorkedMinutes  Int
+  finalGrossGrosze       Int
+  finalNetGrosze         Int
+  employerCostGrosze     Int
+  payrollOfficeReference String?
+  payrollOfficeConfirmedAt DateTime
+  snapshotJson           String
+  approvalNote           String?
+  approvedById           String
+  approvedAt             DateTime          @default(now())
+  supersededAt           DateTime?
+  supersededByVersionId  String?
+
+  @@unique([settlementId, versionNumber])
+  @@index([year, month])
+}
+
+// Append-only history. employeeId is always set; settlementId is null for base-salary events.
+model PayrollAuditEvent {
+  id           String             @id @default(cuid())
+  employeeId   String
+  settlementId String?
+  settlement   PayrollSettlement? @relation(fields: [settlementId], references: [id], onDelete: Restrict)
+  action       String
+  entityType   String
+  entityId     String
+  beforeJson   String?
+  afterJson    String?
+  reason       String?
+  actorId      String
+  createdAt    DateTime           @default(now())
+
+  @@index([settlementId, createdAt])
+  @@index([employeeId, createdAt])
 }
 
 // ─── HR Leave Types ───────────────────────────────────────────────────────────

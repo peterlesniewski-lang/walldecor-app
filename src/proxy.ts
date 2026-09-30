@@ -10,6 +10,8 @@ const ROLE_RULES: { pattern: RegExp; roles: Role[] }[] = [
   // ADMIN only
   { pattern: /^\/hr\/employees\/new(\/|$)/, roles: ['ADMIN'] },
   { pattern: /^\/hr\/leave\/types(\/|$)/, roles: ['ADMIN'] },
+  { pattern: /^\/hr\/payroll(\/|$)/, roles: ['ADMIN'] },
+  { pattern: /^\/api\/hr\/payroll(\/|$)/, roles: ['ADMIN'] },
 
   // ADMIN | MANAGER
   { pattern: /^\/hr\/time-tracking\/periods(\/|$)/, roles: ['ADMIN', 'MANAGER'] },
@@ -79,6 +81,9 @@ export default withAuth(
     if (requiredRoles && token) {
       const userRole = token.role as Role | undefined
       if (!userRole || !requiredRoles.includes(userRole)) {
+        if (pathname.startsWith('/api/')) {
+          return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+        }
         // Redirect unauthorised users back to HR root
         const url = req.nextUrl.clone()
         url.pathname = '/hr'

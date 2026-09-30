@@ -19,6 +19,7 @@ import {
   Settings2,
   TrendingUp,
   PieChart,
+  WalletCards,
 } from 'lucide-react'
 import { MobileNavigationDialog } from '@/components/shared/mobile-navigation-dialog'
 
@@ -80,6 +81,14 @@ export const HR_NAV: NavEntry[] = [
       { href: '/hr/leave/types', label: 'Typy', icon: Settings2, roles: ['ADMIN'] },
       { href: '/hr/leave/balances', label: 'Salda', icon: PieChart, roles: ['ADMIN', 'MANAGER'] },
       { href: '/hr/leave/approval', label: 'Akceptacja', icon: CheckSquare, roles: ['ADMIN', 'MANAGER'] },
+    ],
+  },
+  {
+    id: 'payroll',
+    label: 'Wynagrodzenia',
+    icon: WalletCards,
+    children: [
+      { href: '/hr/payroll', label: 'Rozliczenia miesięczne', icon: WalletCards, roles: ['ADMIN'] },
     ],
   },
 ]
@@ -174,6 +183,7 @@ function HrNavGroup({
   const Icon = group.icon
   const Chevron = open ? ChevronDown : ChevronRight
   const regionId = `${idPrefix}-group-${group.id}`
+  if (visibleChildren.length === 0) return null
 
   return (
     <div>
