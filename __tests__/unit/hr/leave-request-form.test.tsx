@@ -201,6 +201,22 @@ afterEach(() => {
 })
 
 describe('LeaveRequestForm', () => {
+  it('should prefill the date range from initialStartDate and initialEndDate', async () => {
+    installFetchMock()
+    render(
+      <LeaveRequestForm
+        employeeId="employee-1"
+        initialStartDate="2026-09-08"
+        initialEndDate="2026-09-10"
+        onSuccess={vi.fn()}
+        onCancel={vi.fn()}
+      />
+    )
+
+    await screen.findByRole('combobox')
+    expect(dateInputs().map((input) => input.value)).toEqual(['2026-09-08', '2026-09-10'])
+  })
+
   it('renders VLD as a leave type and has no standalone on-demand checkbox', async () => {
     installFetchMock()
     renderForm()

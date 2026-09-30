@@ -239,6 +239,7 @@ export default async function LeavePage({ searchParams }: PageProps) {
         }}
         initialMonth={currentMonth}
         initialSummary={initialSummary}
+        canCreate={isAdmin}
       />
     </div>
   )
