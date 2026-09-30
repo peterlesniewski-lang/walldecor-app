@@ -3,10 +3,12 @@
 import { useEffect, useState, type FormEvent } from 'react'
 import Link from 'next/link'
 import { ArrowLeft, RefreshCw } from 'lucide-react'
-import { formatGrosze, formatMinutesAsHours, groszeToPlnString } from '@/lib/payroll/money'
+import { formatGrosze, formatMinutesAsHours, groszeToPlnString, parsePlnToGrosze } from '@/lib/payroll/money'
+import { calculateEmployerCostGrosze } from '@/lib/payroll/employer-cost'
 import { BLOCKER_LABELS, WARNING_LABELS, type PayrollBlocker, type PayrollWarning } from '@/lib/payroll/summary'
 import { PAYROLL_BASIS_LABELS, type OvertimeResolution, type PayrollBasis } from '@/lib/payroll/types'
 import { StatusStamp } from './payroll-month-view'
+import { EmployerCostPanel, describeRates, type EmployerCostContextView } from './employer-cost-panel'
 import styles from './payroll.module.css'
 
 type Line = {
@@ -52,7 +54,7 @@ type Detail = {
   month: number
   status: 'DRAFT' | 'APPROVED'
   revision: number
-  employee: { firstName: string; lastName: string; position: string; costCenterId: string; employmentType: string | null }
+  employee: { id: string; firstName: string; lastName: string; position: string; costCenterId: string; employmentType: string | null }
   baseSalaryGrosze: number | null
   baseBasis: PayrollBasis | null
   baseSegments: Array<{ from: string; amountGrosze: number; basis: PayrollBasis }>
@@ -63,6 +65,8 @@ type Detail = {
   finalGrossGrosze: number | null
   finalNetGrosze: number | null
   employerCostGrosze: number | null
+  employerCostSource: 'CALCULATED' | 'OVERRIDDEN' | null
+  employerCostContext: EmployerCostContextView
   payrollOfficeReference: string | null
   payrollOfficeConfirmedAt: string | null
   currentVersionNumber: number
@@ -157,6 +161,8 @@ export function PayrollSettlementView({ id }: { id: string }) {
   const [blockers, setBlockers] = useState<string[]>([])
   const [pending, setPending] = useState(false)
   const [editing, setEditing] = useState<string | null>(null)
+  const [grossInput, setGrossInput] = useState('')
+  const [overrideEmployerCost, setOverrideEmployerCost] = useState(false)
 
   const [reloadKey, setReloadKey] = useState(0)
   const load = () => setReloadKey((key) => key + 1)
@@ -207,6 +213,8 @@ export function PayrollSettlementView({ id }: { id: string }) {
       const submitter = (event.nativeEvent as SubmitEvent).submitter
       if (await act(handler(new FormData(formElement, submitter)))) {
         formElement.reset()
+        setGrossInput('')
+        setOverrideEmployerCost(false)
         setEditing(null)
       }
     }
@@ -231,6 +239,14 @@ export function PayrollSettlementView({ id }: { id: string }) {
     { label: 'Dane od kadrowej', done: confirmed || !isDraft },
     { label: 'Zatwierdzenie', done: !isDraft },
   ]
+  const costContext = detail.employerCostContext
+  const canCalculate = costContext.rates !== null
+  const grossPreview = parsePlnToGrosze(grossInput)
+  const employerCostPreview = canCalculate && grossPreview !== null && grossPreview > 0
+    ? calculateEmployerCostGrosze(grossPreview, costContext.rates!)
+    : null
+  const employerCostHint = detail.employerCostSource === 'CALCULATED' ? 'wyliczony ze stawek'
+    : detail.employerCostSource === 'OVERRIDDEN' ? 'wpisany ręcznie' : null
   const figureHint = !detail.finalGrossGrosze ? 'czeka na kadrową' : confirmed || !isDraft ? 'potwierdzone przez kadrową' : 'niepotwierdzone — dane wejściowe zmieniły się'
 
   return (
@@ -258,7 +274,9 @@ export function PayrollSettlementView({ id }: { id: string }) {
             <div key={label as string} className={styles.figure}>
               <div className={styles.figureLabel}>{label}</div>
               <div className={styles.figureValue} data-testid={`figure-${label}`}>{formatGrosze(value as number | null)}</div>
-              <div className={styles.figureHint}>{figureHint}</div>
+              <div className={styles.figureHint}>
+                {figureHint}{label === 'Pełny koszt pracodawcy' && employerCostHint ? ` · ${employerCostHint}` : ''}
+              </div>
             </div>
           ))}
         </div>
@@ -458,6 +476,13 @@ export function PayrollSettlementView({ id }: { id: string }) {
             </div>
           </section>
 
+          <EmployerCostPanel
+            employeeId={detail.employee.id}
+            monthKey={`${detail.year}-${String(detail.month).padStart(2, '0')}`}
+            context={costContext}
+            onChanged={load}
+          />
+
           <section className={styles.panel} aria-labelledby="office-title">
             <header className={styles.panelHead}>
               <h2 id="office-title" className={styles.panelTitle}>Dane od kadrowej</h2>
@@ -471,17 +496,32 @@ export function PayrollSettlementView({ id }: { id: string }) {
                     action: 'payrollOffice.confirm',
                     finalGross: form.get('finalGross'),
                     finalNet: form.get('finalNet'),
-                    employerCost: form.get('employerCost'),
+                    employerCost: overrideEmployerCost || !canCalculate ? form.get('employerCost') : null,
                     reference: form.get('reference') || null,
                   }))}
                 >
-                  <label className={styles.field}>Brutto (ostateczne)<input name="finalGross" inputMode="decimal" required placeholder="0,00" /></label>
-                  <label className={styles.field}>Netto do wypłaty<input name="finalNet" inputMode="decimal" required placeholder="0,00" /></label>
-                  <label className={`${styles.field} ${styles.full}`}>
-                    Pełny koszt pracodawcy
-                    <input name="employerCost" inputMode="decimal" required placeholder="0,00" />
-                    <span className={styles.hint}>Przepisz z listy płac kadrowej (brutto + składki i narzuty pracodawcy). Aplikacja nie wylicza go z netto.</span>
+                  <label className={styles.field}>
+                    Brutto (ostateczne)
+                    <input name="finalGross" inputMode="decimal" required placeholder="0,00" value={grossInput} onChange={(e) => setGrossInput(e.target.value)} />
                   </label>
+                  <label className={styles.field}>Netto do wypłaty<input name="finalNet" inputMode="decimal" required placeholder="0,00" /></label>
+                  <div className={`${styles.full} ${styles.field}`}>
+                    <span>Pełny koszt pracodawcy</span>
+                    {canCalculate && !overrideEmployerCost ? (
+                      <p className={styles.num} data-testid="employer-cost-preview">
+                        {employerCostPreview === null ? 'wpisz brutto' : formatGrosze(employerCostPreview)}
+                      </p>
+                    ) : (
+                      <input name="employerCost" inputMode="decimal" required placeholder="0,00" aria-label="Pełny koszt pracodawcy" />
+                    )}
+                    <span className={styles.hint}>{describeRates(costContext)}</span>
+                    {canCalculate && (
+                      <label className={styles.hint}>
+                        <input type="checkbox" checked={overrideEmployerCost} onChange={(e) => setOverrideEmployerCost(e.target.checked)} />{' '}
+                        wpisz ręcznie (wyjątek — zapisze się jako nadpisany)
+                      </label>
+                    )}
+                  </div>
                   <label className={`${styles.field} ${styles.full}`}>Numer listy płac / notatka<input name="reference" maxLength={200} /></label>
                   <div className={`${styles.full} ${styles.rowActions}`}>
                     <button type="submit" className={styles.btn} disabled={pending || s.inputBlockers.length > 0}>

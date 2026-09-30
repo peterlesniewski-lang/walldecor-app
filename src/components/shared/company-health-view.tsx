@@ -122,6 +122,8 @@ interface CompanyHealthViewProps {
   uncertainPaymentCount?: number
   unclassifiedWarningAmount?: number
   unclassifiedWarningSummary?: InvoiceMoneySummary
+  /** Employer cost (payroll) included in the current month's costs. */
+  employerCost?: { amount: number; status: 'NONE' | 'APPROVED' | 'ESTIMATE'; missingCount: number }
 }
 
 export function CompanyHealthView({
@@ -135,6 +137,7 @@ export function CompanyHealthView({
   uncertainPaymentCount = 0,
   unclassifiedWarningAmount = 0,
   unclassifiedWarningSummary = { plnAmount: unclassifiedWarningAmount, unconvertedCount: 0, unconvertedByCurrency: [] },
+  employerCost,
 }: CompanyHealthViewProps) {
   const cards = [
     health.company,
@@ -179,6 +182,17 @@ export function CompanyHealthView({
             <p className="data-label">Koszty wykonane</p>
           </div>
           <p className="num mt-3 text-xl font-bold">{formatMoney(cm.expenses)}</p>
+          {employerCost && employerCost.status !== 'NONE' && (
+            <p className="mt-1 text-[11px] text-[var(--wd-text-muted)]">
+              {isAdmin ? `w tym koszt pracodawcy ${formatMoney(employerCost.amount)}` : 'zawiera koszt pracodawcy'}
+              {employerCost.status === 'ESTIMATE' && <span className="font-semibold text-amber-700"> · szacunek do czasu listy płac</span>}
+            </p>
+          )}
+          {isAdmin && employerCost && employerCost.missingCount > 0 && (
+            <p className="mt-1 text-[11px] font-semibold text-amber-700">
+              Bez kosztu pracodawcy: {employerCost.missingCount} os. — uzupełnij podstawę lub podział w Wynagrodzeniach.
+            </p>
+          )}
         </div>
         <div className="rounded-lg border border-[var(--wd-border)] bg-white p-4">
           <div className="flex items-center gap-2">

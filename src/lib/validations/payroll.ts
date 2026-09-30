@@ -1,6 +1,7 @@
 import { z } from 'zod'
 import { parsePlnToGrosze } from '@/lib/payroll/money'
 import { ADJUSTMENT_KINDS, OVERTIME_RESOLUTIONS, PAYROLL_BASES } from '@/lib/payroll/types'
+import { PAYROLL_SETTLEMENT_TYPES } from '@/lib/payroll/employer-cost'
 
 const MAX_GROSZE = 100_000_000
 
@@ -73,7 +74,8 @@ export const PayrollSettlementActionSchema = z.discriminatedUnion('action', [
     expectedRevision,
     finalGross: plnAmount('Brutto'),
     finalNet: plnAmount('Netto do wypłaty'),
-    employerCost: plnAmount('Pełny koszt pracodawcy'),
+    // Omitted → calculated from gross and employer rates; given → an explicit override.
+    employerCost: plnAmount('Pełny koszt pracodawcy').nullish(),
     reference: optionalText(200),
   }).strict(),
   z.object({ action: z.literal('approve'), expectedRevision, note: optionalText(500) }).strict(),
@@ -81,3 +83,47 @@ export const PayrollSettlementActionSchema = z.discriminatedUnion('action', [
 ])
 
 export type PayrollSettlementAction = z.infer<typeof PayrollSettlementActionSchema>
+
+// ─── Employer cost settings ──────────────────────────────────────────────────
+
+const monthKey = z.string().regex(/^\d{4}-(0[1-9]|1[0-2])$/, 'Miesiąc w formacie RRRR-MM')
+
+/** "9,76" (percent, max 2 decimals) → 976 basis points. */
+function percentRate(label: string) {
+  return z
+    .union([z.string(), z.number()])
+    .transform((value, ctx) => {
+      const basisPoints = parsePlnToGrosze(String(value))
+      if (basisPoints === null || basisPoints < 0 || basisPoints > 5_000) {
+        ctx.addIssue({ code: 'custom', message: `${label}: podaj procent od 0 do 50 (maks. 2 miejsca po przecinku).` })
+        return z.NEVER
+      }
+      return basisPoints
+    })
+}
+
+export const PayrollEmployerRateCreateSchema = z.object({
+  settlementType: z.enum(PAYROLL_SETTLEMENT_TYPES),
+  effectiveFrom: monthKey,
+  pension: percentRate('Emerytalna'),
+  disability: percentRate('Rentowa'),
+  accident: percentRate('Wypadkowa'),
+  labourFund: percentRate('Fundusz Pracy'),
+  guaranteeFund: percentRate('FGŚP'),
+  ppk: percentRate('PPK'),
+  note: optionalText(500),
+}).strict()
+
+export const PayrollCostProfileSchema = z.object({
+  employeeId: z.string().min(1),
+  withoutFunds: z.boolean(),
+  withoutContributions: z.boolean(),
+}).strict()
+
+export const PayrollCostSplitCreateSchema = z.object({
+  employeeId: z.string().min(1),
+  effectiveFrom: monthKey,
+  jagPercent: z.number().int().min(0).max(100),
+}).strict()
+
+export const PayrollRevokeSchema = z.object({ reason }).strict()

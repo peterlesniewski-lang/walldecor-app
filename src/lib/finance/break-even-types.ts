@@ -19,7 +19,7 @@ export interface BreakEvenSalonReport {
   variableNet: number; fixedOnlyTargetNet: number | null;
   targetNet: number | null; targetGross: number | null; deltaGross: number | null; operatingResultNet: number | null;
   omittedFixedCount: number; omittedFixedNet: number; goodsNet: number; oneOffNet: number;
-  hr: { status: 'missing'; amount: null }; status: 'provisional'; warnings: string[];
+  hr: { status: 'missing'; amount: null } | { status: 'actual' | 'estimate'; amount: number }; status: 'provisional'; warnings: string[];
 }
 export interface BreakEvenHistoricalSuggestion {
   status: 'available' | 'incomplete'; margin: number | null; revenueNet: number; purchasesNet: number;

@@ -12,6 +12,8 @@ import {
 import { summarizeSettlement, validatePayrollOfficeFigures, BLOCKER_LABELS } from './summary'
 import type { PayrollSettlementAction } from '@/lib/validations/payroll'
 import type { PayrollBasis } from './types'
+import { allocateEmployerCost, calculateEmployerCostGrosze } from './employer-cost'
+import { isCalculatedEmployerCostStale, loadEmployerCostContext, type EmployerCostContext } from './cost-context'
 
 type Db = PrismaClient | Prisma.TransactionClient
 
@@ -43,7 +45,7 @@ const EMPLOYEE_SELECT = {
   active: true,
 } as const
 
-async function audit(
+export async function audit(
   tx: Db,
   event: {
     employeeId: string
@@ -321,6 +323,7 @@ export async function getSettlementDetail(db: Db, id: string) {
   const period = { year: settlement.year, month: settlement.month }
   const live = await loadCalendarSnapshot(db, settlement.employeeId, period, settlement.overtimeLines)
   const calendarInSync = live.fingerprint === settlement.calendarFingerprint
+  const employerCostContext = await loadEmployerCostContext(db, settlement.employee, period)
   const summary = summarizeSettlement({
     baseSalaryGrosze: settlement.baseSalaryGrosze,
     baseBasis: settlement.baseBasis,
@@ -331,6 +334,8 @@ export async function getSettlementDetail(db: Db, id: string) {
     payrollOfficeConfirmedAt: settlement.payrollOfficeConfirmedAt,
     lines: settlement.overtimeLines,
     adjustments: settlement.adjustments,
+    costSplitMissing: employerCostContext.split === null,
+    employerCostStale: isCalculatedEmployerCostStale(settlement, employerCostContext),
   })
 
   const actorIds = [...new Set([
@@ -348,6 +353,7 @@ export async function getSettlementDetail(db: Db, id: string) {
     })),
     calendarInSync,
     summary,
+    employerCostContext,
     actors: Object.fromEntries(actors.map((actor) => [actor.id, actor.name])),
   }
 }
@@ -527,16 +533,24 @@ export async function applySettlementAction(
 
       case 'payrollOffice.confirm': {
         requireDraft(settlement)
-        const summary = await currentSummary(tx, settlement)
+        const context = await loadEmployerCostContext(tx, settlement.employee, period)
+        const summary = await currentSummary(tx, settlement, context)
         if (summary.inputBlockers.length > 0) {
           throw new PayrollError('Uzupełnij dane wejściowe przed potwierdzeniem kadrowej.', 409, {
             blockers: summary.inputBlockers.map((code) => ({ code, message: BLOCKER_LABELS[code] })),
           })
         }
+        const overridden = action.employerCost != null
+        if (!overridden && !context.rates) {
+          throw new PayrollError('Ten rodzaj umowy nie ma stawek pracodawcy — podaj pełny koszt pracodawcy ręcznie.')
+        }
         const figures = {
           finalGrossGrosze: action.finalGross,
           finalNetGrosze: action.finalNet,
-          employerCostGrosze: action.employerCost,
+          employerCostGrosze: overridden
+            ? (action.employerCost as number)
+            : calculateEmployerCostGrosze(action.finalGross, context.rates as NonNullable<typeof context.rates>),
+          employerCostSource: overridden ? 'OVERRIDDEN' : 'CALCULATED',
         }
         const invalid = validatePayrollOfficeFigures({ employmentType: settlement.employee.employmentType, ...figures })
         if (invalid) throw new PayrollError(invalid)
@@ -555,16 +569,18 @@ export async function applySettlementAction(
             finalGrossGrosze: settlement.finalGrossGrosze,
             finalNetGrosze: settlement.finalNetGrosze,
             employerCostGrosze: settlement.employerCostGrosze,
+            employerCostSource: settlement.employerCostSource,
             reference: settlement.payrollOfficeReference,
           },
-          after: { ...figures, reference: action.reference },
+          after: { ...figures, rates: overridden ? null : context.rates, reference: action.reference },
         })
         return
       }
 
       case 'approve': {
         requireDraft(settlement)
-        const summary = await currentSummary(tx, settlement)
+        const context = await loadEmployerCostContext(tx, settlement.employee, period)
+        const summary = await currentSummary(tx, settlement, context)
         if (summary.approvalBlockers.length > 0) {
           throw new PayrollError('Rozliczenia nie można zatwierdzić.', 409, {
             blockers: summary.approvalBlockers.map((code) => ({ code, message: BLOCKER_LABELS[code] })),
@@ -576,6 +592,9 @@ export async function applySettlementAction(
         const versionNumber = settlement.currentVersionNumber + 1
         const versionId = randomUUID()
         const activeAdjustments = settlement.adjustments.filter((a) => a.deletedAt === null)
+        const employerCostGrosze = settlement.employerCostGrosze as number
+        const costAllocation = allocateEmployerCost(employerCostGrosze, context.split as NonNullable<typeof context.split>)
+        const employerCostSource = settlement.employerCostSource ?? 'ENTERED'
 
         await bumpRevision(tx, id, action.expectedRevision)
         if (previous) {
@@ -603,7 +622,18 @@ export async function applySettlementAction(
             approvedWorkedMinutes: settlement.approvedWorkedMinutes,
             finalGrossGrosze: settlement.finalGrossGrosze as number,
             finalNetGrosze: settlement.finalNetGrosze as number,
-            employerCostGrosze: settlement.employerCostGrosze as number,
+            employerCostGrosze,
+            employerCostSource,
+            employerRatesJson: employerCostSource === 'CALCULATED'
+              ? JSON.stringify({
+                settlementType: context.settlementType,
+                ratesSource: context.ratesSource,
+                ratesEffectiveFrom: context.ratesEffectiveFrom,
+                rates: context.rates,
+                exemptions: context.exemptions,
+              })
+              : null,
+            costAllocationJson: JSON.stringify(costAllocation),
             payrollOfficeReference: settlement.payrollOfficeReference,
             payrollOfficeConfirmedAt: settlement.payrollOfficeConfirmedAt as Date,
             snapshotJson: JSON.stringify({
@@ -640,6 +670,8 @@ export async function applySettlementAction(
             finalGrossGrosze: settlement.finalGrossGrosze,
             finalNetGrosze: settlement.finalNetGrosze,
             employerCostGrosze: settlement.employerCostGrosze,
+            employerCostSource,
+            costAllocation,
           },
           reason: action.note,
         })
@@ -670,6 +702,9 @@ async function currentSummary(
   tx: Db,
   settlement: {
     employeeId: string
+    finalGrossGrosze: number | null
+    employerCostGrosze: number | null
+    employerCostSource: string | null
     year: number
     month: number
     baseSalaryGrosze: number | null
@@ -680,7 +715,8 @@ async function currentSummary(
     payrollOfficeConfirmedAt: Date | null
     overtimeLines: Array<{ timeEntryId: string; overtimeMinutes: number; entryStatus: string; resolution: string | null; resolutionSource: string | null }>
     adjustments: Array<{ kind: string; amountGrosze: number; deletedAt: Date | null }>
-  }
+  },
+  context: EmployerCostContext
 ) {
   const live = await loadCalendarSnapshot(
     tx,
@@ -698,5 +734,7 @@ async function currentSummary(
     payrollOfficeConfirmedAt: settlement.payrollOfficeConfirmedAt,
     lines: settlement.overtimeLines,
     adjustments: settlement.adjustments,
+    costSplitMissing: context.split === null,
+    employerCostStale: isCalculatedEmployerCostStale(settlement, context),
   })
 }

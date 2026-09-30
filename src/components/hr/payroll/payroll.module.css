@@ -246,3 +246,25 @@
   .line > :last-child { grid-column: 1 / -1; }
   .event { grid-template-columns: minmax(0, 1fr); gap: 2px; }
 }
+
+/* ── Employer cost panel ─────────────────────────────── */
+.checks { display: grid; gap: 6px; border: 0; padding: 0; margin: 12px 0; font-size: 13px; }
+.checks label { display: flex; gap: 8px; align-items: center; }
+.checks input { accent-color: var(--pr-ink); }
+.panelBody > * + * { margin-top: 8px; }
+
+/* ── Employer rates ──────────────────────────────────── */
+.backLink { display: inline-flex; gap: 6px; align-items: center; }
+.rateHistory { display: grid; gap: 6px; grid-column: 2 / -1; }
+.rateHistory > div { display: flex; flex-wrap: wrap; gap: 6px 10px; align-items: center; }
+.revoked { opacity: .5; text-decoration: line-through; }
+
+/* ── Own pay slip (employee view) ─────────────────────── */
+.payFigures { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+.payLedger .ledgerHead, .payLedger .ledgerRow { grid-template-columns: minmax(0, 1.4fr) repeat(2, minmax(0, 1fr)); }
+.period { text-transform: capitalize; }
+/* Three short columns fit a phone; keep the header and column order instead of the ledger's stacked layout. */
+@container (max-width: 880px) {
+  .payLedger .ledgerHead { display: grid; }
+  .payLedger .ledgerRow > * { order: 0; justify-self: stretch; grid-column: auto; }
+}

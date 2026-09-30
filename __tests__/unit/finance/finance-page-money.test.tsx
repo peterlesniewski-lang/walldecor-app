@@ -10,6 +10,12 @@ const prismaMock = vi.hoisted(() => ({
 }))
 
 vi.mock('@/lib/prisma', () => ({ prisma: prismaMock }))
+// Payroll employer cost has its own tests; these cover invoice and revenue data only.
+vi.mock('@/lib/finance/employer-costs', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/lib/finance/employer-costs')>()
+  const empty = async () => ({ rows: [], missingByMonth: new Array(12).fill(0) })
+  return { ...original, loadEmployerCostsForYear: vi.fn(empty), loadEmployerCostsForMonths: vi.fn(empty) }
+})
 vi.mock('next-auth', () => ({
   getServerSession: vi.fn(async () => ({ user: { id: 'admin-1', role: 'ADMIN' } })),
 }))

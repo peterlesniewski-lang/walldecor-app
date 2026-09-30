@@ -1,5 +1,7 @@
 import type { Prisma, PrismaClient } from '@/generated/prisma'
-import { payrollMonthKey, type PayrollPeriod } from './period'
+import { isEmployedInPeriod, payrollMonthKey, periodLastDay, periodTimeEntryQueryRange, type PayrollPeriod } from './period'
+import { allocateEmployerCost, estimateEmployerCostGrosze, payrollSettlementTypeFor } from './employer-cost'
+import { loadEmployerCostContexts } from './cost-context'
 
 // Read contracts for the next stages. Both read ONLY effective approved versions
 // (PayrollSettlementVersion.supersededAt IS NULL) — never drafts, never superseded versions.
@@ -20,6 +22,12 @@ export type PayrollCostRecord = {
   versionNumber: number
   employeeId: string
   costCenterId: string // Employee cost center snapshot at approval time (JAG | PUL | GLOBAL)
+  /** Employer cost split between salons at approval; sums to employerCostGrosze. */
+  allocations: PayrollCostAllocation[]
+  /** CALCULATED from rates, OVERRIDDEN by ADMIN, or ENTERED before rates existed. */
+  employerCostSource: string
+  /** Employment type snapshot at approval time. */
+  employmentType: string | null
   year: number
   month: number
   /** Full employer cost as confirmed by the payroll office — the amount to book as cost. */
@@ -27,6 +35,14 @@ export type PayrollCostRecord = {
   /** Informational only; do not book both gross and employer cost. */
   finalGrossGrosze: number
   approvedAt: Date
+}
+
+export type PayrollCostAllocation = { costCenterId: string; amountGrosze: number }
+
+function parseAllocations(json: string, fallback: PayrollCostAllocation): PayrollCostAllocation[] {
+  const parsed = JSON.parse(json) as PayrollCostAllocation[]
+  // Versions approved before salon splits existed carry the whole cost on the employee cost center.
+  return parsed.length > 0 ? parsed : [fallback]
 }
 
 export function payrollCostSourceKey(employeeId: string, period: PayrollPeriod) {
@@ -44,16 +60,109 @@ export async function getEffectivePayrollCosts(db: Db, period: PayrollPeriod): P
       year: true,
       month: true,
       employerCostGrosze: true,
+      employerCostSource: true,
+      employmentType: true,
+      costAllocationJson: true,
       finalGrossGrosze: true,
       approvedAt: true,
     },
     orderBy: [{ costCenterId: 'asc' }, { employeeId: 'asc' }],
   })
-  return versions.map(({ id, ...version }) => ({
+  return versions.map(({ id, costAllocationJson, ...version }) => ({
     sourceKey: payrollCostSourceKey(version.employeeId, version),
     versionId: id,
     ...version,
+    allocations: parseAllocations(costAllocationJson, {
+      costCenterId: version.costCenterId,
+      amountGrosze: version.employerCostGrosze,
+    }),
   }))
+}
+
+// ─── Finance: employer cost per month (approved or estimated) ────────────────
+
+export type MonthlyEmployerCostStatus = 'APPROVED' | 'ESTIMATE' | 'MISSING'
+export type MonthlyEmployerCostGap = 'BASE_MISSING' | 'HOURLY_BASE' | 'COST_SPLIT_MISSING'
+
+export type MonthlyEmployerCost = {
+  employeeId: string
+  year: number
+  month: number
+  status: MonthlyEmployerCostStatus
+  /** Why an estimate could not be made; set only for MISSING. */
+  gap: MonthlyEmployerCostGap | null
+  employerCostGrosze: number | null
+  allocations: PayrollCostAllocation[]
+}
+
+/**
+ * Employer cost of every person settled through payroll (UoP, UZ, management board) for one month.
+ * An approved version wins; otherwise the cost is estimated from the base salary and rates, without
+ * overtime or bonuses. B2B and other employment types are excluded — their cost arrives as invoices.
+ */
+export async function getMonthlyEmployerCosts(db: Db, period: PayrollPeriod): Promise<MonthlyEmployerCost[]> {
+  const range = periodTimeEntryQueryRange(period)
+  const [approved, employees] = await Promise.all([
+    getEffectivePayrollCosts(db, period),
+    db.employee.findMany({
+      where: { startDate: { lt: range.lt }, OR: [{ endDate: null }, { endDate: { gte: range.gte } }] },
+      select: {
+        id: true,
+        employmentType: true,
+        costCenterId: true,
+        startDate: true,
+        endDate: true,
+        payrollBaseSalaries: {
+          where: { revokedAt: null, effectiveFrom: { lte: periodLastDay(period) } },
+          orderBy: { effectiveFrom: 'desc' },
+          take: 1,
+          select: { amountGrosze: true, basis: true },
+        },
+      },
+      orderBy: { id: 'asc' },
+    }),
+  ])
+  const approvedEmployeeIds = new Set(approved.map((record) => record.employeeId))
+  const inScope = employees.filter((employee) =>
+    payrollSettlementTypeFor(employee.employmentType) !== null && isEmployedInPeriod(employee, period)
+  )
+  const contexts = await loadEmployerCostContexts(db, inScope, period)
+
+  const approvedRows: MonthlyEmployerCost[] = approved
+    .filter((record) => payrollSettlementTypeFor(record.employmentType) !== null)
+    .map((record) => ({
+      employeeId: record.employeeId,
+      year: record.year,
+      month: record.month,
+      status: 'APPROVED',
+      gap: null,
+      employerCostGrosze: record.employerCostGrosze,
+      allocations: record.allocations,
+    }))
+
+  const estimatedRows = inScope
+    .filter((employee) => !approvedEmployeeIds.has(employee.id))
+    .map((employee): MonthlyEmployerCost => {
+      const context = contexts.get(employee.id)
+      const base = employee.payrollBaseSalaries[0] ?? null
+      const missing = (gap: MonthlyEmployerCostGap): MonthlyEmployerCost => ({
+        employeeId: employee.id, ...period, status: 'MISSING', gap, employerCostGrosze: null, allocations: [],
+      })
+      if (!base) return missing('BASE_MISSING')
+      if (!context?.split) return missing('COST_SPLIT_MISSING')
+      const estimate = context.rates ? estimateEmployerCostGrosze(base, context.rates) : null
+      if (estimate === null) return missing('HOURLY_BASE')
+      return {
+        employeeId: employee.id,
+        ...period,
+        status: 'ESTIMATE',
+        gap: null,
+        employerCostGrosze: estimate,
+        allocations: allocateEmployerCost(estimate, context.split),
+      }
+    })
+
+  return [...approvedRows, ...estimatedRows]
 }
 
 // ─── Employee "Moje wynagrodzenia" ───────────────────────────────────────────

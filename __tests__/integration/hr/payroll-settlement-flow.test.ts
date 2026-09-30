@@ -218,9 +218,10 @@ describe('payroll settlement — admin flow on a fresh database', () => {
     expect(res.status).toBe(400)
   })
 
-  it('should require the employer cost as an explicit value', async () => {
-    const { res } = await act(settlementId, { action: 'payrollOffice.confirm', finalGross: '5000', finalNet: '3600' })
-    expect(res.status).toBe(400)
+  it('should calculate the employer cost from gross and default UoP rates when it is not given', async () => {
+    // 5 000,00 × (9,76% + 6,50% + 1,67% + 2,45% + 0,10%) = 1 024,00
+    const { res, json } = await act(settlementId, { action: 'payrollOffice.confirm', finalGross: '5000', finalNet: '3600' })
+    expect([res.status, json.employerCostGrosze, json.employerCostSource]).toEqual([200, 602400, 'CALCULATED'])
   })
 
   it('should store gross, net and full employer cost separately after payroll office confirmation', async () => {

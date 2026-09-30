@@ -20,6 +20,8 @@ import {
   TrendingUp,
   PieChart,
   WalletCards,
+  ReceiptText,
+  Percent,
 } from 'lucide-react'
 import { MobileNavigationDialog } from '@/components/shared/mobile-navigation-dialog'
 
@@ -89,6 +91,8 @@ export const HR_NAV: NavEntry[] = [
     icon: WalletCards,
     children: [
       { href: '/hr/payroll', label: 'Rozliczenia miesięczne', icon: WalletCards, roles: ['ADMIN'] },
+      { href: '/hr/payroll/rates', label: 'Stawki pracodawcy', icon: Percent, roles: ['ADMIN'] },
+      { href: '/hr/my-pay', label: 'Mój pasek', icon: ReceiptText },
     ],
   },
 ]

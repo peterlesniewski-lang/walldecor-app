@@ -1,6 +1,7 @@
 import { prisma } from '@/lib/prisma'
 import { buildActualDashboard, dashboardToday, type ActualDashboardModel, type DashboardPeriod } from '@/lib/finance/actual-dashboard'
 import { isActiveInvoiceMoneyRow } from '@/lib/finance/invoice-money-scope'
+import { loadEmployerCostsForYear } from '@/lib/finance/employer-costs'
 
 /** Financial model only. Callers enforce ADMIN access; no cash, alerts or external services are loaded here. */
 export async function loadActualDashboardModel(period: DashboardPeriod, now = new Date()): Promise<ActualDashboardModel> {
@@ -9,7 +10,7 @@ export async function loadActualDashboardModel(period: DashboardPeriod, now = ne
   const previousThroughMonth = { gte: new Date(Date.UTC(year - 1, 0, 1)), lt: new Date(Date.UTC(year - 1, month, 1)) }
   const parts = { include: { tags: { include: { tag: true } }, allocations: true } }
   const [revenue, previousRevenue, actualEntries, previousActualEntries, costEvents, previousCostEvents,
-    pendingInvoiceRows, closedPeriods, pendingCostEvents] = await Promise.all([
+    pendingInvoiceRows, closedPeriods, pendingCostEvents, employerCosts, previousEmployerCosts] = await Promise.all([
     prisma.revenue.findMany({ where: { year, month: { lte: month } } }),
     prisma.revenue.findMany({ where: { year: year - 1, month: { lte: month } } }),
     prisma.actualEntry.findMany({ where: { year, month: { lte: month } }, include: { subCategory: { select: { isFixed: true } } } }),
@@ -27,6 +28,8 @@ export async function loadActualDashboardModel(period: DashboardPeriod, now = ne
       where: { status: 'DRAFT', documentStatus: { not: 'CANCELLED' }, OR: [{ eventDate: throughSelectedMonth }, { eventDate: previousThroughMonth }] },
       select: { id: true, sourceInvoiceId: true, eventDate: true },
     }),
+    loadEmployerCostsForYear(prisma, year, month, now),
+    loadEmployerCostsForYear(prisma, year - 1, month, now),
   ])
   // After revoke this row is the previous approved snapshot. OPEN/ARCHIVED
   // imports are handled in the import queue, not as current pending KSeF money.
@@ -45,5 +48,5 @@ export async function loadActualDashboardModel(period: DashboardPeriod, now = ne
   for (const invoice of pendingInvoices) addPending(invoice.issueDate, `invoice:${invoice.id}`)
   for (const event of pendingCostEvents) addPending(event.eventDate, event.sourceInvoiceId ? `invoice:${event.sourceInvoiceId}` : `event:${event.id}`)
   const pendingCostPeriods = [...pendingByPeriod.values()].map(({ year: pendingYear, month: pendingMonth, documents }) => ({ year: pendingYear, month: pendingMonth, count: documents.size }))
-  return buildActualDashboard({ period, today: dashboardToday(now), revenue, previousRevenue, actualEntries, previousActualEntries, costEvents, previousCostEvents, waitingInvoices, closedPeriods, pendingCostPeriods })
+  return buildActualDashboard({ period, today: dashboardToday(now), revenue, previousRevenue, actualEntries, previousActualEntries, costEvents, previousCostEvents, waitingInvoices, closedPeriods, pendingCostPeriods, employerCosts: employerCosts.rows, previousEmployerCosts: previousEmployerCosts.rows })
 }

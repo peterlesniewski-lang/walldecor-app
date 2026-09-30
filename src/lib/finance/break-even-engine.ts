@@ -32,6 +32,10 @@ export interface BreakEvenCalculationInput {
   matches: BreakEvenFixedCostMatch[]; revenue: Array<{ costCenterId: string; amount: number }>;
   revenueBases: BreakEvenRevenueBasis[]; sources: BreakEvenSource[]; sourceWarnings?: string[];
   historicalSuggestion: BreakEvenHistoricalSuggestion; warningSummary: BreakEvenReport['warningSummary'];
+  /** Payroll employer cost allocated to salons; undefined when payroll is not part of the month. */
+  employerCosts?: Array<{ costCenterId: string; amount: number; status: 'APPROVED' | 'ESTIMATE' }>;
+  /** People in payroll whose employer cost is unknown (no base salary, hourly base, no split). */
+  employerCostMissingCount?: number;
 }
 
 export function calculateBreakEven(input: BreakEvenCalculationInput): BreakEvenReport {
@@ -87,11 +91,18 @@ export function calculateBreakEven(input: BreakEvenCalculationInput): BreakEvenR
     if (!fixedCosts.length) centerWarnings.push('Brak wybranych pozycji kosztów stałych. Wybierz koszty przed oceną progu.')
     const unclassified = centerSources.filter((source) => !matchedKeys.has(sourceKey(source)) && !has(source, ['fixed', 'variable', 'goods', 'cogs', 'one-off', 'payroll']))
     if (unclassified.length) centerWarnings.push(`Pozycje bez klasyfikacji kosztu: ${unclassified.length}. Nie są uwzględnione w progu.`)
-    centerWarnings.push('Brak kompletnego kosztu pracodawcy z HR. Raport nie obejmuje pełnego kosztu salonu.')
+    const payrollRows = input.employerCosts?.filter((row) => row.costCenterId === center)
+    const hr: BreakEvenSalonReport['hr'] = payrollRows === undefined
+      ? { status: 'missing', amount: null }
+      : { status: payrollRows.some((row) => row.status === 'ESTIMATE') ? 'estimate' : 'actual', amount: roundMoney(payrollRows.reduce((sum, row) => sum + row.amount, 0)) }
+    if (hr.status === 'missing') centerWarnings.push('Brak kompletnego kosztu pracodawcy z HR. Raport nie obejmuje pełnego kosztu salonu.')
+    if (hr.status === 'estimate') centerWarnings.push('Koszt pracodawcy to szacunek z podstawy wynagrodzenia (bez nadgodzin i premii) do czasu zatwierdzenia listy płac.')
+    if (input.employerCostMissingCount) centerWarnings.push(`Bez kosztu pracodawcy: ${input.employerCostMissingCount} os. (brak podstawy lub podziału na salony). Uzupełnij w Wynagrodzeniach.`)
     centerWarnings.push('Koszty zmienne obejmują tylko dokumenty ujęte w tym miesiącu; przyszłe koszty zmienne są nieznane.')
     const actualFixedNet = roundMoney(fixedCosts.filter((row) => row.actualNetAmount !== null).reduce((sum, row) => sum + row.includedNetAmount, 0))
     const expectedFixedNet = roundMoney(fixedCosts.filter((row) => row.actualNetAmount === null).reduce((sum, row) => sum + row.includedNetAmount, 0))
-    const fixedNet = roundMoney(actualFixedNet + expectedFixedNet)
+    // Employer cost carries no VAT, so its net equals its gross; it is a fixed salon cost.
+    const fixedNet = roundMoney(actualFixedNet + expectedFixedNet + (hr.amount ?? 0))
     const canCalculate = margin !== null && fixedCosts.length > 0 && !unknownVariable && !fixedCosts.some((row) => row.status === 'invalid')
     const targetNet = canCalculate ? roundMoney((fixedNet + variableNet) / margin.margin) : null
     const fixedOnlyTargetNet = margin && fixedCosts.length > 0 ? roundMoney(fixedNet / margin.margin) : null
@@ -103,7 +114,7 @@ export function calculateBreakEven(input: BreakEvenCalculationInput): BreakEvenR
       omittedFixedCount: omittedFixed.length, omittedFixedNet: roundMoney(omittedFixed.reduce((sum, source) => sum + (source.netAmount ?? 0), 0)),
       goodsNet: roundMoney(centerSources.filter(isPurchaseSource).reduce((sum, source) => sum + (source.netAmount ?? 0), 0)),
       oneOffNet: roundMoney(centerSources.filter((source) => has(source, ['one-off'])).reduce((sum, source) => sum + (source.netAmount ?? 0), 0)),
-      hr: { status: 'missing', amount: null }, status: 'provisional', warnings: centerWarnings }]
+      hr, status: 'provisional', warnings: centerWarnings }]
   })) as Record<BreakEvenSalon, BreakEvenSalonReport>
   return { year: input.year, month: input.month, margin, byCostCenter, historicalSuggestion: input.historicalSuggestion,
     warnings, warningAmount: input.warningSummary.plnAmount, warningSummary: input.warningSummary }

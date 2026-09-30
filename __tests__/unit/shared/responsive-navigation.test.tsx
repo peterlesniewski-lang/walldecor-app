@@ -128,7 +128,7 @@ describe('responsive dashboard navigation', () => {
     let dialog = screen.getByRole('dialog', { name: 'Menu HR' })
     const timeGroup = within(dialog).getByRole('button', { name: 'Czas pracy' })
     const leaveGroup = within(dialog).getByRole('button', { name: 'Urlopy' })
-    expect(within(dialog).queryByRole('button', { name: 'Wynagrodzenia' })).toBeNull()
+    const payrollGroup = within(dialog).getByRole('button', { name: 'Wynagrodzenia' })
 
     expect(timeGroup.getAttribute('aria-expanded')).toBe('true')
     expect(timeGroup.getAttribute('aria-controls')).toBe('hr-mobile-nav-group-time')
@@ -157,6 +157,12 @@ describe('responsive dashboard navigation', () => {
     expect(within(dialog).queryByRole('link', { name: 'Typy' })).toBeNull()
     expect(within(dialog).queryByRole('link', { name: 'Salda' })).toBeNull()
     expect(within(dialog).queryByRole('link', { name: 'Akceptacja' })).toBeNull()
+
+    // Employees reach only their own pay slip; settlements and rates stay ADMIN-only.
+    await user.click(payrollGroup)
+    expect(within(dialog).getByRole('link', { name: 'Mój pasek' }).getAttribute('href')).toBe('/hr/my-pay')
+    expect(within(dialog).queryByRole('link', { name: 'Rozliczenia miesięczne' })).toBeNull()
+    expect(within(dialog).queryByRole('link', { name: 'Stawki pracodawcy' })).toBeNull()
 
     await user.click(within(dialog).getByRole('button', { name: 'Zamknij' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Menu HR' })).toBeNull())

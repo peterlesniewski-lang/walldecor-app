@@ -1,6 +1,6 @@
 import { COST_CENTER_CHANNELS, CHANNEL_LABELS, type RevenueChannel } from '@/lib/validations/revenue'
 import { FINANCE_COST_CENTERS, type FinanceCostCenterId } from '@/lib/finance/company-health'
-import { buildRealizedCostSummary, type RealizedActualEntryInput, type RealizedCostEventInput } from '@/lib/finance/realized-costs'
+import { buildRealizedCostSummary, type RealizedActualEntryInput, type RealizedCostEventInput, type RealizedEmployerCostInput } from '@/lib/finance/realized-costs'
 import { roundMoney } from '@/lib/finance/ksef-inbox'
 
 export interface DashboardPeriod { year: number; month: number }
@@ -42,6 +42,9 @@ export interface DashboardInput {
   costEvents: RealizedCostEventInput[]
   previousActualEntries: RealizedActualEntryInput[]
   previousCostEvents: RealizedCostEventInput[]
+  /** Payroll employer cost per salon (ADMIN view, unmasked). */
+  employerCosts?: RealizedEmployerCostInput[]
+  previousEmployerCosts?: RealizedEmployerCostInput[]
   waitingInvoices: Array<{ currency: string; grossAmount: number; reportingGrossAmount?: number | null }>
   /** Explicit company-level confirmation; never inferred from the existence of a cost row. */
   closedPeriods?: DashboardPeriod[]
@@ -89,8 +92,8 @@ function channelRows(rows: DashboardRevenue[], year: number, month: number, toda
 /** Report values are actuals only. Presence and freshness are independent of the amount (including zero). */
 export function buildActualDashboard(input: DashboardInput) {
   const { year, month } = input.period
-  const realized = buildRealizedCostSummary({ year, actualEntries: input.actualEntries, costEvents: input.costEvents })
-  const previousRealized = buildRealizedCostSummary({ year: year - 1, actualEntries: input.previousActualEntries, costEvents: input.previousCostEvents })
+  const realized = buildRealizedCostSummary({ year, actualEntries: input.actualEntries, costEvents: input.costEvents, employerCosts: input.employerCosts })
+  const previousRealized = buildRealizedCostSummary({ year: year - 1, actualEntries: input.previousActualEntries, costEvents: input.previousCostEvents, employerCosts: input.previousEmployerCosts })
   const makeMonth = (reportYear: number, reportMonth: number, revenues: DashboardRevenue[], costs: typeof realized): DashboardMonth => {
     const rows = revenues.filter((row) => row.year === reportYear && row.month === reportMonth)
     const channels = channelRows(rows, reportYear, reportMonth, input.today)

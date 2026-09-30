@@ -5,6 +5,12 @@ const prismaMock = vi.hoisted(() => ({
   breakEvenFixedCost: { findMany: vi.fn() }, breakEvenRevenueBasis: { findMany: vi.fn() }, revenue: { findMany: vi.fn() }, ksefInvoice: { findMany: vi.fn() },
 }))
 vi.mock('@/lib/prisma', () => ({ prisma: prismaMock }))
+// Payroll employer cost has its own tests; these cover invoice and revenue data only.
+vi.mock('@/lib/finance/employer-costs', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/lib/finance/employer-costs')>()
+  const empty = async () => ({ rows: [], missingByMonth: new Array(12).fill(0) })
+  return { ...original, loadEmployerCostsForYear: vi.fn(empty), loadEmployerCostsForMonths: vi.fn(empty) }
+})
 const event = (patch: Partial<BreakEvenEventInput> = {}): BreakEvenEventInput => ({ id: 'e', status: 'APPROVED', documentStatus: 'ACTIVE', currency: 'PLN', grossAmount: 1230, netAmount: 1000, vatAmount: 230, sourceInvoiceId: 'invoice', supplierName: 'Dostawca', supplierNip: '123', reference: 'FV1', sourceInvoice: { status: 'APPROVED', documentStatus: 'ACTIVE', invoiceImportDraft: null }, parts: [{ id: 'part', label: 'Czynsz', grossAmount: 1230, tags: [{ tag: { slug: 'fixed' } }], allocations: [{ costCenterId: 'JAG', percent: 100 }] }], ...patch })
 const build = (events: BreakEvenEventInput[]) => buildBreakEvenSources(events, [], 2026, 9)
 

@@ -22,7 +22,7 @@ const step1Schema = z.object({
 })
 
 const step2Schema = z.object({
-  employmentType: z.enum(['UoP', 'B2B', 'UZ', 'UoD', 'inne'] as const).optional(),
+  employmentType: z.enum(['UoP', 'B2B', 'UZ', 'UoD', 'Zarząd', 'inne'] as const).optional(),
   startDate: z.string().min(1, 'Data rozpoczęcia jest wymagana'),
   endDate: z.string().optional(),
   costCenterId: z.string().min(1, 'Centrum kosztów jest wymagane'),
@@ -228,6 +228,7 @@ export function EmployeeForm({ divisions, departments, managers }: EmployeeFormP
                 <option value="B2B">B2B</option>
                 <option value="UZ">UZ — Umowa zlecenie</option>
                 <option value="UoD">UoD — Umowa o dzieło</option>
+                <option value="Zarząd">Zarząd — powołanie / uchwała</option>
                 <option value="inne">Inne</option>
               </select>
             </div>

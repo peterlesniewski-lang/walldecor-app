@@ -1,6 +1,25 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-09-30 (koszt pracodawcy w wynikach — #21, w toku)
+**Ostatnia aktualizacja:** 2026-09-30 (koszt pracodawcy w wynikach — #21, gałąź `employer-cost-results`, lokalnie)
+
+## Koszt pracodawcy w wynikach firmy i Pasek wynagrodzenia — 30.09.2026 (#21, gałąź `employer-cost-results`)
+
+```
+[x] Migracja 20260930090000_payroll_employer_cost: stawki pracodawcy, zwolnienia, podział JAG/PUL, źródło kosztu i podział w wersji (triggery append-only)
+[x] Koszt pracodawcy wyliczany z brutto × stawki per rodzaj rozliczenia (UoP / UZ / Zarząd), każda składka zaokrąglana osobno; ręczne nadpisanie jako OVERRIDDEN
+[x] Kadrowa podaje tylko brutto i netto; podgląd wyliczonego kosztu w formularzu
+[x] Blokady zatwierdzenia: brak podziału dla osoby w GLOBAL; stawki/zwolnienia zmienione po potwierdzeniu kadrowej
+[x] Kontrakt getMonthlyEmployerCosts: zatwierdzone lub szacunek z podstawy (bez nadgodzin/premii), MISSING z powodem; B2B poza listą
+[x] Wynik firmy i salonów (/finance) oraz pulpit CEO: koszt pracodawcy jako koszt stały od 04/2026 do bieżącego miesiąca, oznaczenie „szacunek”
+[x] MANAGER/EMPLOYEE: gdy w salonie w miesiącu jest 1 osoba, cały koszt pracodawcy miesiąca idzie tylko do sumy firmy (GLOBAL)
+[x] Próg rentowności: koszt pracodawcy salonu w kosztach stałych, status actual/estimate zamiast stałego „brak kosztu z HR”
+[x] Ekrany: /hr/payroll/rates (stawki, ADMIN), panel „Koszt pracodawcy i podział” w rozliczeniu, /hr/my-pay (pasek brutto/netto pracownika)
+[x] Rodzaj umowy „Zarząd” w karcie pracownika
+[ ] Przed wdrożeniem: sprawdzić na produkcji ręczne koszty z wynagrodzeniami od 04/2026 (podwójne liczenie)
+[ ] Po wdrożeniu: potwierdzić stawki z księgową, ustawić podział zarządu, uzupełnić rozliczenia 04–09/2026
+```
+
+Testy: Vitest 3131 PASS (pada tylko `ksef-sync.test.ts` — 11 testów, pada też na czystym `main`), nowe: jednostkowe kosztu pracodawcy 25, finansowe 16, próg rentowności +6, integracja 23 na świeżej bazie.
 
 ## HR: miesięczne rozliczenia wynagrodzeń — 22.09.2026 (gałąź `monthly-salary-settlement`, lokalnie)
 
@@ -13,8 +32,8 @@
 [x] Zatwierdzenie → niezmienna wersja; korekta = nowa wersja zastępująca poprzednią (brak podwójnego kosztu)
 [x] API /api/hr/payroll/* tylko ADMIN (+ reguła w proxy), UI /hr/payroll i /hr/payroll/[id]
 [x] Kontrakt dla etapów 2 i 3: src/lib/payroll/contracts.ts (getEffectivePayrollCosts, getOwnPayrollStatements)
-[ ] Etap 2: prywatny ekran „Moje wynagrodzenia” (EMPLOYEE, employeeId z sesji)
-[ ] Etap 3: przekazanie kosztu do finansów / Break-even (upsert po sourceKey)
+[x] Etap 2: prywatny ekran „Moje wynagrodzenia” → /hr/my-pay (#21)
+[x] Etap 3: przekazanie kosztu do finansów / Break-even → getMonthlyEmployerCosts (#21)
 ```
 
 Wyniki: Vitest 3034 PASS, integracja płac 35/35 i E2E 3/3 na świeżej bazie (z restartem serwera i odmową dostępu), typecheck i build PASS.

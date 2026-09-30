@@ -325,6 +325,8 @@ export function EmployeeEditForm({
                         ? 'UZ — Umowa zlecenie'
                         : t === 'UoD'
                         ? 'UoD — Umowa o dzieło'
+                        : t === 'Zarząd'
+                        ? 'Zarząd — powołanie / uchwała'
                         : 'Inne'}
                     </option>
                   ))}

@@ -841,6 +841,8 @@ model Employee {
   // Payroll (ADMIN-only; never include from generic employee queries)
   payrollBaseSalaries PayrollBaseSalary[]
   payrollSettlements  PayrollSettlement[]
+  payrollCostProfile  PayrollCostProfile?
+  payrollCostSplits   PayrollCostSplit[]
 
   createdAt DateTime @default(now())
 }
@@ -1784,6 +1786,7 @@ model PayrollSettlement {
   finalGrossGrosze          Int?
   finalNetGrosze            Int?
   employerCostGrosze        Int?
+  employerCostSource        String?   // CALCULATED | OVERRIDDEN
   payrollOfficeReference    String?
   payrollOfficeConfirmedAt  DateTime?
   payrollOfficeConfirmedById String?
@@ -1866,9 +1869,59 @@ model PayrollSettlementVersion {
   approvedAt             DateTime          @default(now())
   supersededAt           DateTime?
   supersededByVersionId  String?
+  employerCostSource     String    @default("ENTERED") // ENTERED (legacy) | CALCULATED | OVERRIDDEN
+  employerRatesJson      String?   // rates and exemptions used for CALCULATED / OVERRIDDEN
+  costAllocationJson     String    @default("[]") // [{ costCenterId: JAG|PUL, amountGrosze }]
 
   @@unique([settlementId, versionNumber])
   @@index([year, month])
+}
+
+// Employer contribution rates per settlement type (UOP | UZ | ZARZAD) in basis points.
+// Append-only: a wrong row is revoked, not edited. effectiveFrom is "YYYY-MM".
+model PayrollEmployerRate {
+  id              String    @id @default(cuid())
+  settlementType  String
+  effectiveFrom   String
+  pensionBp       Int
+  disabilityBp    Int
+  accidentBp      Int
+  labourFundBp    Int
+  guaranteeFundBp Int
+  ppkBp           Int
+  note            String?
+  createdById     String
+  createdAt       DateTime  @default(now())
+  revokedAt       DateTime?
+  revokedById     String?
+
+  @@index([settlementType, effectiveFrom])
+}
+
+// Per-employee exemptions from employer contributions (ADMIN-only).
+model PayrollCostProfile {
+  employeeId           String   @id
+  employee             Employee @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  withoutFunds         Boolean  @default(false)
+  withoutContributions Boolean  @default(false)
+  updatedById          String
+  updatedAt            DateTime @updatedAt
+}
+
+// Fixed split of an employee's cost between salons; PUL gets 100 - jagPercent.
+// Append-only: a wrong row is revoked. effectiveFrom is "YYYY-MM".
+model PayrollCostSplit {
+  id            String    @id @default(cuid())
+  employeeId    String
+  employee      Employee  @relation(fields: [employeeId], references: [id], onDelete: Restrict)
+  effectiveFrom String
+  jagPercent    Int
+  createdById   String
+  createdAt     DateTime  @default(now())
+  revokedAt     DateTime?
+  revokedById   String?
+
+  @@index([employeeId, effectiveFrom])
 }
 
 // Append-only history. employeeId is always set; settlementId is null for base-salary events.

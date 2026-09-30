@@ -22,6 +22,10 @@ export type SummaryInput = {
   payrollOfficeConfirmedAt: Date | null
   lines: SummaryLine[]
   adjustments: SummaryAdjustment[]
+  /** Employee sits in GLOBAL without a JAG/PUL split, so the cost cannot reach a salon. */
+  costSplitMissing?: boolean
+  /** A calculated employer cost no longer matches current rates or exemptions. */
+  employerCostStale?: boolean
 }
 
 export type PayrollBlocker =
@@ -32,6 +36,8 @@ export type PayrollBlocker =
   | 'HOURLY_ENTRIES_PENDING'
   | 'OPEN_TIME_ENTRY'
   | 'PAYROLL_OFFICE_NOT_CONFIRMED'
+  | 'COST_SPLIT_MISSING'
+  | 'EMPLOYER_COST_STALE'
 
 export type PayrollWarning = 'BASE_CHANGED_MID_MONTH' | 'NON_OVERTIME_ENTRIES_PENDING'
 
@@ -42,7 +48,9 @@ export const BLOCKER_LABELS: Record<PayrollBlocker, string> = {
   OVERTIME_UNRESOLVED: 'Nie wszystkie zatwierdzone nadgodziny mają wskazane: wypłata czy czas wolny.',
   HOURLY_ENTRIES_PENDING: 'Stawka godzinowa: w kalendarzu są niezatwierdzone wpisy czasu pracy.',
   OPEN_TIME_ENTRY: 'W kalendarzu jest otwarty wpis (brak wyjścia).',
-  PAYROLL_OFFICE_NOT_CONFIRMED: 'Brak potwierdzonych danych od kadrowej (brutto, netto, koszt pracodawcy).',
+  PAYROLL_OFFICE_NOT_CONFIRMED: 'Brak potwierdzonych danych od kadrowej (brutto i netto).',
+  COST_SPLIT_MISSING: 'Pracownik jest przypisany do GLOBAL — ustaw w karcie podział kosztu na salony JAG/PUL.',
+  EMPLOYER_COST_STALE: 'Stawki lub zwolnienia zmieniły się po potwierdzeniu danych kadrowej — potwierdź je ponownie.',
 }
 
 export const WARNING_LABELS: Record<PayrollWarning, string> = {
@@ -102,14 +110,17 @@ export function summarizeSettlement(input: SummaryInput): SettlementSummary {
     rejectedOvertimeMinutes: minutes(input.lines.filter((line) => line.entryStatus === 'rejected')),
     unresolvedOvertimeMinutes,
     inputBlockers,
-    approvalBlockers: input.payrollOfficeConfirmedAt
-      ? inputBlockers
-      : [...inputBlockers, 'PAYROLL_OFFICE_NOT_CONFIRMED'],
+    approvalBlockers: [
+      ...inputBlockers,
+      ...(input.payrollOfficeConfirmedAt ? [] : ['PAYROLL_OFFICE_NOT_CONFIRMED' as const]),
+      ...(input.costSplitMissing ? ['COST_SPLIT_MISSING' as const] : []),
+      ...(input.employerCostStale ? ['EMPLOYER_COST_STALE' as const] : []),
+    ],
     warnings,
   }
 }
 
-/** Validates the payroll office figures. The employer cost is always an explicit input. */
+/** Validates the payroll office figures together with the calculated or overridden employer cost. */
 export function validatePayrollOfficeFigures(input: {
   employmentType: string | null
   finalGrossGrosze: number

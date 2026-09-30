@@ -424,6 +424,24 @@ Ochrona w bazie (migracja `20260922120000_hr_payroll_settlements`): CHECK-i (net
 triggery blokujące UPDATE/DELETE wersji i audytu, DELETE rozliczeń, edycję zatwierdzonego rozliczenia i jego pozycji.
 Kontrakt odczytu dla finansów i ekranu pracownika: `src/lib/payroll/contracts.ts`.
 
+#### Koszt pracodawcy i podział na salony (2026-09-30, #21)
+
+```
+PayrollEmployerRate   (settlementType UOP|UZ|ZARZAD, effectiveFrom "YYYY-MM", stawki w punktach bazowych; append-only + revoke)
+Employee 1─1 PayrollCostProfile   (withoutFunds — bez FP/FGŚP, withoutContributions — bez składek pracodawcy)
+Employee 1─* PayrollCostSplit     (effectiveFrom "YYYY-MM", jagPercent 0–100, PUL = reszta; append-only + revoke)
+PayrollSettlement.employerCostSource          CALCULATED | OVERRIDDEN
+PayrollSettlementVersion.employerCostSource   ENTERED (sprzed #21) | CALCULATED | OVERRIDDEN
+PayrollSettlementVersion.employerRatesJson    stawki i zwolnienia użyte do wyliczenia
+PayrollSettlementVersion.costAllocationJson   [{ costCenterId: JAG|PUL, amountGrosze }]
+```
+
+Koszt pracodawcy = brutto z listy płac + każda składka pracodawcy zaokrąglona osobno do grosza (`src/lib/payroll/employer-cost.ts`).
+Rodzaj rozliczenia wynika z `Employee.employmentType` (UoP → UOP, UZ → UZ, Zarząd → ZARZAD; B2B i pozostałe poza listą płac).
+Bez wpisu w `PayrollEmployerRate` obowiązują stawki domyślne z kodu. Osoba w GLOBAL musi mieć podział, inaczej zatwierdzenie jest blokowane.
+Finanse czytają `getMonthlyEmployerCosts` (zatwierdzona wersja albo szacunek z podstawy × stawki) przez `src/lib/finance/employer-costs.ts`;
+koszt wchodzi do wyniku firmy/salonów i progu rentowności jako koszt stały od 04/2026 do bieżącego miesiąca.
+
 ---
 
 ### LeaveRequest — Wnioski urlopowe

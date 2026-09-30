@@ -107,6 +107,39 @@ describe('break-even explicit company margin and selected costs', () => {
   })
 })
 
+describe('break-even employer cost from payroll', () => {
+  const payroll = (patch: Partial<NonNullable<BreakEvenCalculationInput['employerCosts']>[number]> = {}) =>
+    ({ costCenterId: 'JAG', amount: 6000, status: 'APPROVED' as const, ...patch })
+
+  it('should add the salon employer cost to fixed costs', () => {
+    // (1 000 rent + 6 000 payroll) / 0.4 margin
+    expect(calculateBreakEven(input({ employerCosts: [payroll()] })).byCostCenter.JAG.targetNet).toBe(17500)
+  })
+
+  it('should report approved payroll as the actual employer cost without the missing-HR warning', () => {
+    const jag = calculateBreakEven(input({ employerCosts: [payroll()] })).byCostCenter.JAG
+    expect([jag.hr, jag.warnings.some((w) => w.includes('kosztu pracodawcy'))]).toEqual([{ status: 'actual', amount: 6000 }, false])
+  })
+
+  it('should flag an estimated employer cost', () => {
+    const jag = calculateBreakEven(input({ employerCosts: [payroll(), payroll({ amount: 3000, status: 'ESTIMATE' })] })).byCostCenter.JAG
+    expect([jag.hr, jag.warnings.some((w) => w.includes('szacunek'))]).toEqual([{ status: 'estimate', amount: 9000 }, true])
+  })
+
+  it('should only count the employer cost allocated to the salon', () => {
+    expect(calculateBreakEven(input({ employerCosts: [payroll({ costCenterId: 'PUL' })] })).byCostCenter.JAG.hr).toEqual({ status: 'actual', amount: 0 })
+  })
+
+  it('should warn about people without an employer cost', () => {
+    const jag = calculateBreakEven(input({ employerCosts: [], employerCostMissingCount: 2 })).byCostCenter.JAG
+    expect(jag.warnings.some((w) => w.includes('2 os.'))).toBe(true)
+  })
+
+  it('should keep the missing-HR state when payroll is not part of the month', () => {
+    expect(calculateBreakEven(input()).byCostCenter.JAG.hr).toEqual({ status: 'missing', amount: null })
+  })
+})
+
 describe('historical purchase based indicative margin', () => {
   const months = () => ['2026-06', '2026-07', '2026-08'].map((period) => ({ period, revenue: [{ costCenterId: 'JAG', amount: 12300 }, { costCenterId: 'PUL', amount: 12300 }], bases: [basis(), basis('PUL')], sources: [source({ tags: ['goods'], netAmount: 12000, costCenterId: 'GLOBAL' })], warnings: [] }))
   it('weights revenue and all purchases across company including GLOBAL', () => {

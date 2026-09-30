@@ -1,4 +1,4 @@
-export const EMPLOYMENT_TYPES = ['UoP', 'B2B', 'UZ', 'UoD', 'inne'] as const
+export const EMPLOYMENT_TYPES = ['UoP', 'B2B', 'UZ', 'UoD', 'Zarząd', 'inne'] as const
 export type EmploymentType = typeof EMPLOYMENT_TYPES[number]
 
 export const LEAVE_STATUSES = ['pending', 'approved', 'rejected', 'cancelled'] as const
