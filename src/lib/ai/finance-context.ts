@@ -42,6 +42,7 @@ export function buildFinanceAiContext(model: ActualDashboardModel) {
       'Koszty równe zero bez costsConfirmed nie potwierdzają braku kosztów. Wynik przy complete=false jest niepełny; bieżący miesiąc partialMonth=true pozostaje miesiącem w toku. YTD obejmuje styczeń do wybranego miesiąca i zachowuje własną kompletność.',
       'Porównanie rok do roku wolno opisać tylko gdy yoy nie jest null; w przeciwnym razie podaj ograniczenie z yoyReason i nie wyliczaj porównania samodzielnie.',
       'Kontekst nie zawiera budżetu, prognoz, danych dostawców ani konkretnych faktur. Nie wnioskuj o nich z agregatów. Nie zawiera też sald rachunków, należności, zobowiązań ani powiadomień użytkownika.',
+      'Ten kontekst nie zawiera sprzedaży netto ani różnicy netto. Nie przeliczaj brutto dzieląc przez stawkę VAT.',
     ],
     period: { year: model.period.year, month: model.period.month },
     today: model.today,

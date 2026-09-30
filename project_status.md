@@ -57,6 +57,14 @@ Szczegóły i ograniczenia: [docs/evidence/2026-09-22-payroll-settlement.md](doc
 - [x] **Wdrożone na produkcję 2026-09-23** (PR #11, `412d639`). Pierwszy przebieg automatyczny: slot 15:00, status OK — pobrano 925, nowe 1, zaktualizowane 924.
 - [x] Fix builda Coolify (`47b8b0b`): `next/font/google` padał w Dockerze (`google/loader.js:122`, brak URL pliku czcionki od Google). Czcionki self-hosted w `src/app/fonts/` (woff2 latin+latin-ext, licencje OFL) przez `next/font/local` w `src/app/fonts.ts` — build nie zależy już od fonts.googleapis.com.
 
+## Pulpit CEO — wykres roczny i netto (2026-09-22)
+
+Gałąź `w-walldecor-app-wdro-roczny-wy`. Na `/` i `/dashboard` (tylko ADMIN) pod nagłówkiem „Finanse firmy” jest wykres styczeń–grudzień. Kliknięcie słupka ustawia `?year=&month=` i przeładowuje karty poniżej. Układ kart, kasy i alertów został. `/finance` nie dostało tego widoku.
+
+Sprzedaż netto bierze się z `BreakEvenRevenueBasis` i obowiązuje tylko, gdy snapshot brutto jest równy aktualnej sumie kanałów salonu. Brak albo nieaktualny snapshot daje formularz zapisu przez istniejące `revenue.save`. Koszt netto firmy to suma netto dokumentów (`netAmount`, a gdy go nie ma — brutto minus zapisany VAT). Brak, waluta bez PLN i wpisy sprzed kwietnia 2026 nie są zamieniane na zero ani na brutto/1,23. Podział na salony przy kilku częściach faktury jest oznaczony jako niepewny. Różnica nazywa się „Różnica po znanych kosztach netto”. Od 30.09 (#21) pulpit dolicza koszt pracodawcy z rozliczeń płac do kosztów netto (bez VAT) — patrz sekcja kosztu pracodawcy.
+
+Odbiór lokalny: testy jednostkowe pulpitu i netto, test SQLite loadera, `next build`, Playwright (zapis 8 500 zł przy brutto 10 300 zł, odczyt po przeładowaniu, zmiana miesiąca, pracownik nie wchodzi na pulpit).
+
 ## Bieżąca praca: faktury spoza KSeF i wspólne AI
 
 Izolowany checkout `walldecor-invoice-ai`, gałąź `feat/invoice-import-codex-ai`, baza `391518d`. Właściciel zatwierdził publikację i wdrożenie 12 września; przygotowanie produkcji trwa, aplikacja nie została jeszcze przełączona. [Zatwierdzony plan i bramki](docs/plans/2026-09-10-invoice-import-codex-ai.md).
