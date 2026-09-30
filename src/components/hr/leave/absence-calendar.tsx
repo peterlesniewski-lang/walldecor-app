@@ -1,6 +1,6 @@
 'use client'
 
-import { useState, useEffect, useCallback, useRef } from 'react'
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react'
 import { useRouter, useSearchParams } from 'next/navigation'
 import {
   Users,
@@ -12,6 +12,7 @@ import {
   CalendarDays,
 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
+import { LeaveRequestDialog } from './leave-request-dialog'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -106,6 +107,53 @@ function nextMonth(monthStr: string): string {
 function currentMonthStr(): string {
   const d = new Date()
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}`
+}
+
+interface CellLeave {
+  leave: LeaveEntry
+  isStart: boolean
+  isEnd: boolean
+}
+
+// Maps every day covered by the employee's leaves to the leave occupying it.
+function buildLeaveLookup(employee: EmployeeRow): Map<string, CellLeave> {
+  const map = new Map<string, CellLeave>()
+  for (const leave of employee.leaves) {
+    const start = new Date(leave.startDate + 'T12:00:00')
+    const end = new Date(leave.endDate + 'T12:00:00')
+    const cursor = new Date(start)
+    while (cursor <= end) {
+      const ds = `${cursor.getFullYear()}-${pad(cursor.getMonth() + 1)}-${pad(cursor.getDate())}`
+      map.set(ds, {
+        leave,
+        isStart: ds === leave.startDate,
+        isEnd: ds === leave.endDate,
+      })
+      cursor.setDate(cursor.getDate() + 1)
+    }
+  }
+  return map
+}
+
+// Moves from `anchor` toward `target` (same month, YYYY-MM-DD) and stops before
+// the first occupied day, so a drag never selects days the API would reject.
+function clampSelectionEnd(anchor: string, target: string, isOccupied: (ds: string) => boolean): string {
+  const prefix = anchor.slice(0, 8)
+  const anchorDay = Number(anchor.slice(8))
+  const targetDay = Number(target.slice(8))
+  const step = targetDay >= anchorDay ? 1 : -1
+  let end = anchorDay
+  for (let day = anchorDay + step; step > 0 ? day <= targetDay : day >= targetDay; day += step) {
+    if (isOccupied(`${prefix}${pad(day)}`)) break
+    end = day
+  }
+  return `${prefix}${pad(end)}`
+}
+
+interface Selection {
+  employeeId: string
+  anchor: string
+  current: string
 }
 
 // ─── KPI Card ─────────────────────────────────────────────────────────────────
@@ -239,12 +287,6 @@ function AbsencePopover({ leave, employeeName, children }: AbsencePopoverProps) 
 
 // ─── Calendar Cell ────────────────────────────────────────────────────────────
 
-interface CellLeave {
-  leave: LeaveEntry
-  isStart: boolean
-  isEnd: boolean
-}
-
 function CalendarCell({
   dayStr,
   cellLeave,
@@ -253,6 +295,10 @@ function CalendarCell({
   isHoliday,
   isToday,
   filters,
+  canCreate,
+  isSelected,
+  onSelectStart,
+  onSelectEnter,
 }: {
   dayStr: string
   cellLeave: CellLeave | null
@@ -261,6 +307,10 @@ function CalendarCell({
   isHoliday: boolean
   isToday: boolean
   filters: FilterState
+  canCreate: boolean
+  isSelected: boolean
+  onSelectStart: (dayStr: string) => void
+  onSelectEnter: (dayStr: string) => void
 }) {
   let bg = 'transparent'
   if (isHoliday) bg = 'rgb(254 242 242)'
@@ -269,14 +319,27 @@ function CalendarCell({
   if (!cellLeave) {
     return (
       <td
+        data-day={dayStr}
+        data-selected={isSelected || undefined}
+        onMouseDown={
+          canCreate
+            ? (e) => {
+                if (e.button !== 0) return
+                e.preventDefault()
+                onSelectStart(dayStr)
+              }
+            : undefined
+        }
+        onMouseEnter={canCreate ? () => onSelectEnter(dayStr) : undefined}
         style={{
-          background: bg,
+          background: isSelected ? 'rgba(228,220,209,0.9)' : bg,
           width: 28,
           minWidth: 28,
           padding: 0,
           borderRight: '1px solid var(--wd-border)',
           borderBottom: '1px solid var(--wd-border)',
           position: 'relative',
+          cursor: canCreate ? 'cell' : undefined,
         }}
       >
         {isToday && (
@@ -374,9 +437,10 @@ interface AbsenceCalendarProps {
   initialData: CalendarData
   initialMonth: string
   initialSummary: SummaryData
+  canCreate?: boolean
 }
 
-export function AbsenceCalendar({ initialData, initialMonth, initialSummary }: AbsenceCalendarProps) {
+export function AbsenceCalendar({ initialData, initialMonth, initialSummary, canCreate = false }: AbsenceCalendarProps) {
   const router = useRouter()
   const searchParams = useSearchParams()
 
@@ -422,6 +486,72 @@ export function AbsenceCalendar({ initialData, initialMonth, initialSummary }: A
     fetchSummary()
   }, [fetchSummary])
 
+  // Server re-renders (router.refresh after adding a leave, month navigation)
+  // deliver fresh props; state initialised from props would otherwise go stale.
+  useEffect(() => {
+    setCalData(initialData)
+  }, [initialData])
+
+  useEffect(() => {
+    setSummary(initialSummary)
+  }, [initialSummary])
+
+  const leaveLookups = useMemo(() => {
+    const lookups = new Map<string, Map<string, CellLeave>>()
+    for (const emp of calData.employees) lookups.set(emp.id, buildLeaveLookup(emp))
+    return lookups
+  }, [calData.employees])
+
+  // ── Click / drag selection (admin only) ─────────────────────────────────────
+  const [selection, setSelection] = useState<Selection | null>(null)
+  const [createDialog, setCreateDialog] = useState<{
+    employeeId: string
+    employeeName: string
+    startDate: string
+    endDate: string
+  } | null>(null)
+
+  const startSelection = (employeeId: string, dayStr: string) => {
+    setSelection({ employeeId, anchor: dayStr, current: dayStr })
+  }
+
+  const extendSelection = (employeeId: string, dayStr: string) => {
+    setSelection((sel) => {
+      if (!sel || sel.employeeId !== employeeId) return sel
+      const lookup = leaveLookups.get(employeeId)
+      const current = clampSelectionEnd(sel.anchor, dayStr, (ds) => lookup?.has(ds) ?? false)
+      return current === sel.current ? sel : { ...sel, current }
+    })
+  }
+
+  // Listen on window so the drag also ends when released outside the table.
+  useEffect(() => {
+    if (!selection) return
+    const finish = () => {
+      setSelection(null)
+      const emp = calData.employees.find((e) => e.id === selection.employeeId)
+      if (!emp) return
+      const [startDate, endDate] =
+        selection.anchor <= selection.current
+          ? [selection.anchor, selection.current]
+          : [selection.current, selection.anchor]
+      setCreateDialog({
+        employeeId: emp.id,
+        employeeName: `${emp.firstName} ${emp.lastName}`,
+        startDate,
+        endDate,
+      })
+    }
+    window.addEventListener('mouseup', finish)
+    return () => window.removeEventListener('mouseup', finish)
+  }, [selection, calData.employees])
+
+  const handleCreated = () => {
+    setCreateDialog(null)
+    fetchCalendar(month)
+    fetchSummary()
+  }
+
   const navigateMonth = (newMonth: string) => {
     setMonth(newMonth)
     const params = new URLSearchParams(searchParams.toString())
@@ -437,26 +567,6 @@ export function AbsenceCalendar({ initialData, initialMonth, initialSummary }: A
   const holidayMap = new Map<string, string>()
   for (const h of calData.holidays) {
     holidayMap.set(h.date, h.name)
-  }
-
-  // Precompute: for each employee, build a map of dayStr → CellLeave
-  function buildLeaveLookup(employee: EmployeeRow): Map<string, CellLeave> {
-    const map = new Map<string, CellLeave>()
-    for (const leave of employee.leaves) {
-      const start = new Date(leave.startDate + 'T12:00:00')
-      const end = new Date(leave.endDate + 'T12:00:00')
-      const cursor = new Date(start)
-      while (cursor <= end) {
-        const ds = `${cursor.getFullYear()}-${pad(cursor.getMonth() + 1)}-${pad(cursor.getDate())}`
-        map.set(ds, {
-          leave,
-          isStart: ds === leave.startDate,
-          isEnd: ds === leave.endDate,
-        })
-        cursor.setDate(cursor.getDate() + 1)
-      }
-    }
-    return map
   }
 
   const filterButton = (key: keyof FilterState, label: string, color: string) => {
@@ -580,7 +690,10 @@ export function AbsenceCalendar({ initialData, initialMonth, initialSummary }: A
 
         {/* Table scroll wrapper */}
         <div ref={tableScrollRef} className="overflow-x-auto">
-          <table style={{ borderCollapse: 'collapse', tableLayout: 'fixed', minWidth: '100%' }}>
+          <table
+            className={canCreate ? 'select-none' : undefined}
+            style={{ borderCollapse: 'collapse', tableLayout: 'fixed', minWidth: '100%' }}
+          >
             <thead>
               {/* Day numbers row */}
               <tr>
@@ -696,7 +809,15 @@ export function AbsenceCalendar({ initialData, initialMonth, initialSummary }: A
             </thead>
             <tbody>
               {calData.employees.map((emp, idx) => {
-                const leaveLookup = buildLeaveLookup(emp)
+                const leaveLookup = leaveLookups.get(emp.id) ?? new Map<string, CellLeave>()
+                const selStart =
+                  selection?.employeeId === emp.id
+                    ? (selection.anchor <= selection.current ? selection.anchor : selection.current)
+                    : null
+                const selEnd =
+                  selection?.employeeId === emp.id
+                    ? (selection.anchor <= selection.current ? selection.current : selection.anchor)
+                    : null
                 const bgRow = idx % 2 === 1 ? 'var(--wd-surface-2)' : 'white'
 
                 return (
@@ -739,6 +860,10 @@ export function AbsenceCalendar({ initialData, initialMonth, initialSummary }: A
                           isHoliday={holiday}
                           isToday={ds === today}
                           filters={filters}
+                          canCreate={canCreate}
+                          isSelected={selStart !== null && selEnd !== null && ds >= selStart && ds <= selEnd}
+                          onSelectStart={(dayStr) => startSelection(emp.id, dayStr)}
+                          onSelectEnter={(dayStr) => extendSelection(emp.id, dayStr)}
                         />
                       )
                     })}
@@ -790,6 +915,20 @@ export function AbsenceCalendar({ initialData, initialMonth, initialSummary }: A
           </span>
         </div>
       </div>
+
+      {canCreate && (
+        <LeaveRequestDialog
+          open={createDialog !== null}
+          onOpenChange={(open) => {
+            if (!open) setCreateDialog(null)
+          }}
+          onSuccess={handleCreated}
+          employeeId={createDialog?.employeeId}
+          employeeName={createDialog?.employeeName}
+          startDate={createDialog?.startDate}
+          endDate={createDialog?.endDate}
+        />
+      )}
     </div>
   )
 }

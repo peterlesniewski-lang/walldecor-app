@@ -1,6 +1,14 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-09-23 (automatyczna synchronizacja KSeF 2× na dobę)
+**Ostatnia aktualizacja:** 2026-09-30 (dodawanie urlopów klikaniem w kalendarz HR)
+
+## Kalendarz urlopów — dodawanie przez kliknięcie (2026-09-30)
+
+- [x] `/hr/leave` (tylko ADMIN): kliknięcie pustego dnia lub przeciągnięcie po dniach jednego pracownika otwiera dialog „Dodaj urlop” z wypełnionym pracownikiem i datami. Zaznaczenie zatrzymuje się przed pierwszym zajętym dniem; dni z istniejącym wnioskiem nadal otwierają popover.
+- [x] Mechanika bez zmian: ten sam `POST /api/hr/leave-requests`, wniosek ze statusem `pending`. Przycisk „Dodaj urlop” zostaje jako druga ścieżka.
+- [x] Nowy `leave-request-dialog.tsx` (wspólny dla przycisku i kalendarza); `LeaveRequestForm` dostał `initialStartDate`/`initialEndDate`; `AbsenceCalendar` — prop `canCreate`.
+- [x] Fix: `AdminLeaveButton` odświeża stronę (`router.refresh()`) po zapisie, a `AbsenceCalendar` synchronizuje stan z nowymi propsami serwera — wcześniej nowy urlop nie pojawiał się bez przeładowania.
+- [x] Testy: `__tests__/unit/hr/absence-calendar-selection.test.tsx` (8), test prefillu w `leave-request-form.test.tsx`. Bez obsługi dotyku (świadomie).
 
 ## Automatyczna synchronizacja KSeF (2026-09-23)
 
