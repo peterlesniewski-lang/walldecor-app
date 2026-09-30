@@ -3,6 +3,7 @@ import { buildCostWarningSummary } from './cost-reporting'
 import { isActiveInvoiceMoneyRow } from './invoice-money-scope'
 import { roundMoney } from './ksef-inbox'
 import { breakEvenPeriod, calculateBreakEven, calculateHistoricalSuggestion } from './break-even-engine'
+import { employerCostMonthsInScope, loadEmployerCostsForMonths } from './employer-costs'
 import type { BreakEvenFixedCost, BreakEvenFixedCostMatch, BreakEvenResponse, BreakEvenSourcesResult, BreakEvenSource } from './break-even-types'
 
 export function breakEvenMonthRange(year: number, month: number) {
@@ -79,14 +80,23 @@ function missingInvoiceCostWarnings(invoices: Awaited<ReturnType<typeof loadWarn
   return missingCount ? [`Zatwierdzone faktury bez aktywnego kosztu w wybranym miesiącu: ${missingCount}. Sprawdź powiązanie i datę kosztu.`] : []
 }
 
+async function loadBreakEvenEmployerCosts(year: number, month: number) {
+  if (!employerCostMonthsInScope(year).includes(month)) return { employerCosts: undefined, employerCostMissingCount: 0 }
+  const { rows, missingByMonth } = await loadEmployerCostsForMonths(prisma, year, [month])
+  return {
+    employerCosts: rows.filter((row) => row.month === month).map(({ costCenterId, amount, status }) => ({ costCenterId, amount, status })),
+    employerCostMissingCount: missingByMonth[month - 1],
+  }
+}
+
 export async function loadBreakEvenReport(year: number, month: number): Promise<BreakEvenResponse> {
-  const [marginRows, fixedRows, matches, revenue, revenueBases, sourceResult, warningInvoices] = await Promise.all([
+  const [marginRows, fixedRows, matches, revenue, revenueBases, sourceResult, warningInvoices, payroll] = await Promise.all([
     prisma.breakEvenMarginSetting.findMany({ orderBy: { effectiveFrom: 'desc' } }),
     prisma.breakEvenFixedCost.findMany({ orderBy: [{ costCenterId: 'asc' }, { name: 'asc' }] }),
     prisma.breakEvenFixedCostMatch.findMany({ where: { year, month } }),
     prisma.revenue.findMany({ where: { year, month, costCenterId: { in: ['JAG', 'PUL'] } } }),
     prisma.breakEvenRevenueBasis.findMany({ where: { year, month } }),
-    loadBreakEvenSources(year, month), loadWarningInvoices(year, month),
+    loadBreakEvenSources(year, month), loadWarningInvoices(year, month), loadBreakEvenEmployerCosts(year, month),
   ])
   const margins = marginRows.map((row) => ({ id: row.id, margin: row.margin, effectiveFrom: row.effectiveFrom.toISOString().slice(0, 7), note: row.note }))
   const fixedCosts = fixedRows.map((row) => ({ ...row, costCenterId: row.costCenterId as BreakEvenFixedCost['costCenterId'] }))
@@ -109,6 +119,6 @@ export async function loadBreakEvenReport(year: number, month: number): Promise<
   }))
   const report = calculateBreakEven({ year, month, margins, fixedCosts, matches, revenue, revenueBases,
     sources: sourceResult.sources, sourceWarnings: [...sourceResult.warnings, ...missingInvoiceCostWarnings(warningInvoices, year, month)],
-    historicalSuggestion: calculateHistoricalSuggestion(historicalMonths), warningSummary: buildCostWarningSummary(warningInvoices) })
+    historicalSuggestion: calculateHistoricalSuggestion(historicalMonths), warningSummary: buildCostWarningSummary(warningInvoices), ...payroll })
   return { year, month, report, settings: { margins, fixedCosts } }
 }

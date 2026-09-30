@@ -4,6 +4,7 @@ import { loadActualDashboardModel } from '@/lib/finance/actual-dashboard-model-d
 
 const db = vi.hoisted(() => ({
   revenue: { findMany: vi.fn() },
+  breakEvenRevenueBasis: { findMany: vi.fn() },
   actualEntry: { findMany: vi.fn() },
   costEvent: { findMany: vi.fn() },
   ksefInvoice: { findMany: vi.fn() },
@@ -11,6 +12,12 @@ const db = vi.hoisted(() => ({
 }))
 // Deliberately expose only financial tables: unrelated reads must fail this boundary test.
 vi.mock('@/lib/prisma', () => ({ prisma: db }))
+// Payroll employer cost has its own tests; these cover invoice and revenue data only.
+vi.mock('@/lib/finance/employer-costs', async (importOriginal) => {
+  const original = await importOriginal<typeof import('@/lib/finance/employer-costs')>()
+  const empty = async () => ({ rows: [], missingByMonth: new Array(12).fill(0) })
+  return { ...original, loadEmployerCostsForYear: vi.fn(empty), loadEmployerCostsForMonths: vi.fn(empty) }
+})
 
 beforeEach(() => {
   vi.resetAllMocks()
@@ -25,11 +32,15 @@ describe('financial-only dashboard loader', () => {
     expect(model.selected).toMatchObject({ revenue: null, result: null, costs: 0, complete: false })
     expect(model.yoy).toBeNull()
     expect(db.revenue.findMany.mock.calls).toEqual([
-      [{ where: { year: 2026, month: { lte: 8 } } }],
-      [{ where: { year: 2025, month: { lte: 8 } } }],
+      [{ where: { year: 2026 } }],
+      [{ where: { year: 2025, month: 8 } }],
+    ])
+    expect(db.breakEvenRevenueBasis.findMany.mock.calls).toEqual([
+      [{ where: { year: 2026 } }],
+      [{ where: { year: 2025, month: 8 } }],
     ])
     expect(db.costEvent.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: {
-      status: 'APPROVED', eventDate: { gte: new Date('2026-01-01T00:00:00Z'), lt: new Date('2026-09-01T00:00:00Z') },
+      status: 'APPROVED', eventDate: { gte: new Date('2026-01-01T00:00:00Z'), lt: new Date('2027-01-01T00:00:00Z') },
     } }))
     expect(db.ksefInvoice.findMany).toHaveBeenCalledWith(expect.objectContaining({ where: expect.objectContaining({
       status: { in: ['NEW', 'MAPPED'] }, documentStatus: { not: 'CANCELLED' },

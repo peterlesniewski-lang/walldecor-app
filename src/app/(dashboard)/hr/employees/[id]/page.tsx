@@ -46,6 +46,7 @@ function EmploymentTypeBadge({ type }: { type: string | null }) {
     B2B: 'bg-sky-50 text-sky-700 border-sky-200',
     UZ: 'bg-amber-50 text-amber-700 border-amber-200',
     UoD: 'bg-violet-50 text-violet-700 border-violet-200',
+    'Zarząd': 'bg-stone-100 text-stone-800 border-stone-300',
   }
   const cls = styles[type] ?? 'bg-stone-50 text-stone-600 border-stone-200'
   return (

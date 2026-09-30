@@ -1,6 +1,43 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-09-30 (dodawanie urlopów klikaniem w kalendarz HR)
+**Ostatnia aktualizacja:** 2026-09-30 (koszt pracodawcy w wynikach — #21, gałąź `employer-cost-results`, lokalnie)
+
+## Koszt pracodawcy w wynikach firmy i Pasek wynagrodzenia — 30.09.2026 (#21, gałąź `employer-cost-results`)
+
+```
+[x] Migracja 20260930090000_payroll_employer_cost: stawki pracodawcy, zwolnienia, podział JAG/PUL, źródło kosztu i podział w wersji (triggery append-only)
+[x] Koszt pracodawcy wyliczany z brutto × stawki per rodzaj rozliczenia (UoP / UZ / Zarząd), każda składka zaokrąglana osobno; ręczne nadpisanie jako OVERRIDDEN
+[x] Kadrowa podaje tylko brutto i netto; podgląd wyliczonego kosztu w formularzu
+[x] Blokady zatwierdzenia: brak podziału dla osoby w GLOBAL; stawki/zwolnienia zmienione po potwierdzeniu kadrowej
+[x] Kontrakt getMonthlyEmployerCosts: zatwierdzone lub szacunek z podstawy (bez nadgodzin/premii), MISSING z powodem; B2B poza listą
+[x] Wynik firmy i salonów (/finance) oraz pulpit CEO: koszt pracodawcy jako koszt stały od 04/2026 do bieżącego miesiąca, oznaczenie „szacunek”
+[x] MANAGER/EMPLOYEE: gdy w salonie w miesiącu jest 1 osoba, cały koszt pracodawcy miesiąca idzie tylko do sumy firmy (GLOBAL)
+[x] Próg rentowności: koszt pracodawcy salonu w kosztach stałych, status actual/estimate zamiast stałego „brak kosztu z HR”
+[x] Ekrany: /hr/payroll/rates (stawki, ADMIN), panel „Koszt pracodawcy i podział” w rozliczeniu, /hr/my-pay (pasek brutto/netto pracownika)
+[x] Rodzaj umowy „Zarząd” w karcie pracownika
+[ ] Przed wdrożeniem: sprawdzić na produkcji ręczne koszty z wynagrodzeniami od 04/2026 (podwójne liczenie)
+[ ] Po wdrożeniu: potwierdzić stawki z księgową, ustawić podział zarządu, uzupełnić rozliczenia 04–09/2026
+```
+
+Testy: Vitest 3131 PASS (pada tylko `ksef-sync.test.ts` — 11 testów, pada też na czystym `main`), nowe: jednostkowe kosztu pracodawcy 25, finansowe 16, próg rentowności +6, integracja 23 na świeżej bazie.
+
+## HR: miesięczne rozliczenia wynagrodzeń — 22.09.2026 (gałąź `monthly-salary-settlement`, lokalnie)
+
+```
+[x] Schemat + migracja 20260922120000_hr_payroll_settlements (grosze Int, CHECK-i, triggery niezmienności, 1 obowiązująca wersja / pracownik-miesiąc)
+[x] Podstawa wynagrodzenia z datą obowiązywania (tylko dopisywanie, cofanie z powodem)
+[x] Szkic rozliczenia: nadgodziny z kalendarza HR (tylko zatwierdzone TimeEntry), wypłata vs czas wolny, wykrywanie zmian kalendarza
+[x] Premie i korekty z historią zmian (przed/po/powód/autor)
+[x] Dane kadrowej osobno: ostateczne brutto, netto, pełny koszt pracodawcy (bez wyliczania); zmiana danych po potwierdzeniu je unieważnia
+[x] Zatwierdzenie → niezmienna wersja; korekta = nowa wersja zastępująca poprzednią (brak podwójnego kosztu)
+[x] API /api/hr/payroll/* tylko ADMIN (+ reguła w proxy), UI /hr/payroll i /hr/payroll/[id]
+[x] Kontrakt dla etapów 2 i 3: src/lib/payroll/contracts.ts (getEffectivePayrollCosts, getOwnPayrollStatements)
+[x] Etap 2: prywatny ekran „Moje wynagrodzenia” → /hr/my-pay (#21)
+[x] Etap 3: przekazanie kosztu do finansów / Break-even → getMonthlyEmployerCosts (#21)
+```
+
+Wyniki: Vitest 3034 PASS, integracja płac 35/35 i E2E 3/3 na świeżej bazie (z restartem serwera i odmową dostępu), typecheck i build PASS.
+Szczegóły i ograniczenia: [docs/evidence/2026-09-22-payroll-settlement.md](docs/evidence/2026-09-22-payroll-settlement.md). Kontrakt: [docs/plans/2026-09-22-payroll-data-contract.md](docs/plans/2026-09-22-payroll-data-contract.md).
 
 ## Kalendarz urlopów — dodawanie przez kliknięcie (2026-09-30)
 
@@ -19,6 +56,14 @@
 - [x] Testy: `__tests__/unit/finance/ksef-auto-sync.test.ts` (16), pełny pakiet 2998 PASS, typecheck i build PASS, smoke test standalone — harmonogram zapisał wynik slotu.
 - [x] **Wdrożone na produkcję 2026-09-23** (PR #11, `412d639`). Pierwszy przebieg automatyczny: slot 15:00, status OK — pobrano 925, nowe 1, zaktualizowane 924.
 - [x] Fix builda Coolify (`47b8b0b`): `next/font/google` padał w Dockerze (`google/loader.js:122`, brak URL pliku czcionki od Google). Czcionki self-hosted w `src/app/fonts/` (woff2 latin+latin-ext, licencje OFL) przez `next/font/local` w `src/app/fonts.ts` — build nie zależy już od fonts.googleapis.com.
+
+## Pulpit CEO — wykres roczny i netto (2026-09-22)
+
+Gałąź `w-walldecor-app-wdro-roczny-wy`. Na `/` i `/dashboard` (tylko ADMIN) pod nagłówkiem „Finanse firmy” jest wykres styczeń–grudzień. Kliknięcie słupka ustawia `?year=&month=` i przeładowuje karty poniżej. Układ kart, kasy i alertów został. `/finance` nie dostało tego widoku.
+
+Sprzedaż netto bierze się z `BreakEvenRevenueBasis` i obowiązuje tylko, gdy snapshot brutto jest równy aktualnej sumie kanałów salonu. Brak albo nieaktualny snapshot daje formularz zapisu przez istniejące `revenue.save`. Koszt netto firmy to suma netto dokumentów (`netAmount`, a gdy go nie ma — brutto minus zapisany VAT). Brak, waluta bez PLN i wpisy sprzed kwietnia 2026 nie są zamieniane na zero ani na brutto/1,23. Podział na salony przy kilku częściach faktury jest oznaczony jako niepewny. Różnica nazywa się „Różnica po znanych kosztach netto”. Od 30.09 (#21) pulpit dolicza koszt pracodawcy z rozliczeń płac do kosztów netto (bez VAT) — patrz sekcja kosztu pracodawcy.
+
+Odbiór lokalny: testy jednostkowe pulpitu i netto, test SQLite loadera, `next build`, Playwright (zapis 8 500 zł przy brutto 10 300 zł, odczyt po przeładowaniu, zmiana miesiąca, pracownik nie wchodzi na pulpit).
 
 ## Bieżąca praca: faktury spoza KSeF i wspólne AI
 
@@ -390,6 +435,8 @@ M10 — Operacje / Playbook         [x] MVP start (2026-05-18)
 ---
 
 ## Następna sesja
+
+**HR — wynagrodzenia (22.09.2026):** decyzja o commit/push gałęzi `monthly-salary-settlement`. Następnie etap 2 („Moje wynagrodzenia”) i etap 3 (koszty do finansów/Break-even) według kontraktu w `docs/plans/2026-09-22-payroll-data-contract.md`. Otwarte decyzje: czy pracownik widzi pełny koszt pracodawcy, alokacja kosztu pracowników GLOBAL, los starego `SalaryHistory`.
 
 **Finanse (10.09.2026):** commit/push gałęzi zatwierdzony przez właściciela. Wdrożenie i aktywacja kas to osobne kroki wymagające decyzji, kopii bazy, odczytu po migracji i potwierdzenia danych startowych. Historyczny backlog poniżej pozostaje poza tym zakresem.
 

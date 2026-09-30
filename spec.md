@@ -170,6 +170,7 @@ Zastąpienie arkusza Excel webową aplikacją do zarządzania budżetem firmowym
 - Umowy dodatkowe per pracownik (np. najem auta, dodatkowe UZ)
 - Historia zmian wynagrodzenia i stanowiska
 - Zewnętrzni B2B jako osobna sekcja (dane do FV, stawki, historia)
+- **Miesięczne rozliczenie wynagrodzeń (ADMIN, 2026-09-22):** podstawa z datą obowiązywania; nadgodziny wyłącznie z zatwierdzonych wpisów kalendarza HR, z podziałem na wypłatę i czas wolny; premie i korekty z historią zmian. Rozliczenie pozostaje robocze do potwierdzenia danych kadrowej: ostateczne brutto, netto i pełny koszt pracodawcy są wpisywane osobno, aplikacja ich nie wylicza. Zatwierdzenie tworzy niezmienną wersję, a korekta tworzy nową wersję zastępującą poprzednią, więc koszt nie jest liczony podwójnie. Kolejne etapy: „Moje wynagrodzenia” (pracownik) i przekazanie kosztu do finansów/Break-even (`docs/plans/2026-09-22-payroll-data-contract.md`).
 
 ### MODUŁ 6 — HR: Czas pracy i nieobecności
 - **Wnioski urlopowe:** pracownik składa → manager/admin zatwierdza

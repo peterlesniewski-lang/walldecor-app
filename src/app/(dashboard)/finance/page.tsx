@@ -6,6 +6,7 @@ import { CompanyHealthView } from '@/components/shared/company-health-view'
 import { buildCompanyHealth, type FinanceCostCenterId } from '@/lib/finance/company-health'
 import { buildCostWarningSummary } from '@/lib/finance/cost-reporting'
 import { buildRealizedCostSummary, costEventYearDateRange } from '@/lib/finance/realized-costs'
+import { loadEmployerCostsForYear, maskEmployerCostsForRole } from '@/lib/finance/employer-costs'
 import { summarizeInvoicePayments } from '@/lib/finance/invoice-money'
 import { isActiveInvoiceMoneyRow } from '@/lib/finance/invoice-money-scope'
 
@@ -24,7 +25,7 @@ export default async function FinancePage({ searchParams }: PageProps) {
   const year = yearParam ? parseInt(yearParam, 10) : new Date().getFullYear()
   const currentMonth = year === new Date().getFullYear() ? new Date().getMonth() + 1 : 12
 
-  const [revenueActuals, actualCosts, costEvents, cashAccounts, ksefInboxCount, unpaidInvoices, warningInvoices] = await Promise.all([
+  const [revenueActuals, actualCosts, costEvents, cashAccounts, ksefInboxCount, unpaidInvoices, warningInvoices, employerCosts] = await Promise.all([
     prisma.revenue.findMany({ where: { year } }),
     prisma.actualEntry.findMany({
       where: { year },
@@ -79,12 +80,14 @@ export default async function FinancePage({ searchParams }: PageProps) {
           },
         })
       : Promise.resolve([]),
+    loadEmployerCostsForYear(prisma, year),
   ])
 
   const realizedCosts = buildRealizedCostSummary({
     year,
     actualEntries: actualCosts,
     costEvents,
+    employerCosts: maskEmployerCostsForRole(employerCosts.rows, role),
   })
 
   const health = buildCompanyHealth({
@@ -122,6 +125,11 @@ export default async function FinancePage({ searchParams }: PageProps) {
       uncertainPaymentCount={unpaidSummary.uncertainPaymentCount}
       unclassifiedWarningAmount={warningSummary.plnAmount}
       unclassifiedWarningSummary={warningSummary}
+      employerCost={{
+        amount: realizedCosts.employerCostsByMonth[currentMonth - 1] ?? 0,
+        status: realizedCosts.employerCostStatusByMonth[currentMonth - 1] ?? 'NONE',
+        missingCount: isAdmin ? employerCosts.missingByMonth[currentMonth - 1] ?? 0 : 0,
+      }}
     />
   )
 }

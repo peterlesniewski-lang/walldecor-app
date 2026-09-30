@@ -31,6 +31,16 @@ export interface RealizedCostEventInput {
   }>
 }
 
+/** Employer cost (payroll) per employee, month and salon, in PLN. */
+export interface RealizedEmployerCostInput {
+  month: number
+  costCenterId: string
+  amount: number
+  status: 'APPROVED' | 'ESTIMATE'
+}
+
+export type EmployerCostMonthStatus = 'NONE' | 'APPROVED' | 'ESTIMATE'
+
 export interface BreakEvenCostRow {
   costCenterId: FinanceCostCenterId
   fixedCosts: number
@@ -46,6 +56,10 @@ export interface RealizedCostSummary {
   cogsByMonth: number[]
   costCenterTotals: Record<FinanceCostCenterId, number>
   breakEvenCostRows: BreakEvenCostRow[]
+  /** Employer cost included in the totals above, per month. */
+  employerCostsByMonth: number[]
+  /** ESTIMATE when any person's cost in the month is still an estimate. */
+  employerCostStatusByMonth: EmployerCostMonthStatus[]
 }
 
 type CostBucket = 'fixedCosts' | 'variableCosts' | 'cogs'
@@ -135,6 +149,7 @@ export function buildRealizedCostSummary(input: {
   year: number
   actualEntries: RealizedActualEntryInput[]
   costEvents: RealizedCostEventInput[]
+  employerCosts?: RealizedEmployerCostInput[]
 }): RealizedCostSummary {
   const rowsByCenterMonth = new Map<string, MonthlyFinanceAmount>()
   const totalCostsByMonth = emptyMonths()
@@ -143,6 +158,8 @@ export function buildRealizedCostSummary(input: {
   const cogsByMonth = emptyMonths()
   const costCenterTotals = emptyCostCenterTotals()
   const breakEvenByCenter = emptyBreakEvenRows()
+  const employerCostsByMonth = emptyMonths()
+  const employerCostStatusByMonth = new Array<EmployerCostMonthStatus>(12).fill('NONE')
 
   const addCost = (
     costCenterId: FinanceCostCenterId,
@@ -202,6 +219,20 @@ export function buildRealizedCostSummary(input: {
     }
   }
 
+  // Employer cost is a fixed salon cost. Before the cost-event cutover historical entries already
+  // include wages, so adding payroll there would count them twice.
+  for (const cost of input.employerCosts ?? []) {
+    if (cost.month < 1 || cost.month > 12) continue
+    if (!isCostEventInRealizedCostScope(new Date(Date.UTC(input.year, cost.month - 1, 1)))) continue
+    if (!isFinanceCostCenterId(cost.costCenterId)) continue
+
+    addCost(cost.costCenterId, cost.month, cost.amount, 'fixedCosts')
+    const monthIndex = cost.month - 1
+    employerCostsByMonth[monthIndex] = roundMoney(employerCostsByMonth[monthIndex] + roundMoney(cost.amount))
+    if (cost.status === 'ESTIMATE') employerCostStatusByMonth[monthIndex] = 'ESTIMATE'
+    else if (employerCostStatusByMonth[monthIndex] === 'NONE') employerCostStatusByMonth[monthIndex] = 'APPROVED'
+  }
+
   const monthlyRows = FINANCE_COST_CENTERS.flatMap((center) =>
     Array.from({ length: 12 }, (_, index) => rowsByCenterMonth.get(`${center}:${index + 1}`)).filter(
       (row): row is MonthlyFinanceAmount => Boolean(row)
@@ -216,5 +247,7 @@ export function buildRealizedCostSummary(input: {
     cogsByMonth,
     costCenterTotals,
     breakEvenCostRows: FINANCE_COST_CENTERS.map((center) => breakEvenByCenter[center]),
+    employerCostsByMonth,
+    employerCostStatusByMonth,
   }
 }

@@ -81,7 +81,7 @@ describe('responsive dashboard navigation', () => {
     await user.click(trigger)
     const dialog = screen.getByRole('dialog', { name: 'WallDecor' })
     const links = within(dialog).getAllByRole('link')
-    expect(links).toHaveLength(19)
+    expect(links).toHaveLength(20)
     for (const link of links) {
       expect(link.className).toContain('min-h-11')
       expect(link.className).toContain('lg:min-h-0')
@@ -92,6 +92,7 @@ describe('responsive dashboard navigation', () => {
     expect(within(dialog).getByRole('link', { name: 'KSeF Inbox' })).toBeTruthy()
     expect(within(dialog).getByRole('link', { name: 'Czas pracy' })).toBeTruthy()
     expect(within(dialog).getByRole('link', { name: 'Montaże' })).toBeTruthy()
+    expect(within(dialog).getByRole('link', { name: 'Wynagrodzenia' }).getAttribute('href')).toBe('/hr/payroll')
     expect(within(dialog).getByRole('link', { name: 'Kasa salonu' }).getAttribute('href')).toBe('/cashier')
 
     await user.click(within(dialog).getByRole('link', { name: 'Pracownicy' }))
@@ -110,6 +111,7 @@ describe('responsive dashboard navigation', () => {
     expect(within(dialog).getByRole('link', { name: 'Wynik teraz' })).toBeTruthy()
     expect(within(dialog).queryByRole('link', { name: 'KSeF Inbox' })).toBeNull()
     expect(within(dialog).queryByRole('link', { name: 'Dashboard' })).toBeNull()
+    expect(within(dialog).queryByRole('link', { name: 'Wynagrodzenia' })).toBeNull()
     expect(within(dialog).getByRole('link', { name: 'Montaże' })).toBeTruthy()
   })
 
@@ -126,6 +128,7 @@ describe('responsive dashboard navigation', () => {
     let dialog = screen.getByRole('dialog', { name: 'Menu HR' })
     const timeGroup = within(dialog).getByRole('button', { name: 'Czas pracy' })
     const leaveGroup = within(dialog).getByRole('button', { name: 'Urlopy' })
+    const payrollGroup = within(dialog).getByRole('button', { name: 'Wynagrodzenia' })
 
     expect(timeGroup.getAttribute('aria-expanded')).toBe('true')
     expect(timeGroup.getAttribute('aria-controls')).toBe('hr-mobile-nav-group-time')
@@ -154,6 +157,12 @@ describe('responsive dashboard navigation', () => {
     expect(within(dialog).queryByRole('link', { name: 'Typy' })).toBeNull()
     expect(within(dialog).queryByRole('link', { name: 'Salda' })).toBeNull()
     expect(within(dialog).queryByRole('link', { name: 'Akceptacja' })).toBeNull()
+
+    // Employees reach only their own pay slip; settlements and rates stay ADMIN-only.
+    await user.click(payrollGroup)
+    expect(within(dialog).getByRole('link', { name: 'Mój pasek' }).getAttribute('href')).toBe('/hr/my-pay')
+    expect(within(dialog).queryByRole('link', { name: 'Rozliczenia miesięczne' })).toBeNull()
+    expect(within(dialog).queryByRole('link', { name: 'Stawki pracodawcy' })).toBeNull()
 
     await user.click(within(dialog).getByRole('button', { name: 'Zamknij' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Menu HR' })).toBeNull())
@@ -184,8 +193,9 @@ describe('responsive dashboard navigation', () => {
     const controlledIds = Array.from(
       document.querySelectorAll<HTMLButtonElement>('button[aria-controls*="nav-group"]')
     ).map((button) => button.getAttribute('aria-controls'))
-    expect(controlledIds).toHaveLength(4)
-    expect(new Set(controlledIds).size).toBe(4)
+    // time, leave and payroll (ADMIN-only) groups, once per desktop and mobile navigation
+    expect(controlledIds).toHaveLength(6)
+    expect(new Set(controlledIds).size).toBe(6)
     for (const id of controlledIds) {
       expect(id).not.toBeNull()
       expect(document.getElementById(id!)).toBeTruthy()

@@ -19,6 +19,7 @@ const EMPLOYMENT_TYPE_OPTIONS = [
   { value: 'B2B', label: 'B2B' },
   { value: 'UZ', label: 'UZ' },
   { value: 'UoD', label: 'UoD' },
+  { value: 'Zarząd', label: 'Zarząd' },
   { value: 'inne', label: 'Inne' },
 ]
 
