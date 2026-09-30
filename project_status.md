@@ -1,6 +1,6 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-09-22 (HR: miesięczne rozliczenia wynagrodzeń — ekran administratora, lokalnie)
+**Ostatnia aktualizacja:** 2026-09-30 (koszt pracodawcy w wynikach — #21, w toku)
 
 ## HR: miesięczne rozliczenia wynagrodzeń — 22.09.2026 (gałąź `monthly-salary-settlement`, lokalnie)
 
@@ -19,6 +19,24 @@
 
 Wyniki: Vitest 3034 PASS, integracja płac 35/35 i E2E 3/3 na świeżej bazie (z restartem serwera i odmową dostępu), typecheck i build PASS.
 Szczegóły i ograniczenia: [docs/evidence/2026-09-22-payroll-settlement.md](docs/evidence/2026-09-22-payroll-settlement.md). Kontrakt: [docs/plans/2026-09-22-payroll-data-contract.md](docs/plans/2026-09-22-payroll-data-contract.md).
+
+## Kalendarz urlopów — dodawanie przez kliknięcie (2026-09-30)
+
+- [x] `/hr/leave` (tylko ADMIN): kliknięcie pustego dnia lub przeciągnięcie po dniach jednego pracownika otwiera dialog „Dodaj urlop” z wypełnionym pracownikiem i datami. Zaznaczenie zatrzymuje się przed pierwszym zajętym dniem; dni z istniejącym wnioskiem nadal otwierają popover.
+- [x] Mechanika bez zmian: ten sam `POST /api/hr/leave-requests`, wniosek ze statusem `pending`. Przycisk „Dodaj urlop” zostaje jako druga ścieżka.
+- [x] Nowy `leave-request-dialog.tsx` (wspólny dla przycisku i kalendarza); `LeaveRequestForm` dostał `initialStartDate`/`initialEndDate`; `AbsenceCalendar` — prop `canCreate`.
+- [x] Fix: `AdminLeaveButton` odświeża stronę (`router.refresh()`) po zapisie, a `AbsenceCalendar` synchronizuje stan z nowymi propsami serwera — wcześniej nowy urlop nie pojawiał się bez przeładowania.
+- [x] Testy: `__tests__/unit/hr/absence-calendar-selection.test.tsx` (8), test prefillu w `leave-request-form.test.tsx`. Bez obsługi dotyku (świadomie).
+
+## Automatyczna synchronizacja KSeF (2026-09-23)
+
+- [x] Synchronizacja KSeF uruchamia się sama codziennie o **07:00 i 15:00 (Europe/Warsaw)** — bez klikania „Synchronizuj z KSeF”.
+- [x] Logika wydzielona do `src/lib/finance/ksef-sync-service.ts` (`runKsefSync`, `withKsefSyncLock`); `POST /api/finance/ksef/sync` korzysta z serwisu i zwraca 409, gdy inna synchronizacja trwa.
+- [x] Harmonogram w procesie serwera: `src/instrumentation.ts` → `src/lib/finance/ksef-auto-sync.ts` (sprawdzenie co 5 min, jeden przebieg na slot, nadrabianie slotu pominiętego po restarcie). Działa w imieniu pierwszego aktywnego ADMIN.
+- [x] Ustawienia → KSeF: przełącznik „Automatyczna synchronizacja” (`ksef_auto_sync_enabled`, domyślnie włączona) i status ostatniego uruchomienia (`ksef_auto_sync_last_*`). Zmienna `KSEF_AUTO_SYNC=off` wyłącza harmonogram na poziomie serwera, `=on` włącza go w dev.
+- [x] Testy: `__tests__/unit/finance/ksef-auto-sync.test.ts` (16), pełny pakiet 2998 PASS, typecheck i build PASS, smoke test standalone — harmonogram zapisał wynik slotu.
+- [x] **Wdrożone na produkcję 2026-09-23** (PR #11, `412d639`). Pierwszy przebieg automatyczny: slot 15:00, status OK — pobrano 925, nowe 1, zaktualizowane 924.
+- [x] Fix builda Coolify (`47b8b0b`): `next/font/google` padał w Dockerze (`google/loader.js:122`, brak URL pliku czcionki od Google). Czcionki self-hosted w `src/app/fonts/` (woff2 latin+latin-ext, licencje OFL) przez `next/font/local` w `src/app/fonts.ts` — build nie zależy już od fonts.googleapis.com.
 
 ## Bieżąca praca: faktury spoza KSeF i wspólne AI
 

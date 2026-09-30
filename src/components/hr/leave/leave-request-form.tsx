@@ -31,6 +31,8 @@ interface LeaveBalance {
 interface LeaveRequestFormProps {
   employeeId?: string
   isAdmin?: boolean
+  initialStartDate?: string
+  initialEndDate?: string
   onSuccess: () => void
   onCancel: () => void
 }
@@ -60,7 +62,14 @@ function isAbortError(error: unknown) {
   return error instanceof DOMException && error.name === 'AbortError'
 }
 
-export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, onSuccess, onCancel }: LeaveRequestFormProps) {
+export function LeaveRequestForm({
+  employeeId: employeeIdProp,
+  isAdmin = false,
+  initialStartDate = '',
+  initialEndDate = '',
+  onSuccess,
+  onCancel,
+}: LeaveRequestFormProps) {
   const [balances, setBalances] = useState<LeaveBalance[]>([])
   const [allLeaveTypes, setAllLeaveTypes] = useState<LeaveType[]>([])
   const [loadingBalances, setLoadingBalances] = useState(false)
@@ -72,8 +81,8 @@ export function LeaveRequestForm({ employeeId: employeeIdProp, isAdmin = false, 
   const employeeId = isAdmin ? selectedEmployeeId : employeeIdProp
 
   const [leaveTypeId, setLeaveTypeId] = useState('')
-  const [startDate, setStartDate] = useState('')
-  const [endDate, setEndDate] = useState('')
+  const [startDate, setStartDate] = useState(initialStartDate)
+  const [endDate, setEndDate] = useState(initialEndDate)
   const [isRemoteWork, setIsRemoteWork] = useState(false)
   const [substituteId, setSubstituteId] = useState<string | undefined>()
   const [notifySubstitute, setNotifySubstitute] = useState(false)

@@ -79,6 +79,90 @@ describe('private media client', () => {
     expect(bodyCancelled).toBe(true)
   })
 
+  describe('non-2xx responses with a delayed body', () => {
+    type ErrorBodyProbe = { cancelled: boolean }
+
+    // An error body that echoes the bearer token and never finishes. Reading it
+    // to completion would hang until the timeout and mask the real status.
+    function stalledErrorBody(status: number, probe: ErrorBodyProbe, cancelHangs = false) {
+      return new Response(new ReadableStream<Uint8Array>({
+        start(controller) {
+          controller.enqueue(new TextEncoder().encode(`{"error":"denied","authorization":"Bearer ${privateToken}"`))
+        },
+        cancel() {
+          probe.cancelled = true
+          return cancelHangs ? new Promise<void>(() => undefined) : undefined
+        },
+      }), { status, headers: { 'Content-Type': 'application/json' } })
+    }
+
+    const signed = () => Response.json({ expires_at: 1_799_999_999, signature: 'safe-signature' })
+    const operations = [
+      {
+        name: 'upload',
+        run: (client: ReturnType<typeof createPrivateMediaClient>) => client.upload({ fileId: 'file-1', jobId: 'order-1', contentType: 'image/png', bytes: new Uint8Array([1]) }),
+        respond: (_input: string, error: () => Response) => error(),
+      },
+      {
+        name: 'signed download',
+        run: (client: ReturnType<typeof createPrivateMediaClient>) => client.download('file-1'),
+        respond: (_input: string, error: () => Response) => error(),
+      },
+      {
+        name: 'download',
+        run: (client: ReturnType<typeof createPrivateMediaClient>) => client.download('file-1'),
+        respond: (input: string, error: () => Response) => input.endsWith('/signed-download') ? signed() : error(),
+      },
+      {
+        name: 'delete',
+        run: (client: ReturnType<typeof createPrivateMediaClient>) => client.remove('file-1'),
+        respond: (_input: string, error: () => Response) => error(),
+      },
+    ] as const
+
+    it.each(operations)('should cancel the $name error body at once and keep the service status', async ({ run, respond }) => {
+      const probe: ErrorBodyProbe = { cancelled: false }
+      const fetchImpl = vi.fn(async (input: string | URL | Request) => respond(String(input), () => stalledErrorBody(503, probe)))
+      const client = createPrivateMediaClient({ baseUrl: privateUrl, token: privateToken, fetchImpl, timeoutMs: 5_000 })
+
+      const startedAt = Date.now()
+      const error = await run(client).catch((caught) => caught)
+
+      expect({
+        isClientError: error instanceof InstallationMediaClientError,
+        status: error.status,
+        timedOut: String(error.message).includes('przekroczył limit czasu'),
+        leaksToken: `${error.message} ${String(error.stack)}`.includes(privateToken),
+        bodyCancelled: probe.cancelled,
+        settledBeforeTimeout: Date.now() - startedAt < 1_000,
+      }).toEqual({ isClientError: true, status: 503, timedOut: false, leaksToken: false, bodyCancelled: true, settledBeforeTimeout: true })
+    }, 2_000)
+
+    it.each(operations)('should keep the $name service status when cancelling the error body stalls past the timeout', async ({ run, respond }) => {
+      const probe: ErrorBodyProbe = { cancelled: false }
+      const fetchImpl = vi.fn(async (input: string | URL | Request) => respond(String(input), () => stalledErrorBody(502, probe, true)))
+      const client = createPrivateMediaClient({ baseUrl: privateUrl, token: privateToken, fetchImpl, timeoutMs: 30 })
+
+      const error = await run(client).catch((caught) => caught)
+
+      expect({
+        isClientError: error instanceof InstallationMediaClientError,
+        status: error.status,
+        leaksToken: String(error.message).includes(privateToken),
+        bodyCancelled: probe.cancelled,
+      }).toEqual({ isClientError: true, status: 502, leaksToken: false, bodyCancelled: true })
+    }, 2_000)
+
+    it('should treat a delete 404 as already removed without waiting for its delayed body', async () => {
+      const probe: ErrorBodyProbe = { cancelled: false }
+      const fetchImpl = vi.fn(async () => stalledErrorBody(404, probe))
+      const client = createPrivateMediaClient({ baseUrl: privateUrl, token: privateToken, fetchImpl, timeoutMs: 5_000 })
+
+      await expect(client.remove('file-1')).resolves.toBeUndefined()
+      expect(probe.cancelled).toBe(true)
+    }, 2_000)
+  })
+
   it('uploads the exact bytes only through the private authenticated endpoint', async () => {
     const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10])
     const sha256 = createHash('sha256').update(bytes).digest('hex')

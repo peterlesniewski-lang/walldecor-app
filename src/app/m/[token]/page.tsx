@@ -1,11 +1,8 @@
-import { Bricolage_Grotesque, Spline_Sans } from 'next/font/google'
+import { clientDisplay as display, clientSans as sans } from '@/app/fonts'
 import { notFound } from 'next/navigation'
 import { prisma } from '@/lib/prisma'
 import { InstallationClientLinkNotFoundError, loadPublicInstallationProjection } from '@/lib/installations/client-link'
 import { ClientInstallationForm, type ClientFormProjection } from '@/components/installations/client-form/client-installation-form'
-
-const display = Bricolage_Grotesque({ variable: '--font-client-display', subsets: ['latin', 'latin-ext'], weight: ['700', '800'] })
-const sans = Spline_Sans({ variable: '--font-client-sans', subsets: ['latin', 'latin-ext'], weight: ['400', '500', '600', '700'] })
 
 type Params = { params: Promise<{ token: string }> }
 
