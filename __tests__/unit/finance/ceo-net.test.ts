@@ -153,10 +153,11 @@ describe('CEO net figures', () => {
       revenueBases: [basis('JAG', 160, 200), basis('PUL', 250, 300)],
       employerCosts: [{ month: 8, costCenterId: 'PUL', amount: 90, status: 'APPROVED' }],
       employerCostMissingByMonth: [0, 0, 0, 0, 0, 0, 0, 1, 0, 0, 0, 0],
+      employerCostMissingPeople: [{ month: 8, label: 'Test Zarząd — brak podziału JAG/PUL obowiązującego w tym miesiącu' }],
       closedPeriods: [{ year: 2026, month: 8 }],
     })
     expect([model.selected.net.costsNet, model.selected.net.chartValue, employeeCostReadiness(model.selected.net.employerCost).label])
-      .toEqual([null, null, expect.stringMatching(/1 os\./)])
+      .toEqual([null, null, expect.stringMatching(/1 os\. \(Test Zarząd — brak podziału JAG\/PUL/)])
   })
 
   it('does not offer a net basis for negative gross', () => {

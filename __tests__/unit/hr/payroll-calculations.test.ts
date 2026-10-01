@@ -48,6 +48,18 @@ describe('payroll money', () => {
     expect(parsePlnToGrosze('10.001')).toBeNull()
   })
 
+  it('should accept a dot as thousands separator with a decimal comma', () => {
+    expect(parsePlnToGrosze('5.165,00')).toBe(516500)
+  })
+
+  it('should accept several dot-separated thousand groups', () => {
+    expect(parsePlnToGrosze('12.345.678,9')).toBe(1234567890)
+  })
+
+  it('should reject dot groups that are not thousands', () => {
+    expect(parsePlnToGrosze('51.65,00')).toBeNull()
+  })
+
   it('should format grosze as PLN', () => {
     expect(formatGrosze(1234567).replace(/\s/g, ' ')).toBe('12 345,67 zł')
   })

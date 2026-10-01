@@ -15,7 +15,7 @@ vi.mock('@/lib/prisma', () => ({ prisma: db }))
 // Payroll employer cost has its own tests; these cover invoice and revenue data only.
 vi.mock('@/lib/finance/employer-costs', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/lib/finance/employer-costs')>()
-  const empty = async () => ({ rows: [], missingByMonth: new Array(12).fill(0) })
+  const empty = async () => ({ rows: [], missingByMonth: new Array(12).fill(0), missing: [] })
   return { ...original, loadEmployerCostsForYear: vi.fn(empty), loadEmployerCostsForMonths: vi.fn(empty) }
 })
 

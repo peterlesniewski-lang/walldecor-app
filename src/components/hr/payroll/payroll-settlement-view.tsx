@@ -54,7 +54,7 @@ type Detail = {
   month: number
   status: 'DRAFT' | 'APPROVED'
   revision: number
-  employee: { id: string; firstName: string; lastName: string; position: string; costCenterId: string; employmentType: string | null }
+  employee: { id: string; firstName: string; lastName: string; position: string; costCenterId: string; employmentType: string | null; startDate: string }
   baseSalaryGrosze: number | null
   baseBasis: PayrollBasis | null
   baseSegments: Array<{ from: string; amountGrosze: number; basis: PayrollBasis }>
@@ -478,7 +478,7 @@ export function PayrollSettlementView({ id }: { id: string }) {
 
           <EmployerCostPanel
             employeeId={detail.employee.id}
-            monthKey={`${detail.year}-${String(detail.month).padStart(2, '0')}`}
+            employeeStartDate={detail.employee.startDate}
             context={costContext}
             onChanged={load}
           />

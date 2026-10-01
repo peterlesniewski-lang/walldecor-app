@@ -5,6 +5,7 @@ import Link from 'next/link'
 import {
   EMPLOYER_RATE_LABELS,
   PAYROLL_SETTLEMENT_TYPE_LABELS,
+  defaultCostSplitMonth,
   type EmployerRates,
   type PayrollSettlementType,
 } from '@/lib/payroll/employer-cost'
@@ -41,12 +42,12 @@ async function send(url: string, method: 'PUT' | 'POST', body: unknown) {
 /** Rates, exemptions and the salon split behind one employee's employer cost. ADMIN only. */
 export function EmployerCostPanel({
   employeeId,
-  monthKey,
+  employeeStartDate,
   context,
   onChanged,
 }: {
   employeeId: string
-  monthKey: string
+  employeeStartDate: string
   context: EmployerCostContextView
   onChanged: () => void
 }) {
@@ -111,7 +112,7 @@ export function EmployerCostPanel({
             : 'Brak podziału — osoba w GLOBAL musi mieć ustawiony podział na salony.'}
         </p>
         <form className={styles.form} onSubmit={addSplit}>
-          <label className={styles.field}>Od miesiąca<input name="effectiveFrom" type="month" required defaultValue={monthKey} /></label>
+          <label className={styles.field}>Od miesiąca<input name="effectiveFrom" type="month" required defaultValue={defaultCostSplitMonth(employeeStartDate)} /></label>
           <label className={styles.field}>JAG %<input name="jagPercent" type="number" min={0} max={100} step={1} required defaultValue={split?.jagPercent ?? 50} /></label>
           <div className={`${styles.full} ${styles.rowActions}`}>
             <button type="submit" className={`${styles.btn} ${styles.ghost}`} disabled={pending}>Ustaw podział</button>

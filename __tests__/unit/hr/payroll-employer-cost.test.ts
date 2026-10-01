@@ -4,6 +4,7 @@ import {
   allocateEmployerCost,
   applicableEmployerRates,
   calculateEmployerCostGrosze,
+  defaultCostSplitMonth,
   estimateEmployerCostGrosze,
   payrollSettlementTypeFor,
   resolveCostSplit,
@@ -130,6 +131,16 @@ describe('cost split', () => {
       { costCenterId: 'JAG', amountGrosze: 3_000_00 },
       { costCenterId: 'PUL', amountGrosze: 7_000_00 },
     ])
+  })
+})
+
+describe('default split month', () => {
+  it('should start a split at April 2026 for someone employed earlier', () => {
+    expect(defaultCostSplitMonth('2025-01-01T00:00:00.000Z')).toBe('2026-04')
+  })
+
+  it('should start a split at the first month of a later hire', () => {
+    expect(defaultCostSplitMonth('2026-06-15T00:00:00.000Z')).toBe('2026-06')
   })
 })
 

@@ -36,6 +36,7 @@ export interface BreakEvenCalculationInput {
   employerCosts?: Array<{ costCenterId: string; amount: number; status: 'APPROVED' | 'ESTIMATE' }>;
   /** People in payroll whose employer cost is unknown (no base salary, hourly base, no split). */
   employerCostMissingCount?: number;
+  employerCostMissingPeople?: string[];
 }
 
 export function calculateBreakEven(input: BreakEvenCalculationInput): BreakEvenReport {
@@ -97,7 +98,7 @@ export function calculateBreakEven(input: BreakEvenCalculationInput): BreakEvenR
       : { status: payrollRows.some((row) => row.status === 'ESTIMATE') ? 'estimate' : 'actual', amount: roundMoney(payrollRows.reduce((sum, row) => sum + row.amount, 0)) }
     if (hr.status === 'missing') centerWarnings.push('Brak kompletnego kosztu pracodawcy z HR. Raport nie obejmuje pełnego kosztu salonu.')
     if (hr.status === 'estimate') centerWarnings.push('Koszt pracodawcy to szacunek z podstawy wynagrodzenia (bez nadgodzin i premii) do czasu zatwierdzenia listy płac.')
-    if (input.employerCostMissingCount) centerWarnings.push(`Bez kosztu pracodawcy: ${input.employerCostMissingCount} os. (brak podstawy lub podziału na salony). Uzupełnij w Wynagrodzeniach.`)
+    if (input.employerCostMissingCount) centerWarnings.push(`Bez kosztu pracodawcy: ${input.employerCostMissingCount} os.${input.employerCostMissingPeople?.length ? ` (${input.employerCostMissingPeople.join('; ')})` : ' (brak podstawy lub podziału na salony)'}. Uzupełnij w Wynagrodzeniach.`)
     centerWarnings.push('Koszty zmienne obejmują tylko dokumenty ujęte w tym miesiącu; przyszłe koszty zmienne są nieznane.')
     const actualFixedNet = roundMoney(fixedCosts.filter((row) => row.actualNetAmount !== null).reduce((sum, row) => sum + row.includedNetAmount, 0))
     const expectedFixedNet = roundMoney(fixedCosts.filter((row) => row.actualNetAmount === null).reduce((sum, row) => sum + row.includedNetAmount, 0))

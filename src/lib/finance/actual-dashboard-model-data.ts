@@ -34,7 +34,7 @@ export async function loadActualDashboardModel(period: DashboardPeriod, now = ne
     loadEmployerCostsForYear(prisma, year, 12, now),
     employerCostMonthsInScope(year - 1, now).includes(month)
       ? loadEmployerCostsForMonths(prisma, year - 1, [month])
-      : Promise.resolve({ rows: [], missingByMonth: new Array<number>(12).fill(0) }),
+      : Promise.resolve({ rows: [], missingByMonth: new Array<number>(12).fill(0), missing: [] }),
   ])
   // After revoke this row is the previous approved snapshot. OPEN/ARCHIVED
   // imports are handled in the import queue, not as current pending KSeF money.
@@ -54,5 +54,5 @@ export async function loadActualDashboardModel(period: DashboardPeriod, now = ne
   for (const event of pendingCostEvents) addPending(event.eventDate, event.sourceInvoiceId ? `invoice:${event.sourceInvoiceId}` : `event:${event.id}`)
   const pendingCostPeriods = [...pendingByPeriod.values()].map(({ year: pendingYear, month: pendingMonth, documents }) => ({ year: pendingYear, month: pendingMonth, count: documents.size }))
   return buildActualDashboard({ period, today: dashboardToday(now), revenue, previousRevenue, revenueBases, previousRevenueBases, actualEntries, previousActualEntries, costEvents, previousCostEvents, waitingInvoices, closedPeriods, pendingCostPeriods,
-    employerCosts: employerCosts.rows, previousEmployerCosts: previousEmployerCosts.rows, employerCostMissingByMonth: employerCosts.missingByMonth })
+    employerCosts: employerCosts.rows, previousEmployerCosts: previousEmployerCosts.rows, employerCostMissingByMonth: employerCosts.missingByMonth, employerCostMissingPeople: employerCosts.missing })
 }

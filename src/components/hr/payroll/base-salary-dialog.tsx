@@ -93,7 +93,7 @@ export function BaseSalaryDialog({
 
   return (
     <Dialog open onOpenChange={(open) => !open && onClose()}>
-      <DialogContent className="max-w-xl">
+      <DialogContent className={`max-w-xl ${styles.tokens}`}>
         <DialogHeader>
           <DialogTitle>Podstawa wynagrodzenia — {employee.firstName} {employee.lastName}</DialogTitle>
           <DialogDescription>

@@ -15,7 +15,7 @@ export function employeeCostReadiness(employerCost: MonthEmployerCost): Employee
   if (employerCost.missingCount > 0) {
     return {
       connected: false,
-      label: `Bez kosztu pracodawcy: ${employerCost.missingCount} os. — uzupełnij podstawę lub podział w Wynagrodzeniach. Koszty netto są niepełne.`,
+      label: `Bez kosztu pracodawcy: ${employerCost.missingCount} os.${employerCost.missingPeople.length ? ` (${employerCost.missingPeople.join('; ')})` : ''} — uzupełnij w Wynagrodzeniach. Koszty netto są niepełne.`,
     }
   }
   if (employerCost.amount === null || employerCost.status === 'NONE') {
