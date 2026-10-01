@@ -135,6 +135,12 @@ describe('break-even employer cost from payroll', () => {
     expect(jag.warnings.some((w) => w.includes('2 os.'))).toBe(true)
   })
 
+  it('should add cost contracts of the salon to fixed costs', () => {
+    // (1 000 rent template + 1 500 contract) / 0.4 margin
+    const jag = calculateBreakEven(input({ contractCosts: [{ costCenterId: 'JAG', amount: 1500 }, { costCenterId: 'PUL', amount: 1500 }] })).byCostCenter.JAG
+    expect([jag.contractNet, jag.targetNet]).toEqual([1500, 6250])
+  })
+
   it('should keep the missing-HR state when payroll is not part of the month', () => {
     expect(calculateBreakEven(input()).byCostCenter.JAG.hr).toEqual({ status: 'missing', amount: null })
   })

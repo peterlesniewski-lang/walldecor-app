@@ -8,7 +8,7 @@ const makeSalon = (costCenterId: 'JAG' | 'PUL'): BreakEvenSalonReport => ({
   fixedCosts: [{ id: `fixed-${costCenterId}`, name: `Czynsz ${costCenterId}`, expectedNetAmount: 1000, actualNetAmount: null, includedNetAmount: 1000, status: 'expected', netEstimated: false, matches: [] }],
   expectedFixedNet: 1000, actualFixedNet: 0, fixedNet: 1000, variableNet: 200, fixedOnlyTargetNet: 2000,
   targetNet: 2400, targetGross: null, deltaGross: null, operatingResultNet: null, omittedFixedCount: 0, omittedFixedNet: 0, goodsNet: 4000, oneOffNet: 0,
-  hr: { status: 'missing', amount: null }, status: 'provisional', warnings: [],
+  hr: { status: 'missing', amount: null }, contractNet: 0, status: 'provisional', warnings: [],
 })
 const makeReport = (): BreakEvenReport => ({ year: 2026, month: 9, margin: { id: 'm1', margin: .5, effectiveFrom: '2026-01', note: null }, byCostCenter: { JAG: makeSalon('JAG'), PUL: makeSalon('PUL') }, historicalSuggestion: { status: 'incomplete', margin: null, revenueNet: 0, purchasesNet: 0, months: [], warnings: [] }, warnings: [], warningAmount: 220, warningSummary: { plnAmount: 220, unconvertedCount: 1, unconvertedByCurrency: [{ currency: 'EUR', amount: 20, count: 1 }] } })
 const makeSource = (overrides: Partial<BreakEvenSource> = {}): BreakEvenSource => ({ partId: 'part1', eventId: 'event1', sourceInvoiceId: 'invoice1', title: 'FV/09/2026', supplierName: 'Wynajmujący', supplierNip: '1234567890', costCenterId: 'JAG', grossAmount: 1230, netAmount: 1000, netEstimated: true, tags: ['fixed'], matchedFixedCostId: null, ...overrides })

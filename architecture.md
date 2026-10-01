@@ -444,6 +444,20 @@ koszt wchodzi do wyniku firmy/salonów i progu rentowności jako koszt stały od
 
 ---
 
+### CostContract — Umowy kosztowe (2026-10-01, #25)
+
+```
+CostContract 1─* CostContractAmount      (effectiveFrom "YYYY-MM", amountGrosze; append-only + revoke)
+CostContract 1─* CostContractSplit       (effectiveFrom "YYYY-MM", jagPercent; append-only + revoke)
+CostContract 1─* CostContractAuditEvent  (append-only)
+CostContract: counterparty, description, startMonth, endMonth?, isConfidential (domyślnie true)
+```
+
+Koszt miesiąca: `src/lib/finance/cost-contracts.ts` (`contractMonthlyCosts`), loader `cost-contracts-data.ts`.
+Bez podziału koszt idzie do GLOBAL. Wchodzi jako koszt stały do `buildRealizedCostSummary`, pulpitu netto i progu rentowności.
+
+---
+
 ### LeaveRequest — Wnioski urlopowe
 ```prisma
 model LeaveRequest {

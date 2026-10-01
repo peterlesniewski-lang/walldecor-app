@@ -1,6 +1,18 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-09-30 (koszt pracodawcy w wynikach — #21, gałąź `employer-cost-results`, lokalnie)
+**Ostatnia aktualizacja:** 2026-10-01 (umowy kosztowe — #25, gałąź `cost-contracts`)
+
+## Umowy kosztowe — 01.10.2026 (#25, gałąź `cost-contracts`)
+
+```
+[x] Migracja 20261001090000_cost_contracts: umowa, kwoty i podział JAG/PUL od miesiąca (append-only + cofanie), audyt; triggery blokują usuwanie
+[x] Koszt umowy liczony automatycznie w każdym miesiącu obowiązywania (od 04/2026 do bieżącego), bez VAT i składek, jako koszt stały
+[x] Wynik firmy i salonów, pulpit netto i próg rentowności („w tym umowy kosztowe”)
+[x] Poufne umowy niewidoczne dla ról innych niż ADMIN
+[x] Ekran /finance/contracts (ADMIN): dodanie, zmiana kwoty i podziału od miesiąca, zakończenie umowy, cofanie wpisów
+```
+
+Testy: jednostkowe 13, integracja na świeżej bazie 10, próg rentowności +1, pulpit netto +1; Vitest 3175 PASS (poza `ksef-sync.test.ts`, pada też na `main`), build PASS.
 
 ## Koszt pracodawcy w wynikach firmy i Pasek wynagrodzenia — 30.09.2026 (#21, gałąź `employer-cost-results`)
 
@@ -15,7 +27,8 @@
 [x] Próg rentowności: koszt pracodawcy salonu w kosztach stałych, status actual/estimate zamiast stałego „brak kosztu z HR”
 [x] Ekrany: /hr/payroll/rates (stawki, ADMIN), panel „Koszt pracodawcy i podział” w rozliczeniu, /hr/my-pay (pasek brutto/netto pracownika)
 [x] Rodzaj umowy „Zarząd” w karcie pracownika
-[ ] Przed wdrożeniem: sprawdzić na produkcji ręczne koszty z wynagrodzeniami od 04/2026 (podwójne liczenie)
+[x] Przed wdrożeniem: właściciel potwierdził brak ręcznych kosztów z wynagrodzeniami od 04/2026
+[x] Wdrożone na produkcję 2026-09-30 (PR #23, `34ecdc1`); poprawki PR #24
 [ ] Po wdrożeniu: potwierdzić stawki z księgową, ustawić podział zarządu, uzupełnić rozliczenia 04–09/2026
 ```
 

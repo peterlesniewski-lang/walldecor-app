@@ -137,6 +137,8 @@ export function buildMonthNet(input: {
   employerCosts?: Array<{ costCenterId: string; amount: number; status: 'APPROVED' | 'ESTIMATE' }>
   employerCostMissingCount?: number
   employerCostMissingPeople?: string[]
+  /** Cost contracts: fixed costs without invoice or VAT, net as they stand. */
+  contractCosts?: Array<{ costCenterId: string; amount: number }>
 }): MonthNet {
   const gaps: RevenueNetGap[] = []
   const revenueByCenter = new Map<string, number>()
@@ -201,13 +203,16 @@ export function buildMonthNet(input: {
   }
 
   const payroll = input.employerCosts ?? []
+  // Contract costs carry no VAT either, so they join payroll in the no-invoice net costs.
+  const noInvoiceRows = [...payroll, ...(input.contractCosts ?? [])]
+  const contractTotal = roundMoney((input.contractCosts ?? []).reduce((sum, row) => sum + row.amount, 0))
   const employerCostMissingCount = input.employerCostMissingCount ?? 0
   const employerTotal = roundMoney(payroll.reduce((sum, row) => sum + row.amount, 0))
-  const employerByCenter = Object.fromEntries(FINANCE_COST_CENTERS.map((center) => [center, 0])) as Record<FinanceCostCenterId, number>
-  for (const row of payroll) {
+  const noInvoiceByCenter = Object.fromEntries(FINANCE_COST_CENTERS.map((center) => [center, 0])) as Record<FinanceCostCenterId, number>
+  for (const row of noInvoiceRows) {
     if (FINANCE_COST_CENTERS.includes(row.costCenterId as FinanceCostCenterId)) {
       const costCenterId = row.costCenterId as FinanceCostCenterId
-      employerByCenter[costCenterId] = roundMoney(employerByCenter[costCenterId] + row.amount)
+      noInvoiceByCenter[costCenterId] = roundMoney(noInvoiceByCenter[costCenterId] + row.amount)
     }
   }
 
@@ -215,7 +220,7 @@ export function buildMonthNet(input: {
   const documentsIncomplete = missingNetDocumentCount > 0 || foreignDocumentCount > 0 || input.legacyEntryCount > 0 || employerCostMissingCount > 0
   const noDocuments = input.costEvents.length === 0 && input.legacyEntryCount === 0
   const costsNetComplete = !documentsIncomplete && (input.costEvents.length > 0 || input.costsConfirmed)
-  const costsNet = costsNetComplete ? roundMoney((input.costEvents.length > 0 ? known : 0) + employerTotal) : null
+  const costsNet = costsNetComplete ? roundMoney((input.costEvents.length > 0 ? known : 0) + employerTotal + contractTotal) : null
 
   for (const center of centers) {
     if (blockCenters && (input.costEvents.length > 0 || input.legacyEntryCount > 0)) {
@@ -223,7 +228,7 @@ export function buildMonthNet(input: {
       center.costsNet = null
     } else if (costsNetComplete) {
       center.costsStatus = 'confirmed'
-      center.costsNet = roundMoney((touched[center.costCenterId] ? allocated[center.costCenterId] : 0) + employerByCenter[center.costCenterId])
+      center.costsNet = roundMoney((touched[center.costCenterId] ? allocated[center.costCenterId] : 0) + noInvoiceByCenter[center.costCenterId])
     }
     const revenueForResult = center.revenueStatus === 'confirmed'
       ? center.revenueNet

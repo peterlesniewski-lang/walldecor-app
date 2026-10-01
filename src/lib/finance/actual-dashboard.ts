@@ -53,6 +53,9 @@ export interface DashboardInput {
   employerCostMissingByMonth?: number[]
   /** Named people without employer cost, with the reason, per month of the selected year. */
   employerCostMissingPeople?: Array<{ month: number; label: string }>
+  /** Cost contracts (fixed costs without invoice) per salon (ADMIN view). */
+  contractCosts?: Array<{ month: number; costCenterId: string; amount: number }>
+  previousContractCosts?: Array<{ month: number; costCenterId: string; amount: number }>
   waitingInvoices: Array<{ currency: string; grossAmount: number; reportingGrossAmount?: number | null }>
   /** Explicit company-level confirmation; never inferred from the existence of a cost row. */
   closedPeriods?: DashboardPeriod[]
@@ -100,8 +103,8 @@ function channelRows(rows: DashboardRevenue[], year: number, month: number, toda
 /** Report values are actuals only. Presence and freshness are independent of the amount (including zero). */
 export function buildActualDashboard(input: DashboardInput) {
   const { year, month } = input.period
-  const realized = buildRealizedCostSummary({ year, actualEntries: input.actualEntries, costEvents: input.costEvents, employerCosts: input.employerCosts })
-  const previousRealized = buildRealizedCostSummary({ year: year - 1, actualEntries: input.previousActualEntries, costEvents: input.previousCostEvents, employerCosts: input.previousEmployerCosts })
+  const realized = buildRealizedCostSummary({ year, actualEntries: input.actualEntries, costEvents: input.costEvents, employerCosts: input.employerCosts, contractCosts: input.contractCosts })
+  const previousRealized = buildRealizedCostSummary({ year: year - 1, actualEntries: input.previousActualEntries, costEvents: input.previousCostEvents, employerCosts: input.previousEmployerCosts, contractCosts: input.previousContractCosts })
   const makeMonth = (reportYear: number, reportMonth: number, revenues: DashboardRevenue[], costs: typeof realized): DashboardMonth => {
     const rows = revenues.filter((row) => row.year === reportYear && row.month === reportMonth)
     const channels = channelRows(rows, reportYear, reportMonth, input.today)
@@ -131,6 +134,7 @@ export function buildActualDashboard(input: DashboardInput) {
         futureMonth,
         employerCosts: (reportYear === year ? input.employerCosts ?? [] : input.previousEmployerCosts ?? []).filter((row) => row.month === reportMonth),
         employerCostMissingCount: reportYear === year ? input.employerCostMissingByMonth?.[reportMonth - 1] ?? 0 : 0,
+        contractCosts: (reportYear === year ? input.contractCosts ?? [] : input.previousContractCosts ?? []).filter((row) => row.month === reportMonth),
         employerCostMissingPeople: reportYear === year ? (input.employerCostMissingPeople ?? []).filter((row) => row.month === reportMonth).map((row) => row.label) : [],
       }),
     }

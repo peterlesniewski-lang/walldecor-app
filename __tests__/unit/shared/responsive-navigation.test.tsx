@@ -81,7 +81,7 @@ describe('responsive dashboard navigation', () => {
     await user.click(trigger)
     const dialog = screen.getByRole('dialog', { name: 'WallDecor' })
     const links = within(dialog).getAllByRole('link')
-    expect(links).toHaveLength(20)
+    expect(links).toHaveLength(21)
     for (const link of links) {
       expect(link.className).toContain('min-h-11')
       expect(link.className).toContain('lg:min-h-0')

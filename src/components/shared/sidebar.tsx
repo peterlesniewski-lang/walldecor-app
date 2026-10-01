@@ -17,6 +17,7 @@ import {
   ChartPie,
   ClipboardList,
   WalletCards,
+  FileSignature,
   type LucideIcon,
 } from 'lucide-react'
 import { NavItem } from './nav-item'
@@ -47,6 +48,7 @@ export const NAV_SECTIONS: Array<{ label: string | null; items: NavSectionItem[]
       { href: '/finance/ksef', label: 'KSeF Inbox', icon: FileCheck2, roles: ['ADMIN'] },
       { href: '/finance/cost-events', label: 'Zdarzenia kosztowe', icon: ReceiptText, roles: ['ADMIN'] },
       { href: '/finance/break-even', label: 'Break-even', icon: Target, roles: ['ADMIN'] },
+      { href: '/finance/contracts', label: 'Umowy kosztowe', icon: FileSignature, roles: ['ADMIN'] },
       { href: '/finance/areas', label: 'Marża obszarów', icon: ChartPie, roles: ['ADMIN'] },
       { href: '/finance/revenue', label: 'Przychody', icon: Banknote, roles: ['ADMIN'] },
       { href: '/finance/alerts', label: 'Alerty', icon: ShieldAlert, roles: ['ADMIN'] },

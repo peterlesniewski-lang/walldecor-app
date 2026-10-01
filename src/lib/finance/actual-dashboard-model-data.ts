@@ -2,6 +2,7 @@ import { prisma } from '@/lib/prisma'
 import { buildActualDashboard, dashboardToday, type ActualDashboardModel, type DashboardPeriod } from '@/lib/finance/actual-dashboard'
 import { isActiveInvoiceMoneyRow } from '@/lib/finance/invoice-money-scope'
 import { employerCostMonthsInScope, loadEmployerCostsForMonths, loadEmployerCostsForYear } from '@/lib/finance/employer-costs'
+import { loadContractCostsForMonths } from '@/lib/finance/cost-contracts-data'
 
 /** Financial model only. Callers enforce ADMIN access; no cash, alerts or external services are loaded here. */
 export async function loadActualDashboardModel(period: DashboardPeriod, now = new Date()): Promise<ActualDashboardModel> {
@@ -10,7 +11,7 @@ export async function loadActualDashboardModel(period: DashboardPeriod, now = ne
   const previousMonthRange = { gte: new Date(Date.UTC(year - 1, month - 1, 1)), lt: new Date(Date.UTC(year - 1, month, 1)) }
   const parts = { include: { tags: { include: { tag: true } }, allocations: true } }
   const [revenue, previousRevenue, revenueBases, previousRevenueBases, actualEntries, previousActualEntries, costEvents, previousCostEvents,
-    pendingInvoiceRows, closedPeriods, pendingCostEvents, employerCosts, previousEmployerCosts] = await Promise.all([
+    pendingInvoiceRows, closedPeriods, pendingCostEvents, employerCosts, previousEmployerCosts, contractCosts, previousContractCosts] = await Promise.all([
     prisma.revenue.findMany({ where: { year } }),
     prisma.revenue.findMany({ where: { year: year - 1, month } }),
     prisma.breakEvenRevenueBasis.findMany({ where: { year } }),
@@ -35,6 +36,8 @@ export async function loadActualDashboardModel(period: DashboardPeriod, now = ne
     employerCostMonthsInScope(year - 1, now).includes(month)
       ? loadEmployerCostsForMonths(prisma, year - 1, [month])
       : Promise.resolve({ rows: [], missingByMonth: new Array<number>(12).fill(0), missing: [] }),
+    loadContractCostsForMonths(prisma, year, employerCostMonthsInScope(year, now)),
+    loadContractCostsForMonths(prisma, year - 1, employerCostMonthsInScope(year - 1, now).filter((scopeMonth) => scopeMonth === month)),
   ])
   // After revoke this row is the previous approved snapshot. OPEN/ARCHIVED
   // imports are handled in the import queue, not as current pending KSeF money.
@@ -54,5 +57,6 @@ export async function loadActualDashboardModel(period: DashboardPeriod, now = ne
   for (const event of pendingCostEvents) addPending(event.eventDate, event.sourceInvoiceId ? `invoice:${event.sourceInvoiceId}` : `event:${event.id}`)
   const pendingCostPeriods = [...pendingByPeriod.values()].map(({ year: pendingYear, month: pendingMonth, documents }) => ({ year: pendingYear, month: pendingMonth, count: documents.size }))
   return buildActualDashboard({ period, today: dashboardToday(now), revenue, previousRevenue, revenueBases, previousRevenueBases, actualEntries, previousActualEntries, costEvents, previousCostEvents, waitingInvoices, closedPeriods, pendingCostPeriods,
-    employerCosts: employerCosts.rows, previousEmployerCosts: previousEmployerCosts.rows, employerCostMissingByMonth: employerCosts.missingByMonth, employerCostMissingPeople: employerCosts.missing })
+    employerCosts: employerCosts.rows, previousEmployerCosts: previousEmployerCosts.rows, employerCostMissingByMonth: employerCosts.missingByMonth, employerCostMissingPeople: employerCosts.missing,
+    contractCosts, previousContractCosts })
 }
