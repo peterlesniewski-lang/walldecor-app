@@ -650,6 +650,67 @@ model CostEventPartAllocation {
   @@unique([partId, costCenterId])
 }
 
+// Fixed monthly cost without a VAT invoice (e.g. renting a yard from a private person).
+// Recognised automatically in every month between startMonth and endMonth ("YYYY-MM").
+model CostContract {
+  id             String    @id @default(cuid())
+  counterparty   String
+  description    String
+  startMonth     String
+  endMonth       String?
+  isConfidential Boolean   @default(true)
+  createdById    String
+  createdAt      DateTime  @default(now())
+  updatedAt      DateTime  @updatedAt
+
+  amounts     CostContractAmount[]
+  splits      CostContractSplit[]
+  auditEvents CostContractAuditEvent[]
+}
+
+// Monthly amount from effectiveFrom ("YYYY-MM"); append-only, a wrong row is revoked.
+model CostContractAmount {
+  id            String       @id @default(cuid())
+  contractId    String
+  contract      CostContract @relation(fields: [contractId], references: [id], onDelete: Restrict)
+  effectiveFrom String
+  amountGrosze  Int
+  createdById   String
+  createdAt     DateTime     @default(now())
+  revokedAt     DateTime?
+  revokedById   String?
+
+  @@index([contractId, effectiveFrom])
+}
+
+// Salon split from effectiveFrom ("YYYY-MM"); PUL gets 100 - jagPercent. Append-only + revoke.
+model CostContractSplit {
+  id            String       @id @default(cuid())
+  contractId    String
+  contract      CostContract @relation(fields: [contractId], references: [id], onDelete: Restrict)
+  effectiveFrom String
+  jagPercent    Int
+  createdById   String
+  createdAt     DateTime     @default(now())
+  revokedAt     DateTime?
+  revokedById   String?
+
+  @@index([contractId, effectiveFrom])
+}
+
+model CostContractAuditEvent {
+  id         String       @id @default(cuid())
+  contractId String
+  contract   CostContract @relation(fields: [contractId], references: [id], onDelete: Restrict)
+  action     String
+  beforeJson String?
+  afterJson  String?
+  actorId    String
+  createdAt  DateTime     @default(now())
+
+  @@index([contractId, createdAt])
+}
+
 model CostAuditLog {
   id          String   @id @default(cuid())
   invoiceId   String?

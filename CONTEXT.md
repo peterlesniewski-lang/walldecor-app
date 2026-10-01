@@ -29,3 +29,9 @@ _Avoid_: prognoza, koszt oczekiwany
 **Miesiąc kosztu**:
 Miesiąc, za który wykonano pracę; w nim Koszt pracodawcy obciąża wynik, niezależnie od terminu zapłaty składek.
 _Avoid_: miesiąc wypłaty
+
+### Koszty bez faktury
+
+**Umowa kosztowa**:
+Stała umowa, za którą spółka co miesiąc płaci bez faktury VAT (np. najem placu od osoby prywatnej); jej kwota jest kosztem stałym w każdym miesiącu obowiązywania.
+_Avoid_: umowa dodatkowa, koszt ręczny, czynsz (jako nazwa ogólna)

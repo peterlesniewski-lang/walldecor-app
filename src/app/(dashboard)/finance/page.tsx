@@ -6,7 +6,9 @@ import { CompanyHealthView } from '@/components/shared/company-health-view'
 import { buildCompanyHealth, type FinanceCostCenterId } from '@/lib/finance/company-health'
 import { buildCostWarningSummary } from '@/lib/finance/cost-reporting'
 import { buildRealizedCostSummary, costEventYearDateRange } from '@/lib/finance/realized-costs'
-import { loadEmployerCostsForYear, maskEmployerCostsForRole, missingPeopleInMonth } from '@/lib/finance/employer-costs'
+import { employerCostMonthsInScope, loadEmployerCostsForYear, maskEmployerCostsForRole, missingPeopleInMonth } from '@/lib/finance/employer-costs'
+import { loadContractCostsForMonths } from '@/lib/finance/cost-contracts-data'
+import { visibleContractCosts } from '@/lib/finance/cost-contracts'
 import { summarizeInvoicePayments } from '@/lib/finance/invoice-money'
 import { isActiveInvoiceMoneyRow } from '@/lib/finance/invoice-money-scope'
 
@@ -25,7 +27,7 @@ export default async function FinancePage({ searchParams }: PageProps) {
   const year = yearParam ? parseInt(yearParam, 10) : new Date().getFullYear()
   const currentMonth = year === new Date().getFullYear() ? new Date().getMonth() + 1 : 12
 
-  const [revenueActuals, actualCosts, costEvents, cashAccounts, ksefInboxCount, unpaidInvoices, warningInvoices, employerCosts] = await Promise.all([
+  const [revenueActuals, actualCosts, costEvents, cashAccounts, ksefInboxCount, unpaidInvoices, warningInvoices, employerCosts, contractCosts] = await Promise.all([
     prisma.revenue.findMany({ where: { year } }),
     prisma.actualEntry.findMany({
       where: { year },
@@ -81,6 +83,7 @@ export default async function FinancePage({ searchParams }: PageProps) {
         })
       : Promise.resolve([]),
     loadEmployerCostsForYear(prisma, year),
+    loadContractCostsForMonths(prisma, year, employerCostMonthsInScope(year)),
   ])
 
   const realizedCosts = buildRealizedCostSummary({
@@ -88,6 +91,7 @@ export default async function FinancePage({ searchParams }: PageProps) {
     actualEntries: actualCosts,
     costEvents,
     employerCosts: maskEmployerCostsForRole(employerCosts.rows, role),
+    contractCosts: visibleContractCosts(contractCosts, role),
   })
 
   const health = buildCompanyHealth({

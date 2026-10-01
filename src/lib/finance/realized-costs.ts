@@ -61,6 +61,8 @@ export interface RealizedCostSummary {
   employerCostsByMonth: number[]
   /** ESTIMATE when any person's cost in the month is still an estimate. */
   employerCostStatusByMonth: EmployerCostMonthStatus[]
+  /** Cost contracts (fixed costs without an invoice) included in the totals above, per month. */
+  contractCostsByMonth: number[]
 }
 
 type CostBucket = 'fixedCosts' | 'variableCosts' | 'cogs'
@@ -151,6 +153,8 @@ export function buildRealizedCostSummary(input: {
   actualEntries: RealizedActualEntryInput[]
   costEvents: RealizedCostEventInput[]
   employerCosts?: RealizedEmployerCostInput[]
+  /** Fixed monthly costs from cost contracts (no invoice, no VAT), per salon. */
+  contractCosts?: Array<{ month: number; costCenterId: string; amount: number }>
 }): RealizedCostSummary {
   const rowsByCenterMonth = new Map<string, MonthlyFinanceAmount>()
   const totalCostsByMonth = emptyMonths()
@@ -161,6 +165,7 @@ export function buildRealizedCostSummary(input: {
   const breakEvenByCenter = emptyBreakEvenRows()
   const employerCostsByMonth = emptyMonths()
   const employerCostStatusByMonth = new Array<EmployerCostMonthStatus>(12).fill('NONE')
+  const contractCostsByMonth = emptyMonths()
 
   const addCost = (
     costCenterId: FinanceCostCenterId,
@@ -234,6 +239,14 @@ export function buildRealizedCostSummary(input: {
     else if (employerCostStatusByMonth[monthIndex] === 'NONE') employerCostStatusByMonth[monthIndex] = 'APPROVED'
   }
 
+  for (const cost of input.contractCosts ?? []) {
+    if (cost.month < 1 || cost.month > 12) continue
+    if (!isCostEventInRealizedCostScope(new Date(Date.UTC(input.year, cost.month - 1, 1)))) continue
+    if (!isFinanceCostCenterId(cost.costCenterId)) continue
+    addCost(cost.costCenterId, cost.month, cost.amount, 'fixedCosts')
+    contractCostsByMonth[cost.month - 1] = roundMoney(contractCostsByMonth[cost.month - 1] + roundMoney(cost.amount))
+  }
+
   const monthlyRows = FINANCE_COST_CENTERS.flatMap((center) =>
     Array.from({ length: 12 }, (_, index) => rowsByCenterMonth.get(`${center}:${index + 1}`)).filter(
       (row): row is MonthlyFinanceAmount => Boolean(row)
@@ -250,5 +263,6 @@ export function buildRealizedCostSummary(input: {
     breakEvenCostRows: FINANCE_COST_CENTERS.map((center) => breakEvenByCenter[center]),
     employerCostsByMonth,
     employerCostStatusByMonth,
+    contractCostsByMonth,
   }
 }

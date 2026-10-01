@@ -37,6 +37,8 @@ export interface BreakEvenCalculationInput {
   /** People in payroll whose employer cost is unknown (no base salary, hourly base, no split). */
   employerCostMissingCount?: number;
   employerCostMissingPeople?: string[];
+  /** Cost contracts allocated to salons for the month (no invoice, no VAT). */
+  contractCosts?: Array<{ costCenterId: string; amount: number }>;
 }
 
 export function calculateBreakEven(input: BreakEvenCalculationInput): BreakEvenReport {
@@ -103,7 +105,8 @@ export function calculateBreakEven(input: BreakEvenCalculationInput): BreakEvenR
     const actualFixedNet = roundMoney(fixedCosts.filter((row) => row.actualNetAmount !== null).reduce((sum, row) => sum + row.includedNetAmount, 0))
     const expectedFixedNet = roundMoney(fixedCosts.filter((row) => row.actualNetAmount === null).reduce((sum, row) => sum + row.includedNetAmount, 0))
     // Employer cost carries no VAT, so its net equals its gross; it is a fixed salon cost.
-    const fixedNet = roundMoney(actualFixedNet + expectedFixedNet + (hr.amount ?? 0))
+    const contractNet = roundMoney((input.contractCosts ?? []).filter((row) => row.costCenterId === center).reduce((sum, row) => sum + row.amount, 0))
+    const fixedNet = roundMoney(actualFixedNet + expectedFixedNet + (hr.amount ?? 0) + contractNet)
     const canCalculate = margin !== null && fixedCosts.length > 0 && !unknownVariable && !fixedCosts.some((row) => row.status === 'invalid')
     const targetNet = canCalculate ? roundMoney((fixedNet + variableNet) / margin.margin) : null
     const fixedOnlyTargetNet = margin && fixedCosts.length > 0 ? roundMoney(fixedNet / margin.margin) : null
@@ -115,7 +118,7 @@ export function calculateBreakEven(input: BreakEvenCalculationInput): BreakEvenR
       omittedFixedCount: omittedFixed.length, omittedFixedNet: roundMoney(omittedFixed.reduce((sum, source) => sum + (source.netAmount ?? 0), 0)),
       goodsNet: roundMoney(centerSources.filter(isPurchaseSource).reduce((sum, source) => sum + (source.netAmount ?? 0), 0)),
       oneOffNet: roundMoney(centerSources.filter((source) => has(source, ['one-off'])).reduce((sum, source) => sum + (source.netAmount ?? 0), 0)),
-      hr, status: 'provisional', warnings: centerWarnings }]
+      hr, contractNet, status: 'provisional', warnings: centerWarnings }]
   })) as Record<BreakEvenSalon, BreakEvenSalonReport>
   return { year: input.year, month: input.month, margin, byCostCenter, historicalSuggestion: input.historicalSuggestion,
     warnings, warningAmount: input.warningSummary.plnAmount, warningSummary: input.warningSummary }

@@ -137,6 +137,16 @@ describe('CEO net figures', () => {
     ]).toEqual([230, 180, 150, { connected: true, amount: 150, label: expect.stringMatching(/zatwierdzonych list płac/) }])
   })
 
+  it('adds cost contracts to net costs of the company and the salon', () => {
+    const model = build({
+      revenue: revenue(8),
+      revenueBases: [basis('JAG', 160, 200), basis('PUL', 250, 300)],
+      contractCosts: [{ month: 8, costCenterId: 'PUL', amount: 70 }],
+      closedPeriods: [{ year: 2026, month: 8 }],
+    })
+    expect([model.selected.net.costsNet, model.byCenter.find((row) => row.costCenterId === 'PUL')?.net.costsNet]).toEqual([70, 70])
+  })
+
   it('labels an estimated employer cost', () => {
     const model = build({
       revenue: revenue(8),

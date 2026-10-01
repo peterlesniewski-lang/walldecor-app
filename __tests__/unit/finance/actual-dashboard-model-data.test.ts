@@ -13,6 +13,7 @@ const db = vi.hoisted(() => ({
 // Deliberately expose only financial tables: unrelated reads must fail this boundary test.
 vi.mock('@/lib/prisma', () => ({ prisma: db }))
 // Payroll employer cost has its own tests; these cover invoice and revenue data only.
+vi.mock('@/lib/finance/cost-contracts-data', () => ({ loadContractCostsForMonths: vi.fn(async () => []) }))
 vi.mock('@/lib/finance/employer-costs', async (importOriginal) => {
   const original = await importOriginal<typeof import('@/lib/finance/employer-costs')>()
   const empty = async () => ({ rows: [], missingByMonth: new Array(12).fill(0), missing: [] })
