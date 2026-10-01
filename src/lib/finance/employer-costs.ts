@@ -1,6 +1,7 @@
 import type { Prisma, PrismaClient } from '@/generated/prisma'
 import { getWarsawBusinessDate } from '@/lib/hr/business-date'
 import { getMonthlyEmployerCosts } from '@/lib/payroll/contracts'
+import { EMPLOYER_COST_GAP_LABELS } from '@/lib/payroll/employer-cost'
 import { KSEF_COST_EVENT_START_MONTH, KSEF_COST_EVENT_START_YEAR, type RealizedEmployerCostInput } from './realized-costs'
 
 type Db = PrismaClient | Prisma.TransactionClient
@@ -12,6 +13,12 @@ export type EmployerCostYear = {
   rows: EmployerCostRow[]
   /** People in payroll whose cost could not be estimated (no base salary, hourly base, no split). */
   missingByMonth: number[]
+  /** The same people, named with the reason ("Jan Kowalski — brak podstawy…"). ADMIN views only. */
+  missing: Array<{ month: number; label: string }>
+}
+
+export function missingPeopleInMonth(year: EmployerCostYear, month: number): string[] {
+  return year.missing.filter((row) => row.month === month).map((row) => row.label)
 }
 
 /**
@@ -34,10 +41,12 @@ export async function loadEmployerCostsForMonths(db: Db, year: number, months: n
   const perMonth = await Promise.all(months.map((month) => getMonthlyEmployerCosts(db, { year, month })))
   const missingByMonth = new Array<number>(12).fill(0)
   const rows: EmployerCostRow[] = []
+  const gaps: Array<{ month: number; employeeId: string; gap: string }> = []
   for (const records of perMonth) {
     for (const record of records) {
       if (record.status === 'MISSING') {
         missingByMonth[record.month - 1] += 1
+        gaps.push({ month: record.month, employeeId: record.employeeId, gap: record.gap ?? 'BASE_MISSING' })
         continue
       }
       for (const allocation of record.allocations) {
@@ -51,7 +60,15 @@ export async function loadEmployerCostsForMonths(db: Db, year: number, months: n
       }
     }
   }
-  return { rows, missingByMonth }
+  const people = gaps.length
+    ? await db.employee.findMany({ where: { id: { in: [...new Set(gaps.map((gap) => gap.employeeId))] } }, select: { id: true, firstName: true, lastName: true } })
+    : []
+  const nameById = new Map(people.map((person) => [person.id, `${person.firstName} ${person.lastName}`]))
+  const missing = gaps.map((gap) => ({
+    month: gap.month,
+    label: `${nameById.get(gap.employeeId) ?? 'Nieznana osoba'} — ${EMPLOYER_COST_GAP_LABELS[gap.gap] ?? gap.gap}`,
+  }))
+  return { rows, missingByMonth, missing }
 }
 
 /**

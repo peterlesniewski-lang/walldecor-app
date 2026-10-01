@@ -3,7 +3,7 @@ import { buildCostWarningSummary } from './cost-reporting'
 import { isActiveInvoiceMoneyRow } from './invoice-money-scope'
 import { roundMoney } from './ksef-inbox'
 import { breakEvenPeriod, calculateBreakEven, calculateHistoricalSuggestion } from './break-even-engine'
-import { employerCostMonthsInScope, loadEmployerCostsForMonths } from './employer-costs'
+import { employerCostMonthsInScope, loadEmployerCostsForMonths, missingPeopleInMonth } from './employer-costs'
 import type { BreakEvenFixedCost, BreakEvenFixedCostMatch, BreakEvenResponse, BreakEvenSourcesResult, BreakEvenSource } from './break-even-types'
 
 export function breakEvenMonthRange(year: number, month: number) {
@@ -81,11 +81,12 @@ function missingInvoiceCostWarnings(invoices: Awaited<ReturnType<typeof loadWarn
 }
 
 async function loadBreakEvenEmployerCosts(year: number, month: number) {
-  if (!employerCostMonthsInScope(year).includes(month)) return { employerCosts: undefined, employerCostMissingCount: 0 }
-  const { rows, missingByMonth } = await loadEmployerCostsForMonths(prisma, year, [month])
+  if (!employerCostMonthsInScope(year).includes(month)) return { employerCosts: undefined, employerCostMissingCount: 0, employerCostMissingPeople: [] }
+  const loaded = await loadEmployerCostsForMonths(prisma, year, [month])
   return {
-    employerCosts: rows.filter((row) => row.month === month).map(({ costCenterId, amount, status }) => ({ costCenterId, amount, status })),
-    employerCostMissingCount: missingByMonth[month - 1],
+    employerCosts: loaded.rows.filter((row) => row.month === month).map(({ costCenterId, amount, status }) => ({ costCenterId, amount, status })),
+    employerCostMissingCount: loaded.missingByMonth[month - 1],
+    employerCostMissingPeople: missingPeopleInMonth(loaded, month),
   }
 }
 

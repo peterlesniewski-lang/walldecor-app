@@ -123,7 +123,7 @@ interface CompanyHealthViewProps {
   unclassifiedWarningAmount?: number
   unclassifiedWarningSummary?: InvoiceMoneySummary
   /** Employer cost (payroll) included in the current month's costs. */
-  employerCost?: { amount: number; status: 'NONE' | 'APPROVED' | 'ESTIMATE'; missingCount: number }
+  employerCost?: { amount: number; status: 'NONE' | 'APPROVED' | 'ESTIMATE'; missingCount: number; missingPeople?: string[] }
 }
 
 export function CompanyHealthView({
@@ -190,7 +190,8 @@ export function CompanyHealthView({
           )}
           {isAdmin && employerCost && employerCost.missingCount > 0 && (
             <p className="mt-1 text-[11px] font-semibold text-amber-700">
-              Bez kosztu pracodawcy: {employerCost.missingCount} os. — uzupełnij podstawę lub podział w Wynagrodzeniach.
+              Bez kosztu pracodawcy: {employerCost.missingCount} os.
+              {employerCost.missingPeople?.length ? ` (${employerCost.missingPeople.join('; ')})` : ''} — uzupełnij w Wynagrodzeniach.
             </p>
           )}
         </div>

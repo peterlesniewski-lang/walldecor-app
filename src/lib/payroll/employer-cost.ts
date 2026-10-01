@@ -1,3 +1,4 @@
+import { COST_EVENT_START_MONTH_KEY } from '@/lib/finance/cost-cutover'
 import { payrollMonthKey, type PayrollPeriod } from './period'
 import type { PayrollBasis } from './types'
 
@@ -153,6 +154,23 @@ export function resolveCostSplit(
   if (employeeCostCenterId === 'JAG') return { jagPercent: 100, source: 'COST_CENTER' }
   if (employeeCostCenterId === 'PUL') return { jagPercent: 0, source: 'COST_CENTER' }
   return null
+}
+
+/**
+ * Default month for a new split: the first month whose results include employer cost, or the
+ * employee's first month if they started later. A split set "from the open settlement" would leave
+ * every earlier month without a salon.
+ */
+export function defaultCostSplitMonth(employeeStartDate: string): string {
+  const startMonth = employeeStartDate.slice(0, 7)
+  return startMonth > COST_EVENT_START_MONTH_KEY ? startMonth : COST_EVENT_START_MONTH_KEY
+}
+
+/** Why a person in payroll has no employer cost in a month (ADMIN-facing wording). */
+export const EMPLOYER_COST_GAP_LABELS: Record<string, string> = {
+  BASE_MISSING: 'brak podstawy wynagrodzenia w tym miesiącu',
+  HOURLY_BASE: 'stawka godzinowa — szacunek możliwy dopiero po rozliczeniu',
+  COST_SPLIT_MISSING: 'brak podziału JAG/PUL obowiązującego w tym miesiącu',
 }
 
 export type EmployerCostAllocation = { costCenterId: PayrollCostCenter; amountGrosze: number }

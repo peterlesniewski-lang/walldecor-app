@@ -51,6 +51,8 @@ export interface DashboardInput {
   previousEmployerCosts?: RealizedEmployerCostInput[]
   /** People in payroll whose employer cost is unknown, per month of the selected year. */
   employerCostMissingByMonth?: number[]
+  /** Named people without employer cost, with the reason, per month of the selected year. */
+  employerCostMissingPeople?: Array<{ month: number; label: string }>
   waitingInvoices: Array<{ currency: string; grossAmount: number; reportingGrossAmount?: number | null }>
   /** Explicit company-level confirmation; never inferred from the existence of a cost row. */
   closedPeriods?: DashboardPeriod[]
@@ -129,6 +131,7 @@ export function buildActualDashboard(input: DashboardInput) {
         futureMonth,
         employerCosts: (reportYear === year ? input.employerCosts ?? [] : input.previousEmployerCosts ?? []).filter((row) => row.month === reportMonth),
         employerCostMissingCount: reportYear === year ? input.employerCostMissingByMonth?.[reportMonth - 1] ?? 0 : 0,
+        employerCostMissingPeople: reportYear === year ? (input.employerCostMissingPeople ?? []).filter((row) => row.month === reportMonth).map((row) => row.label) : [],
       }),
     }
   }

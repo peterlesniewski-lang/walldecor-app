@@ -5,8 +5,9 @@ import {
 } from '@/lib/finance/company-health'
 import { roundMoney } from '@/lib/finance/ksef-inbox'
 
-export const KSEF_COST_EVENT_START_YEAR = 2026
-export const KSEF_COST_EVENT_START_MONTH = 4
+import { KSEF_COST_EVENT_START_MONTH, KSEF_COST_EVENT_START_YEAR } from '@/lib/finance/cost-cutover'
+
+export { KSEF_COST_EVENT_START_MONTH, KSEF_COST_EVENT_START_YEAR }
 
 export interface RealizedActualEntryInput {
   year: number

@@ -1,5 +1,6 @@
 /* Payroll ledger — built on WallDecor tokens (sand, dark, DM Mono). */
-.page {
+/* Dialogs are portalled outside .page, so they need the tokens too. */
+.page, .tokens {
   --pr-ink: var(--wd-dark, #1e1e1e);
   --pr-paper: var(--card, #fff);
   --pr-rule: color-mix(in srgb, var(--border) 70%, transparent);
@@ -9,6 +10,8 @@
   --pr-ok: #2f6b3f;
   --pr-radius: 14px;
   --pr-mono: var(--font-mono, 'DM Mono'), ui-monospace, monospace;
+}
+.page {
   display: grid;
   gap: 22px;
   padding-bottom: 48px;

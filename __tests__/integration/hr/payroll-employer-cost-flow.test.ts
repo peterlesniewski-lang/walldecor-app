@@ -179,6 +179,12 @@ describe('employer cost — salon split', () => {
     expect([res.status, json.details?.blockers?.map((b: { code: string }) => b.code)]).toEqual([409, ['COST_SPLIT_MISSING']])
   })
 
+  it('should name the person and the reason when a month has no split', async () => {
+    const { loadEmployerCostsForMonths } = await import('@/lib/finance/employer-costs')
+    const july = await loadEmployerCostsForMonths(prisma, 2026, [7])
+    expect(july.missing.map((row) => row.label)).toContain('Test emp-board — brak podziału JAG/PUL obowiązującego w tym miesiącu')
+  })
+
   it('should record the split in the audit history', async () => {
     const events = await prisma.payrollAuditEvent.findMany({ where: { employeeId: 'emp-board', action: 'costSplit.create' } })
     expect(events.map((event) => JSON.parse(event.afterJson ?? '{}'))).toEqual([{ effectiveFrom: '2026-08', jagPercent: 50, pulPercent: 50 }])

@@ -6,7 +6,7 @@ import { CompanyHealthView } from '@/components/shared/company-health-view'
 import { buildCompanyHealth, type FinanceCostCenterId } from '@/lib/finance/company-health'
 import { buildCostWarningSummary } from '@/lib/finance/cost-reporting'
 import { buildRealizedCostSummary, costEventYearDateRange } from '@/lib/finance/realized-costs'
-import { loadEmployerCostsForYear, maskEmployerCostsForRole } from '@/lib/finance/employer-costs'
+import { loadEmployerCostsForYear, maskEmployerCostsForRole, missingPeopleInMonth } from '@/lib/finance/employer-costs'
 import { summarizeInvoicePayments } from '@/lib/finance/invoice-money'
 import { isActiveInvoiceMoneyRow } from '@/lib/finance/invoice-money-scope'
 
@@ -129,6 +129,7 @@ export default async function FinancePage({ searchParams }: PageProps) {
         amount: realizedCosts.employerCostsByMonth[currentMonth - 1] ?? 0,
         status: realizedCosts.employerCostStatusByMonth[currentMonth - 1] ?? 'NONE',
         missingCount: isAdmin ? employerCosts.missingByMonth[currentMonth - 1] ?? 0 : 0,
+        missingPeople: isAdmin ? missingPeopleInMonth(employerCosts, currentMonth) : [],
       }}
     />
   )

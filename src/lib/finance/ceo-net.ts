@@ -43,6 +43,8 @@ export interface MonthEmployerCost {
   status: EmployerCostMonthStatus
   /** People in payroll whose employer cost is unknown (no base salary, hourly base, no split). */
   missingCount: number
+  /** The same people named with the reason; empty when names are not loaded. */
+  missingPeople: string[]
 }
 
 export interface MonthNet {
@@ -134,6 +136,7 @@ export function buildMonthNet(input: {
   futureMonth: boolean
   employerCosts?: Array<{ costCenterId: string; amount: number; status: 'APPROVED' | 'ESTIMATE' }>
   employerCostMissingCount?: number
+  employerCostMissingPeople?: string[]
 }): MonthNet {
   const gaps: RevenueNetGap[] = []
   const revenueByCenter = new Map<string, number>()
@@ -247,6 +250,7 @@ export function buildMonthNet(input: {
       amount: payroll.length > 0 ? employerTotal : null,
       status: payroll.some((row) => row.status === 'ESTIMATE') ? 'ESTIMATE' : payroll.length > 0 ? 'APPROVED' : 'NONE',
       missingCount: employerCostMissingCount,
+      missingPeople: input.employerCostMissingPeople ?? [],
     },
     gaps,
     centers,
