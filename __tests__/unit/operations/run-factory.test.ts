@@ -118,19 +118,48 @@ describe('month closing helpers', () => {
     ])
   })
 
-  it('resets status when copying a task and keeps owner and procedure', () => {
-    const [first] = buildRunItemsFromPreviousRun(previousItems)
+  // Rows as they come back from Prisma: they carry more fields than PreviousRunItem declares.
+  // Built through a variable so TypeScript's excess-property check does not hide a leaky copy.
+  const finishedDatabaseRow = {
+    id: 'row-1',
+    runId: 'run-9',
+    templateItemId: 't3',
+    title: 'Rejestr VAT',
+    description: 'Wszystkie lokalizacje',
+    order: 3,
+    procedureId: 'p-vat',
+    ownerId: 'u2',
+    recurring: true,
+    status: 'done',
+    note: 'Wysłane do księgowej',
+    completedAt: new Date('2026-09-30T10:00:00Z'),
+  }
 
-    expect(first).toEqual({
-      templateItemId: 't1',
-      title: 'Raport z kasy',
-      description: 'Obie lokalizacje',
+  it('resets status, note and completion when copying a task', () => {
+    const [copied] = buildRunItemsFromPreviousRun([finishedDatabaseRow])
+
+    expect(copied).toEqual({
+      templateItemId: 't3',
+      title: 'Rejestr VAT',
+      description: 'Wszystkie lokalizacje',
       order: 1,
-      procedureId: null,
-      ownerId: 'u1',
+      procedureId: 'p-vat',
+      ownerId: 'u2',
       status: 'todo',
       recurring: true,
     })
+  })
+
+  it('keeps owner and procedure when copying a task', () => {
+    const [copied] = buildRunItemsFromPreviousRun([finishedDatabaseRow])
+
+    expect([copied.ownerId, copied.procedureId]).toEqual(['u2', 'p-vat'])
+  })
+
+  it('copies a recurring ad-hoc task without a template item', () => {
+    const [copied] = buildRunItemsFromPreviousRun([{ ...finishedDatabaseRow, templateItemId: null }])
+
+    expect(copied.templateItemId).toBeNull()
   })
 
   it('returns an empty list when no task of the previous run repeats', () => {
@@ -163,6 +192,14 @@ describe('month closing helpers', () => {
     expect(getRunDisplayStatus('closed', [{ status: 'done' }])).toBe('closed')
   })
 
+  it('keeps "open" for an open run with a task that is not done', () => {
+    expect(getRunDisplayStatus('open', [{ status: 'done' }, { status: 'todo' }])).toBe('open')
+  })
+
+  it('keeps "open" for an open run without any tasks', () => {
+    expect(getRunDisplayStatus('open', [])).toBe('open')
+  })
+
   it('finds the first task that is not done, by order', () => {
     const next = getNextOpenItem([
       { title: 'C', order: 3, status: 'todo' },
@@ -179,12 +216,18 @@ describe('month closing helpers', () => {
 
   it('finds the run for a template and period', () => {
     const runs = [
+      { id: 'x', templateId: 'other', periodYear: 2026, periodMonth: 9 },
       { id: 'a', templateId: 't', periodYear: 2026, periodMonth: 8 },
       { id: 'b', templateId: 't', periodYear: 2026, periodMonth: 9 },
-      { id: 'c', templateId: 'other', periodYear: 2026, periodMonth: 9 },
     ]
 
     expect(findRunForPeriod(runs, 't', { periodYear: 2026, periodMonth: 9 })?.id).toBe('b')
+  })
+
+  it('does not match a yearly run without a month to a monthly period', () => {
+    const runs = [{ id: 'a', templateId: 't', periodYear: 2026, periodMonth: null }]
+
+    expect(findRunForPeriod(runs, 't', { periodYear: 2026, periodMonth: 9 })).toBeUndefined()
   })
 
   it('does not find a run for the previous December in January', () => {
