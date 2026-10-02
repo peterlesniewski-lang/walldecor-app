@@ -2250,6 +2250,7 @@ model ChecklistRunItem {
   ownerId        String?
   status         String                 @default("todo") // todo | in_progress | blocked | done
   note           String?
+  recurring      Boolean                @default(true)
   completedAt    DateTime?
   completedById  String?
   createdAt      DateTime               @default(now())
