@@ -102,5 +102,5 @@ Per `.claude/rules/testing.md`.
 
 ## Migration
 
-- `prisma db push` adds `recurring` with default `true` (project uses `db push`, no migration files). Update `architecture.md` with the new field.
-- No data backfill needed.
+- The repo ships SQL migrations in `prisma/migrations/` and `docker-entrypoint.sh` runs `prisma migrate deploy`, so the change is a new migration `20261002090000_run_item_recurring` with `ALTER TABLE "ChecklistRunItem" ADD COLUMN "recurring" BOOLEAN NOT NULL DEFAULT true;`. The default backfills existing rows with `true`. Update `architecture.md` with the new field.
+- The duplicate-run guard (409) is enforced in application code inside a transaction, not with a unique index: `periodMonth` is nullable and existing production data may already contain duplicates that would make a new unique index fail to apply.
