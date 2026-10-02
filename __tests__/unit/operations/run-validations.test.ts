@@ -18,7 +18,6 @@ describe('CreateChecklistRunItemSchema', () => {
       title: 'Faktura od dostawcy',
       description: null,
       procedureId: null,
-      recurring: false,
     })
 
     expect(result.success).toBe(true)
@@ -38,6 +37,18 @@ describe('CreateChecklistRunItemSchema', () => {
 
   it('should reject a title shorter than 3 characters', () => {
     expect(CreateChecklistRunItemSchema.safeParse({ title: 'ab' }).success).toBe(false)
+  })
+
+  it('should accept a title of exactly 3 characters', () => {
+    expect(CreateChecklistRunItemSchema.safeParse({ title: 'abc' }).success).toBe(true)
+  })
+
+  it('should reject a title made only of whitespace', () => {
+    expect(CreateChecklistRunItemSchema.safeParse({ title: '   ' }).success).toBe(false)
+  })
+
+  it('should reject a title that is shorter than 3 characters after trimming', () => {
+    expect(CreateChecklistRunItemSchema.safeParse({ title: '  ab ' }).success).toBe(false)
   })
 
   it('should reject a title longer than 200 characters', () => {
@@ -96,6 +107,18 @@ describe('UpdateChecklistRunItemSchema', () => {
 
   it('should reject a title shorter than 3 characters', () => {
     expect(UpdateChecklistRunItemSchema.safeParse({ title: 'x' }).success).toBe(false)
+  })
+
+  it('should accept a title of exactly 3 characters', () => {
+    expect(UpdateChecklistRunItemSchema.safeParse({ title: 'abc' }).success).toBe(true)
+  })
+
+  it('should reject a title made only of whitespace', () => {
+    expect(UpdateChecklistRunItemSchema.safeParse({ title: '   ' }).success).toBe(false)
+  })
+
+  it('should reject a title that is shorter than 3 characters after trimming', () => {
+    expect(UpdateChecklistRunItemSchema.safeParse({ title: '  ab ' }).success).toBe(false)
   })
 
   it('should reject a title longer than 200 characters', () => {

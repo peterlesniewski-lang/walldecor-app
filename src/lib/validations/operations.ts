@@ -14,8 +14,8 @@ export const UpdateChecklistRunItemSchema = z.object({
   status: z.enum(RUN_ITEM_STATUSES).optional(),
   note: z.string().max(2000).optional().nullable(),
   ownerId: z.string().min(1).optional().nullable(),
-  title: z.string().min(3).max(200).trim().optional(),
-  description: z.string().max(2000).trim().nullish(),
+  title: z.string().trim().min(3).max(200).optional(),
+  description: z.string().trim().max(2000).nullish(),
   procedureId: z.string().min(1).nullish(),
   recurring: z.boolean().optional(),
 })
@@ -24,8 +24,8 @@ export const UpdateChecklistRunItemSchema = z.object({
 export const RUN_ITEM_STRUCTURE_FIELDS = ['title', 'description', 'procedureId', 'recurring'] as const
 
 export const CreateChecklistRunItemSchema = z.object({
-  title: z.string().min(3).max(200).trim(),
-  description: z.string().max(2000).trim().nullish(),
+  title: z.string().trim().min(3).max(200),
+  description: z.string().trim().max(2000).nullish(),
   procedureId: z.string().min(1).nullish(),
   recurring: z.boolean().default(true),
 })
