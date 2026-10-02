@@ -1,4 +1,4 @@
-import type { PrismaClient } from '@/generated/prisma'
+import type { Prisma, PrismaClient } from '@/generated/prisma'
 import {
   buildRunItemsFromPreviousRun,
   createRunItemInputs,
@@ -25,6 +25,11 @@ export class RunServiceError extends Error {
     this.name = 'RunServiceError'
   }
 }
+
+// What the guards need: satisfied by a `PrismaClient` as well as by the `tx` of an interactive transaction.
+type RunDb = Pick<Prisma.TransactionClient, 'checklistRun' | 'article'>
+
+const procedureWhere = (procedureId: string) => ({ id: procedureId, type: 'procedure' })
 
 // `ChecklistRunItem` has @@unique([runId, order]): shift every order far out of range first, then assign the final values.
 const ORDER_SHIFT = 10_000
@@ -88,15 +93,15 @@ export async function createRunFromTemplate(db: PrismaClient, input: StartRunInp
   })
 }
 
-export async function assertRunIsOpen(db: PrismaClient, runId: string) {
+export async function assertRunIsOpen(db: RunDb, runId: string) {
   const run = await db.checklistRun.findUnique({ where: { id: runId }, select: { status: true } })
   if (!run) throw new RunServiceError('RUN_NOT_FOUND')
   if (run.status !== 'open') throw new RunServiceError('RUN_CLOSED')
 }
 
-export async function assertProcedureExists(db: PrismaClient, procedureId: string) {
+export async function assertProcedureExists(db: RunDb, procedureId: string) {
   const procedure = await db.article.findFirst({
-    where: { id: procedureId, type: 'procedure' },
+    where: procedureWhere(procedureId),
     select: { id: true },
   })
   if (!procedure) throw new RunServiceError('PROCEDURE_NOT_FOUND')
@@ -105,16 +110,16 @@ export async function assertProcedureExists(db: PrismaClient, procedureId: strin
 export async function getProcedureForItem(db: PrismaClient, procedureId: string | null) {
   if (!procedureId) return null
   return db.article.findFirst({
-    where: { id: procedureId, type: 'procedure' },
+    where: procedureWhere(procedureId),
     select: { id: true, title: true, content: true },
   })
 }
 
 export async function addRunItem(db: PrismaClient, runId: string, input: RunTaskInput) {
-  await assertRunIsOpen(db, runId)
-  if (input.procedureId) await assertProcedureExists(db, input.procedureId)
-
   return db.$transaction(async (tx) => {
+    await assertRunIsOpen(tx, runId)
+    if (input.procedureId) await assertProcedureExists(tx, input.procedureId)
+
     const last = await tx.checklistRunItem.aggregate({ where: { runId }, _max: { order: true } })
     return tx.checklistRunItem.create({
       data: {
@@ -131,9 +136,9 @@ export async function addRunItem(db: PrismaClient, runId: string, input: RunTask
 }
 
 export async function deleteRunItem(db: PrismaClient, runId: string, itemId: string) {
-  await assertRunIsOpen(db, runId)
-
   await db.$transaction(async (tx) => {
+    await assertRunIsOpen(tx, runId)
+
     const item = await tx.checklistRunItem.findFirst({ where: { id: itemId, runId }, select: { id: true } })
     if (!item) throw new RunServiceError('ITEM_NOT_FOUND')
 
@@ -153,9 +158,9 @@ export async function deleteRunItem(db: PrismaClient, runId: string, itemId: str
 }
 
 export async function reorderRunItems(db: PrismaClient, runId: string, itemIds: string[]) {
-  await assertRunIsOpen(db, runId)
-
   await db.$transaction(async (tx) => {
+    await assertRunIsOpen(tx, runId)
+
     const current = await tx.checklistRunItem.findMany({ where: { runId }, select: { id: true } })
     if (!isPermutationOf(current.map((item) => item.id), itemIds)) {
       throw new RunServiceError('ORDER_MISMATCH')

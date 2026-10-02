@@ -4,13 +4,14 @@ import { mkdtempSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest'
-import { PrismaClient } from '@/generated/prisma'
+import { PrismaClient, type Prisma } from '@/generated/prisma'
 import {
   addRunItem,
   createRunFromTemplate,
   deleteRunItem,
   getProcedureForItem,
   reorderRunItems,
+  type RunServiceError,
 } from '@/lib/operations/run-service'
 
 const directory = mkdtempSync(path.join(tmpdir(), 'walldecor-operations-test-'))
@@ -63,7 +64,7 @@ const seedArticle = (id: string, type: string) =>
     data: { id, title: `Artykuł ${id}`, slug: id, content: `Treść ${id}`, category: 'processes', type },
   })
 
-const startInput = (periodMonth: number) => ({
+const startInput = (periodMonth: number | null) => ({
   templateId: 'template',
   periodYear: 2026,
   periodMonth,
@@ -79,6 +80,37 @@ const taskInput = (title: string, recurring = true) => ({
 
 const itemsOf = (runId: string) =>
   db.checklistRunItem.findMany({ where: { runId }, orderBy: { order: 'asc' } })
+
+const seedRun = (periodMonth: number, titles: string[]) =>
+  db.checklistRun.create({
+    data: {
+      templateId: 'template',
+      name: `Run ${periodMonth}`,
+      periodYear: 2026,
+      periodMonth,
+      createdById: 'admin',
+      items: { create: titles.map((title, index) => ({ title, order: index + 1 })) },
+    },
+  })
+
+type InteractiveTransaction = (callback: (tx: Prisma.TransactionClient) => Promise<unknown>) => Promise<unknown>
+
+// Simulates another request that lands after a caller has read the database but before its write transaction starts.
+function interleaveBeforeTransaction(request: () => Promise<unknown>): PrismaClient {
+  return new Proxy(db, {
+    get(target, property) {
+      if (property !== '$transaction') return Reflect.get(target, property, target)
+      const transaction = target.$transaction.bind(target) as InteractiveTransaction
+      return async (callback: Parameters<InteractiveTransaction>[0]) => {
+        await request()
+        return transaction(callback)
+      }
+    },
+  })
+}
+
+const closeRunBeforeWriting = (runId: string) =>
+  interleaveBeforeTransaction(() => db.checklistRun.update({ where: { id: runId }, data: { status: 'closed' } }))
 
 describe('createRunFromTemplate', () => {
   it('should copy template items when there is no previous run', async () => {
@@ -100,9 +132,7 @@ describe('createRunFromTemplate', () => {
   it('should copy only recurring tasks from the previous run', async () => {
     await seedTemplate()
     const august = await createRunFromTemplate(db, startInput(8))
-    const [first, second] = august.items
-    await db.checklistRunItem.update({ where: { id: second.id }, data: { recurring: false } })
-    await db.checklistRunItem.update({ where: { id: first.id }, data: { status: 'done', note: 'Zrobione' } })
+    await db.checklistRunItem.update({ where: { id: august.items[1].id }, data: { recurring: false } })
 
     const september = await createRunFromTemplate(db, startInput(9))
 
@@ -148,6 +178,26 @@ describe('createRunFromTemplate', () => {
     ])
   })
 
+  it('should copy from the run with the latest period, not the most recently created one', async () => {
+    await seedTemplate()
+    await seedRun(10, ['Zadanie z października'])
+    await seedRun(8, ['Zadanie z sierpnia'])
+
+    const november = await createRunFromTemplate(db, startInput(11))
+
+    expect(november.items.map((item) => item.title)).toEqual(['Zadanie z października'])
+  })
+
+  it('should start an empty run when no task of the previous run is recurring', async () => {
+    await seedTemplate()
+    const august = await createRunFromTemplate(db, startInput(8))
+    await db.checklistRunItem.updateMany({ where: { runId: august.id }, data: { recurring: false } })
+
+    const september = await createRunFromTemplate(db, startInput(9))
+
+    expect(september.items).toEqual([])
+  })
+
   it('should ignore runs of other templates when copying', async () => {
     await seedTemplate()
     await db.checklistTemplate.create({ data: { id: 'other-template', moduleId: 'module', name: 'Inna lista' } })
@@ -183,6 +233,49 @@ describe('createRunFromTemplate', () => {
       code: 'RUN_EXISTS',
       details: { runId: first.id },
     })
+  })
+
+  it('should create and name a yearly run without a month', async () => {
+    await seedTemplate()
+
+    const run = await createRunFromTemplate(db, startInput(null))
+
+    expect(run).toMatchObject({ name: 'Księgowość - koniec miesiąca - 2026', periodYear: 2026, periodMonth: null })
+  })
+
+  it('should reject a second yearly run for the same template and year', async () => {
+    await seedTemplate()
+    const first = await createRunFromTemplate(db, startInput(null))
+
+    await expect(createRunFromTemplate(db, startInput(null))).rejects.toMatchObject({
+      code: 'RUN_EXISTS',
+      details: { runId: first.id },
+    })
+  })
+
+  it('should create exactly one run when the same period is started concurrently', async () => {
+    await seedTemplate()
+
+    const results = await Promise.allSettled([
+      createRunFromTemplate(db, startInput(8)),
+      createRunFromTemplate(db, startInput(8)),
+      createRunFromTemplate(db, startInput(8)),
+    ])
+
+    const outcomes = results.map((result) =>
+      result.status === 'fulfilled' ? 'created' : (result.reason as RunServiceError).code
+    )
+    expect(outcomes.sort()).toEqual(['RUN_EXISTS', 'RUN_EXISTS', 'created'])
+    expect(await db.checklistRun.count()).toBe(1)
+  })
+
+  it('should reject a period that another request claims before the write starts', async () => {
+    await seedTemplate()
+    const racing = interleaveBeforeTransaction(() => seedRun(8, []))
+
+    await expect(createRunFromTemplate(racing, startInput(8))).rejects.toMatchObject({ code: 'RUN_EXISTS' })
+
+    expect(await db.checklistRun.count()).toBe(1)
   })
 
   it('should reject starting from a template without items when there is no previous run', async () => {
@@ -246,6 +339,26 @@ describe('addRunItem', () => {
     })
   })
 
+  it('should number the first task of an empty run 1', async () => {
+    await seedTemplate()
+    const run = await seedRun(8, [])
+
+    const item = await addRunItem(db, run.id, taskInput('Faktura od dostawcy'))
+
+    expect(item.order).toBe(1)
+  })
+
+  it('should not add a task to a run that is closed before the write starts', async () => {
+    await seedTemplate()
+    const run = await createRunFromTemplate(db, startInput(8))
+
+    await expect(
+      addRunItem(closeRunBeforeWriting(run.id), run.id, taskInput('Faktura od dostawcy'))
+    ).rejects.toMatchObject({ code: 'RUN_CLOSED' })
+
+    expect(await itemsOf(run.id)).toHaveLength(3)
+  })
+
   it('should reject an unknown procedure', async () => {
     await seedTemplate()
     const run = await createRunFromTemplate(db, startInput(8))
@@ -280,6 +393,32 @@ describe('deleteRunItem', () => {
     ])
   })
 
+  it('should renumber the tasks after a deleted middle task', async () => {
+    await seedTemplate()
+    const run = await createRunFromTemplate(db, startInput(8))
+
+    await deleteRunItem(db, run.id, run.items[1].id)
+
+    const remaining = await itemsOf(run.id)
+    expect(remaining.map((item) => [item.order, item.title])).toEqual([
+      [1, 'Raport z kasy'],
+      [2, 'Rejestr VAT'],
+    ])
+  })
+
+  it('should keep the remaining tasks numbered after deleting the last task', async () => {
+    await seedTemplate()
+    const run = await createRunFromTemplate(db, startInput(8))
+
+    await deleteRunItem(db, run.id, run.items[2].id)
+
+    const remaining = await itemsOf(run.id)
+    expect(remaining.map((item) => [item.order, item.title])).toEqual([
+      [1, 'Raport z kasy'],
+      [2, 'Saldo rachunków'],
+    ])
+  })
+
   it('should reject deleting a task that belongs to another run', async () => {
     await seedTemplate()
     const august = await createRunFromTemplate(db, startInput(8))
@@ -288,6 +427,21 @@ describe('deleteRunItem', () => {
     await expect(deleteRunItem(db, august.id, september.items[0].id)).rejects.toMatchObject({
       code: 'ITEM_NOT_FOUND',
     })
+  })
+
+  it('should reject deleting from an unknown run', async () => {
+    await expect(deleteRunItem(db, 'missing', 'item')).rejects.toMatchObject({ code: 'RUN_NOT_FOUND' })
+  })
+
+  it('should not delete a task from a run that is closed before the write starts', async () => {
+    await seedTemplate()
+    const run = await createRunFromTemplate(db, startInput(8))
+
+    await expect(
+      deleteRunItem(closeRunBeforeWriting(run.id), run.id, run.items[0].id)
+    ).rejects.toMatchObject({ code: 'RUN_CLOSED' })
+
+    expect(await itemsOf(run.id)).toHaveLength(3)
   })
 
   it('should reject deleting from a closed run', async () => {
@@ -322,6 +476,39 @@ describe('reorderRunItems', () => {
     await expect(reorderRunItems(db, run.id, [run.items[0].id])).rejects.toMatchObject({
       code: 'ORDER_MISMATCH',
     })
+  })
+
+  it('should reject a task id from another run and leave the order unchanged', async () => {
+    await seedTemplate()
+    const august = await createRunFromTemplate(db, startInput(8))
+    const september = await createRunFromTemplate(db, startInput(9))
+    const foreign = [august.items[0].id, august.items[1].id, september.items[2].id]
+
+    await expect(reorderRunItems(db, august.id, foreign)).rejects.toMatchObject({ code: 'ORDER_MISMATCH' })
+
+    const items = await itemsOf(august.id)
+    expect(items.map((item) => [item.order, item.title])).toEqual([
+      [1, 'Raport z kasy'],
+      [2, 'Saldo rachunków'],
+      [3, 'Rejestr VAT'],
+    ])
+  })
+
+  it('should reject reordering an unknown run', async () => {
+    await expect(reorderRunItems(db, 'missing', ['item'])).rejects.toMatchObject({ code: 'RUN_NOT_FOUND' })
+  })
+
+  it('should not reorder a run that is closed before the write starts', async () => {
+    await seedTemplate()
+    const run = await createRunFromTemplate(db, startInput(8))
+    const reversed = [...run.items].reverse().map((item) => item.id)
+
+    await expect(reorderRunItems(closeRunBeforeWriting(run.id), run.id, reversed)).rejects.toMatchObject({
+      code: 'RUN_CLOSED',
+    })
+
+    const items = await itemsOf(run.id)
+    expect(items.map((item) => item.title)).toEqual(['Raport z kasy', 'Saldo rachunków', 'Rejestr VAT'])
   })
 
   it('should reject reordering a closed run', async () => {
