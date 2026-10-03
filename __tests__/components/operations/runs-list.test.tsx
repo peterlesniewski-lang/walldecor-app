@@ -110,10 +110,28 @@ describe('RunsList', () => {
   })
 
   describe('status badge', () => {
-    it('should show "Gotowe do zamknięcia" for an open run that is ready to close', () => {
-      renderList([makeRun({ status: 'open', readyToClose: true })])
+    it('should show "Gotowe do zamknięcia" to a manager for an open run that is ready to close', () => {
+      renderList([makeRun({ status: 'open', readyToClose: true })], true)
 
       expect(screen.queryByText('Gotowe do zamknięcia')).not.toBeNull()
+    })
+
+    it('should not show "Gotowe do zamknięcia" to an employee for an open run that is ready to close', () => {
+      renderList([makeRun({ status: 'open', readyToClose: true })], false)
+
+      expect(screen.queryByText('Gotowe do zamknięcia')).toBeNull()
+    })
+
+    it('should show "W toku" to an employee for an open run that is ready to close', () => {
+      renderList([makeRun({ status: 'open', readyToClose: true })], false)
+
+      expect(screen.queryByText('W toku')).not.toBeNull()
+    })
+
+    it('should show "W toku" to an employee for an open run that is not ready to close', () => {
+      renderList([makeRun({ status: 'open', readyToClose: false })], false)
+
+      expect(screen.queryByText('W toku')).not.toBeNull()
     })
 
     it('should show "W toku" for an open run that is not ready to close', () => {

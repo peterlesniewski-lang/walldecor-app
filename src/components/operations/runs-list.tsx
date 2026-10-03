@@ -26,6 +26,8 @@ interface RunListItem {
 
 function RunCard({ run, canManage, muted = false }: { run: RunListItem; canManage: boolean; muted?: boolean }) {
   const isOpen = run.status === 'open'
+  // The "ready to close" hint is a manager's cue; an employee sees the plain status, like on the run page.
+  const showReady = isOpen && run.readyToClose && canManage
 
   return (
     <div
@@ -42,7 +44,7 @@ function RunCard({ run, canManage, muted = false }: { run: RunListItem; canManag
                 {run.name}
               </Link>
             </h3>
-            <StatusBadge status={isOpen && run.readyToClose ? 'ready' : run.status} />
+            <StatusBadge status={showReady ? 'ready' : run.status} />
           </div>
           <p className="mt-1 text-xs text-gray-500">
             {run.template.module.area.name} / {run.template.module.name}
@@ -66,7 +68,7 @@ function RunCard({ run, canManage, muted = false }: { run: RunListItem; canManag
           {run.progress.done}/{run.progress.total}
         </span>
       </div>
-      {canManage && isOpen && run.readyToClose && (
+      {showReady && (
         <div className="relative z-10 mt-3 w-fit">
           <RunStatusButton runId={run.id} nextStatus="closed" primary ariaLabel={`Zamknij miesiąc: ${run.name}`}>
             Zamknij miesiąc
