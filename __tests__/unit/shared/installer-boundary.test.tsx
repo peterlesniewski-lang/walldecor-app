@@ -37,7 +37,7 @@ describe('global INSTALLER boundary', () => {
     expect(screen.getByText('Montaże')).toBeTruthy()
     expect(screen.queryByText('Wynik teraz')).toBeNull()
     expect(screen.queryByText('Pracownicy')).toBeNull()
-    expect(screen.queryByText('Centrum')).toBeNull()
+    expect(screen.queryByText('Zamknięcie miesiąca')).toBeNull()
     expect(screen.queryByText('Ustawienia')).toBeNull()
 
     render(<Header user={{ name: 'Jan Instalator', email: 'jan@example.com', role: 'INSTALLER' }} />)
