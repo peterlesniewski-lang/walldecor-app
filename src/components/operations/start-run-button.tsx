@@ -5,16 +5,24 @@ import { useState } from 'react'
 import { CalendarDays, Play, X } from 'lucide-react'
 import { getPreviousMonthPeriod, MONTHS } from '@/lib/operations/run-factory'
 
-export function StartRunButton({ templateId }: { templateId: string }) {
+export function StartRunButton({
+  templateId,
+  label = 'Uruchom zamknięcie miesiąca',
+}: {
+  templateId: string
+  label?: string
+}) {
   const router = useRouter()
   const defaultPeriod = getPreviousMonthPeriod()
   const [open, setOpen] = useState(false)
   const [periodYear, setPeriodYear] = useState(defaultPeriod.periodYear)
   const [periodMonth, setPeriodMonth] = useState(defaultPeriod.periodMonth)
   const [loading, setLoading] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   async function startRun() {
     setLoading(true)
+    setError(null)
     const res = await fetch('/api/operations/runs', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
@@ -25,7 +33,18 @@ export function StartRunButton({ templateId }: { templateId: string }) {
       }),
     })
     setLoading(false)
-    if (!res.ok) return
+
+    if (res.status === 409) {
+      const existing = (await res.json()) as { runId?: string }
+      if (existing.runId) {
+        router.push(`/operations/runs/${existing.runId}`)
+        return
+      }
+    }
+    if (!res.ok) {
+      setError('Nie udało się utworzyć wykonania. Spróbuj ponownie.')
+      return
+    }
     const run = (await res.json()) as { id: string }
     router.push(`/operations/runs/${run.id}`)
   }
@@ -39,7 +58,7 @@ export function StartRunButton({ templateId }: { templateId: string }) {
         className="inline-flex items-center gap-2 rounded-lg bg-gray-900 px-4 py-2.5 text-sm font-medium text-white transition hover:bg-gray-800 disabled:opacity-50"
       >
         <Play className="h-4 w-4" />
-        {loading ? 'Uruchamiam...' : 'Uruchom zamknięcie miesiąca'}
+        {loading ? 'Uruchamiam...' : label}
       </button>
 
       {open && (
@@ -56,6 +75,7 @@ export function StartRunButton({ templateId }: { templateId: string }) {
 
           <div className="grid grid-cols-[1fr_96px] gap-2">
             <select
+              aria-label="Miesiąc"
               value={periodMonth}
               onChange={(event) => setPeriodMonth(Number(event.target.value))}
               className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
@@ -67,6 +87,7 @@ export function StartRunButton({ templateId }: { templateId: string }) {
               ))}
             </select>
             <input
+              aria-label="Rok"
               type="number"
               min={2020}
               max={2100}
@@ -75,6 +96,12 @@ export function StartRunButton({ templateId }: { templateId: string }) {
               className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
             />
           </div>
+
+          {error && (
+            <p role="alert" className="mt-2 text-xs text-red-700">
+              {error}
+            </p>
+          )}
 
           <button
             type="button"
