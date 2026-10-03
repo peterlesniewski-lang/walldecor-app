@@ -106,6 +106,8 @@ function stubManualFetch() {
     answer: (index: number, status: number, body: unknown = {}) =>
       act(async () => {
         pending[index](new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
+        // Flush with act + a macrotask instead of waitFor: several assertions check that something did NOT happen,
+        // and waitFor would return before the response was processed.
         await new Promise((resolve) => setTimeout(resolve, 0))
       }),
   }
@@ -1340,6 +1342,18 @@ describe('RunDetailClient', () => {
         expect(firstRowBadge()).toBe('W toku')
       })
 
+      it('should keep the alert of a newer failed save when a superseded save of the same task succeeds', async () => {
+        const { answer } = stubManualFetch()
+        renderClient()
+        await userEvent.click(statusButton('Bloker'))
+        await userEvent.click(statusButton('W toku'))
+
+        await answer(1, 500)
+        await answer(0, 200, itemResponse({ ...firstTask, status: 'blocked' }))
+
+        expect(screen.queryByRole('alert')).not.toBeNull()
+      })
+
       it('should still close the edit form when a superseded save of the edited task succeeds', async () => {
         const { answer } = stubManualFetch()
         renderClient()
@@ -1455,6 +1469,54 @@ describe('RunDetailClient', () => {
 
         await waitFor(() => expect(rowTitles()).toEqual(['Wyciąg bankowy', 'Faktury kosztowe', 'Raport VAT']))
         expect(checkbox('Faktury kosztowe').getAttribute('aria-checked')).toBe('true')
+      })
+
+      it('should keep the order of a newer reorder when an older reorder fails', async () => {
+        const { answer } = stubManualFetch()
+        renderClient()
+        await reorder(['i3', 'i1', 'i2'])
+        await reorder(['i2', 'i3', 'i1'])
+
+        await answer(1, 200, { ok: true })
+        await answer(0, 500)
+
+        expect(rowTitles()).toEqual(['Faktury kosztowe', 'Raport VAT', 'Wyciąg bankowy'])
+      })
+
+      it('should not show an error when an older reorder fails after a newer one was sent', async () => {
+        const { answer } = stubManualFetch()
+        renderClient()
+        await reorder(['i3', 'i1', 'i2'])
+        await reorder(['i2', 'i3', 'i1'])
+
+        await answer(1, 200, { ok: true })
+        await answer(0, 500)
+
+        expect(screen.queryByRole('alert')).toBeNull()
+      })
+
+      it('should roll the latest reorder back to the order the older one left when the latest fails', async () => {
+        const { answer } = stubManualFetch()
+        renderClient()
+        await reorder(['i3', 'i1', 'i2'])
+        await reorder(['i2', 'i3', 'i1'])
+
+        await answer(0, 200, { ok: true })
+        await answer(1, 500)
+
+        expect(rowTitles()).toEqual(['Raport VAT', 'Wyciąg bankowy', 'Faktury kosztowe'])
+      })
+
+      it('should show an error when the latest of two reorders fails', async () => {
+        const { answer } = stubManualFetch()
+        renderClient()
+        await reorder(['i3', 'i1', 'i2'])
+        await reorder(['i2', 'i3', 'i1'])
+
+        await answer(0, 200, { ok: true })
+        await answer(1, 500)
+
+        expect((await screen.findByRole('alert')).textContent).toBe(SAVE_ERROR)
       })
 
       it('should restore the previous order values of the tasks', async () => {

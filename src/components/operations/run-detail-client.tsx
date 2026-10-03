@@ -99,6 +99,8 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
   const [isPending, startTransition] = useTransition()
   // Latest PATCH request number per item, so a response that arrives after a newer request was sent is not merged.
   const patchRequests = useRef<Record<string, number>>({})
+  // Number of the latest reorder request, so a failure of an older one does not undo a newer order.
+  const reorderRequests = useRef(0)
 
   const { canManage } = initialRun
   const isOpen = runStatus === 'open'
@@ -139,10 +141,11 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
         setError(SAVE_ERROR)
         return
       }
-      setError(null)
       const { procedure, ...item } = updated
       registerProcedure(procedure)
+      // A superseded response must not merge into the list, nor clear the alert of a newer failure.
       if (patchRequests.current[itemId] === requestNumber) {
+        setError(null)
         setItems((current) => current.map((entry) => (entry.id === item.id ? { ...entry, ...item } : entry)))
       }
       onDone?.()
@@ -194,6 +197,8 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
 
   function reorderTasks(orderedIds: string[]) {
     const previous = new Map(items.map((item, index) => [item.id, { index, order: item.order }]))
+    const requestNumber = reorderRequests.current + 1
+    reorderRequests.current = requestNumber
     const byId = new Map(items.map((item) => [item.id, item]))
     setItems(
       orderedIds.flatMap((id, index) => {
@@ -208,6 +213,8 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
         { itemIds: orderedIds }
       )
       if (!result) {
+        // A newer reorder was sent meanwhile; the server holds that one, so there is nothing to roll back.
+        if (reorderRequests.current !== requestNumber) return
         // Put back only the ordering, so saves that landed in the meantime (status, notes, new tasks) survive.
         const positionOf = (id: string) => previous.get(id)?.index ?? previous.size
         setItems((current) =>
