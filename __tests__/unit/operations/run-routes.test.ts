@@ -336,6 +336,50 @@ describe('PATCH /api/operations/runs/[id]/items/[itemId]', () => {
     expect(mockUpdateItem).not.toHaveBeenCalled()
   })
 
+  describe('a task linked to a procedure that no longer exists', () => {
+    const staleItem = { ...storedItem, procedureId: 'proc-deleted' }
+
+    beforeEach(() => {
+      mockFindItem.mockResolvedValue(staleItem)
+      vi.mocked(assertProcedureExists).mockRejectedValue(new RunServiceError('PROCEDURE_NOT_FOUND'))
+    })
+
+    it('should let a manager edit the title when the form sends the stored procedure back', async () => {
+      const res = await patchItem(
+        jsonRequest('PATCH', { title: 'Nowa nazwa', procedureId: 'proc-deleted' }),
+        itemParams
+      )
+
+      expect(res.status).toBe(200)
+    })
+
+    it('should not check the procedure when its id is unchanged', async () => {
+      await patchItem(jsonRequest('PATCH', { title: 'Nowa nazwa', procedureId: 'proc-deleted' }), itemParams)
+
+      expect(assertProcedureExists).not.toHaveBeenCalled()
+    })
+
+    it('should check the procedure when the link changes to a different one', async () => {
+      await patchItem(jsonRequest('PATCH', { procedureId: 'proc-2' }), itemParams)
+
+      expect(assertProcedureExists).toHaveBeenCalledWith(expect.anything(), 'proc-2')
+    })
+
+    it('should return 400 when the link changes to a procedure that does not exist', async () => {
+      const res = await patchItem(jsonRequest('PATCH', { procedureId: 'proc-missing' }), itemParams)
+
+      expect(res.status).toBe(400)
+      expect(mockUpdateItem).not.toHaveBeenCalled()
+    })
+
+    it('should let a manager unlink the stale procedure', async () => {
+      const res = await patchItem(jsonRequest('PATCH', { procedureId: null }), itemParams)
+
+      expect(res.status).toBe(200)
+      expect(updateData()).toEqual({ procedureId: null })
+    })
+  })
+
   it('should not let the task owner reassign the task', async () => {
     mockSession.mockResolvedValue(session('EMPLOYEE', 'employee-1'))
 

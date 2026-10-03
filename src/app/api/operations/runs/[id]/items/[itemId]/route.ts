@@ -38,7 +38,11 @@ export async function PATCH(
 
   try {
     await assertRunIsOpen(prisma, id)
-    if (parsed.data.procedureId) await assertProcedureExists(prisma, parsed.data.procedureId)
+    // `procedureId` has no FK, so the stored link can outlive its article. The edit form always sends the stored
+    // value back, so only a real change is checked, otherwise a task with a stale link could never be edited again.
+    if (parsed.data.procedureId && parsed.data.procedureId !== item.procedureId) {
+      await assertProcedureExists(prisma, parsed.data.procedureId)
+    }
   } catch (error) {
     if (error instanceof RunServiceError) return runErrorResponse(error)
     throw error
