@@ -1,6 +1,6 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-10-02 (Zamknięcie miesiąca — przebudowa UX modułu Wykonania, gałąź `improve-module-ux`)
+**Ostatnia aktualizacja:** 2026-10-03 (Zamknięcie miesiąca — przebudowa UX modułu Wykonania, gałąź `improve-module-ux`)
 
 ## Zamknięcie miesiąca (dawniej Wykonania) — 02.10.2026 (gałąź `improve-module-ux`)
 
@@ -10,9 +10,10 @@
 [x] Nowe wykonanie = kopia zadań z poprzedniego miesiąca (tylko „powtarzaj co miesiąc"); 409 przy duplikacie miesiąca (UI przekierowuje do istniejącego wykonania)
 [x] Szczegół wykonania: pole wyboru „Gotowe" (1 klik), dodawanie / edycja / usuwanie zadań, przełącznik „Powtarzaj co miesiąc", przeciąganie (dnd-kit), „Zamknij miesiąc" bez blokady, „Otwórz ponownie"; zamknięte wykonanie tylko do odczytu
 [x] Menu: „Wykonania" → „Zamknięcie miesiąca", usunięto „Centrum"; /operations przekierowuje na /operations/runs; Szablony poza menu (strona działa pod adresem)
+[x] Niezmienniki po stronie serwera: zadanie z usuniętą procedurą da się dalej edytować (istnienie procedury sprawdzane tylko przy zmianie powiązania); wykonanie inne niż otwarte jest tylko do odczytu także na serwerze (nazwa i okres → 409, sam status zawsze wolno); zmiana okresu na miesiąc, który ma już wykonanie tego szablonu → 409 z `runId` (jak przy starcie miesiąca)
 ```
 
-Testy: moduł Operacje + sidebar 499 PASS (jednostkowe operacje 159, integracja na prawdziwym pliku SQLite 42, komponenty 276, pozostałe shared — sidebar i nawigacja — 22); E2E `e2e/operations-month-closing.spec.ts` 1 PASS; Vitest całość 3646 PASS, 11 FAIL — wszystkie w `ksef-sync.test.ts` (pada tak samo na bazie gałęzi `e24be58`, poza zakresem zmian); typecheck PASS, build PASS; lint zmienionych plików czysty (pełny `npm run lint` zgłasza błędy w wygenerowanym, ignorowanym przez git `src/generated/prisma` oraz w 3 plikach, których ta gałąź nie zmienia).
+Testy: moduł Operacje + sidebar 534 PASS (jednostkowe operacje 191, integracja na prawdziwym pliku SQLite 42, komponenty 279, pozostałe shared — sidebar i nawigacja — 22); E2E `e2e/operations-month-closing.spec.ts` 1 PASS; Vitest całość 3681 PASS, 11 FAIL — wszystkie w `ksef-sync.test.ts` (pada tak samo na bazie gałęzi `e24be58`, poza zakresem zmian); typecheck PASS, build PASS; lint zmienionych plików czysty (pełny `npm run lint` zgłasza błędy w wygenerowanym, ignorowanym przez git `src/generated/prisma` oraz w 3 plikach, których ta gałąź nie zmienia).
 
 Spec: `docs/superpowers/specs/2026-10-02-month-closing-ux-design.md`. Plan: `docs/superpowers/plans/2026-10-02-month-closing-ux.md`.
 
@@ -25,6 +26,11 @@ Spec: `docs/superpowers/specs/2026-10-02-month-closing-ux-design.md`. Plan: `doc
 - Zmiana kolejności zadań (`run-detail-client.tsx`): gałąź sukcesu wywołuje `setError(null)` bezwarunkowo, bez sprawdzenia numeru żądania — może zgasić komunikat błędu z innej operacji.
 - Utwardzenie E2E (`e2e/operations-month-closing.spec.ts`): dodatnia asercja menu przed negatywną dla „Centrum", zawężenie lokatora „tylko ten miesiąc" do wiersza zadania, `afterAll` bez wywołania `assertQaDatabase()` (jak w `beforeAll`).
 - Edycja szablonów nie jest już dostępna z menu — tylko pod adresem `/operations/templates`.
+- PATCH zadania sprawdza „wykonanie otwarte" poza transakcją zapisu — minimalne okno, w którym zamknięcie wykonania może wyprzedzić zapis.
+- `getRunDisplayStatus` w `run-factory.ts` jest przetestowane, ale nieużywane (reguła „gotowe do zamknięcia" jest wpisana wprost na liście i w szczególe wykonania).
+- Miesiąc w banerze (zegar serwera) i domyślny miesiąc w oknie startu (zegar przeglądarki) mogą się różnić przez 1–2 h na granicy miesiąca.
+- Zduplikowane testy `useStartRun` przez `StartMonthBanner` i `StartRunButton` — można je skrócić.
+- Edytor okresu w szczególe wykonania pokazuje ogólny błąd zapisu także przy 409 (miesiąc już ma wykonanie) — można dodać link do istniejącego wykonania.
 
 ---
 
@@ -609,8 +615,15 @@ M10 — Operacje / Playbook         [x] MVP start (2026-05-18)
 | src/components/operations/run-detail-client.tsx | Split view wykonania: checklist + instrukcja how-to |
 | src/components/operations/runs-list.tsx | Lista wykonań z postępem i blokerami |
 | src/components/operations/templates-list.tsx | Lista szablonów checklist |
-| src/components/operations/start-run-button.tsx | Uruchamia wykonanie bieżącego miesiąca z szablonu |
+| src/components/operations/start-run-button.tsx | Przycisk „Uruchom zamknięcie miesiąca” z wyborem miesiąca (domyślnie POPRZEDNI miesiąc); startuje przez `useStartRun`, przy 409 przekierowuje do istniejącego wykonania |
+| src/components/operations/use-start-run.ts | Hook startu miesiąca: POST `/api/operations/runs`, przekierowanie do nowego wykonania; 409 (duplikat miesiąca) otwiera istniejące wykonanie |
+| src/components/operations/start-month-banner.tsx | Baner „<miesiąc> nie ma jeszcze zamknięcia” z przyciskiem startu (na liście wykonań) |
+| src/components/operations/run-task-list.tsx | Lista zadań wykonania: pole „Gotowe”, przeciąganie (dnd-kit), menu wiersza (edytuj / usuń) |
+| src/components/operations/run-task-form.tsx | Formularz dodawania / edycji zadania: tytuł, opis, procedura, „Powtarzaj co miesiąc” |
+| src/components/operations/run-status-button.tsx | Przycisk „Zamknij miesiąc” / „Otwórz ponownie” (PATCH statusu wykonania) |
 | src/lib/operations/run-factory.ts | Tworzenie pozycji wykonania z szablonu + liczenie postępu |
+| src/lib/operations/run-service.ts | Operacje na wykonaniu w transakcji: start miesiąca (kopia zadań z poprzedniego wykonania), dodawanie / usuwanie / kolejność zadań, strażnicy (wykonanie otwarte, procedura istnieje), błędy `RunServiceError` |
+| src/lib/operations/run-http.ts | Mapowanie `RunServiceError` na odpowiedź HTTP (404 / 400 / 409, z `runId` przy duplikacie miesiąca) |
 | src/lib/operations/queries.ts | Query helpery dla modułów, szablonów i wykonań |
 
 ---
