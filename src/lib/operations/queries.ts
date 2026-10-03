@@ -1,5 +1,5 @@
 import { prisma } from '@/lib/prisma'
-import { calculateRunProgress } from '@/lib/operations/run-factory'
+import { calculateRunProgress, getNextOpenItem, isReadyToClose } from '@/lib/operations/run-factory'
 import {
   canBypassOperationVisibility,
   getGrantedResourceIds,
@@ -110,20 +110,24 @@ export async function getRuns(viewer: OperationViewer) {
     orderBy: [{ periodYear: 'desc' }, { periodMonth: 'desc' }, { createdAt: 'desc' }],
     include: {
       template: { include: { module: { include: { area: true } } } },
-      items: { select: { status: true, ownerId: true } },
+      items: { select: { status: true, ownerId: true, title: true, order: true } },
     },
   })
 
   const grantedSet = new Set(grantedRunIds ?? [])
 
-  return runs.map((run) => ({
-    ...run,
-    progress: calculateRunProgress(
-      canBypass || grantedSet.has(run.id)
-        ? run.items
-        : run.items.filter((item) => item.ownerId === viewer.id)
-    ),
-  }))
+  return runs.map(({ items, ...run }) => {
+    const visible =
+      canBypass || grantedSet.has(run.id) ? items : items.filter((item) => item.ownerId === viewer.id)
+
+    return {
+      ...run,
+      items: items.map(({ status, ownerId }) => ({ status, ownerId })),
+      progress: calculateRunProgress(visible),
+      nextItemTitle: getNextOpenItem(visible)?.title ?? null,
+      readyToClose: run.status === 'open' && isReadyToClose(items),
+    }
+  })
 }
 
 export async function getRun(id: string, viewer: OperationViewer) {
@@ -169,4 +173,29 @@ export async function getRun(id: string, viewer: OperationViewer) {
     progress: calculateRunProgress(run.items),
     procedures,
   }
+}
+
+// Template used by "Rozpocznij miesiąc": the template of the latest run, otherwise the first active template.
+export async function getDefaultRunTemplateId() {
+  const lastRun = await prisma.checklistRun.findFirst({
+    orderBy: [{ periodYear: 'desc' }, { periodMonth: 'desc' }, { createdAt: 'desc' }],
+    select: { templateId: true },
+  })
+  if (lastRun) return lastRun.templateId
+
+  const template = await prisma.checklistTemplate.findFirst({
+    where: { active: true },
+    orderBy: [{ module: { area: { order: 'asc' } } }, { module: { order: 'asc' } }, { name: 'asc' }],
+    select: { id: true },
+  })
+  return template?.id ?? null
+}
+
+// Manager-only: returns every procedure, not filtered by visibility. Callers must gate by role.
+export async function getProcedureOptions() {
+  return prisma.article.findMany({
+    where: { type: 'procedure' },
+    orderBy: [{ category: 'asc' }, { title: 'asc' }],
+    select: { id: true, title: true },
+  })
 }

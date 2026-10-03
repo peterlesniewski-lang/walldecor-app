@@ -61,6 +61,10 @@ export default async function OperationTemplatePage({
       <div className="rounded-xl border bg-white">
         <div className="border-b p-4">
           <h2 className="font-semibold text-gray-900">Zadania w szablonie</h2>
+          <p className="mt-1 text-xs text-gray-500">
+            Szablon służy tylko do pierwszego uruchomienia. Kolejne miesiące kopiują zadania z poprzedniego
+            wykonania — zadania edytujesz na stronie wykonania.
+          </p>
         </div>
         <div className="divide-y">
           {template.items.map((item) => (

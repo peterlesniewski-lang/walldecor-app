@@ -1,8 +1,17 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import type { Prisma } from '@/generated/prisma'
 import { prisma } from '@/lib/prisma'
-import { UpdateChecklistRunItemSchema } from '@/lib/validations/operations'
+import { runErrorResponse } from '@/lib/operations/run-http'
+import {
+  assertProcedureExists,
+  assertRunIsOpen,
+  deleteRunItem,
+  getProcedureForItem,
+  RunServiceError,
+} from '@/lib/operations/run-service'
+import { RUN_ITEM_STRUCTURE_FIELDS, UpdateChecklistRunItemSchema } from '@/lib/validations/operations'
 
 export async function PATCH(
   req: NextRequest,
@@ -24,19 +33,60 @@ export async function PATCH(
     return NextResponse.json({ error: 'Invalid input', details: parsed.error.flatten() }, { status: 400 })
   }
 
-  const status = parsed.data.status ?? item.status
-  const completed = status === 'done'
+  const touchesStructure = RUN_ITEM_STRUCTURE_FIELDS.some((field) => parsed.data[field] !== undefined)
+  if (touchesStructure && !canManage) return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
 
-  const updated = await prisma.checklistRunItem.update({
-    where: { id: item.id },
-    data: {
-      status,
-      note: parsed.data.note === undefined ? item.note : parsed.data.note,
-      ownerId: canManage && parsed.data.ownerId !== undefined ? parsed.data.ownerId : item.ownerId,
-      completedAt: completed ? (item.completedAt ?? new Date()) : null,
-      completedById: completed ? session.user.id : null,
-    },
-  })
+  try {
+    await assertRunIsOpen(prisma, id)
+    // `procedureId` has no FK, so the stored link can outlive its article. The edit form always sends the stored
+    // value back, so only a real change is checked, otherwise a task with a stale link could never be edited again.
+    if (parsed.data.procedureId && parsed.data.procedureId !== item.procedureId) {
+      await assertProcedureExists(prisma, parsed.data.procedureId)
+    }
+  } catch (error) {
+    if (error instanceof RunServiceError) return runErrorResponse(error)
+    throw error
+  }
 
-  return NextResponse.json(updated)
+  // Write only the fields the client sent. Overlapping PATCHes (e.g. a note saved right before a tick) each read
+  // the same snapshot, so writing every column would let the last write wipe the other request's change.
+  const data: Prisma.ChecklistRunItemUncheckedUpdateInput = {}
+  if (parsed.data.status !== undefined) {
+    const completed = parsed.data.status === 'done'
+    data.status = parsed.data.status
+    data.completedAt = completed ? (item.completedAt ?? new Date()) : null
+    data.completedById = completed ? (item.completedById ?? session.user.id) : null
+  }
+  if (parsed.data.note !== undefined) data.note = parsed.data.note
+  if (canManage && parsed.data.ownerId !== undefined) data.ownerId = parsed.data.ownerId
+  if (parsed.data.title !== undefined) data.title = parsed.data.title
+  if (parsed.data.description !== undefined) data.description = parsed.data.description
+  if (parsed.data.procedureId !== undefined) data.procedureId = parsed.data.procedureId
+  if (parsed.data.recurring !== undefined) data.recurring = parsed.data.recurring
+
+  const updated = await prisma.checklistRunItem.update({ where: { id: item.id }, data })
+
+  const procedure = await getProcedureForItem(prisma, updated.procedureId)
+  return NextResponse.json({ ...updated, procedure })
+}
+
+export async function DELETE(
+  _req: NextRequest,
+  { params }: { params: Promise<{ id: string; itemId: string }> }
+) {
+  const session = await getServerSession(authOptions)
+  if (!session) return NextResponse.json({ error: 'Unauthorized' }, { status: 401 })
+  if (!['ADMIN', 'MANAGER'].includes(session.user.role)) {
+    return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+  }
+
+  const { id, itemId } = await params
+
+  try {
+    await deleteRunItem(prisma, id, itemId)
+    return NextResponse.json({ ok: true })
+  } catch (error) {
+    if (error instanceof RunServiceError) return runErrorResponse(error)
+    throw error
+  }
 }

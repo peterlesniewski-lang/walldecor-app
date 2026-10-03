@@ -81,7 +81,7 @@ describe('responsive dashboard navigation', () => {
     await user.click(trigger)
     const dialog = screen.getByRole('dialog', { name: 'WallDecor' })
     const links = within(dialog).getAllByRole('link')
-    expect(links).toHaveLength(21)
+    expect(links).toHaveLength(20)
     for (const link of links) {
       expect(link.className).toContain('min-h-11')
       expect(link.className).toContain('lg:min-h-0')
@@ -106,7 +106,7 @@ describe('responsive dashboard navigation', () => {
     await user.click(screen.getByRole('button', { name: 'Otwórz menu główne' }))
     const dialog = screen.getByRole('dialog', { name: 'WallDecor' })
 
-    expect(within(dialog).getAllByRole('link')).toHaveLength(11)
+    expect(within(dialog).getAllByRole('link')).toHaveLength(10)
     expect(within(dialog).getByRole('link', { name: 'Kasa salonu' }).getAttribute('href')).toBe('/cashier')
     expect(within(dialog).getByRole('link', { name: 'Wynik teraz' })).toBeTruthy()
     expect(within(dialog).queryByRole('link', { name: 'KSeF Inbox' })).toBeNull()

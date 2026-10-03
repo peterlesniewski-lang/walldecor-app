@@ -1,7 +1,7 @@
 import { getServerSession } from 'next-auth'
 import { notFound, redirect } from 'next/navigation'
 import { authOptions } from '@/lib/auth'
-import { getRun } from '@/lib/operations/queries'
+import { getProcedureOptions, getRun } from '@/lib/operations/queries'
 import { RunDetailClient } from '@/components/operations/run-detail-client'
 
 export default async function OperationRunPage({ params }: { params: Promise<{ id: string }> }) {
@@ -14,7 +14,8 @@ export default async function OperationRunPage({ params }: { params: Promise<{ i
 
   const visibleItems =
     session.user.role === 'EMPLOYEE' ? run.items.filter((item) => item.ownerId === session.user.id) : run.items
-  const canEditPeriod = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
+  const canManage = session.user.role === 'ADMIN' || session.user.role === 'MANAGER'
+  const procedureOptions = canManage ? await getProcedureOptions() : []
 
   return (
     <div className="mx-auto max-w-7xl p-6">
@@ -25,9 +26,8 @@ export default async function OperationRunPage({ params }: { params: Promise<{ i
           status: run.status,
           periodYear: run.periodYear,
           periodMonth: run.periodMonth,
-          canEditPeriod,
+          canManage,
           template: run.template,
-          progress: run.progress,
           items: visibleItems.map((item) => ({
             id: item.id,
             title: item.title,
@@ -37,12 +37,14 @@ export default async function OperationRunPage({ params }: { params: Promise<{ i
             ownerId: item.ownerId,
             status: item.status,
             note: item.note,
+            recurring: item.recurring,
           })),
           procedures: run.procedures.map((procedure) => ({
             id: procedure.id,
             title: procedure.title,
             content: procedure.content,
           })),
+          procedureOptions,
         }}
       />
     </div>

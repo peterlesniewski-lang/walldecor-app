@@ -26,10 +26,6 @@ export default async function OperationProcedurePage({ params }: { params: Promi
   return (
     <div className="mx-auto max-w-4xl p-6">
       <nav className="mb-6 flex items-center gap-1.5 text-sm text-gray-500">
-        <Link href="/operations" className="transition-colors hover:text-gray-900">
-          Operacje
-        </Link>
-        <ChevronRight className="h-3.5 w-3.5" />
         <Link href="/operations/procedures" className="transition-colors hover:text-gray-900">
           Procedury
         </Link>

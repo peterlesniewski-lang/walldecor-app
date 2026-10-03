@@ -12,13 +12,14 @@ export interface TemplateItemForRun {
 }
 
 export interface RunItemCreateInput {
-  templateItemId: string
+  templateItemId: string | null
   title: string
   description: string | null
   order: number
   procedureId: string | null
   ownerId: string | null
   status: RunItemStatus
+  recurring?: boolean
 }
 
 export interface RunItemStatusLike {
@@ -108,4 +109,63 @@ export function calculateRunProgress(items: RunItemStatusLike[]): RunProgress {
     todo,
     percent: total === 0 ? 0 : Math.round((done / total) * 100),
   }
+}
+
+export interface PreviousRunItem {
+  templateItemId: string | null
+  title: string
+  description: string | null
+  order: number
+  procedureId: string | null
+  ownerId: string | null
+  recurring: boolean
+}
+
+export function buildRunItemsFromPreviousRun(items: PreviousRunItem[]): RunItemCreateInput[] {
+  return items
+    .filter((item) => item.recurring)
+    .sort((a, b) => a.order - b.order)
+    .map((item, index) => ({
+      templateItemId: item.templateItemId,
+      title: item.title,
+      description: item.description,
+      order: index + 1,
+      procedureId: item.procedureId,
+      ownerId: item.ownerId,
+      status: 'todo' as const,
+      recurring: true,
+    }))
+}
+
+export function isReadyToClose(items: RunItemStatusLike[]) {
+  return items.length > 0 && items.every((item) => item.status === 'done')
+}
+
+export function getRunDisplayStatus(status: string, items: RunItemStatusLike[]) {
+  if (status === 'open' && isReadyToClose(items)) return 'ready'
+  return status
+}
+
+export function getNextOpenItem<T extends { order: number; status: string }>(items: T[]): T | null {
+  const open = items.filter((item) => item.status !== 'done').sort((a, b) => a.order - b.order)
+  return open[0] ?? null
+}
+
+export function findRunForPeriod<T extends { templateId: string; periodYear: number; periodMonth: number | null }>(
+  runs: T[],
+  templateId: string,
+  period: ClosingPeriod
+): T | undefined {
+  return runs.find(
+    (run) =>
+      run.templateId === templateId &&
+      run.periodYear === period.periodYear &&
+      run.periodMonth === period.periodMonth
+  )
+}
+
+export function isPermutationOf(current: string[], next: string[]) {
+  if (current.length !== next.length) return false
+  const expected = new Set(current)
+  return new Set(next).size === next.length && next.every((id) => expected.has(id))
 }

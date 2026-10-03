@@ -2,8 +2,9 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
-import { createRunItemInputs, createRunName } from '@/lib/operations/run-factory'
 import { getRuns } from '@/lib/operations/queries'
+import { runErrorResponse } from '@/lib/operations/run-http'
+import { createRunFromTemplate, RunServiceError } from '@/lib/operations/run-service'
 import { CreateChecklistRunSchema } from '@/lib/validations/operations'
 
 export async function GET() {
@@ -26,41 +27,17 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid input', details: parsed.error.flatten() }, { status: 400 })
   }
 
-  const template = await prisma.checklistTemplate.findUnique({
-    where: { id: parsed.data.templateId },
-    include: { items: { orderBy: { order: 'asc' } } },
-  })
-
-  if (!template) return NextResponse.json({ error: 'Template not found' }, { status: 404 })
-
-  let itemInputs: ReturnType<typeof createRunItemInputs>
   try {
-    itemInputs = createRunItemInputs(template.items)
+    const run = await createRunFromTemplate(prisma, {
+      templateId: parsed.data.templateId,
+      periodYear: parsed.data.periodYear,
+      periodMonth: parsed.data.periodMonth ?? null,
+      name: parsed.data.name,
+      createdById: session.user.id,
+    })
+    return NextResponse.json(run, { status: 201 })
   } catch (error) {
-    if (error instanceof Error && error.message === 'EMPTY_TEMPLATE') {
-      return NextResponse.json({ error: 'Template has no items' }, { status: 400 })
-    }
+    if (error instanceof RunServiceError) return runErrorResponse(error)
     throw error
   }
-
-  const name = parsed.data.name ?? createRunName(template.name, parsed.data.periodYear, parsed.data.periodMonth ?? null)
-
-  const run = await prisma.checklistRun.create({
-    data: {
-      templateId: template.id,
-      name,
-      periodYear: parsed.data.periodYear,
-      periodMonth: parsed.data.periodMonth,
-      createdById: session.user.id,
-      items: {
-        create: itemInputs,
-      },
-    },
-    include: {
-      template: { include: { module: { include: { area: true } } } },
-      items: { orderBy: { order: 'asc' } },
-    },
-  })
-
-  return NextResponse.json(run, { status: 201 })
 }

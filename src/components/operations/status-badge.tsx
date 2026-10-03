@@ -3,7 +3,8 @@ const LABELS: Record<string, string> = {
   in_progress: 'W toku',
   blocked: 'Bloker',
   done: 'Gotowe',
-  open: 'Otwarte',
+  open: 'W toku',
+  ready: 'Gotowe do zamknięcia',
   closed: 'Zamknięte',
   archived: 'Archiwum',
 }
@@ -14,6 +15,7 @@ const CLASSES: Record<string, string> = {
   blocked: 'bg-red-100 text-red-700',
   done: 'bg-green-100 text-green-700',
   open: 'bg-blue-100 text-blue-700',
+  ready: 'bg-amber-100 text-amber-800',
   closed: 'bg-green-100 text-green-700',
   archived: 'bg-gray-100 text-gray-600',
 }

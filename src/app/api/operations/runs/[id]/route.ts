@@ -4,6 +4,8 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { getRun } from '@/lib/operations/queries'
 import { createRunName } from '@/lib/operations/run-factory'
+import { runErrorResponse } from '@/lib/operations/run-http'
+import { RunServiceError } from '@/lib/operations/run-service'
 import { UpdateChecklistRunSchema } from '@/lib/validations/operations'
 
 export async function GET(_req: Request, { params }: { params: Promise<{ id: string }> }) {
@@ -43,10 +45,27 @@ export async function PATCH(req: Request, { params }: { params: Promise<{ id: st
   })
   if (!existing) return NextResponse.json({ error: 'Not found' }, { status: 404 })
 
+  // A closed run is read-only except for its status ("Otwórz ponownie"). The rule is judged against the CURRENT
+  // status, so reopening and editing in one request is refused too. A body with only `status` is always allowed.
+  const editsDetails =
+    parsed.data.name !== undefined || parsed.data.periodYear !== undefined || parsed.data.periodMonth !== undefined
+  if (existing.status !== 'open' && editsDetails) return runErrorResponse(new RunServiceError('RUN_CLOSED'))
+
   const periodYear = parsed.data.periodYear ?? existing.periodYear
   const periodMonth = parsed.data.periodMonth === undefined ? existing.periodMonth : parsed.data.periodMonth
-  const periodChanged = parsed.data.periodYear !== undefined || parsed.data.periodMonth !== undefined
-  const name = parsed.data.name ?? (periodChanged ? createRunName(existing.template.name, periodYear, periodMonth) : undefined)
+  const periodChanged = periodYear !== existing.periodYear || periodMonth !== existing.periodMonth
+
+  // Same rule as when a month is started: one run per template and month.
+  if (periodChanged) {
+    const duplicate = await prisma.checklistRun.findFirst({
+      where: { templateId: existing.templateId, periodYear, periodMonth, id: { not: id } },
+      select: { id: true },
+    })
+    if (duplicate) return runErrorResponse(new RunServiceError('RUN_EXISTS', { runId: duplicate.id }))
+  }
+
+  const periodSent = parsed.data.periodYear !== undefined || parsed.data.periodMonth !== undefined
+  const name = parsed.data.name ?? (periodSent ? createRunName(existing.template.name, periodYear, periodMonth) : undefined)
 
   const run = await prisma.checklistRun.update({
     where: { id },

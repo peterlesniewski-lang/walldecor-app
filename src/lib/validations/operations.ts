@@ -14,6 +14,24 @@ export const UpdateChecklistRunItemSchema = z.object({
   status: z.enum(RUN_ITEM_STATUSES).optional(),
   note: z.string().max(2000).optional().nullable(),
   ownerId: z.string().min(1).optional().nullable(),
+  title: z.string().trim().min(3).max(200).optional(),
+  description: z.string().trim().max(2000).nullish(),
+  procedureId: z.string().min(1).nullish(),
+  recurring: z.boolean().optional(),
+})
+
+// Fields that change the task list itself (ADMIN / MANAGER only), as opposed to status and note.
+export const RUN_ITEM_STRUCTURE_FIELDS = ['title', 'description', 'procedureId', 'recurring'] as const
+
+export const CreateChecklistRunItemSchema = z.object({
+  title: z.string().trim().min(3).max(200),
+  description: z.string().trim().max(2000).nullish(),
+  procedureId: z.string().min(1).nullish(),
+  recurring: z.boolean().default(true),
+})
+
+export const ReorderChecklistRunItemsSchema = z.object({
+  itemIds: z.array(z.string().min(1)).min(1).max(200),
 })
 
 export const UpdateChecklistRunSchema = z.object({
@@ -48,5 +66,7 @@ export const UpdateChecklistTemplateSchema = CreateChecklistTemplateSchema.parti
 export type CreateChecklistRunInput = z.infer<typeof CreateChecklistRunSchema>
 export type UpdateChecklistRunInput = z.infer<typeof UpdateChecklistRunSchema>
 export type UpdateChecklistRunItemInput = z.infer<typeof UpdateChecklistRunItemSchema>
+export type CreateChecklistRunItemInput = z.infer<typeof CreateChecklistRunItemSchema>
+export type ReorderChecklistRunItemsInput = z.infer<typeof ReorderChecklistRunItemsSchema>
 export type CreateChecklistTemplateInput = z.infer<typeof CreateChecklistTemplateSchema>
 export type UpdateChecklistTemplateInput = z.infer<typeof UpdateChecklistTemplateSchema>
