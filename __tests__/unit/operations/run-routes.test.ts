@@ -58,6 +58,12 @@ function deleteRequest() {
   return new NextRequest('http://localhost/api/operations/test', { method: 'DELETE' })
 }
 
+// The `data` the PATCH handler passed to prisma.checklistRunItem.update.
+function updateData() {
+  const [args] = mockUpdateItem.mock.calls[0]
+  return args.data as Record<string, unknown>
+}
+
 const runParams = { params: Promise.resolve({ id: 'run-1' }) }
 const itemParams = { params: Promise.resolve({ id: 'run-1', itemId: 'item-1' }) }
 
@@ -335,9 +341,19 @@ describe('PATCH /api/operations/runs/[id]/items/[itemId]', () => {
 
     await patchItem(jsonRequest('PATCH', { ownerId: 'someone-else' }), itemParams)
 
-    expect(mockUpdateItem).toHaveBeenCalledWith(
-      expect.objectContaining({ data: expect.objectContaining({ ownerId: 'employee-1' }) })
-    )
+    expect(updateData()).not.toHaveProperty('ownerId')
+  })
+
+  it('should let a manager reassign the task and write nothing else', async () => {
+    await patchItem(jsonRequest('PATCH', { ownerId: 'employee-3' }), itemParams)
+
+    expect(updateData()).toEqual({ ownerId: 'employee-3' })
+  })
+
+  it('should let a manager unassign the task', async () => {
+    await patchItem(jsonRequest('PATCH', { ownerId: null }), itemParams)
+
+    expect(updateData()).toEqual({ ownerId: null })
   })
 
   it('should return the linked procedure with the updated task', async () => {
@@ -362,35 +378,19 @@ describe('PATCH /api/operations/runs/[id]/items/[itemId]', () => {
     it('should stamp the completion time and the current user when a task is marked done', async () => {
       await patchItem(jsonRequest('PATCH', { status: 'done' }), itemParams)
 
-      expect(mockUpdateItem).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ completedAt: expect.any(Date), completedById: 'manager-1' }),
-        })
-      )
+      expect(updateData()).toEqual({ status: 'done', completedAt: expect.any(Date), completedById: 'manager-1' })
     })
 
-    it('should keep who completed the task when a manager only edits the note', async () => {
+    it('should keep who completed the task when it is marked done again', async () => {
       mockFindItem.mockResolvedValue(doneItem)
 
-      await patchItem(jsonRequest('PATCH', { note: 'Sprawdzone' }), itemParams)
+      await patchItem(jsonRequest('PATCH', { status: 'done' }), itemParams)
 
-      expect(mockUpdateItem).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ completedAt: doneItem.completedAt, completedById: 'employee-2' }),
-        })
-      )
-    })
-
-    it('should keep who completed the task when a manager switches recurring off', async () => {
-      mockFindItem.mockResolvedValue(doneItem)
-
-      await patchItem(jsonRequest('PATCH', { recurring: false }), itemParams)
-
-      expect(mockUpdateItem).toHaveBeenCalledWith(
-        expect.objectContaining({
-          data: expect.objectContaining({ completedAt: doneItem.completedAt, completedById: 'employee-2' }),
-        })
-      )
+      expect(updateData()).toEqual({
+        status: 'done',
+        completedAt: doneItem.completedAt,
+        completedById: 'employee-2',
+      })
     })
 
     it('should clear the completion when a done task goes back to todo', async () => {
@@ -398,9 +398,90 @@ describe('PATCH /api/operations/runs/[id]/items/[itemId]', () => {
 
       await patchItem(jsonRequest('PATCH', { status: 'todo' }), itemParams)
 
-      expect(mockUpdateItem).toHaveBeenCalledWith(
-        expect.objectContaining({ data: expect.objectContaining({ completedAt: null, completedById: null }) })
-      )
+      expect(updateData()).toEqual({ status: 'todo', completedAt: null, completedById: null })
+    })
+
+    it('should not touch who completed the task when a manager only edits the note', async () => {
+      mockFindItem.mockResolvedValue(doneItem)
+
+      await patchItem(jsonRequest('PATCH', { note: 'Sprawdzone' }), itemParams)
+
+      expect(updateData()).not.toHaveProperty('completedById')
+    })
+
+    it('should not touch the completion time when a manager only edits the note', async () => {
+      mockFindItem.mockResolvedValue(doneItem)
+
+      await patchItem(jsonRequest('PATCH', { note: 'Sprawdzone' }), itemParams)
+
+      expect(updateData()).not.toHaveProperty('completedAt')
+    })
+
+    it('should not touch the completion when a manager switches recurring off', async () => {
+      mockFindItem.mockResolvedValue(doneItem)
+
+      await patchItem(jsonRequest('PATCH', { recurring: false }), itemParams)
+
+      expect(updateData()).toEqual({ recurring: false })
+    })
+  })
+
+  describe('writing only the fields that were sent', () => {
+    it('should write only the note when only the note is sent', async () => {
+      mockFindItem.mockResolvedValue(doneItem)
+
+      await patchItem(jsonRequest('PATCH', { note: 'Sprawdzone' }), itemParams)
+
+      expect(updateData()).toEqual({ note: 'Sprawdzone' })
+    })
+
+    it('should write a null note when the note is cleared', async () => {
+      await patchItem(jsonRequest('PATCH', { note: null }), itemParams)
+
+      expect(updateData()).toEqual({ note: null })
+    })
+
+    it('should not write the note when only the status is sent', async () => {
+      await patchItem(jsonRequest('PATCH', { status: 'done' }), itemParams)
+
+      expect(updateData()).not.toHaveProperty('note')
+    })
+
+    it('should not write the owner when only the status is sent', async () => {
+      await patchItem(jsonRequest('PATCH', { status: 'done' }), itemParams)
+
+      expect(updateData()).not.toHaveProperty('ownerId')
+    })
+
+    it('should not write the status when only the note is sent', async () => {
+      await patchItem(jsonRequest('PATCH', { note: 'Sprawdzone' }), itemParams)
+
+      expect(updateData()).not.toHaveProperty('status')
+    })
+
+    it('should write both the status and the note when both are sent', async () => {
+      await patchItem(jsonRequest('PATCH', { status: 'blocked', note: 'Brak dostępu' }), itemParams)
+
+      expect(updateData()).toEqual({
+        status: 'blocked',
+        note: 'Brak dostępu',
+        completedAt: null,
+        completedById: null,
+      })
+    })
+
+    it('should write only the sent structure fields for a manager', async () => {
+      await patchItem(jsonRequest('PATCH', { title: 'Nowa nazwa', recurring: false }), itemParams)
+
+      expect(updateData()).toEqual({ title: 'Nowa nazwa', recurring: false })
+    })
+
+    it('should let the task owner write the note', async () => {
+      mockSession.mockResolvedValue(session('EMPLOYEE', 'employee-1'))
+
+      await patchItem(jsonRequest('PATCH', { note: 'Gotowe do sprawdzenia' }), itemParams)
+
+      expect(updateData()).toEqual({ note: 'Gotowe do sprawdzenia' })
     })
   })
 

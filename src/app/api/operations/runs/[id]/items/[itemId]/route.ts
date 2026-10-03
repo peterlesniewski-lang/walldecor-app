@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
+import type { Prisma } from '@/generated/prisma'
 import { prisma } from '@/lib/prisma'
 import { runErrorResponse } from '@/lib/operations/run-http'
 import {
@@ -43,23 +44,23 @@ export async function PATCH(
     throw error
   }
 
-  const status = parsed.data.status ?? item.status
-  const completed = status === 'done'
+  // Write only the fields the client sent. Overlapping PATCHes (e.g. a note saved right before a tick) each read
+  // the same snapshot, so writing every column would let the last write wipe the other request's change.
+  const data: Prisma.ChecklistRunItemUncheckedUpdateInput = {}
+  if (parsed.data.status !== undefined) {
+    const completed = parsed.data.status === 'done'
+    data.status = parsed.data.status
+    data.completedAt = completed ? (item.completedAt ?? new Date()) : null
+    data.completedById = completed ? (item.completedById ?? session.user.id) : null
+  }
+  if (parsed.data.note !== undefined) data.note = parsed.data.note
+  if (canManage && parsed.data.ownerId !== undefined) data.ownerId = parsed.data.ownerId
+  if (parsed.data.title !== undefined) data.title = parsed.data.title
+  if (parsed.data.description !== undefined) data.description = parsed.data.description
+  if (parsed.data.procedureId !== undefined) data.procedureId = parsed.data.procedureId
+  if (parsed.data.recurring !== undefined) data.recurring = parsed.data.recurring
 
-  const updated = await prisma.checklistRunItem.update({
-    where: { id: item.id },
-    data: {
-      status,
-      note: parsed.data.note === undefined ? item.note : parsed.data.note,
-      ownerId: canManage && parsed.data.ownerId !== undefined ? parsed.data.ownerId : item.ownerId,
-      completedAt: completed ? (item.completedAt ?? new Date()) : null,
-      completedById: completed ? (item.completedById ?? session.user.id) : null,
-      ...(parsed.data.title !== undefined ? { title: parsed.data.title } : {}),
-      ...(parsed.data.description !== undefined ? { description: parsed.data.description } : {}),
-      ...(parsed.data.procedureId !== undefined ? { procedureId: parsed.data.procedureId } : {}),
-      ...(parsed.data.recurring !== undefined ? { recurring: parsed.data.recurring } : {}),
-    },
-  })
+  const updated = await prisma.checklistRunItem.update({ where: { id: item.id }, data })
 
   const procedure = await getProcedureForItem(prisma, updated.procedureId)
   return NextResponse.json({ ...updated, procedure })
