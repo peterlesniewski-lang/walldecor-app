@@ -53,7 +53,7 @@ export async function PATCH(
       note: parsed.data.note === undefined ? item.note : parsed.data.note,
       ownerId: canManage && parsed.data.ownerId !== undefined ? parsed.data.ownerId : item.ownerId,
       completedAt: completed ? (item.completedAt ?? new Date()) : null,
-      completedById: completed ? session.user.id : null,
+      completedById: completed ? (item.completedById ?? session.user.id) : null,
       ...(parsed.data.title !== undefined ? { title: parsed.data.title } : {}),
       ...(parsed.data.description !== undefined ? { description: parsed.data.description } : {}),
       ...(parsed.data.procedureId !== undefined ? { procedureId: parsed.data.procedureId } : {}),

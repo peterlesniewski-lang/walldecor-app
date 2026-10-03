@@ -11,7 +11,9 @@ import {
   getProcedureForItem,
   reorderRunItems,
   RunServiceError,
+  type RunServiceErrorCode,
 } from '@/lib/operations/run-service'
+import { runErrorResponse } from '@/lib/operations/run-http'
 import { POST as startRun } from '@/app/api/operations/runs/route'
 import { POST as createItem } from '@/app/api/operations/runs/[id]/items/route'
 import { PATCH as patchItem, DELETE as removeItem } from '@/app/api/operations/runs/[id]/items/[itemId]/route'
@@ -52,6 +54,10 @@ function jsonRequest(method: string, body: unknown) {
   })
 }
 
+function deleteRequest() {
+  return new NextRequest('http://localhost/api/operations/test', { method: 'DELETE' })
+}
+
 const runParams = { params: Promise.resolve({ id: 'run-1' }) }
 const itemParams = { params: Promise.resolve({ id: 'run-1', itemId: 'item-1' }) }
 
@@ -73,6 +79,13 @@ const storedItem = {
   updatedAt: new Date('2026-09-01T09:00:00Z'),
 }
 
+const doneItem = {
+  ...storedItem,
+  status: 'done',
+  completedAt: new Date('2026-09-05T10:00:00Z'),
+  completedById: 'employee-2',
+}
+
 beforeEach(() => {
   vi.resetAllMocks()
   mockSession.mockResolvedValue(session('MANAGER'))
@@ -90,6 +103,7 @@ describe('POST /api/operations/runs', () => {
     const res = await startRun(jsonRequest('POST', body))
 
     expect(res.status).toBe(401)
+    expect(createRunFromTemplate).not.toHaveBeenCalled()
   })
 
   it('should return 403 for an employee', async () => {
@@ -98,15 +112,17 @@ describe('POST /api/operations/runs', () => {
     const res = await startRun(jsonRequest('POST', body))
 
     expect(res.status).toBe(403)
+    expect(createRunFromTemplate).not.toHaveBeenCalled()
   })
 
   it('should return 400 for an invalid month', async () => {
     const res = await startRun(jsonRequest('POST', { ...body, periodMonth: 13 }))
 
     expect(res.status).toBe(400)
+    expect(createRunFromTemplate).not.toHaveBeenCalled()
   })
 
-  it('should return 409 with the existing run id when the month is already started', async () => {
+  it('should return the existing run id when the month is already started', async () => {
     vi.mocked(createRunFromTemplate).mockRejectedValue(new RunServiceError('RUN_EXISTS', { runId: 'run-9' }))
 
     const res = await startRun(jsonRequest('POST', body))
@@ -156,6 +172,7 @@ describe('POST /api/operations/runs/[id]/items', () => {
     const res = await createItem(jsonRequest('POST', body), runParams)
 
     expect(res.status).toBe(401)
+    expect(addRunItem).not.toHaveBeenCalled()
   })
 
   it('should return 403 for an employee', async () => {
@@ -164,12 +181,14 @@ describe('POST /api/operations/runs/[id]/items', () => {
     const res = await createItem(jsonRequest('POST', body), runParams)
 
     expect(res.status).toBe(403)
+    expect(addRunItem).not.toHaveBeenCalled()
   })
 
   it('should return 400 for a too short title', async () => {
     const res = await createItem(jsonRequest('POST', { title: 'ab' }), runParams)
 
     expect(res.status).toBe(400)
+    expect(addRunItem).not.toHaveBeenCalled()
   })
 
   it('should return 409 when the run is closed', async () => {
@@ -211,6 +230,7 @@ describe('PATCH /api/operations/runs/[id]/items/[itemId]', () => {
     const res = await patchItem(jsonRequest('PATCH', { status: 'done' }), itemParams)
 
     expect(res.status).toBe(401)
+    expect(mockUpdateItem).not.toHaveBeenCalled()
   })
 
   it('should return 404 for a task that is not in the run', async () => {
@@ -219,12 +239,14 @@ describe('PATCH /api/operations/runs/[id]/items/[itemId]', () => {
     const res = await patchItem(jsonRequest('PATCH', { status: 'done' }), itemParams)
 
     expect(res.status).toBe(404)
+    expect(mockUpdateItem).not.toHaveBeenCalled()
   })
 
   it('should return 400 for an invalid payload', async () => {
     const res = await patchItem(jsonRequest('PATCH', { title: 'ab' }), itemParams)
 
     expect(res.status).toBe(400)
+    expect(mockUpdateItem).not.toHaveBeenCalled()
   })
 
   it('should look the task up inside the run from the URL', async () => {
@@ -247,6 +269,25 @@ describe('PATCH /api/operations/runs/[id]/items/[itemId]', () => {
     const res = await patchItem(jsonRequest('PATCH', { title: 'Inna nazwa' }), itemParams)
 
     expect(res.status).toBe(403)
+    expect(mockUpdateItem).not.toHaveBeenCalled()
+  })
+
+  it('should forbid the task owner from clearing the description', async () => {
+    mockSession.mockResolvedValue(session('EMPLOYEE', 'employee-1'))
+
+    const res = await patchItem(jsonRequest('PATCH', { description: null }), itemParams)
+
+    expect(res.status).toBe(403)
+    expect(mockUpdateItem).not.toHaveBeenCalled()
+  })
+
+  it('should forbid the task owner from unlinking the procedure', async () => {
+    mockSession.mockResolvedValue(session('EMPLOYEE', 'employee-1'))
+
+    const res = await patchItem(jsonRequest('PATCH', { procedureId: null }), itemParams)
+
+    expect(res.status).toBe(403)
+    expect(mockUpdateItem).not.toHaveBeenCalled()
   })
 
   it('should forbid an employee who does not own the task', async () => {
@@ -255,6 +296,7 @@ describe('PATCH /api/operations/runs/[id]/items/[itemId]', () => {
     const res = await patchItem(jsonRequest('PATCH', { status: 'done' }), itemParams)
 
     expect(res.status).toBe(403)
+    expect(mockUpdateItem).not.toHaveBeenCalled()
   })
 
   it('should let a manager switch recurring off', async () => {
@@ -285,6 +327,7 @@ describe('PATCH /api/operations/runs/[id]/items/[itemId]', () => {
     const res = await patchItem(jsonRequest('PATCH', { procedureId: 'missing' }), itemParams)
 
     expect(res.status).toBe(400)
+    expect(mockUpdateItem).not.toHaveBeenCalled()
   })
 
   it('should not let the task owner reassign the task', async () => {
@@ -306,12 +349,68 @@ describe('PATCH /api/operations/runs/[id]/items/[itemId]', () => {
     expect(await res.json()).toMatchObject({ id: 'item-1', procedure })
   })
 
+  it('should let a manager unlink the procedure without checking that it exists', async () => {
+    await patchItem(jsonRequest('PATCH', { procedureId: null }), itemParams)
+
+    expect(mockUpdateItem).toHaveBeenCalledWith(
+      expect.objectContaining({ data: expect.objectContaining({ procedureId: null }) })
+    )
+    expect(assertProcedureExists).not.toHaveBeenCalled()
+  })
+
+  describe('completion bookkeeping', () => {
+    it('should stamp the completion time and the current user when a task is marked done', async () => {
+      await patchItem(jsonRequest('PATCH', { status: 'done' }), itemParams)
+
+      expect(mockUpdateItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ completedAt: expect.any(Date), completedById: 'manager-1' }),
+        })
+      )
+    })
+
+    it('should keep who completed the task when a manager only edits the note', async () => {
+      mockFindItem.mockResolvedValue(doneItem)
+
+      await patchItem(jsonRequest('PATCH', { note: 'Sprawdzone' }), itemParams)
+
+      expect(mockUpdateItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ completedAt: doneItem.completedAt, completedById: 'employee-2' }),
+        })
+      )
+    })
+
+    it('should keep who completed the task when a manager switches recurring off', async () => {
+      mockFindItem.mockResolvedValue(doneItem)
+
+      await patchItem(jsonRequest('PATCH', { recurring: false }), itemParams)
+
+      expect(mockUpdateItem).toHaveBeenCalledWith(
+        expect.objectContaining({
+          data: expect.objectContaining({ completedAt: doneItem.completedAt, completedById: 'employee-2' }),
+        })
+      )
+    })
+
+    it('should clear the completion when a done task goes back to todo', async () => {
+      mockFindItem.mockResolvedValue(doneItem)
+
+      await patchItem(jsonRequest('PATCH', { status: 'todo' }), itemParams)
+
+      expect(mockUpdateItem).toHaveBeenCalledWith(
+        expect.objectContaining({ data: expect.objectContaining({ completedAt: null, completedById: null }) })
+      )
+    })
+  })
+
   it('should return 409 when the run is closed', async () => {
     vi.mocked(assertRunIsOpen).mockRejectedValue(new RunServiceError('RUN_CLOSED'))
 
     const res = await patchItem(jsonRequest('PATCH', { status: 'done' }), itemParams)
 
     expect(res.status).toBe(409)
+    expect(mockUpdateItem).not.toHaveBeenCalled()
   })
 })
 
@@ -319,21 +418,23 @@ describe('DELETE /api/operations/runs/[id]/items/[itemId]', () => {
   it('should return 401 without a session', async () => {
     mockSession.mockResolvedValue(null)
 
-    const res = await removeItem(new NextRequest('http://localhost/x', { method: 'DELETE' }), itemParams)
+    const res = await removeItem(deleteRequest(), itemParams)
 
     expect(res.status).toBe(401)
+    expect(deleteRunItem).not.toHaveBeenCalled()
   })
 
   it('should return 403 for an employee', async () => {
     mockSession.mockResolvedValue(session('EMPLOYEE', 'employee-1'))
 
-    const res = await removeItem(new NextRequest('http://localhost/x', { method: 'DELETE' }), itemParams)
+    const res = await removeItem(deleteRequest(), itemParams)
 
     expect(res.status).toBe(403)
+    expect(deleteRunItem).not.toHaveBeenCalled()
   })
 
   it('should delete the task for a manager', async () => {
-    const res = await removeItem(new NextRequest('http://localhost/x', { method: 'DELETE' }), itemParams)
+    const res = await removeItem(deleteRequest(), itemParams)
 
     expect(res.status).toBe(200)
     expect(deleteRunItem).toHaveBeenCalledWith(expect.anything(), 'run-1', 'item-1')
@@ -342,7 +443,7 @@ describe('DELETE /api/operations/runs/[id]/items/[itemId]', () => {
   it('should return 404 for an unknown task', async () => {
     vi.mocked(deleteRunItem).mockRejectedValue(new RunServiceError('ITEM_NOT_FOUND'))
 
-    const res = await removeItem(new NextRequest('http://localhost/x', { method: 'DELETE' }), itemParams)
+    const res = await removeItem(deleteRequest(), itemParams)
 
     expect(res.status).toBe(404)
   })
@@ -355,12 +456,14 @@ describe('PUT /api/operations/runs/[id]/items/order', () => {
     const res = await putOrder(jsonRequest('PUT', { itemIds: ['a', 'b'] }), runParams)
 
     expect(res.status).toBe(401)
+    expect(reorderRunItems).not.toHaveBeenCalled()
   })
 
   it('should return 400 for an empty list of ids', async () => {
     const res = await putOrder(jsonRequest('PUT', { itemIds: [] }), runParams)
 
     expect(res.status).toBe(400)
+    expect(reorderRunItems).not.toHaveBeenCalled()
   })
 
   it('should return 403 for an employee', async () => {
@@ -369,6 +472,7 @@ describe('PUT /api/operations/runs/[id]/items/order', () => {
     const res = await putOrder(jsonRequest('PUT', { itemIds: ['a', 'b'] }), runParams)
 
     expect(res.status).toBe(403)
+    expect(reorderRunItems).not.toHaveBeenCalled()
   })
 
   it('should return 400 when the ids do not match the run tasks', async () => {
@@ -384,5 +488,27 @@ describe('PUT /api/operations/runs/[id]/items/order', () => {
 
     expect(res.status).toBe(200)
     expect(reorderRunItems).toHaveBeenCalledWith(expect.anything(), 'run-1', ['b', 'a'])
+  })
+})
+
+describe('runErrorResponse', () => {
+  const EXPECTED: Record<RunServiceErrorCode, { status: number; error: string; details?: { runId: string } }> = {
+    TEMPLATE_NOT_FOUND: { status: 404, error: 'Template not found' },
+    EMPTY_TEMPLATE: { status: 400, error: 'Template has no items' },
+    RUN_EXISTS: { status: 409, error: 'Run already exists', details: { runId: 'run-9' } },
+    RUN_NOT_FOUND: { status: 404, error: 'Run not found' },
+    RUN_CLOSED: { status: 409, error: 'Run is closed' },
+    ITEM_NOT_FOUND: { status: 404, error: 'Item not found' },
+    ORDER_MISMATCH: { status: 400, error: 'Item ids do not match the run' },
+    PROCEDURE_NOT_FOUND: { status: 400, error: 'Procedure not found' },
+  }
+  const codes = Object.keys(EXPECTED) as RunServiceErrorCode[]
+
+  it.each(codes)('should map %s to its status and message', async (code) => {
+    const { status, error, details } = EXPECTED[code]
+
+    const res = runErrorResponse(new RunServiceError(code, details))
+
+    expect({ status: res.status, body: await res.json() }).toEqual({ status, body: { error, ...details } })
   })
 })
