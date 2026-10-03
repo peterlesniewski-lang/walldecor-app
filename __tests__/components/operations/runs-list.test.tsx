@@ -34,10 +34,22 @@ function sectionOf(heading: string) {
 
 describe('RunsList', () => {
   describe('empty state', () => {
-    it('should show the empty-state hint when there are no runs', () => {
-      renderList([])
+    it('should point a manager to the "Rozpocznij miesiąc" button when there are no runs', () => {
+      renderList([], true)
 
-      expect(screen.getByText(/Brak wykonań/)).not.toBeNull()
+      expect(screen.queryByText(/Użyj przycisku „Rozpocznij miesiąc”/)).not.toBeNull()
+    })
+
+    it('should show a neutral message to a user who cannot start months when there are no runs', () => {
+      renderList([], false)
+
+      expect(screen.queryByText('Brak wykonań do wyświetlenia.')).not.toBeNull()
+    })
+
+    it('should not mention the hidden "Rozpocznij miesiąc" button to a user who cannot start months', () => {
+      renderList([], false)
+
+      expect(screen.queryByText(/Rozpocznij miesiąc/)).toBeNull()
     })
 
     it('should not render any section heading when there are no runs', () => {
@@ -131,27 +143,39 @@ describe('RunsList', () => {
 
   describe('"Zamknij miesiąc" button', () => {
     it('should show the button to a manager for an open run that is ready to close', () => {
+      renderList([makeRun({ name: 'Wrzesień', status: 'open', readyToClose: true })], true)
+
+      expect(screen.queryByRole('button', { name: 'Zamknij miesiąc: Wrzesień' })).not.toBeNull()
+    })
+
+    it('should keep the visible button text as "Zamknij miesiąc"', () => {
+      renderList([makeRun({ name: 'Wrzesień', status: 'open', readyToClose: true })], true)
+
+      expect(screen.getByRole('button', { name: /Zamknij miesiąc/ }).textContent).toBe('Zamknij miesiąc')
+    })
+
+    it('should not nest the button inside the card link', () => {
       renderList([makeRun({ status: 'open', readyToClose: true })], true)
 
-      expect(screen.queryByRole('button', { name: 'Zamknij miesiąc' })).not.toBeNull()
+      expect(screen.getByRole('button', { name: /Zamknij miesiąc/ }).closest('a')).toBeNull()
     })
 
     it('should hide the button from a user who cannot manage runs', () => {
       renderList([makeRun({ status: 'open', readyToClose: true })], false)
 
-      expect(screen.queryByRole('button', { name: 'Zamknij miesiąc' })).toBeNull()
+      expect(screen.queryByRole('button', { name: /Zamknij miesiąc/ })).toBeNull()
     })
 
     it('should hide the button when the run is not ready to close', () => {
       renderList([makeRun({ status: 'open', readyToClose: false })], true)
 
-      expect(screen.queryByRole('button', { name: 'Zamknij miesiąc' })).toBeNull()
+      expect(screen.queryByRole('button', { name: /Zamknij miesiąc/ })).toBeNull()
     })
 
     it('should hide the button for a closed run', () => {
       renderList([makeRun({ status: 'closed', readyToClose: true })], true)
 
-      expect(screen.queryByRole('button', { name: 'Zamknij miesiąc' })).toBeNull()
+      expect(screen.queryByRole('button', { name: /Zamknij miesiąc/ })).toBeNull()
     })
   })
 

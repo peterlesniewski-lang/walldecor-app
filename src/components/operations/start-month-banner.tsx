@@ -1,8 +1,7 @@
 'use client'
 
-import { useRouter } from 'next/navigation'
-import { useState } from 'react'
 import { formatClosingPeriod } from '@/lib/operations/run-factory'
+import { useStartRun } from './use-start-run'
 
 export function StartMonthBanner({
   templateId,
@@ -13,35 +12,8 @@ export function StartMonthBanner({
   periodYear: number
   periodMonth: number
 }) {
-  const router = useRouter()
-  const [loading, setLoading] = useState(false)
-  const [error, setError] = useState<string | null>(null)
+  const { start, loading, error } = useStartRun(templateId)
   const period = formatClosingPeriod(periodYear, periodMonth)
-
-  async function startRun() {
-    setLoading(true)
-    setError(null)
-    const res = await fetch('/api/operations/runs', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ templateId, periodYear, periodMonth }),
-    })
-    setLoading(false)
-
-    if (res.status === 409) {
-      const existing = (await res.json()) as { runId?: string }
-      if (existing.runId) {
-        router.push(`/operations/runs/${existing.runId}`)
-        return
-      }
-    }
-    if (!res.ok) {
-      setError('Nie udało się utworzyć wykonania. Spróbuj ponownie.')
-      return
-    }
-    const run = (await res.json()) as { id: string }
-    router.push(`/operations/runs/${run.id}`)
-  }
 
   return (
     <div className="mb-6 rounded-xl border border-amber-300 bg-amber-50 p-4">
@@ -49,7 +21,7 @@ export function StartMonthBanner({
       <p className="mt-0.5 text-sm text-amber-900">Księgowość czeka na komplet dokumentów za poprzedni miesiąc.</p>
       <button
         type="button"
-        onClick={startRun}
+        onClick={() => start({ periodYear, periodMonth })}
         disabled={loading}
         className="mt-3 rounded-lg bg-gray-900 px-4 py-2 text-sm font-medium text-white transition hover:bg-gray-800 disabled:opacity-50"
       >

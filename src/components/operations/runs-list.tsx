@@ -24,11 +24,15 @@ interface RunListItem {
   }
 }
 
-function RunCard({ run, canManage }: { run: RunListItem; canManage: boolean }) {
+function RunCard({ run, canManage, muted = false }: { run: RunListItem; canManage: boolean; muted?: boolean }) {
   const isOpen = run.status === 'open'
 
   return (
-    <div className="relative rounded-xl border bg-white p-4 transition hover:border-gray-300 hover:shadow-sm">
+    <div
+      className={`relative rounded-xl border p-4 transition hover:border-gray-300 hover:shadow-sm has-[a:focus-visible]:ring-2 has-[a:focus-visible]:ring-gray-400 ${
+        muted ? 'bg-gray-50' : 'bg-white'
+      }`}
+    >
       <div className="flex items-start justify-between gap-4">
         <div className="min-w-0">
           <div className="flex flex-wrap items-center gap-2">
@@ -63,8 +67,8 @@ function RunCard({ run, canManage }: { run: RunListItem; canManage: boolean }) {
         </span>
       </div>
       {canManage && isOpen && run.readyToClose && (
-        <div className="relative z-10 mt-3">
-          <RunStatusButton runId={run.id} nextStatus="closed" primary>
+        <div className="relative z-10 mt-3 w-fit">
+          <RunStatusButton runId={run.id} nextStatus="closed" primary ariaLabel={`Zamknij miesiąc: ${run.name}`}>
             Zamknij miesiąc
           </RunStatusButton>
         </div>
@@ -86,7 +90,9 @@ export function RunsList({ runs, canManage }: { runs: RunListItem[]; canManage: 
   if (runs.length === 0) {
     return (
       <div className="rounded-xl border bg-white p-8 text-sm text-gray-500">
-        Brak wykonań. Użyj przycisku „Rozpocznij miesiąc”, żeby zacząć pierwsze zamknięcie.
+        {canManage
+          ? 'Brak wykonań. Użyj przycisku „Rozpocznij miesiąc”, żeby zacząć pierwsze zamknięcie.'
+          : 'Brak wykonań do wyświetlenia.'}
       </div>
     )
   }
@@ -106,9 +112,7 @@ export function RunsList({ runs, canManage }: { runs: RunListItem[]; canManage: 
       {closed.length > 0 && (
         <RunSection title="Zamknięte">
           {closed.map((run) => (
-            <div key={run.id} className="opacity-75">
-              <RunCard run={run} canManage={canManage} />
-            </div>
+            <RunCard key={run.id} run={run} canManage={canManage} muted />
           ))}
         </RunSection>
       )}
