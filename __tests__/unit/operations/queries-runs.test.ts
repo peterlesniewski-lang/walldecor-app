@@ -181,7 +181,7 @@ describe('getRuns', () => {
       expect(run.nextItemTitle).toBeNull()
     })
 
-    it('should mark readyToClose when all of the viewer own items are done even if others are not', async () => {
+    it('should not mark readyToClose when the viewer own items are done but a colleague task is not', async () => {
       returnRuns(
         runRow({
           items: [item(1, 'Moje zadanie A', 'done', 'employee-1'), item(2, 'Zadanie koleżanki', 'todo', 'employee-2')],
@@ -190,7 +190,17 @@ describe('getRuns', () => {
 
       const [run] = await getRuns(employee)
 
-      expect(run.readyToClose).toBe(true)
+      expect(run.readyToClose).toBe(false)
+    })
+
+    it('should look up the viewer grants for runs', async () => {
+      returnRuns(runRow({ items }))
+
+      await getRuns(employee)
+
+      expect(mockFindGrants).toHaveBeenCalledWith(
+        expect.objectContaining({ where: { userId: 'employee-1', resourceType: 'run' } })
+      )
     })
 
     it('should restrict the runs query to granted runs and runs with an item owned by the viewer', async () => {
@@ -310,12 +320,16 @@ describe('getRuns', () => {
       expect(run.readyToClose).toBe(false)
     })
 
-    it('should be false for an open run where the viewer owns no items', async () => {
-      returnRuns(runRow({ items: [item(1, 'Cudze zadanie', 'done', 'employee-2')] }))
+    it('should be true for an EMPLOYEE viewer when every task of the open run is done, including tasks of others', async () => {
+      returnRuns(
+        runRow({
+          items: [item(1, 'Moje zadanie', 'done', 'employee-1'), item(2, 'Cudze zadanie', 'done', 'employee-2')],
+        })
+      )
 
       const [run] = await getRuns(employee)
 
-      expect(run.readyToClose).toBe(false)
+      expect(run.readyToClose).toBe(true)
     })
 
     it('should be false for an open run with one item still not done', async () => {

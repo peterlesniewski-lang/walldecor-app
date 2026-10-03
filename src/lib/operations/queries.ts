@@ -125,7 +125,7 @@ export async function getRuns(viewer: OperationViewer) {
       items: items.map(({ status, ownerId }) => ({ status, ownerId })),
       progress: calculateRunProgress(visible),
       nextItemTitle: getNextOpenItem(visible)?.title ?? null,
-      readyToClose: run.status === 'open' && isReadyToClose(visible),
+      readyToClose: run.status === 'open' && isReadyToClose(items),
     }
   })
 }
@@ -191,6 +191,7 @@ export async function getDefaultRunTemplateId() {
   return template?.id ?? null
 }
 
+// Manager-only: returns every procedure, not filtered by visibility. Callers must gate by role.
 export async function getProcedureOptions() {
   return prisma.article.findMany({
     where: { type: 'procedure' },
