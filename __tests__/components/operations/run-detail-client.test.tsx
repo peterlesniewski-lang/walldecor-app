@@ -3,12 +3,12 @@ import userEvent from '@testing-library/user-event'
 import type { ComponentProps } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { RunDetailClient } from '@/components/operations/run-detail-client'
-import type { RunTask } from '@/components/operations/run-task-list'
+import type { RunTaskList } from '@/components/operations/run-task-list'
 
 const { push, refresh, listSpy } = vi.hoisted(() => ({
   push: vi.fn(),
   refresh: vi.fn(),
-  listSpy: { latest: null as null | { items: RunTask[]; onReorder: (orderedIds: string[]) => void } },
+  listSpy: { latest: null as null | ComponentProps<typeof RunTaskList> },
 }))
 
 vi.mock('next/navigation', () => ({
@@ -26,7 +26,7 @@ vi.mock('@/components/operations/run-task-list', async (importOriginal) => {
   return {
     ...actual,
     RunTaskList: (props: ComponentProps<typeof actual.RunTaskList>) => {
-      listSpy.latest = props as unknown as NonNullable<typeof listSpy.latest>
+      listSpy.latest = props
       return <actual.RunTaskList {...props} />
     },
   }
@@ -96,6 +96,21 @@ function stubFetchFailure() {
   return stubFetch(() => Promise.reject(new TypeError('Failed to fetch')))
 }
 
+// A fetch whose responses are released by the test, in any order, so overlapping requests can be simulated.
+function stubManualFetch() {
+  const pending: Array<(response: Response) => void> = []
+  const fetchMock = vi.fn<typeof fetch>(() => new Promise<Response>((resolve) => pending.push(resolve)))
+  vi.stubGlobal('fetch', fetchMock)
+  return {
+    fetchMock,
+    answer: (index: number, status: number, body: unknown = {}) =>
+      act(async () => {
+        pending[index](new Response(JSON.stringify(body), { status, headers: { 'Content-Type': 'application/json' } }))
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      }),
+  }
+}
+
 function requestOf(fetchMock: ReturnType<typeof stubFetch>, index = 0) {
   const [url, init] = fetchMock.mock.calls[index]
   return { url, method: (init as RequestInit).method, body: init?.body === undefined ? undefined : JSON.parse(String(init.body)) }
@@ -111,6 +126,9 @@ const header = () => within(screen.getByRole('heading', { level: 1 }).parentElem
 const addButton = () => screen.queryByRole('button', { name: '+ Dodaj zadanie' })
 const dragHandles = () => screen.queryAllByRole('button', { name: /^Przeciągnij zadanie: / })
 const rowMenus = () => screen.queryAllByRole('button', { name: /^Opcje zadania: / })
+// The client hands its full items (with `order`) to the list, but the list's own prop type does not declare it.
+const itemOrders = () =>
+  listSpy.latest?.items.map((item) => [item.id, 'order' in item ? item.order : undefined])
 const progressText = () => screen.getByText('Postęp').nextElementSibling?.textContent
 
 function itemResponse(item: Item, extra: { procedure?: { id: string; title: string; content: string } | null } = {}) {
@@ -157,6 +175,18 @@ describe('RunDetailClient', () => {
       renderClient({ items: makeItems().map((item) => ({ ...item, status: 'done' })) })
 
       expect(header().queryByText('Gotowe do zamknięcia')).not.toBeNull()
+    })
+
+    it('should not show "Gotowe do zamknięcia" to an employee whose own tasks are all done', () => {
+      renderClient({ canManage: false, items: makeItems().map((item) => ({ ...item, status: 'done' })) })
+
+      expect(header().queryByText('Gotowe do zamknięcia')).toBeNull()
+    })
+
+    it('should show an employee whose own tasks are all done the plain "W toku" status', () => {
+      renderClient({ canManage: false, items: makeItems().map((item) => ({ ...item, status: 'done' })) })
+
+      expect(header().queryByText('W toku')).not.toBeNull()
     })
 
     it('should show the "Zamknięte" status of a closed run', () => {
@@ -569,7 +599,10 @@ describe('RunDetailClient', () => {
       await deleteViaMenu('Wyciąg bankowy')
 
       await waitFor(() => expect(listSpy.latest?.items.map((item) => item.title)).toEqual(['Faktury kosztowe', 'Raport VAT']))
-      expect(listSpy.latest?.items.map((item) => (item as RunTask & { order: number }).order)).toEqual([1, 2])
+      expect(itemOrders()).toEqual([
+        ['i2', 1],
+        ['i3', 2],
+      ])
     })
 
     it('should select the first remaining task when the selected one is deleted', async () => {
@@ -654,7 +687,7 @@ describe('RunDetailClient', () => {
 
       await reorder(['i3', 'i1', 'i2'])
 
-      expect(listSpy.latest?.items.map((item) => [item.id, (item as RunTask & { order: number }).order])).toEqual([
+      expect(itemOrders()).toEqual([
         ['i3', 1],
         ['i1', 2],
         ['i2', 3],
@@ -1074,6 +1107,42 @@ describe('RunDetailClient', () => {
       expect((await screen.findByRole('alert')).textContent).toBe(SAVE_ERROR)
     })
 
+    it('should keep showing the saved period when the month is closed with an unsaved choice', async () => {
+      stubFetch(jsonResponse(200, { status: 'closed' }))
+      renderClient()
+      await userEvent.selectOptions(screen.getByDisplayValue('wrzesień'), 'maj')
+
+      await userEvent.click(screen.getByRole('button', { name: 'Zamknij miesiąc' }))
+
+      expect(await screen.findByText('Zamykany okres: wrzesień 2026')).not.toBeNull()
+    })
+
+    it('should show the saved period as the closing period after the period is saved and the month closed', async () => {
+      const fetchMock = stubFetch(
+        jsonResponse(200, { name: 'Zamknięcie miesiąca - sierpień 2026', periodYear: 2026, periodMonth: 8 })
+      )
+      renderClient()
+      await userEvent.selectOptions(screen.getByDisplayValue('wrzesień'), 'sierpień')
+      await userEvent.click(screen.getByRole('button', { name: 'Zapisz okres' }))
+      await screen.findByRole('heading', { level: 1, name: 'Zamknięcie miesiąca - sierpień 2026' })
+      fetchMock.mockImplementation(jsonResponse(200, { status: 'closed' }))
+
+      await userEvent.click(screen.getByRole('button', { name: 'Zamknij miesiąc' }))
+
+      expect(await screen.findByText('Zamykany okres: sierpień 2026')).not.toBeNull()
+    })
+
+    it('should keep the unsaved period choice in the inputs while other things are saved', async () => {
+      stubFetch(jsonResponse(200, itemResponse(makeItem({ id: 'i2', title: 'Faktury kosztowe', status: 'done' }))))
+      renderClient()
+      await userEvent.selectOptions(screen.getByDisplayValue('wrzesień'), 'maj')
+
+      await userEvent.click(checkbox('Faktury kosztowe'))
+
+      await waitFor(() => expect(progressText()).toBe('1/3'))
+      expect((screen.getByDisplayValue('maj') as HTMLSelectElement).value).toBe('5')
+    })
+
     it('should enable the "Zapisz okres" button again when the period request throws', async () => {
       stubFetchFailure()
       renderClient()
@@ -1082,6 +1151,325 @@ describe('RunDetailClient', () => {
       await screen.findByRole('alert')
 
       expect((screen.getByRole('button', { name: 'Zapisz okres' }) as HTMLButtonElement).disabled).toBe(false)
+    })
+  })
+
+  describe('note of the selected task', () => {
+    const noteField = () =>
+      screen.getByPlaceholderText('Co blokuje zadanie albo co trzeba zapamiętać?') as HTMLTextAreaElement
+    const withNoteOnSecondTask = () =>
+      makeItems().map((item) => (item.id === 'i2' ? { ...item, note: 'Notatka B' } : item))
+
+    // Types a note on the first task and selects the second one before the note save has been answered.
+    async function typeNoteThenSelectSecondTask() {
+      const manual = stubManualFetch()
+      renderClient({ items: withNoteOnSecondTask() })
+      await userEvent.type(noteField(), 'Notatka A')
+      await userEvent.click(screen.getByText('Faktury kosztowe'))
+      return manual
+    }
+
+    const firstTaskSavedWithNote = () => itemResponse(makeItem({ id: 'i1', title: 'Wyciąg bankowy', note: 'Notatka A' }))
+
+    it('should save the note typed on a task when another task is selected', async () => {
+      const { fetchMock } = await typeNoteThenSelectSecondTask()
+
+      expect(requestOf(fetchMock)).toEqual({
+        url: '/api/operations/runs/run-1/items/i1',
+        method: 'PATCH',
+        body: { note: 'Notatka A' },
+      })
+    })
+
+    it('should show the own note of the newly selected task right after selecting it', async () => {
+      await typeNoteThenSelectSecondTask()
+
+      expect(noteField().value).toBe('Notatka B')
+    })
+
+    it('should keep the own note of the selected task when a late save of the previous task is answered', async () => {
+      const { answer } = await typeNoteThenSelectSecondTask()
+
+      await answer(0, 200, firstTaskSavedWithNote())
+
+      expect(noteField().value).toBe('Notatka B')
+    })
+
+    it('should not save anything when the selected task note is focused and left after a late save of the previous task', async () => {
+      const { answer, fetchMock } = await typeNoteThenSelectSecondTask()
+      await answer(0, 200, firstTaskSavedWithNote())
+
+      await userEvent.click(noteField())
+      await userEvent.tab()
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+
+    it('should show the saved note again when the task is selected after its save was answered', async () => {
+      const { answer } = await typeNoteThenSelectSecondTask()
+      await answer(0, 200, firstTaskSavedWithNote())
+
+      await userEvent.click(screen.getByText('Wyciąg bankowy'))
+
+      expect(noteField().value).toBe('Notatka A')
+    })
+
+    it('should not save the same note twice', async () => {
+      const { answer, fetchMock } = await typeNoteThenSelectSecondTask()
+      await answer(0, 200, firstTaskSavedWithNote())
+      await userEvent.click(screen.getByText('Wyciąg bankowy'))
+
+      await userEvent.click(noteField())
+      await userEvent.tab()
+
+      expect(fetchMock).toHaveBeenCalledTimes(1)
+    })
+  })
+
+  describe('saves in flight', () => {
+    const reorder = (orderedIds: string[]) => act(async () => listSpy.latest?.onReorder(orderedIds))
+    const noteField = () => screen.getByPlaceholderText('Co blokuje zadanie albo co trzeba zapamiętać?')
+    const statusButton = (name: string) => screen.getByRole('button', { name }) as HTMLButtonElement
+    const doneItem = (id: string, title: string) => itemResponse(makeItem({ id, title, status: 'done' }))
+
+    describe('without blocking the checklist', () => {
+      it('should keep every checkbox enabled while a tick is being saved', async () => {
+        stubManualFetch()
+        renderClient()
+
+        await userEvent.click(checkbox('Faktury kosztowe'))
+
+        expect(screen.getAllByRole('checkbox').map((box) => (box as HTMLButtonElement).disabled)).toEqual([false, false, false])
+      })
+
+      it('should send both requests when a checkbox is clicked right after typing a note', async () => {
+        const { fetchMock } = stubManualFetch()
+        renderClient()
+        await userEvent.type(noteField(), 'Brak dostępu')
+
+        await userEvent.click(checkbox('Faktury kosztowe'))
+
+        expect([requestOf(fetchMock, 0).body, requestOf(fetchMock, 1).body]).toEqual([
+          { note: 'Brak dostępu' },
+          { status: 'done' },
+        ])
+      })
+
+      it('should keep the status buttons of the selected task enabled while a save is pending', async () => {
+        stubManualFetch()
+        renderClient()
+
+        await userEvent.click(checkbox('Faktury kosztowe'))
+
+        expect(statusButton('Bloker').disabled).toBe(false)
+      })
+
+      it('should keep the "Zamknij miesiąc" button enabled while a checkbox save is pending', async () => {
+        stubManualFetch()
+        renderClient()
+
+        await userEvent.click(checkbox('Faktury kosztowe'))
+
+        expect(statusButton('Zamknij miesiąc').disabled).toBe(false)
+      })
+
+      it('should disable the "Zamknij miesiąc" button while the close request is pending', async () => {
+        stubManualFetch()
+        renderClient()
+
+        await userEvent.click(statusButton('Zamknij miesiąc'))
+
+        expect(statusButton('Zamknij miesiąc').disabled).toBe(true)
+      })
+
+      it('should send only one close request when "Zamknij miesiąc" is clicked twice', async () => {
+        const { fetchMock } = stubManualFetch()
+        renderClient()
+
+        await userEvent.dblClick(statusButton('Zamknij miesiąc'))
+
+        expect(fetchMock).toHaveBeenCalledTimes(1)
+      })
+
+      it('should enable the "Zamknij miesiąc" button again when closing fails', async () => {
+        const { answer } = stubManualFetch()
+        renderClient()
+        await userEvent.click(statusButton('Zamknij miesiąc'))
+
+        await answer(0, 409)
+
+        expect(statusButton('Zamknij miesiąc').disabled).toBe(false)
+      })
+
+      it('should disable the "Otwórz ponownie" button while the reopen request is pending', async () => {
+        stubManualFetch()
+        renderClient({ status: 'closed' })
+
+        await userEvent.click(statusButton('Otwórz ponownie'))
+
+        expect(statusButton('Otwórz ponownie').disabled).toBe(true)
+      })
+    })
+
+    describe('overlapping saves of the same task', () => {
+      const firstTask = makeItem({ id: 'i1', title: 'Wyciąg bankowy', procedureId: 'p1' })
+      const firstRowBadge = () =>
+        within(screen.getAllByTestId('run-task-row')[0]).queryByText(/^(W toku|Bloker)$/)?.textContent
+
+      it('should end in the state of the later request when the responses arrive out of order', async () => {
+        const { answer } = stubManualFetch()
+        renderClient()
+        await userEvent.click(statusButton('Bloker'))
+        await userEvent.click(statusButton('W toku'))
+
+        await answer(1, 200, itemResponse({ ...firstTask, status: 'in_progress' }))
+        await answer(0, 200, itemResponse({ ...firstTask, status: 'blocked' }))
+
+        expect(firstRowBadge()).toBe('W toku')
+      })
+
+      it('should end in the state of the later request when the responses arrive in order', async () => {
+        const { answer } = stubManualFetch()
+        renderClient()
+        await userEvent.click(statusButton('Bloker'))
+        await userEvent.click(statusButton('W toku'))
+
+        await answer(0, 200, itemResponse({ ...firstTask, status: 'blocked' }))
+        await answer(1, 200, itemResponse({ ...firstTask, status: 'in_progress' }))
+
+        expect(firstRowBadge()).toBe('W toku')
+      })
+
+      it('should still close the edit form when a superseded save of the edited task succeeds', async () => {
+        const { answer } = stubManualFetch()
+        renderClient()
+        await userEvent.click(screen.getByRole('button', { name: 'Opcje zadania: Wyciąg bankowy' }))
+        await userEvent.click(screen.getByRole('menuitem', { name: 'Edytuj' }))
+        await userEvent.click(screen.getByRole('button', { name: 'Zapisz' }))
+        await userEvent.click(checkbox('Wyciąg bankowy'))
+
+        await answer(1, 200, doneItem('i1', 'Wyciąg bankowy'))
+        await answer(0, 200, itemResponse(firstTask))
+
+        expect(screen.queryByRole('heading', { name: 'Edytuj zadanie' })).toBeNull()
+      })
+
+      it('should not let a superseded save overwrite the newer state of the task in the list', async () => {
+        const { answer } = stubManualFetch()
+        renderClient()
+        await userEvent.click(screen.getByRole('button', { name: 'Opcje zadania: Wyciąg bankowy' }))
+        await userEvent.click(screen.getByRole('menuitem', { name: 'Edytuj' }))
+        await userEvent.click(screen.getByRole('button', { name: 'Zapisz' }))
+        await userEvent.click(checkbox('Wyciąg bankowy'))
+
+        await answer(1, 200, doneItem('i1', 'Wyciąg bankowy'))
+        await answer(0, 200, itemResponse(firstTask))
+
+        expect(checkbox('Wyciąg bankowy').getAttribute('aria-checked')).toBe('true')
+      })
+    })
+
+    describe('overlapping saves of different tasks', () => {
+      it('should apply both responses when two different tasks are ticked one after the other', async () => {
+        const { answer } = stubManualFetch()
+        renderClient()
+        await userEvent.click(checkbox('Wyciąg bankowy'))
+        await userEvent.click(checkbox('Faktury kosztowe'))
+
+        await answer(0, 200, doneItem('i1', 'Wyciąg bankowy'))
+        await answer(1, 200, doneItem('i2', 'Faktury kosztowe'))
+
+        expect(progressText()).toBe('2/3')
+      })
+    })
+
+    describe('deleting while other saves are pending', () => {
+      it('should keep a tick that lands while another task is being deleted', async () => {
+        const { answer } = stubManualFetch()
+        renderClient()
+        await userEvent.click(checkbox('Wyciąg bankowy'))
+        await deleteViaMenu('Faktury kosztowe')
+
+        await answer(0, 200, doneItem('i1', 'Wyciąg bankowy'))
+        await answer(1, 200, { ok: true })
+
+        await waitFor(() => expect(rowTitles()).toEqual(['Wyciąg bankowy', 'Raport VAT']))
+        expect(checkbox('Wyciąg bankowy').getAttribute('aria-checked')).toBe('true')
+      })
+
+      it('should keep an open edit form when another task is deleted', async () => {
+        stubFetch(jsonResponse(200, { ok: true }))
+        renderClient()
+        await userEvent.click(screen.getByRole('button', { name: 'Opcje zadania: Wyciąg bankowy' }))
+        await userEvent.click(screen.getByRole('menuitem', { name: 'Edytuj' }))
+
+        await deleteViaMenu('Raport VAT')
+
+        await waitFor(() => expect(rowTitles()).toEqual(['Wyciąg bankowy', 'Faktury kosztowe']))
+        expect(screen.queryByRole('heading', { name: 'Edytuj zadanie' })).not.toBeNull()
+      })
+
+      it('should close the edit form when the edited task itself is deleted', async () => {
+        stubFetch(jsonResponse(200, { ok: true }))
+        renderClient()
+        await userEvent.click(screen.getByRole('button', { name: 'Opcje zadania: Faktury kosztowe' }))
+        await userEvent.click(screen.getByRole('menuitem', { name: 'Edytuj' }))
+
+        await deleteViaMenu('Faktury kosztowe')
+
+        await waitFor(() => expect(screen.queryByRole('heading', { name: 'Edytuj zadanie' })).toBeNull())
+      })
+
+      it('should keep the task selected during the delete when another task was selected meanwhile', async () => {
+        const { answer } = stubManualFetch()
+        renderClient()
+        await deleteViaMenu('Wyciąg bankowy')
+        await userEvent.click(screen.getByText('Raport VAT'))
+
+        await answer(0, 200, { ok: true })
+
+        await waitFor(() => expect(rowTitles()).toEqual(['Faktury kosztowe', 'Raport VAT']))
+        expect(screen.queryByRole('heading', { level: 2, name: 'Raport VAT' })).not.toBeNull()
+      })
+
+      it('should keep the selected task when another task is deleted', async () => {
+        stubFetch(jsonResponse(200, { ok: true }))
+        renderClient()
+
+        await deleteViaMenu('Raport VAT')
+
+        await waitFor(() => expect(rowTitles()).toEqual(['Wyciąg bankowy', 'Faktury kosztowe']))
+        expect(screen.queryByRole('heading', { level: 2, name: 'Wyciąg bankowy' })).not.toBeNull()
+      })
+    })
+
+    describe('rolling back a failed reorder', () => {
+      it('should keep a tick that lands while the reorder is rolled back', async () => {
+        const { answer } = stubManualFetch()
+        renderClient()
+        await reorder(['i3', 'i1', 'i2'])
+        await userEvent.click(checkbox('Faktury kosztowe'))
+
+        await answer(1, 200, doneItem('i2', 'Faktury kosztowe'))
+        await answer(0, 500)
+
+        await waitFor(() => expect(rowTitles()).toEqual(['Wyciąg bankowy', 'Faktury kosztowe', 'Raport VAT']))
+        expect(checkbox('Faktury kosztowe').getAttribute('aria-checked')).toBe('true')
+      })
+
+      it('should restore the previous order values of the tasks', async () => {
+        const { answer } = stubManualFetch()
+        renderClient()
+        await reorder(['i3', 'i1', 'i2'])
+
+        await answer(0, 500)
+
+        expect(itemOrders()).toEqual([
+          ['i1', 1],
+          ['i2', 2],
+          ['i3', 3],
+        ])
+      })
     })
   })
 })

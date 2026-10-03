@@ -1,6 +1,6 @@
 'use client'
 
-import { useMemo, useState, useTransition } from 'react'
+import { useMemo, useRef, useState, useTransition } from 'react'
 import { useRouter } from 'next/navigation'
 import { Check, Circle, CircleAlert, Loader2, Play } from 'lucide-react'
 import { ArticleViewer } from '@/components/wikipedia/ArticleViewer'
@@ -11,7 +11,7 @@ import { StatusBadge } from './status-badge'
 import {
   calculateRunProgress,
   formatClosingPeriod,
-  getRunDisplayStatus,
+  isReadyToClose,
   MONTHS,
 } from '@/lib/operations/run-factory'
 
@@ -84,16 +84,21 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
   const router = useRouter()
   const [runName, setRunName] = useState(initialRun.name)
   const [runStatus, setRunStatus] = useState(initialRun.status)
+  // The saved closing period is what the header shows; the draft is only what the period inputs currently hold.
   const [periodYear, setPeriodYear] = useState(initialRun.periodYear)
   const [periodMonth, setPeriodMonth] = useState(initialRun.periodMonth ?? 1)
+  const [draftPeriodYear, setDraftPeriodYear] = useState(initialRun.periodYear)
+  const [draftPeriodMonth, setDraftPeriodMonth] = useState(initialRun.periodMonth ?? 1)
   const [items, setItems] = useState(initialRun.items)
   const [procedures, setProcedures] = useState(initialRun.procedures)
   const [selectedId, setSelectedId] = useState(initialRun.items[0]?.id ?? '')
-  const [note, setNote] = useState(initialRun.items[0]?.note ?? '')
   const [form, setForm] = useState<FormState>(null)
   const [error, setError] = useState<string | null>(null)
   const [periodSaving, setPeriodSaving] = useState(false)
+  const [statusSaving, setStatusSaving] = useState(false)
   const [isPending, startTransition] = useTransition()
+  // Latest PATCH request number per item, so a response that arrives after a newer request was sent is not merged.
+  const patchRequests = useRef<Record<string, number>>({})
 
   const { canManage } = initialRun
   const isOpen = runStatus === 'open'
@@ -101,7 +106,8 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
   const selectedItem = items.find((item) => item.id === selectedId) ?? items[0]
   const editedItem = form?.mode === 'edit' ? items.find((item) => item.id === form.itemId) : undefined
   const progress = calculateRunProgress(items)
-  const displayStatus = getRunDisplayStatus(runStatus, items)
+  // Only managers see every task of the run; an employee's own tasks being done does not mean the run is ready.
+  const displayStatus = runStatus === 'open' && canManage && isReadyToClose(items) ? 'ready' : runStatus
   const procedureById = useMemo(
     () => new Map(procedures.map((procedure) => [procedure.id, procedure])),
     [procedures]
@@ -117,11 +123,12 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
     const item = items.find((entry) => entry.id === id)
     if (!item) return
     setSelectedId(item.id)
-    setNote(item.note ?? '')
     setForm(null)
   }
 
   function patchItem(itemId: string, data: object, onDone?: () => void) {
+    const requestNumber = (patchRequests.current[itemId] ?? 0) + 1
+    patchRequests.current[itemId] = requestNumber
     startTransition(async () => {
       const updated = await requestJson<ItemResponse>(
         `/api/operations/runs/${initialRun.id}/items/${itemId}`,
@@ -135,8 +142,9 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
       setError(null)
       const { procedure, ...item } = updated
       registerProcedure(procedure)
-      setItems((current) => current.map((entry) => (entry.id === item.id ? { ...entry, ...item } : entry)))
-      if (item.id === selectedId) setNote(item.note ?? '')
+      if (patchRequests.current[itemId] === requestNumber) {
+        setItems((current) => current.map((entry) => (entry.id === item.id ? { ...entry, ...item } : entry)))
+      }
       onDone?.()
     })
   }
@@ -159,12 +167,12 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
       registerProcedure(procedure)
       setItems((current) => [...current, item])
       setSelectedId(item.id)
-      setNote(item.note ?? '')
       setForm(null)
     })
   }
 
   function deleteTask(itemId: string) {
+    const firstRemainingId = items.find((item) => item.id !== itemId)?.id ?? ''
     startTransition(async () => {
       const result = await requestJson<{ ok: boolean }>(
         `/api/operations/runs/${initialRun.id}/items/${itemId}`,
@@ -175,18 +183,17 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
         return
       }
       setError(null)
-      const remaining = items.filter((item) => item.id !== itemId).map((item, index) => ({ ...item, order: index + 1 }))
-      setItems(remaining)
-      if (selectedId === itemId) {
-        setSelectedId(remaining[0]?.id ?? '')
-        setNote(remaining[0]?.note ?? '')
-      }
-      setForm(null)
+      // Functional updates: other saves may have landed while the DELETE was in flight.
+      setItems((current) =>
+        current.filter((item) => item.id !== itemId).map((item, index) => ({ ...item, order: index + 1 }))
+      )
+      setSelectedId((current) => (current === itemId ? firstRemainingId : current))
+      setForm((current) => (current?.mode === 'edit' && current.itemId === itemId ? null : current))
     })
   }
 
   function reorderTasks(orderedIds: string[]) {
-    const previous = items
+    const previous = new Map(items.map((item, index) => [item.id, { index, order: item.order }]))
     const byId = new Map(items.map((item) => [item.id, item]))
     setItems(
       orderedIds.flatMap((id, index) => {
@@ -201,7 +208,13 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
         { itemIds: orderedIds }
       )
       if (!result) {
-        setItems(previous)
+        // Put back only the ordering, so saves that landed in the meantime (status, notes, new tasks) survive.
+        const positionOf = (id: string) => previous.get(id)?.index ?? previous.size
+        setItems((current) =>
+          current
+            .map((item) => ({ ...item, order: previous.get(item.id)?.order ?? item.order }))
+            .sort((a, b) => positionOf(a.id) - positionOf(b.id))
+        )
         setError(SAVE_ERROR)
         return
       }
@@ -210,10 +223,12 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
   }
 
   function changeRunStatus(next: 'open' | 'closed') {
+    setStatusSaving(true)
     startTransition(async () => {
       const updated = await requestJson<{ status: string }>(`/api/operations/runs/${initialRun.id}`, 'PATCH', {
         status: next,
       })
+      setStatusSaving(false)
       if (!updated) {
         setError(SAVE_ERROR)
         return
@@ -230,7 +245,7 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
     const updated = await requestJson<{ name: string; periodYear: number; periodMonth: number | null }>(
       `/api/operations/runs/${initialRun.id}`,
       'PATCH',
-      { periodYear, periodMonth }
+      { periodYear: draftPeriodYear, periodMonth: draftPeriodMonth }
     )
     setPeriodSaving(false)
     if (!updated) {
@@ -241,6 +256,8 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
     setRunName(updated.name)
     setPeriodYear(updated.periodYear)
     setPeriodMonth(updated.periodMonth ?? 1)
+    setDraftPeriodYear(updated.periodYear)
+    setDraftPeriodMonth(updated.periodMonth ?? 1)
   }
 
   return (
@@ -263,8 +280,8 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
                       Zamykany miesiąc
                     </label>
                     <select
-                      value={periodMonth}
-                      onChange={(event) => setPeriodMonth(Number(event.target.value))}
+                      value={draftPeriodMonth}
+                      onChange={(event) => setDraftPeriodMonth(Number(event.target.value))}
                       className="rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
                     >
                       {MONTHS.map((month, index) => (
@@ -282,8 +299,8 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
                       type="number"
                       min={2020}
                       max={2100}
-                      value={periodYear}
-                      onChange={(event) => setPeriodYear(Number(event.target.value))}
+                      value={draftPeriodYear}
+                      onChange={(event) => setDraftPeriodYear(Number(event.target.value))}
                       className="w-24 rounded-lg border border-gray-200 px-3 py-2 text-sm focus:outline-none focus:ring-2 focus:ring-gray-400"
                     />
                   </div>
@@ -317,7 +334,7 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
               <button
                 type="button"
                 onClick={() => changeRunStatus('closed')}
-                disabled={isPending}
+                disabled={statusSaving}
                 className={`rounded-lg px-4 py-2 text-sm font-medium transition disabled:opacity-50 ${
                   displayStatus === 'ready'
                     ? 'bg-gray-900 text-white hover:bg-gray-800'
@@ -331,7 +348,7 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
               <button
                 type="button"
                 onClick={() => changeRunStatus('open')}
-                disabled={isPending}
+                disabled={statusSaving}
                 className="rounded-lg border border-gray-300 bg-white px-4 py-2 text-sm font-medium text-gray-800 transition hover:bg-gray-50 disabled:opacity-50"
               >
                 Otwórz ponownie
@@ -372,7 +389,7 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
             <RunTaskList
               items={items}
               selectedId={selectedItem?.id ?? ''}
-              canToggle={isOpen && !isPending}
+              canToggle={isOpen}
               canEdit={canEditList}
               onSelect={selectItem}
               onToggleDone={toggleDone}
@@ -424,7 +441,7 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
                       <button
                         key={option.id}
                         onClick={() => patchItem(selectedItem.id, { status: option.id })}
-                        disabled={isPending || !isOpen}
+                        disabled={!isOpen}
                         className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium transition disabled:opacity-60 ${
                           selectedItem.status === option.id
                             ? 'border-gray-900 bg-gray-900 text-white'
@@ -444,10 +461,12 @@ export function RunDetailClient({ initialRun }: { initialRun: RunDetail }) {
                     Notatka / bloker
                   </label>
                   <textarea
-                    value={note}
-                    onChange={(event) => setNote(event.target.value)}
-                    onBlur={() => {
-                      if (isOpen && note !== (selectedItem.note ?? '')) patchItem(selectedItem.id, { note })
+                    key={selectedItem.id}
+                    defaultValue={selectedItem.note ?? ''}
+                    onBlur={(event) => {
+                      if (isOpen && event.target.value !== (selectedItem.note ?? '')) {
+                        patchItem(selectedItem.id, { note: event.target.value })
+                      }
                     }}
                     readOnly={!isOpen}
                     rows={3}
