@@ -3441,3 +3441,18 @@ Per `CLAUDE.md`, update the project memory file for WallDecor (milestone M10 fol
 | Unit / integration / E2E tests | 2, 3, 4, 5, 10 |
 | Migration (SQL file, not `db push`) + `architecture.md` | 1, 11 |
 | Out of scope: owners assignment, template editing, other processes, closed-run editing | not implemented (by design) |
+
+---
+
+## Execution notes (deviations found during implementation)
+
+The code blocks above are the **initial** plan. The final code is in git (branch `improve-module-ux`) and differs from them wherever code review found defects. Deviations:
+
+- **Task 3:** in the Zod schemas `.trim()` must precede `.min()` (Zod 4 evaluates checks in order), otherwise a whitespace-only title passes.
+- **Task 4:** `assertRunIsOpen` / `assertProcedureExists` run inside the write transaction (race), and the guards accept `Pick<Prisma.TransactionClient, ...>` so they work with both `PrismaClient` and a transaction `tx`.
+- **Task 5:** the item PATCH keeps `completedById` of an already-done task and writes ONLY the fields that were sent (lost-update race between a note save and a tick); the `storedItem` test fixture gained the matching fields.
+- **Task 6:** `readyToClose` is computed over ALL tasks of the run, not only the ones visible to the viewer.
+- **Task 7:** the start logic lives in a shared `use-start-run.ts` hook; fetches use try/catch/finally; non-managers get a neutral empty state; the close button has a per-run `aria-label`.
+- **Task 8:** `requestJson` also catches a thrown `fetch`; the note is a per-task uncontrolled textarea (no `note` state); state updates are functional; the "ready" badge is shown to managers only; saved vs draft period are kept apart; there is no global `isPending` gating, instead a per-item stale-response guard and a reorder request counter.
+- **Task 9:** two more test files were updated for the new sidebar: `__tests__/unit/shared/installer-boundary.test.tsx` and `__tests__/unit/shared/responsive-navigation.test.tsx`.
+- **Task 10:** the reorder step waits for `aria-pressed`, retries ArrowUp until the dnd-kit live region reports a move, and waits for the PUT 200 before reloading.

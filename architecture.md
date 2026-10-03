@@ -251,12 +251,15 @@ model ChecklistRunItem {
   ownerId        String?
   status         String @default("todo") // todo | in_progress | blocked | done
   note           String?
+  recurring      Boolean @default(true) // false = zadanie jednorazowe, nie kopiuje się do następnego miesiąca
   completedAt    DateTime?
   completedById  String?
 }
 ```
 
 Pierwszy seed: `Finanse -> Koniec miesiąca -> Księgowość - koniec miesiąca`, 13 zadań i kilka procedur how-to jako `Article.type = "procedure"`.
+
+Nowe wykonanie (`POST /api/operations/runs`) kopiuje zadania z ostatniego wykonania tego samego szablonu (tylko `recurring = true`, status i notatki wyzerowane). Szablon jest użyty tylko, gdy nie ma jeszcze żadnego wykonania. Duplikat (ten sam szablon i miesiąc) zwraca 409 z `runId` istniejącego wykonania — sprawdzany w kodzie, bez unikalnego indeksu (`periodMonth` bywa NULL, a dane produkcyjne mogą już zawierać duplikaty).
 
 ---
 

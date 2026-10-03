@@ -30,7 +30,7 @@ Scope: the module is used for **one process only**, month-end closing. The gener
 
 - Header button **"+ Rozpocznij miesiąc"** (ADMIN, MANAGER). Month defaults to the previous month (`getPreviousMonthPeriod`). The template is chosen automatically: the template of the most recent run, or, if there are no runs yet, the first active template.
 - If no run exists for the previous month, a yellow banner shows at the top: "<miesiąc rok> nie ma jeszcze zamknięcia" with a button "Rozpocznij zamknięcie: <miesiąc rok>".
-- Duplicate guard: if a run for the same template and period exists, the server returns 409 and the UI shows "<miesiąc rok> już rozpoczęty — otwórz" linking to it instead of creating a second one.
+- Duplicate guard: if a run for the same template and period exists, the server returns 409 with the existing run's `runId` in the body and the UI redirects straight to that run (`router.push`) instead of creating a second one.
 - Sections: **"Do zrobienia"** (status `open`) and **"Zamknięte"** (status `closed`, visually muted, below).
 - Status labels: `open` → **"W toku"** (was "Otwarte"), `closed` → "Zamknięte". Derived hint **"Gotowe do zamknięcia"** when an open run has all tasks `done` (computed, not stored).
 - Open-run cards show a line "Następne: <title of first task not done>".

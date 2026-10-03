@@ -1,6 +1,32 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-10-01 (umowy kosztowe — #25, gałąź `cost-contracts`)
+**Ostatnia aktualizacja:** 2026-10-02 (Zamknięcie miesiąca — przebudowa UX modułu Wykonania, gałąź `improve-module-ux`)
+
+## Zamknięcie miesiąca (dawniej Wykonania) — 02.10.2026 (gałąź `improve-module-ux`)
+
+```
+[x] Migracja 20261002090000_run_item_recurring: ChecklistRunItem.recurring (domyślnie true)
+[x] Lista /operations/runs: przycisk „+ Rozpocznij miesiąc", baner „<miesiąc> nie ma jeszcze zamknięcia", sekcje „Do zrobienia" / „Zamknięte", linijka „Następne: …", status „Gotowe do zamknięcia" (podpowiedź), „Zamknij miesiąc"
+[x] Nowe wykonanie = kopia zadań z poprzedniego miesiąca (tylko „powtarzaj co miesiąc"); 409 przy duplikacie miesiąca (UI przekierowuje do istniejącego wykonania)
+[x] Szczegół wykonania: pole wyboru „Gotowe" (1 klik), dodawanie / edycja / usuwanie zadań, przełącznik „Powtarzaj co miesiąc", przeciąganie (dnd-kit), „Zamknij miesiąc" bez blokady, „Otwórz ponownie"; zamknięte wykonanie tylko do odczytu
+[x] Menu: „Wykonania" → „Zamknięcie miesiąca", usunięto „Centrum"; /operations przekierowuje na /operations/runs; Szablony poza menu (strona działa pod adresem)
+```
+
+Testy: moduł Operacje + sidebar 499 PASS (jednostkowe operacje 159, integracja na prawdziwym pliku SQLite 42, komponenty 276, pozostałe shared — sidebar i nawigacja — 22); E2E `e2e/operations-month-closing.spec.ts` 1 PASS; Vitest całość 3646 PASS, 11 FAIL — wszystkie w `ksef-sync.test.ts` (pada tak samo na bazie gałęzi `e24be58`, poza zakresem zmian); typecheck PASS, build PASS; lint zmienionych plików czysty (pełny `npm run lint` zgłasza błędy w wygenerowanym, ignorowanym przez git `src/generated/prisma` oraz w 3 plikach, których ta gałąź nie zmienia).
+
+Spec: `docs/superpowers/specs/2026-10-02-month-closing-ux-design.md`. Plan: `docs/superpowers/plans/2026-10-02-month-closing-ux.md`.
+
+**Następna sesja:** zebrać uwagi po pierwszym użyciu w miesiącu (listopad 2026) — ewentualnie przypisywanie osób do zadań z poziomu wykonania.
+
+**Do zrobienia później (drobne):**
+- Niepoprawny JSON w body zwraca 500 w nowych routach operacji (i w starszych routach) — dodać wspólną osłonę na `req.json()`.
+- Zakładka w `content-visibility-matrix.tsx` nadal nazywa się „Wykonania".
+- `getOperationModules` w `src/lib/operations/queries.ts` nie ma już wywołań (po usunięciu huba `/operations`).
+- Zmiana kolejności zadań (`run-detail-client.tsx`): gałąź sukcesu wywołuje `setError(null)` bezwarunkowo, bez sprawdzenia numeru żądania — może zgasić komunikat błędu z innej operacji.
+- Utwardzenie E2E (`e2e/operations-month-closing.spec.ts`): dodatnia asercja menu przed negatywną dla „Centrum", zawężenie lokatora „tylko ten miesiąc" do wiersza zadania, `afterAll` bez wywołania `assertQaDatabase()` (jak w `beforeAll`).
+- Edycja szablonów nie jest już dostępna z menu — tylko pod adresem `/operations/templates`.
+
+---
 
 ## Umowy kosztowe — 01.10.2026 (#25, gałąź `cost-contracts`)
 
@@ -528,9 +554,11 @@ M10 — Operacje / Playbook         [x] MVP start (2026-05-18)
 |---|---|---|---|
 | /api/operations/templates | GET | Lista szablonów checklist | zalogowani |
 | /api/operations/templates/[id] | GET | Szczegóły szablonu | zalogowani |
-| /api/operations/runs | GET, POST | Lista wykonań / uruchomienie wykonania z szablonu | GET: zalogowani; POST: ADMIN, MANAGER |
-| /api/operations/runs/[id] | GET | Szczegóły wykonania | ADMIN/MANAGER: całość; EMPLOYEE: własne zadania |
-| /api/operations/runs/[id]/items/[itemId] | PATCH | Zmiana statusu/notatki zadania | ADMIN/MANAGER lub właściciel zadania |
+| /api/operations/runs | GET, POST | Lista wykonań / start miesiąca (kopia z poprzedniego wykonania, 409 przy duplikacie) | GET: zalogowani; POST: ADMIN, MANAGER |
+| /api/operations/runs/[id] | GET, PATCH | Szczegóły wykonania / zmiana okresu i statusu (open ↔ closed, bez blokady) | GET: ADMIN/MANAGER całość, EMPLOYEE własne zadania; PATCH: ADMIN, MANAGER |
+| /api/operations/runs/[id]/items | POST | Dodanie zadania do otwartego wykonania | ADMIN, MANAGER |
+| /api/operations/runs/[id]/items/[itemId] | PATCH, DELETE | Status i notatka zadania (ADMIN/MANAGER lub właściciel); tytuł, opis, procedura, `recurring` i usunięcie tylko ADMIN/MANAGER; zamknięte wykonanie → 409 | j.w. |
+| /api/operations/runs/[id]/items/order | PUT | Nowa kolejność zadań (lista id) | ADMIN, MANAGER |
 
 ### API — Konta użytkowników
 | Endpoint | Metoda | Opis | Role |
