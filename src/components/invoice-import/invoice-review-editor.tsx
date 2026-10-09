@@ -16,6 +16,7 @@ import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { InvoiceEurConversion, type InvoiceEurRateRequest } from './invoice-eur-conversion'
 import { TagChips, type TagChipsGroup } from '@/components/shared/tag-chips'
+import { documentTypeIssue } from '@/lib/invoice-import/approval-policy'
 import { invoiceClassificationHint, type InvoiceClassificationRule } from '@/lib/invoice-import/classification-hint'
 import type { InvoiceDraftData } from '@/lib/invoice-import/contracts'
 import type { InvoiceDraftAction, InvoiceDraftDetail, InvoiceReviewIssue } from '@/lib/invoice-import/client-contracts'
@@ -23,6 +24,7 @@ import {
   invoiceDataToForm,
   invoiceFormPatch,
   invoiceEurConversionIssue,
+  invoiceFormAmountSumIssue,
   invoiceReviewFormSchema,
   type InvoiceReviewFormValues,
 } from '@/lib/invoice-import/review-form'
@@ -64,6 +66,7 @@ interface RebaseNotice {
 }
 
 const EMPTY_CHOICE = '__invoice_empty_choice__'
+const NO_ISSUES: InvoiceReviewIssue[] = []
 const DOCUMENT_TYPES: ChoiceOption[] = [
   { value: '', label: 'Wybierz rodzaj' },
   { value: 'INVOICE', label: 'Faktura' },
@@ -231,7 +234,7 @@ export function InvoiceReviewEditor({
   tagGroups,
   rules,
   busy,
-  issues = [],
+  issues = NO_ISSUES,
   approvalBlockReason = null,
   onSave,
   onApprove,
@@ -267,6 +270,23 @@ export function InvoiceReviewEditor({
   const watchedValues = useWatch({ control: form.control }) as InvoiceReviewFormValues
   const isEur = currency.trim().toUpperCase() === 'EUR'
   const eurIssue = isEur ? invoiceEurConversionIssue(watchedValues) : null
+  // Server issues describe the values sent for approval. Sum and document type
+  // issues are re-checked against the current values; any other issue no longer
+  // applies once its field is edited.
+  const [issueSnapshot, setIssueSnapshot] = useState(() => ({ issues, values: form.getValues() }))
+  if (issueSnapshot.issues !== issues) setIssueSnapshot({ issues, values: form.getValues() })
+  function currentIssue(issue: InvoiceReviewIssue): InvoiceReviewIssue | null {
+    if (issue.code === 'NOMINAL_AMOUNT_MISMATCH') return invoiceFormAmountSumIssue('NOMINAL', watchedValues)
+    if (issue.code === 'REPORTING_AMOUNT_MISMATCH') return invoiceFormAmountSumIssue('REPORTING', watchedValues)
+    if (!Object.hasOwn(issueSnapshot.values, issue.field)) return issue
+    const field = issue.field as keyof InvoiceReviewFormValues
+    if (JSON.stringify(issueSnapshot.values[field]) === JSON.stringify(watchedValues[field])) return issue
+    return field === 'documentType' ? documentTypeIssue(watchedValues.documentType || null) : null
+  }
+  const activeIssues = issues.flatMap((issue) => {
+    const current = currentIssue(issue)
+    return current ? [current] : []
+  })
 
   useEffect(() => {
     onDirtyChange?.(isDirty)
@@ -290,13 +310,10 @@ export function InvoiceReviewEditor({
     setRebaseNotice(null)
   }, [currentSourceKey, draft, form, isDirty])
 
-  const issueMap = useMemo(() => {
-    const map = new Map<string, string>()
-    for (const issue of issues) {
-      if (!map.has(issue.field)) map.set(issue.field, issue.messagePolish)
-    }
-    return map
-  }, [issues])
+  const issueMap = new Map<string, string>()
+  for (const issue of activeIssues) {
+    if (!issueMap.has(issue.field)) issueMap.set(issue.field, issue.messagePolish)
+  }
 
   function messageFor(field: keyof InvoiceReviewFormValues): string | undefined {
     return issueMap.get(field) ?? polishValidationMessage(errors[field]?.message)
@@ -314,6 +331,7 @@ export function InvoiceReviewEditor({
     .some((field) => Boolean(messageFor(field)))
   const detailsHaveError = (['net', 'vat', 'bankAccount', 'notes'] as const)
     .some((field) => Boolean(messageFor(field)))
+    || activeIssues.some((issue) => issue.code === 'NOMINAL_AMOUNT_MISMATCH')
 
   useEffect(() => {
     if (detailsHaveError && detailsRef.current) detailsRef.current.open = true
@@ -500,11 +518,11 @@ export function InvoiceReviewEditor({
           </div>
         </header>
 
-        {issues.length > 0 && (
+        {activeIssues.length > 0 && (
           <div role="alert" className="border-l-4 border-red-700 bg-red-50 px-4 py-3 text-sm text-red-900">
             <p className="font-semibold">Sprawdź dane wskazane przez system</p>
             <ul className="mt-1 list-disc space-y-1 pl-5">
-              {[...new Set(issues.map((issue) => issue.messagePolish))].map((message) => <li key={message}>{message}</li>)}
+              {[...new Set(activeIssues.map((issue) => issue.messagePolish))].map((message) => <li key={message}>{message}</li>)}
             </ul>
           </div>
         )}
