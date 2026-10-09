@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   INVOICE_APPROVAL_MAX_AMOUNT,
+  invoiceAmountSumIssue,
   validateInvoiceApproval,
 } from '@/lib/invoice-import/approval-policy'
 
@@ -201,6 +202,42 @@ describe('invoice import approval policy', () => {
     expect(issueCodes({ ...validPlnDraft, gross: 100, net: 80, vat: 19.98 })).toContain(
       'NOMINAL_AMOUNT_MISMATCH',
     )
+  })
+
+  describe('net plus VAT sum check', () => {
+    const rateConversion = { mode: 'MANUAL_RATE' as const, paymentDate: null, rate: '4.25', rateDate: null, tableNumber: null }
+
+    it('should name the amounts, their sum and the difference in the nominal mismatch message', () => {
+      const result = validateInvoiceApproval({ ...validPlnDraft, currency: 'EUR', gross: 360.2, net: 300, vat: 69,
+        conversion: rateConversion, reportingGross: 1530.85, reportingNet: 1275, reportingVat: 293.25,
+        conversionConfirmed: true, conversionNote: 'Kurs ręczny 4.25' })
+      expect(result.ok ? [] : result.issues).toContainEqual({ field: 'gross', code: 'NOMINAL_AMOUNT_MISMATCH',
+        messagePolish: 'Netto 300,00 EUR + VAT 69,00 EUR = 369,00 EUR, a brutto to 360,20 EUR (różnica 8,80 EUR). Popraw kwotę brutto albo netto lub VAT w „Danych szczegółowych”.' })
+    })
+
+    it('should not repeat a nominal mismatch as a PLN mismatch when PLN is converted at a rate', () => {
+      const result = validateInvoiceApproval({ ...validPlnDraft, currency: 'EUR', gross: 360.2, net: 300, vat: 69,
+        conversion: rateConversion, reportingGross: 1530.85, reportingNet: 1275, reportingVat: 293.25,
+        conversionConfirmed: true, conversionNote: 'Kurs ręczny 4.25' })
+      expect(result.ok ? [] : result.issues.map((issue) => issue.code)).not.toContain('REPORTING_AMOUNT_MISMATCH')
+    })
+
+    it('should accept PLN rounding drift of amounts converted at a rate from a consistent EUR invoice', () => {
+      expect(validateInvoiceApproval({ ...validPlnDraft, currency: 'EUR', gross: 100, net: 81.31, vat: 18.7,
+        conversion: rateConversion, reportingGross: 425, reportingNet: 345.57, reportingVat: 79.48,
+        conversionConfirmed: true, conversionNote: 'Kurs ręczny 4.25' }).ok).toBe(true)
+    })
+
+    it('should still check the PLN sum of manually entered PLN amounts', () => {
+      expect(issueCodes({ ...validPlnDraft, currency: 'EUR', gross: 100, net: 81.31, vat: 18.7,
+        conversion: { ...rateConversion, mode: 'MANUAL_AMOUNT', rate: null },
+        reportingGross: 425, reportingNet: 345.57, reportingVat: 79.48,
+        conversionConfirmed: true, conversionNote: 'Kwota z wyciągu' })).toContain('REPORTING_AMOUNT_MISMATCH')
+    })
+
+    it('should return no sum issue when net or VAT is unknown', () => {
+      expect(invoiceAmountSumIssue('NOMINAL', { gross: 100, net: null, vat: 23 }, 'PLN')).toBeNull()
+    })
   })
 
   it('keeps optional unknowns null or absent and never replaces them with zero', () => {

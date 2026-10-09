@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import { invoiceDraftDataSchema, type InvoiceDraftData } from './contracts'
+import { invoiceAmountSumIssue, type ApprovalIssue } from './approval-policy'
 import { EUR_CONVERSION_BASIS_FIELDS, hasEurSourceCentPrecision, invoiceEurConversionSchema, isValidConfirmedEurConversion, parseCanonicalRate } from './eur-conversion'
 
 const MONEY_FIELDS = ['gross', 'net', 'vat', 'reportingGross', 'reportingNet', 'reportingVat'] as const
@@ -36,6 +37,19 @@ const invoiceReviewFormBaseSchema = z.strictObject({
   conversionRate: z.string().max(40),
 })
 export type InvoiceReviewFormValues = z.infer<typeof invoiceReviewFormBaseSchema>
+
+/** The approval sum check (net + VAT = gross) applied to the amounts typed in the form. */
+export function invoiceFormAmountSumIssue(kind: 'NOMINAL' | 'REPORTING', values: InvoiceReviewFormValues): ApprovalIssue | null {
+  try {
+    return kind === 'NOMINAL'
+      ? invoiceAmountSumIssue(kind, { gross: invoiceReviewMoneyValue(values.gross), net: invoiceReviewMoneyValue(values.net),
+        vat: invoiceReviewMoneyValue(values.vat) }, values.currency.trim().toUpperCase())
+      : invoiceAmountSumIssue(kind, { gross: invoiceReviewMoneyValue(values.reportingGross),
+        net: invoiceReviewMoneyValue(values.reportingNet), vat: invoiceReviewMoneyValue(values.reportingVat) }, 'PLN')
+  } catch {
+    return null // A malformed amount is reported by its own field.
+  }
+}
 
 export function invoiceEurConversionIssue(values: InvoiceReviewFormValues): { field: keyof InvoiceReviewFormValues; message: string } | null {
   if (values.currency.trim().toUpperCase() !== 'EUR') return null

@@ -118,8 +118,80 @@ function amountsDifferByMoreThanOneCent(gross: number, net: number, vat: number)
   return difference < BigInt(-1) || difference > BigInt(1)
 }
 
+const centsFormat = new Intl.NumberFormat('pl-PL', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+
+function formatCents(cents: number, currency: string): string {
+  return `${centsFormat.format(cents / 100)}${currency ? ` ${currency}` : ''}`
+}
+
+function amountSumIssueFromCents(
+  kind: 'NOMINAL' | 'REPORTING',
+  grossCents: number | null,
+  netCents: number | null,
+  vatCents: number | null,
+  currency: string,
+): ApprovalIssue | null {
+  if (grossCents == null || netCents == null || vatCents == null
+    || !amountsDifferByMoreThanOneCent(grossCents, netCents, vatCents)) return null
+  const amount = (cents: number) => formatCents(cents, currency)
+  const sum = `Netto ${amount(netCents)} + VAT ${amount(vatCents)} = ${amount(netCents + vatCents)}`
+  const difference = `różnica ${amount(Math.abs(netCents + vatCents - grossCents))}`
+  return kind === 'NOMINAL'
+    ? {
+        field: 'gross',
+        code: 'NOMINAL_AMOUNT_MISMATCH',
+        messagePolish: `${sum}, a brutto to ${amount(grossCents)} (${difference}). Popraw kwotę brutto albo netto lub VAT w „Danych szczegółowych”.`,
+      }
+    : {
+        field: 'reportingGross',
+        code: 'REPORTING_AMOUNT_MISMATCH',
+        messagePolish: `${sum}, a brutto w PLN to ${amount(grossCents)} (${difference}). Popraw kwoty w PLN.`,
+      }
+}
+
+/**
+ * Net plus VAT must match gross within one cent. Shared with the review form so
+ * the message follows the amounts being edited.
+ */
+export function invoiceAmountSumIssue(
+  kind: 'NOMINAL' | 'REPORTING',
+  amounts: { gross: number | null; net: number | null; vat: number | null },
+  currency: string,
+): ApprovalIssue | null {
+  const ignored: ApprovalIssue[] = [] // Invalid amounts are reported by their own fields.
+  const [grossField, netField, vatField] = kind === 'NOMINAL'
+    ? ['gross', 'net', 'vat'] as const
+    : ['reportingGross', 'reportingNet', 'reportingVat'] as const
+  return amountSumIssueFromCents(
+    kind,
+    amountToCents(grossField, amounts.gross, ignored),
+    amountToCents(netField, amounts.net, ignored),
+    amountToCents(vatField, amounts.vat, ignored),
+    currency,
+  )
+}
+
 function roundedAmount(cents: number | null): number | null {
   return cents == null ? null : cents / 100
+}
+
+/** Only a plain invoice can become a cost; every other document type needs separate handling. */
+export function documentTypeIssue(documentType: InvoiceDraftData['documentType']): ApprovalIssue | null {
+  switch (documentType) {
+    case 'INVOICE':
+      return null
+    case 'CORRECTION':
+      return { field: 'documentType', code: 'CORRECTION_UNSUPPORTED', messagePolish: 'Korekty wymagają osobnej obsługi.' }
+    case 'CREDIT_NOTE':
+      return { field: 'documentType', code: 'CREDIT_NOTE_UNSUPPORTED', messagePolish: 'Noty kredytowe wymagają osobnej obsługi.' }
+    case 'PROFORMA':
+      return { field: 'documentType', code: 'PROFORMA_UNSUPPORTED', messagePolish: 'Proformy nie mogą zostać zatwierdzone jako koszt.' }
+    case 'OTHER':
+      return { field: 'documentType', code: 'OTHER_DOCUMENT_UNSUPPORTED', messagePolish: 'Ten typ dokumentu wymaga osobnej obsługi.' }
+    case null:
+    case undefined:
+      return { field: 'documentType', code: 'DOCUMENT_TYPE_REQUIRED', messagePolish: 'Potwierdź, że dokument jest fakturą.' }
+  }
 }
 
 export function validateInvoiceApproval(input: unknown): InvoiceApprovalResult {
@@ -144,26 +216,8 @@ export function validateInvoiceApproval(input: unknown): InvoiceApprovalResult {
     pushIssue(issues, 'conversion', 'INVALID_EUR_CONVERSION', 'Przeliczenie EUR nie odpowiada dacie płatności, kursowi lub kwotom PLN. Przelicz i potwierdź ponownie.')
   }
 
-  switch (data.documentType) {
-    case 'INVOICE':
-      break
-    case 'CORRECTION':
-      pushIssue(issues, 'documentType', 'CORRECTION_UNSUPPORTED', 'Korekty wymagają osobnej obsługi.')
-      break
-    case 'CREDIT_NOTE':
-      pushIssue(issues, 'documentType', 'CREDIT_NOTE_UNSUPPORTED', 'Noty kredytowe wymagają osobnej obsługi.')
-      break
-    case 'PROFORMA':
-      pushIssue(issues, 'documentType', 'PROFORMA_UNSUPPORTED', 'Proformy nie mogą zostać zatwierdzone jako koszt.')
-      break
-    case 'OTHER':
-      pushIssue(issues, 'documentType', 'OTHER_DOCUMENT_UNSUPPORTED', 'Ten typ dokumentu wymaga osobnej obsługi.')
-      break
-    case null:
-    case undefined:
-      pushIssue(issues, 'documentType', 'DOCUMENT_TYPE_REQUIRED', 'Potwierdź, że dokument jest fakturą.')
-      break
-  }
+  const typeIssue = documentTypeIssue(data.documentType)
+  if (typeIssue) issues.push(typeIssue)
 
   if (data.supplierName == null) {
     pushIssue(issues, 'supplierName', 'SUPPLIER_NAME_REQUIRED', 'Uzupełnij nazwę dostawcy.')
@@ -200,15 +254,8 @@ export function validateInvoiceApproval(input: unknown): InvoiceApprovalResult {
   const grossCents = amountToCents('gross', data.gross, issues)
   const netCents = amountToCents('net', data.net, issues)
   const vatCents = amountToCents('vat', data.vat, issues)
-  if (grossCents != null && netCents != null && vatCents != null
-    && amountsDifferByMoreThanOneCent(grossCents, netCents, vatCents)) {
-    pushIssue(
-      issues,
-      'gross',
-      'NOMINAL_AMOUNT_MISMATCH',
-      'Suma kwoty netto i VAT różni się od brutto o więcej niż jeden grosz.',
-    )
-  }
+  const nominalSumIssue = amountSumIssueFromCents('NOMINAL', grossCents, netCents, vatCents, data.currency ?? '')
+  if (nominalSumIssue) issues.push(nominalSumIssue)
 
   let reportingGrossCents = grossCents
   let reportingNetCents = netCents
@@ -227,18 +274,12 @@ export function validateInvoiceApproval(input: unknown): InvoiceApprovalResult {
     reportingGrossCents = amountToCents('reportingGross', data.reportingGross, issues)
     reportingNetCents = amountToCents('reportingNet', data.reportingNet, issues)
     reportingVatCents = amountToCents('reportingVat', data.reportingVat, issues)
-    if (reportingGrossCents != null && reportingNetCents != null && reportingVatCents != null
-      && amountsDifferByMoreThanOneCent(
-        reportingGrossCents,
-        reportingNetCents,
-        reportingVatCents,
-      )) {
-      pushIssue(
-        issues,
-        'reportingGross',
-        'REPORTING_AMOUNT_MISMATCH',
-        'Suma kwoty netto i VAT w PLN różni się od brutto w PLN o więcej niż jeden grosz.',
-      )
+    // PLN amounts converted at a rate are checked against the EUR amounts above;
+    // their own sum may drift by rounding and would only repeat the EUR mismatch.
+    const convertedAtRate = data.conversion != null && data.conversion.mode !== 'MANUAL_AMOUNT'
+    if (!convertedAtRate) {
+      const reportingSumIssue = amountSumIssueFromCents('REPORTING', reportingGrossCents, reportingNetCents, reportingVatCents, 'PLN')
+      if (reportingSumIssue) issues.push(reportingSumIssue)
     }
   }
 

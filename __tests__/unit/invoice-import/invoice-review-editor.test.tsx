@@ -164,6 +164,86 @@ describe('InvoiceReviewEditor', () => {
     expect(screen.queryByText('AMOUNT_MISMATCH_INTERNAL')).toBeNull()
   })
 
+  describe('document type issue after a rejected approval', () => {
+    const proformaMessage = 'Proformy nie mogą zostać zatwierdzone jako koszt.'
+
+    async function chooseDocumentType(user: ReturnType<typeof userEvent.setup>, label: string) {
+      await act(async () => {
+        const trigger = screen.getByRole('button', { name: 'Rodzaj dokumentu' })
+        trigger.focus()
+        fireEvent.keyDown(trigger, { key: 'ArrowDown' })
+      })
+      await user.click(screen.getByRole('menuitemradio', { name: label }))
+      await waitFor(() => expect(screen.queryByRole('menuitemradio', { name: label })).toBeNull())
+    }
+
+    function renderProforma() {
+      render(<InvoiceReviewEditor {...props({
+        draft: draft({ documentType: 'PROFORMA', currency: 'EUR', gross: 100 }),
+        issues: [{ field: 'documentType', code: 'PROFORMA_UNSUPPORTED', messagePolish: proformaMessage }],
+      })} />)
+    }
+
+    it('should hide the pro forma message once the document is changed to an invoice', async () => {
+      const user = userEvent.setup()
+      renderProforma()
+      expect(screen.getAllByText(proformaMessage).length).toBeGreaterThan(0)
+
+      await chooseDocumentType(user, 'Faktura')
+
+      expect(screen.queryByText(proformaMessage)).toBeNull()
+    })
+
+    it('should show the message of the newly chosen unsupported document type', async () => {
+      const user = userEvent.setup()
+      renderProforma()
+
+      await chooseDocumentType(user, 'Faktura korygująca')
+
+      expect(screen.queryByText(proformaMessage)).toBeNull()
+      expect(screen.getAllByText('Korekty wymagają osobnej obsługi.').length).toBeGreaterThan(0)
+    })
+  })
+
+  describe('net plus VAT sum issue after a rejected approval', () => {
+    const sumMessage = 'Netto 300,00 PLN + VAT 69,00 PLN = 369,00 PLN, a brutto to 360,20 PLN (różnica 8,80 PLN). Popraw kwotę brutto albo netto lub VAT w „Danych szczegółowych”.'
+
+    function renderMismatch() {
+      render(<InvoiceReviewEditor {...props({
+        draft: draft({ currency: 'PLN', gross: 360.2, net: 300, vat: 69 }),
+        issues: [{ field: 'gross', code: 'NOMINAL_AMOUNT_MISMATCH', messagePolish: sumMessage }],
+      })} />)
+    }
+
+    it('should open the details holding net and VAT', () => {
+      renderMismatch()
+      expect((screen.getByText('Kwota netto').closest('details') as HTMLDetailsElement).open).toBe(true)
+    })
+
+    it('should hide the issue once VAT is corrected to match gross', async () => {
+      const user = userEvent.setup()
+      renderMismatch()
+      expect(screen.getAllByText(sumMessage).length).toBeGreaterThan(0)
+
+      const vat = screen.getByLabelText('Kwota VAT')
+      await user.clear(vat)
+      await user.type(vat, '60,20')
+
+      expect(screen.queryByText(/Netto 300,00 PLN/u)).toBeNull()
+    })
+
+    it('should update the amounts in the message while they still differ', async () => {
+      const user = userEvent.setup()
+      renderMismatch()
+
+      const vat = screen.getByLabelText('Kwota VAT')
+      await user.clear(vat)
+      await user.type(vat, '60')
+
+      expect(screen.getAllByText(/= 360,00 PLN, a brutto to 360,20 PLN \(różnica 0,20 PLN\)/u).length).toBeGreaterThan(0)
+    })
+  })
+
   it('keeps supplier classification as a suggestion until the administrator applies it', async () => {
     const user = userEvent.setup()
     const onSave = vi.fn().mockResolvedValue(undefined)
