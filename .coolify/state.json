@@ -5,18 +5,43 @@
   "environment_uuid": "bckogwk400o8kg8ks08cs8c4",
   "server_uuid": "tgso04og4wcwk0oc0o84s8gw",
   "url": "https://app.walldecor.pl",
-  "deployed_commit": "fcbdcd297d06db4f6419f1e7498531aa5bf41048",
-  "deployment_uuid": "k4k0g44ow0gg0gs0ko0k4s4w",
+  "deployed_commit": "1c55b01800ed5302f662dc785aaf42f2d3b47d36",
+  "deployment_uuid": "zsg8c44w40cccs4kgok0wwwk",
   "status": "finished",
-  "verified_at": "2026-09-18",
+  "verified_at": "2026-10-14",
   "verified": [
-    "health200",
-    "authenticated_break_even_report",
-    "source_picker_prefill",
-    "margin_editor",
-    "sqlite_integrity_ok",
-    "foreign_keys_empty",
-    "failed_migrations_zero",
-    "new_settings_empty"
-  ]
+    "coolify_running_healthy",
+    "production_deployed_commit_readback",
+    "auto_deploy_off_readback",
+    "persistent_data_volume_readback"
+  ],
+  "build_pipeline": {
+    "workflow": ".github/workflows/build-image.yml",
+    "registry": "ghcr.io/peterlesniewski-lang/walldecor-app",
+    "platform": "linux/amd64",
+    "dockerfile_location": "/Dockerfile.coolify",
+    "auto_deploy": false,
+    "preview_deployments": false,
+    "use_build_secrets": false,
+    "inject_build_args_to_dockerfile": false,
+    "production_approval_required": true,
+    "package_visibility": "private",
+    "registry_login": "pending",
+    "configured_at": "2026-10-14"
+  },
+  "previous_verification": {
+    "deployed_commit": "fcbdcd297d06db4f6419f1e7498531aa5bf41048",
+    "deployment_uuid": "k4k0g44ow0gg0gs0ko0k4s4w",
+    "verified_at": "2026-09-18",
+    "verified": [
+      "health200",
+      "authenticated_break_even_report",
+      "source_picker_prefill",
+      "margin_editor",
+      "sqlite_integrity_ok",
+      "foreign_keys_empty",
+      "failed_migrations_zero",
+      "new_settings_empty"
+    ]
+  }
 }

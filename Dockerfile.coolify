@@ -1,0 +1,5 @@
+# check=skip=InvalidDefaultArgInFrom
+# GitHub Actions builds ./Dockerfile. Coolify only pulls an approved image here.
+# No default: an unset approval reference must fail rather than build on the VPS.
+ARG WALLDECOR_APPROVED_IMAGE
+FROM ${WALLDECOR_APPROVED_IMAGE}
