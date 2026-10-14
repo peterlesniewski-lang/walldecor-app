@@ -44,17 +44,20 @@ function CopyButton({ text, label, children, className }: { text: string; label:
   )
 }
 
+const TRANSFER_TITLE_LIMIT = 140
+
 // Keyed by the joined numbers in the parent, so changing the selection resets manual edits.
 function InvoiceNumbersField({ initial }: { initial: string }) {
   const [text, setText] = useState(initial)
+  const over = text.length > TRANSFER_TITLE_LIMIT
   return (
     <div className="min-w-[16rem] flex-1">
       <div className="mb-1 flex items-center justify-between gap-2 text-xs">
         <label htmlFor="ksef-transfer-title" className="font-medium">Tytuł przelewu</label>
-        <span className="num text-[var(--wd-text-muted)]" aria-live="polite">{text.length} {text.length === 1 ? 'znak' : 'znaków'}</span>
+        <span className={`num ${over ? 'font-semibold text-red-600' : 'text-[var(--wd-text-muted)]'}`} aria-live="polite">{text.length} / {TRANSFER_TITLE_LIMIT} znaków{over ? ` (za dużo o ${text.length - TRANSFER_TITLE_LIMIT})` : ''}</span>
       </div>
       <div className="flex gap-2">
-        <input id="ksef-transfer-title" type="text" value={text} onChange={(event) => setText(event.target.value)} className="num min-w-0 flex-1 rounded border border-[var(--wd-border)] bg-white px-2 py-2 text-sm" />
+        <input id="ksef-transfer-title" type="text" value={text} onChange={(event) => setText(event.target.value)} aria-invalid={over} className={`num min-w-0 flex-1 rounded border bg-white px-2 py-2 text-sm ${over ? 'border-red-500 bg-red-50' : 'border-[var(--wd-border)]'}`} />
         <CopyButton text={text} label="Kopiuj numery faktur" className="whitespace-nowrap rounded border border-[var(--wd-border)] px-3 py-2 text-sm hover:bg-gray-50 disabled:opacity-40">Kopiuj</CopyButton>
       </div>
     </div>
