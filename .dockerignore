@@ -34,3 +34,8 @@ coverage
 .git
 .claude
 README.md
+# CI and deployment instructions are not application build inputs.
+/.github
+/COOLIFY_DEPLOYMENT.md
+/DEPLOY.md
+/docs

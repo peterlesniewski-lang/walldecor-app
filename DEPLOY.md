@@ -363,33 +363,11 @@ fi
 
 ### GitHub Actions (CI/CD)
 
-```yaml
-# .github/workflows/deploy.yml
-name: Deploy to Coolify
-
-on:
-  push:
-    branches: [main]
-
-jobs:
-  build:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v3
-      - uses: actions/setup-node@v3
-        with:
-          node-version: 20
-
-      - run: npm ci
-      - run: npm run build
-      - run: npm run lint
-      - run: npm test
-
-      # Webhook to Coolify to trigger deployment
-      - run: |
-          curl -X POST https://coolify-webhook-url \
-            -H "Authorization: Bearer ${{ secrets.COOLIFY_TOKEN }}"
-```
+Aktualny workflow `.github/workflows/build-image.yml` buduje na GitHubie i
+publikuje obraz w GHCR. Nie zawiera tokena Coolify ani webhooka wdrożeniowego.
+Coolify używa `/Dockerfile.coolify` z referencją zatwierdzonego obrazu.
+Auto Deploy pozostaje wyłączony. Instrukcja operatora:
+[GitHub Actions + GHCR](docs/GITHUB-ACTIONS-BUILD.md).
 
 ---
 
