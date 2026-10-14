@@ -11,9 +11,11 @@
 - Auto Deploy i Preview Deployments w istniejącej aplikacji Coolify są wyłączone.
 - Procedura wyboru obrazu, zgody, wolumenów i rollbacku:
   `docs/GITHUB-ACTIONS-BUILD.md`.
-- Sprawdzenia: actionlint PASS, niezależny przegląd workflow bez błędów
-  blokujących. Pierwszy zdalny build/publikacja oraz pobranie GHCR wymagają
-  potwierdzenia; wdrożenie produkcyjne nie zostało zatwierdzone ani wykonane.
+- Sprawdzenia: actionlint PASS, niezależny przegląd bez błędów blokujących,
+  pełny Docker build PR na GitHubie PASS (run `38600445959`, 5m25s), sprawdzenie
+  mostka PASS i odmowa działania bez zatwierdzonej referencji PASS. Publikacja
+  GHCR i dostęp VPS do prywatnego pakietu wymagają jeszcze potwierdzenia;
+  wdrożenie produkcyjne nie zostało zatwierdzone ani wykonane.
 
 ## Zamknięcie miesiąca (dawniej Wykonania) — 02.10.2026 (gałąź `improve-module-ux`)
 
