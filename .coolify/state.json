@@ -27,7 +27,14 @@
     "production_approval_required": true,
     "package_visibility": "private",
     "registry_login": "pending",
-    "configured_at": "2026-10-14"
+    "configured_at": "2026-10-14",
+    "image_source_commit": "4122110972abea392c1e5220e48e6832c0b1f691",
+    "candidate_digest": "sha256:fde830f308b7018137ccc12bf4094b660eb40d96888e6232cc855c5660a0cb9b",
+    "workflow_run_id": 38602323897,
+    "build_status": "success",
+    "package_visibility_verified": true,
+    "inherit_repository_access": false,
+    "production_deployed": false
   },
   "previous_verification": {
     "deployed_commit": "fcbdcd297d06db4f6419f1e7498531aa5bf41048",

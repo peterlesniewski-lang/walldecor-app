@@ -59,8 +59,12 @@ pól Docker Registry przy oryginalnym Dockerfile nie przenosi budowania poza VPS
 Nie tworzyć zastępczej aplikacji z tą samą domeną ani nowego wolumenu SQLite.
 Zachować wszystkie obecne wolumeny, sekrety runtime, alias sieciowy i zadania.
 
-Obrazy w nowym pakiecie GHCR są domyślnie prywatne. VPS potrzebuje istniejącego
-logowania do GHCR lub dedykowanego tokena tylko do odczytu pakietu. Nie wpisywać
+Widoczność pakietu należy jawnie sprawdzić po pierwszej publikacji: GitHub może
+odziedziczyć publiczny dostęp z repozytorium źródłowego. Pakiet `walldecor-app`
+został ustawiony jako prywatny, a Inherit access from source repository wyłączone.
+Zachowano dostęp workflow repozytorium do publikacji. Anonimowe pobieranie
+jest odrzucane. VPS potrzebuje istniejącego logowania do GHCR lub dedykowanego
+tokena tylko do odczytu pakietu. Nie wpisywać
 tokenów do repozytorium, workflow, argumentów poleceń ani raportów.
 
 ## Pierwsze wdrożenie — dopiero po zgodzie
