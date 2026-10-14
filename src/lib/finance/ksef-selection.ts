@@ -1,5 +1,6 @@
 export interface SelectableKsefInvoice {
   id: string
+  invoiceNumber: string
   grossAmount: number
   currency: string
   paymentStatus?: string
