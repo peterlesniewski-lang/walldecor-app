@@ -15,7 +15,8 @@
   pełny Docker build PR na GitHubie PASS (run `38600445959`, 5m25s), sprawdzenie
   mostka PASS i odmowa działania bez zatwierdzonej referencji PASS. Publikacja
   GHCR PASS (run `38602323897`, 6m46s), prywatność pakietu i odmowa anonimowego
-  pobrania potwierdzone. Dostęp VPS oczekuje na token tylko do odczytu;
+  pobrania potwierdzone. Logowanie VPS tokenem wyłącznie `read:packages` oraz
+  pobranie dokładnego digestu `linux/amd64` potwierdzone;
   wdrożenie produkcyjne nie zostało zatwierdzone ani wykonane.
 
 ## Zamknięcie miesiąca (dawniej Wykonania) — 02.10.2026 (gałąź `improve-module-ux`)

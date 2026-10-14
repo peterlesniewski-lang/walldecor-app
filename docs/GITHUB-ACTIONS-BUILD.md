@@ -67,6 +67,14 @@ jest odrzucane. VPS potrzebuje istniejącego logowania do GHCR lub dedykowanego
 tokena tylko do odczytu pakietu. Nie wpisywać
 tokenów do repozytorium, workflow, argumentów poleceń ani raportów.
 
+14.10.2026 potwierdzono logowanie Docker na VPS dedykowanym tokenem wyłącznie
+`read:packages` oraz pobranie obrazu
+`sha256:fde830f308b7018137ccc12bf4094b660eb40d96888e6232cc855c5660a0cb9b`
+w architekturze `linux/amd64`. Token wygasa 12.01.2027; przed kolejnym pobraniem
+po tej dacie trzeba odnowić dostęp do GHCR. Produkcja pozostała na commicie
+`1c55b01800ed5302f662dc785aaf42f2d3b47d36`, a `WALLDECOR_APPROVED_IMAGE`
+nie została ustawiona. Samo pobranie obrazu nie uruchamia aplikacji ani migracji.
+
 ## Pierwsze wdrożenie — dopiero po zgodzie
 
 1. Potwierdzić zielony run GitHub Actions i jego dokładny digest.
