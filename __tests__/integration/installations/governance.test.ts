@@ -49,6 +49,8 @@ const mobileHandoffRetryMigration = '20260823050000_mobile_handoff_retry_release
 const remoteDeleteLifecycleMigration = '20260823060000_installation_remote_delete_lifecycle'
 const softDeleteRemoteGuardMigration = '20260823070000_installation_soft_delete_remote_guard'
 const hardeningMigrations = new Set([durabilityMigration, acceptanceIntegrityMigration, privateMediaMigration, mobileHandoffRetryMigration, remoteDeleteLifecycleMigration, softDeleteRemoteGuardMigration])
+// Acceptance-protocol migrations alter tables created by the hardening set, so they follow it.
+const followsHardening = (directory: string) => hardeningMigrations.has(directory) || directory.includes('_installation_acceptance_')
 const dayMs = 24 * 60 * 60 * 1000
 
 function futureDate(days = 30) {
@@ -90,7 +92,7 @@ beforeAll(async () => {
   // migration. Task 5 will eventually own the real transition to VERIFIED;
   // these fixtures let us prove existing billing guards and new immutability
   // without giving current generic code a verification back door.
-  applyMigrations((directory) => !hardeningMigrations.has(directory))
+  applyMigrations((directory) => !followsHardening(directory))
   db = createDb()
   await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
   await db.costCenter.create({ data: { id: 'GOV', name: 'Governance' } })
@@ -213,7 +215,7 @@ beforeAll(async () => {
     createdById: 'legacy-admin',
   } })).id
   await db.$disconnect()
-  applyMigrations((directory) => hardeningMigrations.has(directory))
+  applyMigrations(followsHardening)
   db = createDb()
   await db.$executeRawUnsafe('PRAGMA foreign_keys = ON')
   clientToken = await createClientFormLink(order.id)

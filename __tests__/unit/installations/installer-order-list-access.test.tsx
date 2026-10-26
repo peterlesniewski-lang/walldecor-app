@@ -35,6 +35,7 @@ vi.mock('@/lib/installations/order-service', () => ({
   getInstallationOrder: mocks.getOrder,
 }))
 vi.mock('@/lib/installations/installer-card-data', () => ({ getInstallerInstallationCardData: mocks.getCard }))
+vi.mock('@/lib/installations/acceptance-protocol', () => ({ listAcceptanceCandidates: vi.fn(async () => []) }))
 vi.mock('@/lib/installations/catalog-service', () => ({
   getInstallationOrderRooms: mocks.getRooms,
   getInstallerInstallationOrderRooms: mocks.getRooms,
@@ -138,7 +139,8 @@ describe('installer SSR installation access', () => {
     const result = await InstallationOrderPage({ params: Promise.resolve({ id: 'order-1' }) })
 
     expect(mocks.viewerFromSession).toHaveBeenCalledWith(mocks.session)
-    expect(result.props.order.id).toBe('order-1')
+    // The page wraps the detail in the client font scope.
+    expect(result.props.children.props.order.id).toBe('order-1')
     expect(mocks.getCard).toHaveBeenCalledWith(expect.anything(), 'order-1', installerViewer(true))
     expect(mocks.getOrder).not.toHaveBeenCalled()
   })

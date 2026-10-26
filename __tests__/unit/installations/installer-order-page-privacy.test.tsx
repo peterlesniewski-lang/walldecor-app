@@ -39,6 +39,7 @@ vi.mock('@/lib/installations/access', () => ({
 }))
 vi.mock('@/lib/installations/order-service', () => ({ getInstallationOrder: mocks.getOrder }))
 vi.mock('@/lib/installations/installer-card-data', () => ({ getInstallerInstallationCardData: mocks.getCard }))
+vi.mock('@/lib/installations/acceptance-protocol', () => ({ listAcceptanceCandidates: vi.fn(async () => []) }))
 vi.mock('@/lib/installations/catalog-service', () => ({
   getInstallationOrderRooms: mocks.getRooms,
   getInstallerInstallationOrderRooms: mocks.getRooms,
@@ -111,7 +112,9 @@ describe('installer installation detail privacy', () => {
     mocks.listScopeAssignments.mockResolvedValue([{ scopeId: 'scope-1', employeeIds: ['installer-employee'] }])
     mocks.getCard.mockResolvedValue({ order: presentInstallerInstallationOrder(order), rooms: [{ id: 'room-1', name: 'Salon' }], visits: presentInstallerInstallationVisits(visits as never, { role: 'INSTALLER', employeeId: 'installer-employee', employeeActive: true }) })
 
-    const result = await InstallationOrderPage({ params: Promise.resolve({ id: 'order-1' }) })
+    const page = await InstallationOrderPage({ params: Promise.resolve({ id: 'order-1' }) })
+    // The page wraps the detail in the client font scope.
+    const result = page.props.children
 
     expect(mocks.getOrder).not.toHaveBeenCalled()
     expect(mocks.getCard).toHaveBeenCalledWith(expect.anything(), 'order-1', { role: 'INSTALLER', employeeId: 'installer-employee', employeeActive: true })

@@ -188,11 +188,13 @@ describe('installation catalog hierarchy migration upgrade', () => {
       addressStreet: 'Migracyjna', addressBuildingNumber: '7', addressPostalCode: '00-007', addressCity: 'Warszawa',
       primaryEmployeeId: primary.id, backupEmployeeId: backup.id,
     } })
-    const file = await db.installationFile.create({ data: {
-      id: 'remote-delete-upgrade-file', orderId: order.id, purpose: 'INTERNAL_PROJECT', originalFilename: 'upgrade.pdf',
-      contentType: 'application/pdf', status: 'PENDING', source: 'INTERNAL', createdById: primary.id,
-    } })
-    await db.installationFile.update({ where: { id: file.id }, data: { status: 'READY', byteSize: 4, sha256: 'a'.repeat(64) } })
+    // The historical schema predates later InstallationFile columns, so the current Prisma client cannot write this row.
+    const file = { id: 'remote-delete-upgrade-file' }
+    await db.$executeRawUnsafe(
+      'INSERT INTO "InstallationFile" ("id", "orderId", "purpose", "originalFilename", "contentType", "status", "source", "createdById", "updatedAt") VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)',
+      file.id, order.id, 'INTERNAL_PROJECT', 'upgrade.pdf', 'application/pdf', 'PENDING', 'INTERNAL', primary.id, new Date('2026-08-23T07:00:00.000Z'),
+    )
+    await db.$executeRawUnsafe('UPDATE "InstallationFile" SET "status"=?, "byteSize"=?, "sha256"=? WHERE "id"=?', 'READY', 4, 'a'.repeat(64), file.id)
     await db.$executeRawUnsafe(
       'INSERT INTO "InstallationClientLink" ("id", "orderId", "tokenHash", "expiresAt", "createdById", "createdAt") VALUES (?, ?, ?, ?, ?, ?)',
       'remote-delete-upgrade-client-link', order.id, 'b'.repeat(64), new Date('2027-01-01T00:00:00.000Z'), primary.id, new Date('2026-08-23T07:00:00.000Z'),

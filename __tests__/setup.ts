@@ -1,5 +1,10 @@
 import '@testing-library/react'
-import { afterAll, beforeAll, expect } from 'vitest'
+import { afterAll, beforeAll, expect, vi } from 'vitest'
+
+// next/font/local needs the Next build pipeline; page modules import it for CSS variables only.
+vi.mock('next/font/local', () => ({
+  default: (options: { variable?: string }) => ({ className: options.variable ?? 'font', variable: options.variable ?? 'font', style: {} }),
+}))
 
 // Integration databases are disposable. Never provide an application fallback key.
 if (expect.getState().testPath?.includes('/integration/installations/')) {
