@@ -23,6 +23,8 @@ Weryfikacja: `typecheck:app` PASS; Vitest 291 plików PASS, 1 FAIL (`ksef-sync.t
 
 **Wdrożono 26.10.2026 16:02** (PR #31 → main `64ab504`, obraz `sha256:672f6efb…77ec31`, 55 migracji, `running:healthy`; szczegóły w `docs/GITHUB-ACTIONS-BUILD.md`). Produkcja bez serwera mediów — decyzja: v2 modułu.
 
+**Wdrożono 26.10.2026 18:17** (PR #32 → main `40637b6`, obraz `sha256:e9f58f95…52fd9e`, bez migracji, `running:healthy`): poprawki UX po teście na żywo (menu mobilne, tło dropdownów, wersje protokołów, powrót z `/p/<token>` i z instrukcji) oraz rozbudowane e-maile alertów z linkiem do karty.
+
 **Następna sesja:** po wdrożeniu próba na żywo wg runbooka, zamknięcie #12–#19; później: przycisk „Wyślij ponownie” dla linku już wysłanego, persystencja adresata (`sentTo`), serwer mediów na produkcji.
 
 ---
