@@ -61,6 +61,9 @@ describe('installation detail client-link and clarification panels', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(<ClientLinkPanel orderId="order-1" canEdit initialLinks={[{ id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: null, sentById: null }]} />)
 
+    expect(screen.getByRole('button', { name: 'Wyślij link klientowi e-mailem' })).not.toBeNull()
+    await user.click(screen.getByText('Zarządzaj linkiem'))
+    expect(screen.getByText('wysłałem z własnej poczty')).not.toBeNull()
     await user.click(screen.getByRole('button', { name: 'Oznacz jako wysłany' }))
     expect(fetchMock).toHaveBeenCalledWith('/api/installations/order-1/client-link', expect.objectContaining({ method: 'PATCH' }))
     expect(JSON.parse(String(fetchMock.mock.calls.find((call) => call[1]?.method === 'PATCH')?.[1]?.body))).toEqual({ action: 'MARK_SENT', linkId: 'link-1' })
@@ -71,6 +74,50 @@ describe('installation detail client-link and clarification panels', () => {
     expect(document.activeElement).toBe(status)
     expect(screen.queryByRole('button', { name: 'Oznacz jako wysłany' })).toBeNull()
     expect(screen.queryByText(/\/m\//)).toBeNull()
+  })
+
+  it('e-mails a fresh link from the primary button when none is active and shows the recipient status', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+      link: { id: 'link-9', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-08-23T08:00:00.000Z', lastOpenedAt: null, sentAt: '2026-08-23T08:15:00.000Z', sentById: 'owner-user' },
+      url: 'https://app.example.test/m/mailed-secret',
+      sentTo: 'marta@example.test',
+    }), { status: 200 }))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientLinkPanel orderId="order-1" canEdit initialLinks={[]} />)
+
+    expect(screen.getByText('Brak aktywnego linku klienta.')).not.toBeNull()
+    const send = screen.getByRole('button', { name: 'Wyślij link klientowi e-mailem' })
+    expect(send.style.background).toBe('rgb(169, 106, 32)')
+    expect(send.style.color).toBe('rgb(255, 255, 255)')
+    expect(screen.getByRole('button', { name: 'Wygeneruj link' })).not.toBeNull()
+    expect(screen.queryByRole('button', { name: 'Oznacz jako wysłany' })).toBeNull()
+    await user.click(send)
+    expect(fetchMock).toHaveBeenCalledWith('/api/installations/order-1/client-link', expect.objectContaining({ method: 'PATCH' }))
+    const body = JSON.parse(String(fetchMock.mock.calls[0][1]?.body))
+    expect(body.action).toBe('SEND_EMAIL')
+    expect(new Date(body.expiresAt).getTime()).toBeGreaterThan(Date.now() + 20 * 24 * 60 * 60_000)
+    const status = await screen.findByText(/^Wysłano do/)
+    expect(status.getAttribute('role')).toBe('status')
+    expect(status.textContent).toBe(`Wysłano do marta@example.test: ${new Date('2026-08-23T08:15:00.000Z').toLocaleString('pl-PL')}`)
+    expect(document.activeElement).toBe(status)
+    expect(screen.getByText('https://app.example.test/m/mailed-secret')).not.toBeNull()
+    expect(screen.queryByRole('button', { name: 'Wyślij link klientowi e-mailem' })).toBeNull()
+  })
+
+  it('re-sends an active unsent link by e-mail without an expiry and surfaces a delivery failure unmarked', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ error: 'Nie udało się wysłać wiadomości. Link nie został oznaczony jako wysłany.' }), { status: 502 }))
+    fetchMock.mockImplementationOnce(() => new Promise<Response>(() => {}))
+    vi.stubGlobal('fetch', fetchMock)
+    render(<ClientLinkPanel orderId="order-1" canEdit initialLinks={[{ id: 'link-1', expiresAt: '2027-01-01T00:00:00.000Z', revokedAt: null, createdAt: '2026-01-01T00:00:00.000Z', lastOpenedAt: null, sentAt: null, sentById: null }]} />)
+
+    expect(screen.queryByText(/ze swojej poczty/)).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Wyślij link klientowi e-mailem' }))
+    expect(JSON.parse(String(fetchMock.mock.calls.find((call) => call[1]?.method === 'PATCH')?.[1]?.body))).toEqual({ action: 'SEND_EMAIL' })
+    expect((await screen.findByRole('alert')).textContent).toBe('Nie udało się wysłać wiadomości. Link nie został oznaczony jako wysłany.')
+    expect(screen.queryByRole('status')).toBeNull()
+    expect(screen.getByRole('button', { name: 'Wyślij link klientowi e-mailem' }).hasAttribute('disabled')).toBe(false)
   })
 
   it('keeps sent and client-opened timestamps visible together', () => {
@@ -107,6 +154,43 @@ describe('installation detail client-link and clarification panels', () => {
     await user.click(screen.getByText('Historia ustaleń (1)'))
     expect(screen.getByText('Potwierdzone telefonicznie')).not.toBeNull()
     expect(screen.queryByRole('button', { name: 'Zapisz ustalenie' })).toBeNull()
+  })
+
+  it('collapses to a single status line with history when nothing is open', async () => {
+    const user = userEvent.setup()
+    render(<InstallationClarificationPanel orderId="order-1" canEdit readiness={{ isReady: true, openBlockingCount: 0, submittedCount: 1 }} clarifications={[{
+      id: 'clarification-done', status: 'RESOLVED', isBlocking: true, questionLabel: 'Czy są glify?', reason: 'Klient wskazał odpowiedź „Nie wiem”.',
+      revisionNumber: 1, answer: 'Nie wiem', createdAt: '2026-08-22T00:00:00.000Z', resolution: 'Glif ma 12 cm', resolutionNote: null, evidenceReference: null,
+    }]} />)
+
+    expect(screen.getByRole('heading', { name: 'Do ustalenia przed montażem' })).not.toBeNull()
+    expect(screen.getByText('Brak otwartych kwestii w systemie.')).not.toBeNull()
+    expect(screen.queryByText(/Otwarte kwestie/)).toBeNull()
+    expect(screen.queryByText(/Czekamy na formularz/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Zapisz ustalenie' })).toBeNull()
+    const history = screen.getByText('Historia ustaleń (1)')
+    expect(history.closest('details')?.open).toBe(false)
+    await user.click(history)
+    expect(screen.getByText('Glif ma 12 cm')).not.toBeNull()
+  })
+
+  it('tells the coordinator in the compact line what is still missing before clarifications can exist', () => {
+    const { rerender } = render(<InstallationClarificationPanel orderId="order-1" canEdit hasSnapshot={false} readiness={{ isReady: false, openBlockingCount: 0, submittedCount: 0 }} clarifications={[]} />)
+    expect(screen.getByRole('link', { name: 'Wybierz formularz dla tego zlecenia.' }).getAttribute('href')).toBe('#client-form')
+    expect(screen.queryByText('Brak otwartych kwestii w systemie.')).toBeNull()
+
+    rerender(<InstallationClarificationPanel orderId="order-1" canEdit readiness={{ isReady: false, openBlockingCount: 0, submittedCount: 0 }} clarifications={[]} />)
+    expect(screen.getByRole('link', { name: 'Czekamy na formularz klienta — sprawdź link i wysyłkę.' }).getAttribute('href')).toBe('#client-form')
+  })
+
+  it('keeps the full panel while a visit fee is still waiting for approval or client acceptance', () => {
+    const { rerender } = render(<InstallationClarificationPanel orderId="order-1" canEdit visitFeePending readiness={{ isReady: false, openBlockingCount: 0, submittedCount: 1 }} clarifications={[]} />)
+    expect(screen.getByText('Brak otwartych kwestii w systemie.')).not.toBeNull()
+    expect(screen.getByRole('heading', { name: 'Do ustalenia przed montażem' }).className).toContain('text-xl')
+
+    rerender(<InstallationClarificationPanel orderId="order-1" canEdit readiness={{ isReady: false, openBlockingCount: 0, submittedCount: 1, visitFeeAcceptanceRequired: true }} clarifications={[]} />)
+    expect(screen.getByRole('link', { name: /potwierdzenie informacji o opłacie/ }).getAttribute('href')).toBe('#visit-fee')
+    expect(screen.getByRole('heading', { name: 'Do ustalenia przed montażem' }).className).toContain('text-xl')
   })
 
   it('uses the snapshot question label rather than a technical key in clarification text and fields', async () => {

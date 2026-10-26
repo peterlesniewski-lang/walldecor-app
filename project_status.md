@@ -1,6 +1,29 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-10-14 (konfiguracja budowania GitHub Actions + GHCR; produkcja wymaga osobnej zgody)
+**Ostatnia aktualizacja:** 2026-10-26 (montaże: protokół odbioru scalony z main, karta uproszczona, link klienta e-mailem; wdrożenie czeka na zgodę)
+
+## Montaże — finisz modułu — 26.10.2026 (gałąź `walldecor-install-status-5df92ac3`)
+
+```
+[x] Merge `origin/organic-lingonberry` (PR #20, cyfrowy protokół odbioru, #12–#19) z aktualnym `main`; konflikt tylko w CONTEXT.md (sekcja „Montaże” pod Language)
+[x] Testy dostosowane do scalenia: globalny mock `next/font/local` w vitest, migracje odbioru po zestawie hardening w teście governance, historyczna fikstura InstallationFile przez raw SQL, mock `listAcceptanceCandidates` i rozpakowanie font-scope w testach strony instalatora
+[x] Karta montażu: formularze „Dodaj produkt” / „Dodaj pomiar” zwinięte za przyciskami (produkt: nazwa + kod, reszta pod „Więcej pól”); „Pomiary ogólne pomieszczenia (n)” jako details; panel „Do ustalenia” w trybie kompaktowym gdy nic nie jest otwarte; odwołane wizyty pod „Pokaż odwołane (n)”
+[x] Link do formularza klienta wysyłany e-mailem z aplikacji: PATCH `/api/installations/[id]/client-link` `action: SEND_EMAIL` (reuse aktywnego linku lub nowy 21-dniowy, `markClientLinkSent` dopiero po dostarczeniu, nowy link cofany przy błędzie wysyłki); panel z głównym przyciskiem „Wyślij link klientowi e-mailem”, „Oznacz jako wysłany” pod „Zarządzaj linkiem”
+[x] Formularz klienta: akceptacja opłaty za podjazd renderowana raz nad „Wyślij formularz”; po wysłaniu widoczne nazwy przesłanych plików (publiczna projekcja `files`: tylko READY, bez identyfikatorów)
+[x] Runbook wdrożenia: `docs/runbooks/installation-acceptance-release.md` (build GHCR, migracja próbna na kopii bazy nowym obrazem, zgoda na digest, próba na żywo, rollback)
+[x] Stale lokatory E2E „Dodaj zakres w …” → `/^Dodaj (kolejną )?pracę w …$/` (calendar-ui, catalog)
+```
+
+Weryfikacja: `typecheck:app` PASS; Vitest 291 plików PASS, 1 FAIL (`ksef-sync.test.ts`, 11 testów, pre-existing na main); `next build` PASS; Playwright chromium: acceptance-protocol, card, client-form ×2 PASS PASS; calendar-ui PASS po poprawce lokatorów; catalog FAIL pre-existing (spec `installations-catalog.spec.ts` opisuje stary katalog z typami i produktami, usunięty 25.08.2026 — do przepisania osobno).
+
+**Blokery wdrożenia (decyzje właściciela):**
+- Produkcja nie ma `INSTALLATION_MEDIA_API_URL` / `INSTALLATION_MEDIA_API_TOKEN` — załączniki, pliki klienta i zdjęcia w protokole nie działają; protokół i PDF bez zdjęć działają. Serwer mediów = osobny krok.
+- Pierwsze wdrożenie przez pipeline GHCR wymaga: push + PR (build walidacyjny), merge do `main` (publikacja), migracja próbna na kopii (runbook, krok 2, z terminala na VPS — brak SSH i brak `execute` w Coolify beta.463 z tej sesji), zgoda na digest, `WALLDECOR_APPROVED_IMAGE`.
+- W logach produkcji błąd `mkdir /app/.next/standalone/.next/cache` — nie blokuje health, sprawdzić po wdrożeniu.
+
+**Następna sesja:** push gałęzi i PR po zgodzie; po wdrożeniu próba na żywo wg runbooka, zamknięcie #12–#19; później: przycisk „Wyślij ponownie” dla linku już wysłanego, persystencja adresata (`sentTo`), serwer mediów na produkcji.
+
+---
 
 ## Budowanie poza VPS — 14.10.2026
 

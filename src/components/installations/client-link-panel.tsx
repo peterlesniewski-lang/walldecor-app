@@ -34,6 +34,7 @@ function ClientLinkPanelContent({ orderId, initialLinks, canEdit, canGenerate = 
   const [links, setLinks] = useState(initialLinks)
   const [expiresAt, setExpiresAt] = useState(defaultExpiry)
   const [generatedLink, setGeneratedLink] = useState<{ id: string; url: string; createdAt: Date | string } | null>(null)
+  const [sentTo, setSentTo] = useState<{ linkId: string; email: string } | null>(null)
   const requestVersion = useRef(0)
   const mutationVersion = useRef(0)
   const mutationPending = useRef(false)
@@ -108,12 +109,13 @@ function ClientLinkPanelContent({ orderId, initialLinks, canEdit, canGenerate = 
         method, headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
       })
-      const data = await response.json() as { error?: string; link?: InstallationClientLinkStatus; url?: string }
+      const data = await response.json() as { error?: string; link?: InstallationClientLinkStatus; url?: string; sentTo?: string }
       if (version !== mutationVersion.current) return
       if (response.status === 401 || response.status === 403) setGeneratedLink(null)
       if (!response.ok || !data.link) throw new Error(data.error ?? 'Nie udało się zaktualizować linku.')
       setLinks((current) => [data.link!, ...current.filter((link) => link.id !== data.link!.id).map((link) => data.url && !link.revokedAt ? { ...link, revokedAt: new Date().toISOString() } : link)])
       if (data.url) setGeneratedLink({ id: data.link.id, url: data.url, createdAt: data.link.createdAt })
+      if (typeof data.sentTo === 'string') setSentTo({ linkId: data.link.id, email: data.sentTo })
       else if (data.link.revokedAt) setGeneratedLink(null)
       if (data.url || data.link.revokedAt) setLegacyLink(false)
       setState('idle')
@@ -146,24 +148,44 @@ function ClientLinkPanelContent({ orderId, initialLinks, canEdit, canGenerate = 
     void request({ expiresAt: expiry.toISOString() }, 'POST')
   }
 
-  const generation = <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">
-    <label className="grid gap-1 text-sm font-semibold" htmlFor={`client-link-expiry-${orderId}`}>Ważny do
-      <input id={`client-link-expiry-${orderId}`} className="min-h-11 min-w-0 rounded-md border px-3" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} disabled={state === 'loading' || !canGenerate} />
-    </label>
-    <button type="button" className="min-h-11 self-end rounded-md px-4 text-sm font-bold" style={{ background: '#E4DCD1', color: '#1E1E1E' }} onClick={generate} disabled={state === 'loading' || !canGenerate}>{active ? 'Wygeneruj nowy link' : 'Wygeneruj link'}</button>
-  </div>
+  function sendByEmail() {
+    // An active link is re-used as-is; the expiry field only shapes a fresh one.
+    if (active) { void request({ action: 'SEND_EMAIL' }, 'PATCH', true); return }
+    const expiry = new Date(expiresAt)
+    if (!Number.isFinite(expiry.getTime())) { setError('Podaj poprawny termin ważności linku.'); return }
+    void request({ action: 'SEND_EMAIL', expiresAt: expiry.toISOString() }, 'PATCH', true)
+  }
+
+  const sentStatus = active?.sentAt
+    ? (sentTo?.linkId === active.id ? `Wysłano do ${sentTo.email}: ` : 'Wysłano: ') + new Date(active.sentAt).toLocaleString('pl-PL')
+    : null
+  const sendButton = <button type="button" className="min-h-11 rounded-md px-4 text-sm font-bold" style={{ background: '#A96A20', color: '#FFFFFF' }} onClick={sendByEmail} disabled={state === 'loading' || (!active && !canGenerate)}>Wyślij link klientowi e-mailem</button>
+
+  const expiryField = <label className="grid gap-1 text-sm font-semibold" htmlFor={`client-link-expiry-${orderId}`}>Ważny do
+    <input id={`client-link-expiry-${orderId}`} className="min-h-11 min-w-0 rounded-md border px-3" type="datetime-local" value={expiresAt} onChange={(event) => setExpiresAt(event.target.value)} disabled={state === 'loading' || !canGenerate} />
+  </label>
+  const generateButton = <button type="button" className="min-h-11 self-end rounded-md px-4 text-sm font-bold" style={{ background: '#E4DCD1', color: '#1E1E1E' }} onClick={generate} disabled={state === 'loading' || !canGenerate}>{active ? 'Wygeneruj nowy link' : 'Wygeneruj link'}</button>
+  const generation = <div className="mt-3 grid gap-3 sm:grid-cols-[minmax(0,1fr)_auto]">{expiryField}{generateButton}</div>
 
   return <section className="mt-6 rounded-xl border p-4" style={{ background: 'var(--wd-white)', borderColor: 'rgba(30,30,30,.12)', boxShadow: 'var(--card-shadow)' }}>
     <h3 className="font-bold" style={{ color: 'var(--wd-dark)' }}>Link dla klienta</h3>
     {active ? <>
       <p className="mt-2 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Aktywny do <span className="num">{new Date(active.expiresAt).toLocaleString('pl-PL')}</span>{active.lastOpenedAt ? <> · <span className="num">{`Klient otworzył link: ${new Date(active.lastOpenedAt).toLocaleString('pl-PL')}`}</span></> : ' · jeszcze nieotwarty'}.</p>
-      {active.sentAt && <p ref={sentStatusRef} role="status" aria-live="polite" tabIndex={-1} className="mt-1 text-sm font-semibold" style={{ color: 'var(--wd-dark)' }}>{`Wysłano: ${new Date(active.sentAt).toLocaleString('pl-PL')}`}</p>}
+      {sentStatus && <p ref={sentStatusRef} role="status" aria-live="polite" tabIndex={-1} className="mt-1 text-sm font-semibold" style={{ color: 'var(--wd-dark)' }}>{sentStatus}</p>}
     </> : <p className="mt-2 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Brak aktywnego linku klienta.</p>}
     {canEdit && !canGenerate && <p className="mt-3 rounded-md border border-amber-200 bg-amber-50 px-3 py-2 text-sm text-amber-950">Najpierw wybierz formularz dla tego zlecenia.</p>}
-    {canEdit && !active && generation}
+    {canEdit && !active && <div className="mt-3 grid gap-3">
+      {expiryField}
+      <div className="flex flex-wrap gap-2">{sendButton}{generateButton}</div>
+      <p className="text-xs" style={{ color: 'var(--wd-text-muted)' }}>Wiadomość trafi na adres e-mail klienta z karty. „Wygeneruj link” tworzy sam adres do przekazania inną drogą.</p>
+    </div>}
     {canEdit && active && <>
-      {!active.sentAt && <div className="mt-3"><p className="mb-2 text-sm">Wyślij link klientowi ze swojej poczty, a następnie oznacz wysyłkę tutaj.</p><button type="button" className="min-h-11 rounded-md border px-4 text-sm font-bold" onClick={() => void request({ action: 'MARK_SENT', linkId: active.id }, 'PATCH', true)} disabled={state === 'loading'}>Oznacz jako wysłany</button></div>}
+      {!active.sentAt && <div className="mt-3"><p className="mb-2 text-sm">Wiadomość z linkiem trafi na adres e-mail klienta z karty.</p>{sendButton}</div>}
       <details className="mt-3"><summary className="cursor-pointer text-sm font-semibold">Zarządzaj linkiem</summary>
+        {!active.sentAt && <div className="mt-3 flex flex-wrap items-center gap-2">
+          <button type="button" className="min-h-11 rounded-md border px-4 text-sm font-bold" onClick={() => void request({ action: 'MARK_SENT', linkId: active.id }, 'PATCH', true)} disabled={state === 'loading'}>Oznacz jako wysłany</button>
+          <span className="text-xs" style={{ color: 'var(--wd-text-muted)' }}>wysłałem z własnej poczty</span>
+        </div>}
         {generation}
         <div className="mt-3 flex flex-wrap gap-2">
           <button type="button" className="min-h-11 rounded-md border px-4 text-sm font-bold" onClick={() => void request({ action: 'EXTEND', linkId: active.id, expiresAt: extensionExpiry(14) }, 'PATCH')} disabled={state === 'loading'}>Przedłuż o 14 dni</button>

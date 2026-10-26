@@ -375,6 +375,26 @@ export async function archiveInstallationOrder(db: PrismaClient, id: string, act
     const current = await fetchOrderOrThrow(tx, id)
     if (current.archivedAt) return current
 
+    const protocols = await tx.installationAcceptanceProtocol.findMany({ where: { orderId: id }, select: {
+      visitId: true, groupKey: true, revision: true, status: true, resultsJson: true,
+      resolutionAsPrior: { select: { id: true } },
+    } })
+    const latestByVisitAndType = new Map<string, typeof protocols[number]>()
+    for (const protocol of protocols) {
+      const key = `${protocol.visitId}:${protocol.groupKey}`
+      const latest = latestByVisitAndType.get(key)
+      if (!latest || protocol.revision > latest.revision) latestByVisitAndType.set(key, protocol)
+    }
+    const openAcceptance = [...latestByVisitAndType.values()].some((protocol) => {
+      if (protocol.resolutionAsPrior) return false
+      if (protocol.status !== 'ACCEPTED') return true
+      const results = JSON.parse(protocol.resultsJson ?? '[]') as Array<{ result: string }>
+      return !results.length || results.some((result) => result.result !== 'DONE')
+    })
+    if (openAcceptance) throw new InstallationOrderValidationError({
+      acceptance: 'Nie można archiwizować zlecenia, dopóki protokoły odbioru pozostają otwarte. Zakończ poprawki i uzyskaj ponowny podpis klienta.',
+    })
+
     const before = orderAuditSnapshot(current)
     const archived = await tx.installationOrder.update({
       where: { id },

@@ -25,7 +25,10 @@ export type ClientFormProjection = {
     snapshotDigest: string
     clientAcceptedAt: string | null
   }
+  /** Client-supplied READY files by question: names only, no ids or download paths. */
+  files: Array<{ questionKey: string; originalFilename: string; createdAt: string }>
 }
+type VisitFee = NonNullable<ClientFormProjection['visitFee']>
 
 function mapAnswers(submission: Submission): Record<string, AnswerValue> {
   return Object.fromEntries(submission.answers.map((answer) => [answer.questionKey, answer.value]))
@@ -74,6 +77,38 @@ function hasValidAnswer(question: Question, value: AnswerValue | undefined) {
   if (question.type === 'SINGLE') return Boolean(question.options?.includes(value))
   if (question.type === 'NUMBER' || question.type === 'DIMENSION') return /^-?(?:0|[1-9]\d*)(?:\.\d+)?$/.test(value.trim().replace(',', '.'))
   return value.trim().length > 0
+}
+
+function feeAmountLabel(fee: VisitFee) {
+  return `${fee.grossAmount.replace('.', ',')} zł brutto`
+}
+
+/**
+ * The single visit-fee block. Before submission it sits directly above the
+ * submit button; after submission it collapses to one confirmation line once
+ * the client has accepted, and only an outstanding acceptance keeps the
+ * clause and its explicit confirmation visible.
+ */
+function VisitFeeSection({ fee, submitted, accepted, submitting, onToggle, onConfirm }: {
+  fee: VisitFee; submitted: boolean; accepted: boolean; submitting: boolean
+  onToggle: (checked: boolean) => void; onConfirm: () => void
+}) {
+  if (submitted && fee.clientAcceptedAt) {
+    return <p className={styles.feeAccepted}>Informację o opłacie potwierdzono ({feeAmountLabel(fee)}).</p>
+  }
+  return <section className={styles.fee} aria-labelledby="visit-fee-heading" data-testid="visit-fee-section">
+    <p className={styles.feeKicker}>{submitted ? 'Do potwierdzenia przed montażem' : 'Przed wysłaniem'}</p>
+    <h2 id="visit-fee-heading">Informacja o ewentualnej opłacie za podjazd</h2>
+    <p className={styles.feeAmount}><strong>{feeAmountLabel(fee)}</strong></p>
+    <p className={styles.feeClause}>{fee.clauseText}</p>
+    {fee.clientAcceptedAt ? <p className={styles.feeAccepted}>Informację potwierdzono wraz z formularzem.</p> : <>
+      <label className={styles.feeCheck}>
+        <input type="checkbox" checked={accepted} onChange={(event) => onToggle(event.target.checked)} />
+        <span>Akceptuję informację o opłacie w dokładnej kwocie {feeAmountLabel(fee)}.</span>
+      </label>
+      {submitted && <button type="button" className={styles.submit} disabled={submitting || !accepted} onClick={onConfirm}>{submitting ? 'Potwierdzanie…' : 'Potwierdź informację o opłacie'}</button>}
+    </>}
+  </section>
 }
 
 function JobMap({ rooms }: Pick<ClientFormProjection, 'rooms'>) {
@@ -374,6 +409,19 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
 
   const submitted = projection.submission.status === 'SUBMITTED'
   const requiresVisitFeeAcceptance = Boolean(projection.visitFee && !projection.visitFee.clientAcceptedAt)
+  const filesByQuestion = useMemo(() => {
+    const grouped = new Map<string, string[]>()
+    for (const file of projection.files ?? []) grouped.set(file.questionKey, [...(grouped.get(file.questionKey) ?? []), file.originalFilename])
+    return grouped
+  }, [projection.files])
+  const visitFeeSection = projection.visitFee && <VisitFeeSection
+    fee={projection.visitFee}
+    submitted={submitted}
+    accepted={visitFeeAccepted}
+    submitting={submitting}
+    onToggle={(checked) => { setVisitFeeAccepted(checked); if (!submitted) submitAttemptRef.current = null }}
+    onConfirm={() => void acceptVisitFee()}
+  />
   return <main className={styles.shell}>
     <div className={styles.frame}>
       <p className={styles.kicker}>{projection.brand} · przygotowanie montażu</p>
@@ -385,19 +433,7 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
       {submitted ? <section className={styles.confirmation} aria-live="polite">
         <strong>Formularz został wysłany.</strong><br />Zapisaliśmy wersję {projection.submission.revisionNumber}. Odpowiedzi wymagające ustalenia omówimy przed montażem.
         <div style={{ marginTop: 12 }}><button type="button" className={styles.secondary} onClick={() => void startCorrection()} disabled={submitting}>Zgłoś korektę</button></div>
-        {projection.visitFee && <section className={styles.fee} aria-labelledby="visit-fee-heading">
-          <p className={styles.feeKicker}>Do potwierdzenia przed montażem</p>
-          <h2 id="visit-fee-heading">Informacja o ewentualnej opłacie za podjazd</h2>
-          <p className={styles.feeAmount}><strong>{projection.visitFee.grossAmount.replace('.', ',')} zł brutto</strong></p>
-          <p className={styles.feeClause}>{projection.visitFee.clauseText}</p>
-          {projection.visitFee.clientAcceptedAt ? <p className={styles.feeAccepted}>Informację o opłacie potwierdzono.</p> : <>
-            <label className={styles.feeCheck}>
-              <input type="checkbox" checked={visitFeeAccepted} onChange={(event) => setVisitFeeAccepted(event.target.checked)} />
-              <span>Akceptuję informację o opłacie w dokładnej kwocie {projection.visitFee.grossAmount.replace('.', ',')} zł brutto.</span>
-            </label>
-            <button type="button" className={styles.submit} disabled={submitting || !visitFeeAccepted} onClick={() => void acceptVisitFee()}>{submitting ? 'Potwierdzanie…' : 'Potwierdź informację o opłacie'}</button>
-          </>}
-        </section>}
+        {visitFeeSection}
         {error && <p role="alert" className={styles.error}>{error}</p>}
       </section> : <form ref={formRef} className={styles.form} onSubmit={(event) => { event.preventDefault(); void submit() }}>
         <section className={styles.section} aria-labelledby="questions-heading">
@@ -411,34 +447,18 @@ export function ClientInstallationForm({ token, initialProjection }: { token: st
           </div>)}</div>
         </section>
         {unknownSelected && <p className={styles.unknown}><strong>Ustalimy przed montażem.</strong> Nie musisz teraz wpisywać przybliżonego wymiaru.</p>}
-        {projection.visitFee && <section className={styles.fee} aria-labelledby="visit-fee-heading">
-          <p className={styles.feeKicker}>Przed wysłaniem</p>
-          <h2 id="visit-fee-heading">Informacja o ewentualnej opłacie za podjazd</h2>
-          <p className={styles.feeAmount}><strong>{projection.visitFee.grossAmount.replace('.', ',')} zł brutto</strong></p>
-          <p className={styles.feeClause}>{projection.visitFee.clauseText}</p>
-          {projection.visitFee.clientAcceptedAt ? <p className={styles.feeAccepted}>Informację potwierdzono wraz z formularzem.</p> : <label className={styles.feeCheck}>
-            <input
-              type="checkbox"
-              checked={visitFeeAccepted}
-              onChange={(event) => {
-                setVisitFeeAccepted(event.target.checked)
-                submitAttemptRef.current = null
-              }}
-            />
-            <span>Akceptuję informację o opłacie w dokładnej kwocie {projection.visitFee.grossAmount.replace('.', ',')} zł brutto.</span>
-          </label>}
-        </section>}
         <div className={styles.statusRow} role="status" aria-live="polite">
           {saveState === 'saving' && <span className={styles.statusSaving}>Zapisywanie…</span>}
           {saveState === 'saved' && <span className={styles.statusSaved}>Wszystko zapisane</span>}
           {saveState === 'error' && <><span>Wystąpił błąd zapisu.</span><button type="button" className={styles.secondary} onClick={() => void persist()}>Spróbuj ponownie</button></>}
         </div>
         {error && <p role="alert" className={styles.error}>{error}</p>}
+        {visitFeeSection}
         <button type="submit" className={styles.submit} disabled={submitting || (requiresVisitFeeAcceptance && !visitFeeAccepted)}>{submitting ? 'Wysyłanie…' : 'Wyślij formularz'}</button>
       </form>}
       {submitted && <section className={styles.section} aria-labelledby="submitted-answers-heading">
         <h2 id="submitted-answers-heading" className={styles.sectionHeading}>Wysłane odpowiedzi</h2>
-        <div className={styles.questions}>{visible.map((question) => <ClientQuestionRenderer key={question.key} question={question} questions={projection.form.questions} value={answers[question.key]} mode="readonly" fileContent={question.type === 'FILE' ? <p className={styles.fileNotice}>Podgląd plików nie jest dostępny w tej wersji formularza. W razie pytań skontaktuj się z WallDecor.</p> : undefined} />)}</div>
+        <div className={styles.questions}>{visible.map((question) => <ClientQuestionRenderer key={question.key} question={question} questions={projection.form.questions} value={answers[question.key]} mode="readonly" fileContent={question.type === 'FILE' ? <p className={styles.fileNotice}>{filesByQuestion.get(question.key)?.length ? `Przesłane pliki: ${filesByQuestion.get(question.key)!.join(', ')}` : 'Brak przesłanych plików'}</p> : undefined} />)}</div>
       </section>}
     </div>
   </main>

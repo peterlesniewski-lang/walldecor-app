@@ -19,6 +19,7 @@ const projection = {
   submission: { status: 'DRAFT' as const, revisionNumber: 1, draftVersion: 0, submittedAt: null, answers: [] },
   canStartCorrection: false,
   visitFee: null,
+  files: [],
 }
 
 describe('client installation form', () => {
@@ -260,6 +261,42 @@ describe('client installation form', () => {
     expect((screen.getByRole('button', { name: 'Wyślij formularz' }) as HTMLButtonElement).disabled).toBe(true)
     await user.click(screen.getByRole('checkbox', { name: /akceptuję informację o opłacie/i }))
     expect((screen.getByRole('button', { name: 'Wyślij formularz' }) as HTMLButtonElement).disabled).toBe(false)
+  })
+
+  it('renders the visit-fee block exactly once, directly above the submit button, and as one line once accepted after submission', () => {
+    const fee = { grossAmount: '249.90', clauseText: 'Klauzula o podjeździe.', clauseVersion: 3, snapshotDigest: `sha256:${'3'.repeat(64)}`, clientAcceptedAt: null }
+    const { unmount } = render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={{ ...projection, visitFee: fee }} />)
+    expect(screen.getAllByRole('heading', { name: 'Informacja o ewentualnej opłacie za podjazd' })).toHaveLength(1)
+    expect(screen.getAllByRole('checkbox', { name: /akceptuję informację o opłacie/i })).toHaveLength(1)
+    const section = screen.getByTestId('visit-fee-section')
+    expect(section.nextElementSibling).toBe(screen.getByRole('button', { name: 'Wyślij formularz' }))
+    unmount()
+
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={{ ...projection, canStartCorrection: true,
+      submission: { ...projection.submission, status: 'SUBMITTED', draftVersion: 1, submittedAt: '2026-08-23T12:00:00.000Z' },
+      visitFee: { ...fee, clientAcceptedAt: '2026-08-23T12:05:00.000Z' },
+    }} />)
+    expect(screen.queryByRole('heading', { name: 'Informacja o ewentualnej opłacie za podjazd' })).toBeNull()
+    expect(screen.queryByRole('checkbox')).toBeNull()
+    expect(screen.getAllByText(/Informację o opłacie potwierdzono/i)).toHaveLength(1)
+  })
+
+  it('lists client file names per FILE question after submission instead of a preview disclaimer', () => {
+    const submitted = { ...projection, canStartCorrection: true,
+      submission: { ...projection.submission, status: 'SUBMITTED' as const, draftVersion: 2, submittedAt: '2026-08-23T12:00:00.000Z', answers: [{ questionKey: 'glify', value: 'NO', isUnknown: false }] },
+    }
+    const { unmount } = render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={{ ...submitted, files: [
+      { questionKey: 'referencja', originalFilename: 'a.jpg', createdAt: '2026-08-23T11:00:00.000Z' },
+      { questionKey: 'inne', originalFilename: 'cudze.pdf', createdAt: '2026-08-23T11:01:00.000Z' },
+      { questionKey: 'referencja', originalFilename: 'b.pdf', createdAt: '2026-08-23T11:02:00.000Z' },
+    ] }} />)
+    expect(screen.getByText('Przesłane pliki: a.jpg, b.pdf')).not.toBeNull()
+    expect(screen.queryByText(/cudze\.pdf/)).toBeNull()
+    expect(screen.queryByText(/Podgląd plików nie jest dostępny/)).toBeNull()
+    unmount()
+
+    render(<ClientInstallationForm token={'a'.repeat(43)} initialProjection={submitted} />)
+    expect(screen.getByText('Brak przesłanych plików')).not.toBeNull()
   })
 
   it('accepts a fee selected after submission without restarting the form correction flow', async () => {

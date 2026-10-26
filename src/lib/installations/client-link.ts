@@ -4,6 +4,8 @@ import { Prisma, PrismaClient } from '@/generated/prisma'
 import { isClientVisitFeeActive } from './delegation-service'
 import { createVisitFeeSnapshotDigest } from './visit-fee-snapshot'
 import { decryptClientLinkToken, encryptClientLinkToken } from './client-link-crypto'
+import { installationPublicUrl } from './public-url'
+import { sendEmail, type OutboundEmail } from '@/lib/email/outbound-email'
 
 const CLIENT_LINK_SECRET_BYTES = 32
 const CLIENT_LINK_SECRET_PATTERN = /^[A-Za-z0-9_-]{43}$/
@@ -53,6 +55,22 @@ export class InstallationClientLinkPrerequisiteError extends Error {
   }
 }
 
+/** The order card has no client e-mail address, so nothing can be sent. */
+export class InstallationClientEmailMissingError extends Error {
+  constructor() {
+    super('Karta nie ma adresu e-mail klienta.')
+    this.name = 'InstallationClientEmailMissingError'
+  }
+}
+
+/** Outbound delivery failed; the link was deliberately left unmarked. */
+export class InstallationClientLinkDeliveryError extends Error {
+  constructor() {
+    super('Nie udało się wysłać wiadomości. Link nie został oznaczony jako wysłany.')
+    this.name = 'InstallationClientLinkDeliveryError'
+  }
+}
+
 type PublicSubmission = {
   status: 'DRAFT' | 'SUBMITTED'
   revisionNumber: number
@@ -68,6 +86,11 @@ type PublicVisitFee = {
   snapshotDigest: string
   clientAcceptedAt: string | null
 }
+
+/** Client-supplied files by question: names only, never ids, hashes or download paths. */
+type PublicClientFile = { questionKey: string; originalFilename: string; createdAt: string }
+
+const DEFAULT_CLIENT_LINK_TTL_DAYS = 21
 
 function dateInFuture(value: Date) {
   return Number.isFinite(value.getTime()) && value.getTime() > Date.now()
@@ -226,6 +249,80 @@ export async function markClientLinkSent(db: PrismaClient, linkId: string, actor
   })
 }
 
+/** Mirrors the panel default: a freshly e-mailed link stays valid for three weeks. */
+export function defaultClientLinkExpiry(now = new Date()) {
+  const expiresAt = new Date(now)
+  expiresAt.setDate(expiresAt.getDate() + DEFAULT_CLIENT_LINK_TTL_DAYS)
+  return expiresAt
+}
+
+function formatPolishDateTime(value: Date) {
+  return value.toLocaleString('pl-PL', { timeZone: 'Europe/Warsaw', day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })
+}
+
+export function clientLinkEmailContent(input: { url: string; expiresAt: Date }): Pick<OutboundEmail, 'subject' | 'text'> {
+  const contact = publicWallDecorContact()
+  return {
+    subject: 'Formularz przed montażem WallDecor',
+    text: [
+      'Dzień dobry,',
+      '',
+      'Przed montażem prosimy o wypełnienie krótkiego formularza. Kilka odpowiedzi pomoże nam dobrze przygotować prace:',
+      input.url,
+      '',
+      `Link jest ważny do ${formatPolishDateTime(input.expiresAt)}. Formularz zapisuje odpowiedzi automatycznie, można do niego wrócić w dowolnej chwili.`,
+      '',
+      `W razie pytań prosimy o kontakt: ${contact.email}`,
+      '',
+      'Pozdrawiamy,',
+      'WallDecor',
+    ].join('\n'),
+  }
+}
+
+/**
+ * Sends the current client link (or a fresh one) to the client e-mail from the
+ * order card and records the hand-off only after delivery succeeded. A link
+ * that existed before the attempt is never revoked here; a link created for
+ * this attempt is revoked when delivery fails, so no unsent secret lingers.
+ */
+export async function sendClientLinkEmail(
+  db: PrismaClient,
+  input: {
+    orderId: string
+    actorId: string
+    origin?: string
+    expiresAt?: Date
+    emailSender?: (email: OutboundEmail) => Promise<void>
+  },
+) {
+  const emailSender = input.emailSender ?? sendEmail
+  const order = await db.installationOrder.findUnique({
+    where: { id: input.orderId },
+    select: { archivedAt: true, status: true, client: { select: { email: true } } },
+  })
+  if (!order || order.archivedAt || order.status === 'ARCHIVED') throw new InstallationClientLinkNotFoundError()
+  const recipient = order.client.email.trim()
+  if (!recipient) throw new InstallationClientEmailMissingError()
+
+  const current = await retrieveCurrentClientLink(db, input.orderId)
+  const reused = current.link && current.token ? { link: current.link, token: current.token } : null
+  const target = reused ?? await createClientLink(db, {
+    orderId: input.orderId,
+    createdById: input.actorId,
+    expiresAt: input.expiresAt ?? defaultClientLinkExpiry(),
+  })
+  const url = installationPublicUrl(`/m/${target.token}`, input.origin)
+  try {
+    await emailSender({ to: recipient, ...clientLinkEmailContent({ url, expiresAt: target.link.expiresAt }) })
+  } catch {
+    if (!reused) await revokeClientLink(db, target.link.id, input.actorId, input.orderId).catch(() => undefined)
+    throw new InstallationClientLinkDeliveryError()
+  }
+  const link = await markClientLinkSent(db, target.link.id, input.actorId, input.orderId)
+  return { link, token: target.token, url, sentTo: recipient, created: !reused }
+}
+
 /** Hashes every candidate before lookup so malformed, revoked and unknown links share the public failure path. */
 export async function resolveActiveClientLink(db: InstallationDb, token: string) {
   const tokenHash = hashClientLinkSecret(token)
@@ -347,6 +444,7 @@ export async function loadPublicInstallationProjection(db: PrismaClient, token: 
   })
   const submission = draft ?? latestSubmitted ?? await ensureCurrentDraft(db, order.id, snapshot.id)
   const schema = JSON.parse(snapshot.schemaJson) as { questions?: unknown[] }
+  const files = await listPublicClientFiles(db, order.id)
   return {
     brand: 'WallDecor' as const,
     number: order.number,
@@ -367,7 +465,20 @@ export async function loadPublicInstallationProjection(db: PrismaClient, token: 
     submission: publicSubmission(submission),
     canStartCorrection: submission.status === 'SUBMITTED',
     visitFee: publicVisitFee(order),
+    files,
   }
+}
+
+/** Same scope as the public file listing: READY, not soft-deleted client files of this order. */
+async function listPublicClientFiles(db: PrismaClient, orderId: string): Promise<PublicClientFile[]> {
+  const files = await db.installationFile.findMany({
+    where: { orderId, purpose: 'CLIENT_QUESTION', questionKey: { not: null }, status: 'READY', softDeletedAt: null },
+    select: { questionKey: true, originalFilename: true, createdAt: true },
+    orderBy: { createdAt: 'asc' },
+  })
+  return files.flatMap((file) => file.questionKey
+    ? [{ questionKey: file.questionKey, originalFilename: file.originalFilename, createdAt: file.createdAt.toISOString() }]
+    : [])
 }
 
 export async function listClientLinkStatuses(db: InstallationDb, orderId: string) {

@@ -24,9 +24,14 @@ describe('room scope editor order products and measurements UI', () => {
     vi.spyOn(window, 'confirm').mockReturnValue(true)
   })
 
-  it('shows concise labels while preserving scope-specific accessible names', () => {
+  it('shows concise labels while preserving scope-specific accessible names', async () => {
+    const user = userEvent.setup()
     render(createElement(RoomScopeEditor, { orderId: 'order-1', initialRooms: baseRooms, catalog, canEdit: true }))
 
+    expect(screen.getByRole('button', { name: 'Dodaj pomiar do Tapetowanie' }).textContent).toBe('Dodaj pomiar')
+    expect(screen.getByRole('button', { name: 'Dodaj produkt do Tapetowanie' }).textContent).toBe('Dodaj produkt')
+    await user.click(screen.getByRole('button', { name: 'Dodaj pomiar do Tapetowanie' }))
+    await user.click(screen.getByRole('button', { name: 'Dodaj produkt do Tapetowanie' }))
     const width = screen.getByLabelText('Szerokość pomiaru dla Tapetowanie') as HTMLInputElement
     const height = screen.getByLabelText('Wysokość pomiaru dla Tapetowanie') as HTMLInputElement
     expect(width.labels?.[0]?.textContent).toBe('Szerokość')
@@ -66,11 +71,14 @@ describe('room scope editor order products and measurements UI', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(createElement(RoomScopeEditor, { orderId: 'order-1', initialRooms: baseRooms, catalog, canEdit: true }))
 
+    await user.click(screen.getByRole('button', { name: 'Dodaj produkt do Tapetowanie' }))
     const add = screen.getByRole('button', { name: 'Zapisz produkt do Tapetowanie' })
     expect(add).toHaveProperty('disabled', true)
+    expect(screen.queryByLabelText('Producent produktu dla Tapetowanie')).toBeNull()
     await user.type(screen.getByLabelText('Nazwa produktu dla Tapetowanie'), 'Tapeta na zamówienie')
-    await user.type(screen.getByLabelText('Producent produktu dla Tapetowanie'), 'WallDecor')
     await user.type(screen.getByLabelText('Kod / SKU produktu dla Tapetowanie'), 'WD-01')
+    await user.click(screen.getByRole('button', { name: 'Więcej pól produktu dla Tapetowanie' }))
+    await user.type(screen.getByLabelText('Producent produktu dla Tapetowanie'), 'WallDecor')
     await user.type(screen.getByLabelText('Kolekcja / seria produktu dla Tapetowanie'), 'Misty')
     await user.type(screen.getByLabelText('Partia produktu dla Tapetowanie'), 'PARTIA-24')
     await user.click(add)
@@ -79,6 +87,26 @@ describe('room scope editor order products and measurements UI', () => {
     expect(JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({
       productNameSnapshot: 'Tapeta na zamówienie', manufacturerSnapshot: 'WallDecor', productCodeSnapshot: 'WD-01', collectionSnapshot: 'Misty', batchSnapshot: 'PARTIA-24',
     })
+    await waitFor(() => expect(screen.queryByLabelText('Nazwa produktu dla Tapetowanie')).toBeNull())
+    expect(screen.getByRole('button', { name: 'Dodaj produkt do Tapetowanie' })).toBeTruthy()
+  })
+
+  it('keeps the product form collapsed by default and discards it on cancel', async () => {
+    const user = userEvent.setup()
+    const fetchMock = vi.fn()
+    vi.stubGlobal('fetch', fetchMock)
+    render(createElement(RoomScopeEditor, { orderId: 'order-1', initialRooms: baseRooms, catalog, canEdit: true }))
+
+    expect(screen.queryByLabelText('Nazwa produktu dla Tapetowanie')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Zapisz produkt do Tapetowanie' })).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Dodaj produkt do Tapetowanie' }))
+    await user.type(screen.getByLabelText('Nazwa produktu dla Tapetowanie'), 'Szkic')
+    await user.click(screen.getByRole('button', { name: 'Anuluj dodawanie produktu do Tapetowanie' }))
+
+    expect(fetchMock).not.toHaveBeenCalled()
+    expect(screen.queryByLabelText('Nazwa produktu dla Tapetowanie')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Dodaj produkt do Tapetowanie' }))
+    expect((screen.getByLabelText('Nazwa produktu dla Tapetowanie') as HTMLInputElement).value).toBe('')
   })
 
   it('sends RECTANGLE and SINGLE measurement payloads to the owning scope', async () => {
@@ -91,6 +119,8 @@ describe('room scope editor order products and measurements UI', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(createElement(RoomScopeEditor, { orderId: 'order-1', initialRooms: baseRooms, catalog, canEdit: true }))
 
+    expect(screen.queryByLabelText('Nazwa pomiaru dla Tapetowanie')).toBeNull()
+    await user.click(screen.getByRole('button', { name: 'Dodaj pomiar do Tapetowanie' }))
     await user.type(screen.getByLabelText('Nazwa pomiaru dla Tapetowanie'), 'Ściana')
     await user.type(screen.getByLabelText('Szerokość pomiaru dla Tapetowanie'), '240')
     await user.type(screen.getByLabelText('Wysokość pomiaru dla Tapetowanie'), '260')
@@ -98,7 +128,9 @@ describe('room scope editor order products and measurements UI', () => {
     await user.click(screen.getByRole('button', { name: 'Zapisz pomiar do Tapetowanie' }))
     await waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2))
     expect(JSON.parse((fetchMock.mock.calls[0]?.[1] as RequestInit).body as string)).toEqual({ kind: 'RECTANGLE', elementName: 'Ściana', value: '240', secondaryValue: '260', unit: 'CM', scopeId: 'scope-1' })
+    await waitFor(() => expect(screen.queryByLabelText('Nazwa pomiaru dla Tapetowanie')).toBeNull())
 
+    await user.click(screen.getByRole('button', { name: 'Dodaj pomiar do Tapetowanie' }))
     await user.click(screen.getByRole('button', { name: 'Długość / ilość' }))
     await user.type(screen.getByLabelText('Nazwa pomiaru dla Tapetowanie'), 'Listwa')
     await user.type(screen.getByLabelText('Wartość pomiaru dla Tapetowanie'), '3')
@@ -116,6 +148,8 @@ describe('room scope editor order products and measurements UI', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(createElement(RoomScopeEditor, { orderId: 'order-1', initialRooms: baseRooms, catalog, canEdit: true }))
 
+    expect(screen.getByRole('heading', { name: 'Pomiary ogólne pomieszczenia (0)' }).closest('details')?.open).toBe(false)
+    await user.click(screen.getByRole('button', { name: 'Dodaj pomiar ogólny w Salon' }))
     await user.type(screen.getByLabelText('Nazwa pomiaru w Salon'), 'Pomiar przeniesiony')
     await user.type(screen.getByLabelText('Wartość pomiaru w Salon'), '18')
     await user.selectOptions(screen.getByLabelText('Zakres pomiaru w Salon'), 'scope-1')
@@ -153,7 +187,8 @@ describe('room scope editor order products and measurements UI', () => {
     const confirmMock = vi.spyOn(window, 'confirm').mockReturnValue(false)
     render(createElement(RoomScopeEditor, { orderId: 'order-1', initialRooms: rooms, catalog, canEdit: true }))
 
-    expect(screen.getByRole('heading', { name: 'Pomiary ogólne pomieszczenia' })).toBeTruthy()
+    const generalHeading = screen.getByRole('heading', { name: 'Pomiary ogólne pomieszczenia (1)' })
+    expect(generalHeading.closest('details')?.open).toBe(true)
     expect(screen.getByText('Drzwi: 90 CM')).toBeTruthy()
     expect(screen.getAllByText('SKU-1').length).toBeGreaterThan(0)
     await user.click(screen.getByRole('button', { name: 'Usuń zakres Tapetowanie' }))

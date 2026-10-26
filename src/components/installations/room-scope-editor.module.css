@@ -177,3 +177,67 @@
     grid-column: auto;
   }
 }
+
+/* Collapsed add-forms: one dashed call-to-action instead of an always-open form. */
+.collapsedActions {
+  margin-top: 12px;
+}
+
+.addToggle {
+  border-style: dashed;
+  border-color: rgba(169, 106, 32, .45);
+  color: #8C5718;
+  font-weight: 600;
+  background: var(--wd-sand-light);
+}
+
+.addToggle:hover {
+  border-color: #A96A20;
+  background: var(--wd-white);
+  color: #8C5718;
+}
+
+.formActions {
+  grid-column: 1 / -1;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.moreFields {
+  justify-self: start;
+  padding-left: 0;
+  padding-right: 0;
+  color: #8C5718;
+  font-weight: 600;
+  text-decoration: underline;
+  text-underline-offset: 4px;
+}
+
+.generalSummary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 44px;
+  cursor: pointer;
+  list-style: none;
+}
+
+.generalSummary::-webkit-details-marker {
+  display: none;
+}
+
+.generalSummary h4 {
+  flex: 1;
+  min-width: 0;
+}
+
+.summaryChevron {
+  color: #8C5718;
+  transition: transform .2s ease;
+}
+
+.generalMeasurements[open] .summaryChevron {
+  transform: rotate(180deg);
+}

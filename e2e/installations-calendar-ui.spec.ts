@@ -50,7 +50,7 @@ async function createRoomAndScopesThroughUi(page: Page) {
   await expect(roomPanel.getByRole('heading', { name: 'Salon' })).toBeVisible()
 
   const scopeCategory = roomPanel.getByLabel('Rodzaj prac dla Salon')
-  const addScope = roomPanel.getByRole('button', { name: 'Dodaj zakres w Salon' })
+  const addScope = roomPanel.getByRole('button', { name: /^Dodaj (kolejną )?pracę w Salon$/ })
   await scopeCategory.selectOption('calendar-ui-wallpaper')
   await addScope.click()
   await expect(roomPanel.getByRole('heading', { name: 'Tapety tekstylne' })).toBeVisible()
@@ -206,6 +206,8 @@ test('admin schedules, reschedules and cancels visits entirely through the calen
   ]))
 
   await page.reload()
+  // Cancelled visits are folded away under "Pokaż odwołane" and must be revealed before interacting.
+  await visitsPanel.getByText('Pokaż odwołane (1)', { exact: true }).click()
   const cancelledSecondCard = visitsPanel.locator('article').filter({ hasText: '16.02.2027, 09:00–13:00' })
   await expect(cancelledSecondCard).toContainText('Odwołana')
   await cancelledSecondCard.getByRole('button', { name: /16\.02\.2027, 09:00–13:00/u }).click()

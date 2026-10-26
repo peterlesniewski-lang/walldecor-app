@@ -97,6 +97,9 @@ test('employee completes the simplified card workflow, without manual reload bet
   await expect(page.getByRole('button', { name: 'Wygeneruj link', exact: true })).toBeEnabled()
   await page.getByRole('button', { name: 'Wygeneruj link', exact: true }).click()
   const link = (await page.locator('#client-form output').innerText()).trim()
+  await expect(page.getByRole('button', { name: 'Wyślij link klientowi e-mailem' })).toBeVisible()
+  // The manual hand-off lives under "Zarządzaj linkiem" now; e-mail sending is the primary action.
+  await page.locator('#client-form').getByText('Zarządzaj linkiem', { exact: true }).click()
   await page.getByRole('button', { name: 'Oznacz jako wysłany' }).click()
   await expect(page.locator('#client-form output')).toHaveText(link)
   await page.locator('#client-form').getByText('Zarządzaj linkiem', { exact: true }).click()

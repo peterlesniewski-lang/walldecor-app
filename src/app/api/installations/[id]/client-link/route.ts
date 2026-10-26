@@ -9,12 +9,15 @@ import { ClientLinkDecryptionError, ClientLinkEncryptionConfigurationError } fro
 import {
   createClientLink,
   extendClientLink,
+  InstallationClientEmailMissingError,
+  InstallationClientLinkDeliveryError,
   InstallationClientLinkNotFoundError,
   InstallationClientLinkPrerequisiteError,
   InstallationClientLinkValidationError,
   markClientLinkSent,
   revokeClientLink,
   retrieveCurrentClientLink,
+  sendClientLinkEmail,
 } from '@/lib/installations/client-link'
 
 type Params = { params: Promise<{ id: string }> }
@@ -26,6 +29,7 @@ const actionSchema = z.discriminatedUnion('action', [
   z.object({ action: z.literal('EXTEND'), linkId: z.string().trim().min(1), expiresAt: expiry }).strict(),
   z.object({ action: z.literal('MARK_SENT'), linkId: z.string().trim().min(1) }).strict(),
   z.object({ action: z.literal('REGENERATE'), expiresAt: expiry }).strict(),
+  z.object({ action: z.literal('SEND_EMAIL'), expiresAt: expiry.optional() }).strict(),
 ])
 
 function safeLink(link: { id: string; expiresAt: Date; revokedAt: Date | null; createdAt: Date; lastOpenedAt: Date | null; sentAt: Date | null; sentById: string | null }) {
@@ -116,6 +120,15 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     if (parsed.data.action === 'MARK_SENT') {
       return NextResponse.json({ link: safeLink(await markClientLinkSent(prisma, parsed.data.linkId, access.session.user.id, id)) })
     }
+    if (parsed.data.action === 'SEND_EMAIL') {
+      const sent = await sendClientLinkEmail(prisma, { orderId: id, actorId: access.session.user.id, origin: req.nextUrl.origin, expiresAt: parsed.data.expiresAt })
+      // The plaintext URL stays editor-only, exactly like the generate response.
+      return NextResponse.json({
+        link: safeLink(sent.link),
+        url: installationPublicUrl(`/m/${sent.token}`, req.nextUrl.origin),
+        sentTo: sent.sentTo,
+      }, { headers: { 'Cache-Control': 'no-store' } })
+    }
     const created = await createClientLink(prisma, { orderId: id, createdById: access.session.user.id, expiresAt: parsed.data.expiresAt })
     return NextResponse.json({
       link: safeLink(created.link),
@@ -127,6 +140,8 @@ export async function PATCH(req: NextRequest, { params }: Params) {
     if (error instanceof InstallationClientLinkPrerequisiteError) return NextResponse.json({ error: 'Najpierw przypnij dokładnie jeden formularz klienta do zlecenia.' }, { status: 409 })
     if (error instanceof InstallationClientLinkNotFoundError) return NextResponse.json({ error: 'Nie znaleziono linku.' }, { status: 404 })
     if (error instanceof InstallationClientLinkValidationError) return NextResponse.json({ error: error.message, fieldErrors: error.fieldErrors }, { status: 400 })
+    if (error instanceof InstallationClientEmailMissingError) return NextResponse.json({ error: error.message }, { status: 400, headers: { 'Cache-Control': 'no-store' } })
+    if (error instanceof InstallationClientLinkDeliveryError) return NextResponse.json({ error: error.message }, { status: 502, headers: { 'Cache-Control': 'no-store' } })
     if (error instanceof SyntaxError) return NextResponse.json({ error: 'Działanie dla linku jest niepoprawne.' }, { status: 400 })
     return NextResponse.json({ error: 'Nie udało się zaktualizować linku klienta.' }, { status: 500, headers: { 'Cache-Control': 'no-store' } })
   }

@@ -138,6 +138,30 @@ describe('client form uses a real SQLite revision history', () => {
     expect(rows[0].tokenHash).toMatch(/^[a-f0-9]{64}$/)
   })
 
+  it('lists only READY, non-deleted client files by question as names without ids or paths', async () => {
+    const link = await db.installationClientLink.findUniqueOrThrow({ where: { tokenHash: hashClientLinkSecret(linkToken) } })
+    const submission = await db.installationFormSubmission.findUniqueOrThrow({ where: { draftKey: orderId } })
+    const base = { orderId, formSubmissionId: submission.id, clientLinkId: link.id, purpose: 'CLIENT_QUESTION', questionKey: 'referencja', contentType: 'image/png', source: 'WEB', createdById: 'PUBLIC_CLIENT', updatedAt: new Date() }
+    // Files must start PENDING and may only move forward, exactly like the media service does.
+    await db.installationFile.create({ data: { ...base, id: 'projection-pending-file', originalFilename: 'pending.png' } })
+    await db.installationFile.create({ data: { ...base, id: 'projection-deleted-file', originalFilename: 'deleted.png' } })
+    await db.installationFile.update({ where: { id: 'projection-deleted-file' }, data: { status: 'READY', byteSize: 1, sha256: 'c'.repeat(64) } })
+    await db.installationFile.update({ where: { id: 'projection-deleted-file' }, data: { softDeletedAt: new Date(), softDeletedById: 'PUBLIC_CLIENT', remoteDeleteStatus: 'PENDING' } })
+    await db.installationFile.create({ data: { ...base, id: 'projection-visible-file', originalFilename: 'drugi.pdf', contentType: 'application/pdf' } })
+    await db.installationFile.update({ where: { id: 'projection-visible-file' }, data: { status: 'READY', byteSize: 1, sha256: 'd'.repeat(64) } })
+
+    const projection = await loadPublicInstallationProjection(db, linkToken)
+    expect(projection.files).toEqual([
+      { questionKey: 'referencja', originalFilename: 'fixture.png', createdAt: expect.any(String) },
+      { questionKey: 'referencja', originalFilename: 'drugi.pdf', createdAt: expect.any(String) },
+    ])
+    const serialized = JSON.stringify(projection.files)
+    expect(serialized).not.toContain('projection-')
+    expect(serialized).not.toContain('client-form-existing-required-file')
+    expect(serialized).not.toContain('sha256')
+    expect(serialized).not.toContain('/files')
+  })
+
   it('autosaves only visible immutable-schema answers with CAS/idempotency, then freezes revisions on submit', async () => {
     const initial = await loadPublicInstallationProjection(db, linkToken)
     expect(initial.submission).toMatchObject({ status: 'DRAFT', revisionNumber: 1, draftVersion: 0 })
