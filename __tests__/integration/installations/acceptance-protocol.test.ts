@@ -10,6 +10,7 @@ import { createHash } from 'node:crypto'
 import sharp from 'sharp'
 import { dispatchAcceptanceEmailLink, issueAcceptanceLink, publicAcceptanceProjection, revokeAcceptanceLink, submitClientAcceptance } from '@/lib/installations/acceptance-client'
 import { createUnilateralDraft, signUnilateralProtocol } from '@/lib/installations/acceptance-unilateral'
+import type { OutboundEmail } from '@/lib/email/outbound-email'
 import { dispatchPendingAcceptanceAlerts } from '@/lib/installations/acceptance-alerts'
 import { getOrCreateAcceptancePdf } from '@/lib/installations/acceptance-pdf'
 
@@ -126,8 +127,17 @@ describe('protokół odbioru prac', () => {
     expect((await getOrCreateAcceptancePdf(db, protocol.id, 'ACCEPTANCE', { async download() { throw new Error('No photos expected') } })).sha256).toBe(pdf.sha256)
     await expect(db.installationAcceptanceDocument.update({ where: { id: pdf.id }, data: { sha256: 'changed' } })).rejects.toThrow()
     expect(await db.installationAcceptanceAlert.count({ where: { protocolId: protocol.id, kind: 'ACCEPTED_WITH_REMARKS' } })).toBe(2)
-    const dispatched = await dispatchPendingAcceptanceAlerts(db, protocol.id, async () => {})
+    const remarkEmails: OutboundEmail[] = []
+    const dispatched = await dispatchPendingAcceptanceAlerts(db, protocol.id, async (email) => { remarkEmails.push(email) })
     expect(dispatched).toEqual({ sent: 2, failed: 0 })
+    const remarkSnapshot = (await getAcceptanceProtocol(db, protocol.id, installerId)).snapshot
+    expect(remarkEmails).toHaveLength(2)
+    for (const email of remarkEmails) {
+      expect(email.subject).toContain(remarkSnapshot.orderNumber)
+      expect(email.text).toContain(`/installations/${orderId}#acceptance`)
+      expect(email.text).toContain('Poprawić narożnik.')
+      expect(email.html).toContain(`/installations/${orderId}#acceptance`)
+    }
     expect((await dispatchPendingAcceptanceAlerts(db, protocol.id, async () => {})).sent).toBe(0)
     await expect(submitClientAcceptance(db, token, { decision: 'ACCEPTED', firstName: 'Jan', lastName: 'Klient', relationship: 'klient', note: '', signature })).rejects.toThrow('nie oczekuje')
     await expect(db.installationAcceptanceProtocol.update({ where: { id: protocol.id }, data: { clientNote: 'zmiana' } })).rejects.toThrow()
@@ -199,7 +209,11 @@ describe('protokół odbioru prac', () => {
     await submitClientAcceptance(db, refusal.token, { decision: 'REFUSED', firstName: 'Jan', lastName: 'Klient', relationship: 'klient', note: 'Brak akceptacji efektu.', signature: null })
     expect(await db.installationAcceptanceAlert.count({ where: { protocolId: draft.id, kind: 'REFUSED' } })).toBe(2)
     expect((await dispatchPendingAcceptanceAlerts(db, draft.id, async () => { throw new Error('SMTP unavailable') })).failed).toBe(2)
-    expect((await dispatchPendingAcceptanceAlerts(db, draft.id, async () => {})).sent).toBe(2)
+    const refusalEmails: OutboundEmail[] = []
+    expect((await dispatchPendingAcceptanceAlerts(db, draft.id, async (email) => { refusalEmails.push(email) })).sent).toBe(2)
+    expect(refusalEmails[0].subject).toMatch(/^WallDecor: Odmowa odbioru prac · MON-/)
+    expect(refusalEmails[0].text).toContain(`/installations/${orderId}#acceptance`)
+    expect(refusalEmails[0].text).toContain('Brak akceptacji efektu.')
     const unilateral = await createUnilateralDraft(db, draft.id, installerId)
     await expect(signUnilateralProtocol(db, unilateral.id, installerId, { reason: 'ABSENT', circumstances: 'Klient był nieobecny na miejscu.', signature })).rejects.toThrow('Stan odbioru')
     const signedUnilateral = await signUnilateralProtocol(db, unilateral.id, installerId, { reason: 'REFUSAL', circumstances: 'Klient odmówił odbioru z powodu widocznego łączenia listew.', signature })
