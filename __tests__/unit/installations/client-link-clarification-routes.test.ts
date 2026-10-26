@@ -10,10 +10,13 @@ const mocks = vi.hoisted(() => ({
   extendLink: vi.fn(),
   markSent: vi.fn(),
   revokeLink: vi.fn(),
+  sendEmail: vi.fn(),
   listLinks: vi.fn(),
   listClarifications: vi.fn(),
   resolveClarification: vi.fn(),
   MissingSnapshot: function InstallationClientLinkPrerequisiteError(this: object) {},
+  EmailMissing: class InstallationClientEmailMissingError extends Error { constructor() { super('Karta nie ma adresu e-mail klienta.') } },
+  Delivery: class InstallationClientLinkDeliveryError extends Error { constructor() { super('Nie udało się wysłać wiadomości. Link nie został oznaczony jako wysłany.') } },
 }))
 
 vi.mock('next-auth', () => ({ getServerSession: vi.fn(async () => mocks.session) }))
@@ -30,9 +33,12 @@ vi.mock('@/lib/installations/client-link', () => ({
   extendClientLink: mocks.extendLink,
   markClientLinkSent: mocks.markSent,
   revokeClientLink: mocks.revokeLink,
+  sendClientLinkEmail: mocks.sendEmail,
   listClientLinkStatuses: mocks.listLinks,
   InstallationClientLinkNotFoundError: class InstallationClientLinkNotFoundError extends Error {},
   InstallationClientLinkPrerequisiteError: mocks.MissingSnapshot,
+  InstallationClientEmailMissingError: mocks.EmailMissing,
+  InstallationClientLinkDeliveryError: mocks.Delivery,
   InstallationClientLinkValidationError: class InstallationClientLinkValidationError extends Error { fieldErrors = { form: 'bad' } },
 }))
 vi.mock('@/lib/installations/form-service', () => ({
@@ -61,6 +67,7 @@ describe('client-link and clarification internal routes', () => {
     mocks.extendLink.mockReset().mockResolvedValue(link)
     mocks.markSent.mockReset().mockResolvedValue({ ...link, sentAt: new Date('2026-08-23T08:00:00.000Z'), sentById: 'owner-user' })
     mocks.revokeLink.mockReset().mockResolvedValue(link)
+    mocks.sendEmail.mockReset().mockResolvedValue({ link: { ...link, sentAt: new Date('2026-08-23T08:00:00.000Z'), sentById: 'owner-user', tokenHash: 'private-hash', tokenCiphertext: 'private-ciphertext' }, token: 'b'.repeat(43), url: `http://test/m/${'b'.repeat(43)}`, sentTo: 'marta@example.test', created: true })
     mocks.listLinks.mockReset().mockResolvedValue([{ id: 'link-1' }])
     mocks.listClarifications.mockReset().mockResolvedValue([{ id: 'clarification-1', status: 'OPEN' }])
     mocks.resolveClarification.mockReset().mockResolvedValue({ id: 'clarification-1', status: 'RESOLVED' })
@@ -210,6 +217,45 @@ describe('client-link and clarification internal routes', () => {
     expect(result.link).not.toHaveProperty('token')
     expect(result.link).not.toHaveProperty('tokenHash')
     expect(result.link).toMatchObject({ sentAt: '2026-08-23T08:00:00.000Z', sentById: 'owner-user' })
+  })
+
+  it('e-mails the client link for editors only, returns the editor URL without stored secrets and never caches', async () => {
+    const body = JSON.stringify({ action: 'SEND_EMAIL', expiresAt: '2027-01-01T00:00:00.000Z' })
+    expect((await PATCH(new NextRequest('http://test/api/installations/order-1/client-link', { method: 'PATCH', body }), orderParams)).status).toBe(401)
+    expect(mocks.sendEmail).not.toHaveBeenCalled()
+
+    mocks.session = { user: { id: 'owner-user', role: 'EMPLOYEE', employeeId: 'owner-employee' } }
+    const invalid = await PATCH(new NextRequest('http://test/api/installations/order-1/client-link', { method: 'PATCH', body: JSON.stringify({ action: 'SEND_EMAIL', expiresAt: 'soon' }) }), orderParams)
+    expect(invalid.status).toBe(400)
+    expect(mocks.sendEmail).not.toHaveBeenCalled()
+
+    const response = await PATCH(new NextRequest('http://test/api/installations/order-1/client-link', { method: 'PATCH', body }), orderParams)
+    const result = await response.json()
+    expect(response.status).toBe(200)
+    expect(response.headers.get('cache-control')).toBe('no-store')
+    expect(mocks.sendEmail).toHaveBeenCalledWith(expect.anything(), { orderId: 'order-1', actorId: 'owner-user', origin: 'http://test', expiresAt: new Date('2027-01-01T00:00:00.000Z') })
+    expect(result).toMatchObject({ url: `http://test/m/${'b'.repeat(43)}`, sentTo: 'marta@example.test', link: { sentAt: '2026-08-23T08:00:00.000Z', sentById: 'owner-user' } })
+    expect(result.link).not.toHaveProperty('tokenHash')
+    expect(result.link).not.toHaveProperty('tokenCiphertext')
+
+    const withoutExpiry = await PATCH(new NextRequest('http://test/api/installations/order-1/client-link', { method: 'PATCH', body: JSON.stringify({ action: 'SEND_EMAIL' }) }), orderParams)
+    expect(withoutExpiry.status).toBe(200)
+    expect(mocks.sendEmail).toHaveBeenLastCalledWith(expect.anything(), { orderId: 'order-1', actorId: 'owner-user', origin: 'http://test', expiresAt: undefined })
+  })
+
+  it('maps a missing client e-mail to 400 and a delivery failure to 502 with the Polish message', async () => {
+    mocks.session = { user: { id: 'owner-user', role: 'EMPLOYEE', employeeId: 'owner-employee' } }
+    const body = JSON.stringify({ action: 'SEND_EMAIL' })
+    mocks.sendEmail.mockRejectedValueOnce(new mocks.EmailMissing())
+    const missing = await PATCH(new NextRequest('http://test/api/installations/order-1/client-link', { method: 'PATCH', body }), orderParams)
+    expect(missing.status).toBe(400)
+    expect(await missing.json()).toEqual({ error: 'Karta nie ma adresu e-mail klienta.' })
+
+    mocks.sendEmail.mockRejectedValueOnce(new mocks.Delivery())
+    const failed = await PATCH(new NextRequest('http://test/api/installations/order-1/client-link', { method: 'PATCH', body }), orderParams)
+    expect(failed.status).toBe(502)
+    expect(failed.headers.get('cache-control')).toBe('no-store')
+    expect(await failed.json()).toEqual({ error: 'Nie udało się wysłać wiadomości. Link nie został oznaczony jako wysłany.' })
   })
 
   it('never discloses client answers or clarification evidence to an assigned installer', async () => {
