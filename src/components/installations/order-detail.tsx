@@ -15,6 +15,8 @@ import { OwnershipPanel } from './ownership-panel'
 import { VisitFeePanel } from './visit-fee-panel'
 import { InstallationFilesPanel } from './installation-files-panel'
 import { InstallationVisitsPanel, type InstallationVisitValue } from './installation-visits-panel'
+import { InstallerProtocolPanel, type AcceptanceCandidate } from './installer-protocol-panel'
+import { CoordinatorAcceptancePanel, type CoordinatorAcceptanceView } from './coordinator-acceptance-panel'
 import type { ScopeAssignmentView } from '@/lib/installations/scope-assignment-service'
 import type { InstallerInstallationOrderView } from '@/lib/installations/order-presenter'
 import { formatWarsawDateTime } from '@/lib/installations/visit-time'
@@ -56,6 +58,8 @@ export function InstallationOrderDetail({
   mismatches = [],
   visits = [],
   scopeAssignments = [],
+  acceptanceCandidates = [],
+  acceptanceProtocols = [],
 }: {
   order: InstallationOrderDetailValue
   employees: InstallationEmployeeOption[]
@@ -76,6 +80,8 @@ export function InstallationOrderDetail({
   mismatches?: Parameters<typeof InstallationFilesPanel>[0]['mismatches']
   visits?: InstallationVisitValue[]
   scopeAssignments?: ScopeAssignmentView[]
+  acceptanceCandidates?: AcceptanceCandidate[]
+  acceptanceProtocols?: CoordinatorAcceptanceView[]
 }) {
   const router = useRouter()
   const [archiving, setArchiving] = useState(false)
@@ -176,6 +182,7 @@ export function InstallationOrderDetail({
         <a className="underline underline-offset-4" href="#scope">Zakres prac</a>
         {canEditActiveOrder && <a className="underline underline-offset-4" href="#client-form">Formularz klienta</a>}
         <a className="underline underline-offset-4" href="#visits">Wizyty i terminy</a>
+        {!editableOrder && <a className="underline underline-offset-4" href="#acceptance">Protokoły odbioru</a>}
         {canEditActiveOrder && <a className="underline underline-offset-4" href="#attachments">Załączniki</a>}
       </nav>
 
@@ -200,6 +207,8 @@ export function InstallationOrderDetail({
       <section id="visits" data-card-section aria-labelledby="installation-visits-heading" className="scroll-mt-6">
         <InstallationVisitsPanel orderId={order.id} visits={visits} scopes={visitScopes} employees={employees} canEdit={canEditActiveOrder} canForceOverwrite={canManageGovernance && !isArchived} />
       </section>
+      {!editableOrder && <InstallerProtocolPanel orderId={order.id} candidates={acceptanceCandidates} />}
+      {editableOrder && <CoordinatorAcceptancePanel orderId={order.id} protocols={acceptanceProtocols} canManage={canEditActiveOrder} />}
       {canEditActiveOrder && <section id="attachments" data-card-section className="scroll-mt-6" aria-label="Załączniki zlecenia">
         <InstallationFilesPanel orderId={order.id} initialFiles={files} mismatches={mismatches} rooms={cardRooms.map((room) => ({ id: room.id, name: room.name, scopes: room.scopes.map((scope) => ({ id: scope.id, name: scope.name })) }))} canEdit={canEditActiveOrder} onChanged={() => router.refresh()} />
       </section>}

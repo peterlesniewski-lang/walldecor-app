@@ -35,3 +35,11 @@ _Avoid_: miesiąc wypłaty
 **Umowa kosztowa**:
 Stała umowa, za którą spółka co miesiąc płaci bez faktury VAT (np. najem placu od osoby prywatnej); jej kwota jest kosztem stałym w każdym miesiącu obowiązywania.
 _Avoid_: umowa dodatkowa, koszt ręczny, czynsz (jako nazwa ogólna)
+
+### Montaże
+
+**Protokół odbioru prac**:
+Zapis prac jednego rodzaju wykonanych podczas jednej wizyty, także w kilku pomieszczeniach, oraz stanowiska klienta: odbioru, odbioru z uwagami albo odmowy odbioru.
+
+**Protokół jednostronny**:
+Oświadczenie wykonawcy o wykonanych pracach i okolicznościach braku potwierdzenia klienta. Nie oznacza odbioru prac przez klienta.
