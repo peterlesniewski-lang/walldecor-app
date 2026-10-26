@@ -50,7 +50,7 @@ async function createRoomAndScopesThroughUi(page: Page) {
   await expect(roomPanel.getByRole('heading', { name: 'Salon' })).toBeVisible()
 
   const scopeCategory = roomPanel.getByLabel('Rodzaj prac dla Salon')
-  const addScope = roomPanel.getByRole('button', { name: 'Dodaj zakres w Salon' })
+  const addScope = roomPanel.getByRole('button', { name: /^Dodaj (kolejną )?pracę w Salon$/ })
   await scopeCategory.selectOption('calendar-ui-wallpaper')
   await addScope.click()
   await expect(roomPanel.getByRole('heading', { name: 'Tapety tekstylne' })).toBeVisible()
