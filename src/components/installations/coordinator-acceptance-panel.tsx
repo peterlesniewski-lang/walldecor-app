@@ -13,6 +13,11 @@ export type CoordinatorAcceptanceView = {
   invoiceTask: { id: string; title: string; status: string } | null
   workType: string
   visitStartsAt: string | null
+  visitId: string
+  groupKey: string
+  createdAt: string
+  installerSignedAt: string | null
+  clientRespondedAt: string | null
   status: string
   unilateralStatus: string | null
   failedAlerts: number
@@ -23,6 +28,37 @@ export type CoordinatorAcceptanceView = {
 const stateName: Record<string, string> = {
   DRAFT: 'Szkic wykonawcy', INSTALLER_SIGNED: 'Czeka na klienta', ACCEPTED: 'Odebrano',
   ACCEPTED_WITH_REMARKS: 'Odebrano z uwagami', REFUSED: 'Odmowa odbioru', UNILATERAL: 'Protokół jednostronny',
+}
+
+function statusMoment(protocol: CoordinatorAcceptanceView): string {
+  switch (protocol.status) {
+    case 'ACCEPTED':
+    case 'ACCEPTED_WITH_REMARKS':
+    case 'REFUSED':
+      return `Odpowiedź klienta ${formatWarsawDateTime(protocol.clientRespondedAt ?? protocol.createdAt)}`
+    case 'INSTALLER_SIGNED':
+      return `Podpisany przez wykonawcę ${formatWarsawDateTime(protocol.installerSignedAt ?? protocol.createdAt)}`
+    case 'UNILATERAL':
+      return protocol.installerSignedAt
+        ? `Podpisany przez wykonawcę ${formatWarsawDateTime(protocol.installerSignedAt)}`
+        : `Szkic utworzony ${formatWarsawDateTime(protocol.createdAt)}`
+    default:
+      return `Szkic utworzony ${formatWarsawDateTime(protocol.createdAt)}`
+  }
+}
+
+type ProtocolGroup = { key: string; workType: string; visitStartsAt: string | null; latest: CoordinatorAcceptanceView; previous: CoordinatorAcceptanceView[] }
+
+function groupProtocols(protocols: CoordinatorAcceptanceView[]): ProtocolGroup[] {
+  const buckets = new Map<string, CoordinatorAcceptanceView[]>()
+  for (const protocol of protocols) {
+    const key = `${protocol.visitId}:${protocol.groupKey}`
+    buckets.set(key, [...(buckets.get(key) ?? []), protocol])
+  }
+  return Array.from(buckets, ([key, items]) => {
+    const [latest, ...previous] = [...items].sort((a, b) => b.revision - a.revision)
+    return { key, workType: latest.workType, visitStartsAt: latest.visitStartsAt, latest, previous }
+  })
 }
 
 export function CoordinatorAcceptancePanel({ orderId, protocols, canManage }: { orderId: string; protocols: CoordinatorAcceptanceView[]; canManage: boolean }) {
@@ -83,13 +119,16 @@ export function CoordinatorAcceptancePanel({ orderId, protocols, canManage }: { 
     <p className="text-xs font-extrabold uppercase tracking-[0.2em]" style={{ color: '#8C5718' }}>Po montażu</p>
     <h2 id="coordinator-acceptance-heading" className="mt-2 text-2xl font-extrabold" style={{ color: 'var(--wd-dark)', fontFamily: 'var(--font-client-display)' }}>Protokoły odbioru</h2>
     {protocols.length === 0 && <p className="mt-4 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Wykonawcy nie przygotowali jeszcze protokołów.</p>}
-    <div className="mt-4 divide-y divide-black/10">{protocols.map((protocol) => {
+    <div className="mt-4 space-y-5">{groupProtocols(protocols).map((group) => {
+      const protocol = group.latest
       const activeLinks = protocol.links.filter((link) => !link.revokedAt && new Date(link.expiresAt) > new Date())
-      return <article key={protocol.id} className="py-4 first:pt-0 last:pb-0">
+      return <article key={group.key} className="rounded-xl border border-black/10 p-4" aria-label={group.workType}>
         <div className="flex flex-wrap items-start justify-between gap-3">
           <div>
-            <h3 className="font-extrabold">{protocol.workType} <span className="text-sm font-medium">· wersja {protocol.revision}</span></h3>
-            <p className="mt-1 text-sm">{protocol.visitStartsAt ? formatWarsawDateTime(protocol.visitStartsAt) : 'Wizyta'} · {stateName[protocol.status] ?? protocol.status}</p>
+            <h3 className="font-extrabold">{group.workType}</h3>
+            <p className="mt-1 text-sm" style={{ color: 'var(--wd-text-muted)' }}>Wizyta: {group.visitStartsAt ? formatWarsawDateTime(group.visitStartsAt) : 'data nieustalona'}</p>
+            <p className="mt-2"><span className="rounded-full px-2.5 py-1 text-xs font-bold" style={{ background: '#E9D7BA', color: '#70420B' }}>Aktualna · wersja {protocol.revision}</span></p>
+            <p className="mt-2 text-sm">{stateName[protocol.status] ?? protocol.status} · {statusMoment(protocol)}</p>
             {protocol.resolvedByProtocolId && <p className="mt-1 text-sm font-bold text-emerald-900">Etap zamknięty po poprawkach i ponownym odbiorze podczas kolejnej wizyty.</p>}
             {protocol.unilateralStatus === 'SIGNED' && !protocol.resolvedByProtocolId && <p className="mt-1 text-sm font-bold text-amber-900">Osobny protokół jednostronny. Etap pozostaje otwarty.</p>}
             {protocol.isLatest && !protocol.resolvedByProtocolId && ['ACCEPTED_WITH_REMARKS', 'REFUSED', 'UNILATERAL'].includes(protocol.status) && <p className="mt-1 text-sm font-bold text-amber-900">Etap otwarty: po poprawkach wymagany nowy podpis wykonawcy i klienta.</p>}
@@ -108,6 +147,16 @@ export function CoordinatorAcceptancePanel({ orderId, protocols, canManage }: { 
             {canManage && activeLinks.map((link) => <button key={link.id} type="button" disabled={busy !== null} onClick={() => revoke(protocol.id, link.id)} className="min-h-10 rounded-full border border-black/30 px-4 text-xs font-bold disabled:opacity-50">Cofnij link</button>)}
           </div>}
         </div>
+        {group.previous.length > 0 && <details className="mt-4 border-t border-black/10 pt-3">
+          <summary className="cursor-pointer text-sm font-bold">Poprzednie wersje ({group.previous.length})</summary>
+          <ul className="mt-2 divide-y divide-black/10">{group.previous.map((old) => <li key={old.id} className="flex flex-wrap items-center justify-between gap-2 py-2 text-sm">
+            <span>wersja {old.revision} · {stateName[old.status] ?? old.status} · {statusMoment(old)}</span>
+            {old.status !== 'DRAFT' && <span className="flex flex-wrap gap-2">
+              {old.status !== 'INSTALLER_SIGNED' && <a href={`/api/installations/${orderId}/protocols/${old.id}/pdf`} className="inline-flex min-h-9 items-center rounded-full border border-black/30 px-3 text-xs font-bold">PDF</a>}
+              {old.unilateralStatus === 'SIGNED' && <a href={`/api/installations/${orderId}/protocols/${old.id}/pdf?kind=UNILATERAL`} className="inline-flex min-h-9 items-center rounded-full border border-black/30 px-3 text-xs font-bold">PDF jednostronny</a>}
+            </span>}
+          </li>)}</ul>
+        </details>}
       </article>
     })}</div>
     {canManage && protocols.some((protocol) => protocol.failedAlerts > 0) && <button type="button" onClick={retryAlerts} disabled={busy !== null} className="mt-4 min-h-10 rounded-full border border-red-800 px-4 text-xs font-bold text-red-800 disabled:opacity-50">Ponów e-maile z powiadomieniami</button>}

@@ -29,7 +29,7 @@ type Params = { params: Promise<{ id: string }> }
 async function loadAcceptanceProtocols(orderId: string) {
   const [protocols, invoiceTasks] = await Promise.all([
     prisma.installationAcceptanceProtocol.findMany({ where: { orderId }, select: {
-      id: true, visitId: true, groupKey: true, revision: true, status: true, snapshotJson: true, resultsJson: true, clientNote: true,
+      id: true, visitId: true, groupKey: true, revision: true, status: true, createdAt: true, installerSignedAt: true, clientRespondedAt: true, snapshotJson: true, resultsJson: true, clientNote: true,
       resolutionAsPrior: { select: { resolvingProtocolId: true } },
       unilateral: { select: { status: true } },
       alerts: { select: { emailStatus: true } },
@@ -54,6 +54,8 @@ async function loadAcceptanceProtocols(orderId: string) {
       unilateralStatus: protocol.unilateral?.status ?? null,
       failedAlerts: protocol.alerts.filter((alert) => alert.emailStatus === 'FAILED').length,
       workType: snapshot.workType, visitStartsAt: snapshot.visitStartsAt, clientNote: protocol.clientNote,
+      visitId: protocol.visitId, groupKey: protocol.groupKey, createdAt: protocol.createdAt.toISOString(),
+      installerSignedAt: protocol.installerSignedAt?.toISOString() ?? null, clientRespondedAt: protocol.clientRespondedAt?.toISOString() ?? null,
       links: protocol.clientLinks.map((link) => ({ ...link, expiresAt: link.expiresAt.toISOString(), revokedAt: link.revokedAt?.toISOString() ?? null, sentAt: link.sentAt?.toISOString() ?? null })),
     }
   })

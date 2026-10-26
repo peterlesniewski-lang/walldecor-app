@@ -113,6 +113,8 @@ export async function publicAcceptanceProjection(db: PrismaClient, token: string
   const photos = await db.installationFile.findMany({ where: { acceptanceProtocolId: protocol.id, status: 'READY', softDeletedAt: null }, select: { id: true, originalFilename: true }, orderBy: { createdAt: 'asc' } })
   return {
     protocolId: protocol.id,
+    orderId: protocol.orderId,
+    channel: link.channel as Channel,
     revision: protocol.revision,
     isLatest: newest?.id === protocol.id,
     status: protocol.status,

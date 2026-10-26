@@ -6,6 +6,16 @@ import { formatWarsawDateTime } from '@/lib/installations/visit-time'
 
 type Projection = Awaited<ReturnType<typeof publicAcceptanceProjection>>
 const resultNames = { DONE: 'Wykonano', PARTIAL: 'Wykonano częściowo', NOT_DONE: 'Nie wykonano' }
+function AfterResponseHint({ protocol }: { protocol: Projection }) {
+  if (protocol.channel === 'ONSITE') {
+    return <div className="mt-8 border-2 border-[#1b3029] bg-white p-5">
+      <p className="text-lg font-extrabold" style={{ fontFamily: 'var(--font-client-display)' }}>Przekaż telefon wykonawcy.</p>
+      <a href={`/installations/${protocol.orderId}#acceptance`} className="mt-4 inline-flex min-h-12 items-center border border-[#1b3029] px-5 text-sm font-bold">Wróć do karty montażu</a>
+    </div>
+  }
+  return <p className="mt-6 text-sm text-[#4d6157]">Możesz zamknąć tę stronę.</p>
+}
+
 const decisionNames = { ACCEPTED: 'Odebrano', ACCEPTED_WITH_REMARKS: 'Odebrano z uwagami', REFUSED: 'Odmowa odbioru' }
 
 export function ClientAcceptancePage({ token, protocol }: { token: string; protocol: Projection }) {
@@ -109,7 +119,9 @@ export function ClientAcceptancePage({ token, protocol }: { token: string; proto
         <p className="text-xs font-extrabold uppercase tracking-[0.22em]">Odpowiedź zapisana</p>
         <h2 className="mt-2 text-2xl font-extrabold" style={{ fontFamily: 'var(--font-client-display)' }}>{decisionNames[saved]}</h2>
         <p className="mt-2 text-sm">Dziękujemy. Treść protokołu i odpowiedź zostały utrwalone.</p>
-      </section> : canRespond ? <form className="mt-9 border-t-2 border-[#1b3029] pt-8" onSubmit={submit}>
+      </section> : null}
+      {saved ? <AfterResponseHint protocol={protocol} /> : null}
+      {saved ? null : canRespond ? <form className="mt-9 border-t-2 border-[#1b3029] pt-8" onSubmit={submit}>
         <p className="text-xs font-extrabold uppercase tracking-[0.22em] text-[#9a5b22]">02 / decyzja klienta</p>
         <h2 className="mt-2 text-2xl font-extrabold" style={{ fontFamily: 'var(--font-client-display)' }}>Potwierdzenie odbioru</h2>
         <fieldset className="mt-5 space-y-2"><legend className="mb-2 text-sm font-bold">Wybierz odpowiedź</legend>
@@ -130,7 +142,10 @@ export function ClientAcceptancePage({ token, protocol }: { token: string; proto
         </div>
         {error && <p role="alert" className="mt-4 text-sm font-bold text-red-800">{error}</p>}
         <button type="submit" disabled={busy} className="mt-5 min-h-13 w-full bg-[#1b3029] px-6 py-3 font-bold text-white disabled:opacity-50">{busy ? 'Zapisywanie…' : 'Potwierdź decyzję'}</button>
-      </form> : <p className="mt-8 border border-[#9eaa9e] bg-white p-5 text-sm">Ten protokół nie oczekuje już na odpowiedź.</p>}
+      </form> : <>
+        <p className="mt-8 border border-[#9eaa9e] bg-white p-5 text-sm">Ten protokół nie oczekuje już na odpowiedź.</p>
+        <AfterResponseHint protocol={protocol} />
+      </>}
       {canDownload && <div className="mt-6 flex flex-wrap gap-3">
         <a href={`/api/public/acceptance/${token}/pdf`} className="inline-flex min-h-12 items-center bg-[#1b3029] px-5 text-sm font-bold text-white">Pobierz PDF protokołu</a>
         {protocol.unilateral && <a href={`/api/public/acceptance/${token}/pdf?kind=UNILATERAL`} className="inline-flex min-h-12 items-center border border-[#1b3029] px-5 text-sm font-bold">Pobierz PDF jednostronny</a>}

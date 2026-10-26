@@ -1,12 +1,42 @@
 import type { Prisma, PrismaClient } from '@/generated/prisma'
 import { sendEmail, type OutboundEmail } from '@/lib/email/outbound-email'
-import type { AcceptanceSnapshot } from './acceptance-protocol'
+import type { AcceptanceResult, AcceptanceSnapshot } from './acceptance-protocol'
+import { acceptanceAlertEmailContent, acceptanceAlertTitles, type AcceptanceAlertKind } from './acceptance-alert-email'
+import { installationPublicUrl } from './public-url'
 
-const titles: Record<string, string> = {
-  ACCEPTED_WITH_REMARKS: 'Odbiór prac z uwagami', REFUSED: 'Odmowa odbioru prac', UNILATERAL: 'Protokół jednostronny',
+export { acceptanceAlertEmailContent } from './acceptance-alert-email'
+const titles = acceptanceAlertTitles
+
+function parseJson<T>(value: string | null | undefined, fallback: T): T {
+  if (!value) return fallback
+  try { return JSON.parse(value) as T } catch { return fallback }
 }
 
-export async function queueAcceptanceAlerts(tx: Prisma.TransactionClient, protocolId: string, kind: 'ACCEPTED_WITH_REMARKS' | 'REFUSED' | 'UNILATERAL') {
+const alertKinds: AcceptanceAlertKind[] = ['ACCEPTED_WITH_REMARKS', 'REFUSED', 'UNILATERAL']
+
+async function composeAlertEmail(db: PrismaClient, alert: { protocolId: string; kind: string; title: string; message: string }): Promise<Pick<OutboundEmail, 'subject' | 'text' | 'html'>> {
+  const protocol = await db.installationAcceptanceProtocol.findUnique({ where: { id: alert.protocolId }, select: {
+    orderId: true, snapshotJson: true, resultsJson: true, installerSignedAt: true, clientDecision: true, clientFirstName: true,
+    clientLastName: true, clientRelationship: true, clientNote: true, clientRespondedAt: true,
+    unilateral: { select: { reason: true, circumstances: true, signedAt: true } },
+  } })
+  const kind = alertKinds.find((value) => value === alert.kind)
+  if (!protocol || !kind) {
+    const url = installationPublicUrl(protocol ? `/installations/${protocol.orderId}#acceptance` : '/installations')
+    return { subject: `WallDecor: ${alert.title}`, text: `${alert.message}\n\nOtwórz kartę zlecenia: ${url}` }
+  }
+  const snapshot = parseJson<AcceptanceSnapshot | null>(protocol.snapshotJson, null)
+  const url = installationPublicUrl(`/installations/${protocol.orderId}#acceptance`)
+  if (!snapshot) return { subject: `WallDecor: ${alert.title}`, text: `${alert.message}\n\nOtwórz kartę zlecenia: ${url}` }
+  return acceptanceAlertEmailContent({
+    kind, url, snapshot, results: parseJson<AcceptanceResult[]>(protocol.resultsJson, []),
+    installerSignedAt: protocol.installerSignedAt, clientDecision: protocol.clientDecision,
+    clientFirstName: protocol.clientFirstName, clientLastName: protocol.clientLastName, clientRelationship: protocol.clientRelationship,
+    clientNote: protocol.clientNote, clientRespondedAt: protocol.clientRespondedAt, unilateral: protocol.unilateral,
+  })
+}
+
+export async function queueAcceptanceAlerts(tx: Prisma.TransactionClient, protocolId: string, kind: AcceptanceAlertKind) {
   const protocol = await tx.installationAcceptanceProtocol.findUniqueOrThrow({ where: { id: protocolId }, select: {
     orderId: true, snapshotJson: true, order: { select: { primaryEmployeeId: true, primaryEmployee: { select: { email: true, active: true } } } },
   } })
@@ -47,7 +77,7 @@ export async function dispatchPendingAcceptanceAlerts(
     }, data: { emailStatus: 'SENDING', emailAttempts: { increment: 1 }, emailLeaseUntil: new Date(Date.now() + 5 * 60_000), lastEmailError: null } })
     if (!claimed.count) continue
     try {
-      await emailSender({ to: alert.recipientEmail, subject: `WallDecor: ${alert.title}`, text: `${alert.message}\n\nOtwórz kartę zlecenia w aplikacji WallDecor.` })
+      await emailSender({ to: alert.recipientEmail, ...(await composeAlertEmail(db, alert)) })
       await db.installationAcceptanceAlert.update({ where: { id: alert.id }, data: { emailStatus: 'SENT', emailSentAt: new Date(), emailLeaseUntil: null } })
       sent += 1
     } catch (error) {

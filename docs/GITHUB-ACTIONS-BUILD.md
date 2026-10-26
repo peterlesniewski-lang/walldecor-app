@@ -75,7 +75,21 @@ po tej dacie trzeba odnowić dostęp do GHCR. Produkcja pozostała na commicie
 `1c55b01800ed5302f662dc785aaf42f2d3b47d36`, a `WALLDECOR_APPROVED_IMAGE`
 nie została ustawiona. Samo pobranie obrazu nie uruchamia aplikacji ani migracji.
 
-## Pierwsze wdrożenie — dopiero po zgodzie
+## Pierwsze wdrożenie — wykonane 26.10.2026
+
+Zatwierdzony digest `sha256:672f6efb8d66754c86ad86b53f15599ca42e90f12b8378083618a41e8b77ec31`
+(commit `64ab504`, run `40350166671`, PR #31). Migracja próbna na kopii bazy nowym obrazem
+z wolumenem tylko do odczytu: 49 → 55 migracji, integrity ok. Backup przed zmianą:
+`/data/backups/walldecor-before-acceptance-20261026-1547.db`; entrypoint zrobił drugi
+(`walldecor-20261026-160159-1.db`). Zmienna `WALLDECOR_APPROVED_IMAGE` utworzona przez API
+(`POST /applications/{uuid}/envs` przyjmuje tylko key/value/is_preview/is_literal/is_multiline/
+is_shown_once; Coolify beta.463 sam ustawił `is_buildtime=true`). Deploy 22 s, rolling update,
+kontener `pwc0sk0w8cw8k8wkgwokgogk-160139262557`, `running:healthy`. Warstwy obrazu
+uruchomionego kontenera identyczne z obrazem GHCR (różni się tylko lokalny image ID przez
+etykiety Coolify). Terminal Coolify (`/terminal`, serwer `localhost`) działa jako root i
+zastępuje brak endpointu `execute` w API.
+
+## Procedura wdrożenia — po zgodzie
 
 1. Potwierdzić zielony run GitHub Actions i jego dokładny digest.
 2. Potwierdzić, że VPS potrafi pobrać ten obraz, bez uruchamiania go na produkcji.

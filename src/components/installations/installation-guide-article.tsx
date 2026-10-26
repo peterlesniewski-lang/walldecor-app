@@ -14,10 +14,16 @@ function sectionId(index: number) {
 export function InstallationGuideArticle({ guide }: { guide: InstallationGuide }) {
   return (
     <article className="mx-auto max-w-5xl">
-      <Link href="/installations/instrukcje" className="inline-flex items-center gap-2 text-sm font-bold underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4" style={{ color: '#8C5718' }}>
-        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
-        Wszystkie instrukcje montaży
-      </Link>
+      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
+        <Link href="/installations/instrukcje" className="inline-flex items-center gap-2 text-sm font-bold underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4" style={{ color: '#8C5718' }}>
+          <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+          Wszystkie instrukcje montaży
+        </Link>
+        <span aria-hidden="true" style={{ color: '#8C5718' }}>·</span>
+        <Link href="/installations" className="inline-flex items-center gap-2 text-sm font-bold underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4" style={{ color: '#8C5718' }}>
+          Montaże
+        </Link>
+      </div>
 
       <header className="mt-5 rounded-2xl border px-6 py-7 sm:px-8" style={{ background: 'linear-gradient(135deg, #FCF8F0 0%, #FFFFFF 60%)', borderColor: 'rgba(106, 78, 42, 0.18)', boxShadow: 'var(--card-shadow)' }}>
         <p className="data-label" style={{ color: '#8C5718' }}>{guide.audienceLabel}</p>
