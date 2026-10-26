@@ -21,7 +21,9 @@ Weryfikacja: `typecheck:app` PASS; Vitest 291 plików PASS, 1 FAIL (`ksef-sync.t
 - Pierwsze wdrożenie przez pipeline GHCR wymaga: push + PR (build walidacyjny), merge do `main` (publikacja), migracja próbna na kopii (runbook, krok 2, z terminala na VPS — brak SSH i brak `execute` w Coolify beta.463 z tej sesji), zgoda na digest, `WALLDECOR_APPROVED_IMAGE`.
 - W logach produkcji błąd `mkdir /app/.next/standalone/.next/cache` — nie blokuje health, sprawdzić po wdrożeniu.
 
-**Następna sesja:** push gałęzi i PR po zgodzie; po wdrożeniu próba na żywo wg runbooka, zamknięcie #12–#19; później: przycisk „Wyślij ponownie” dla linku już wysłanego, persystencja adresata (`sentTo`), serwer mediów na produkcji.
+**Wdrożono 26.10.2026 16:02** (PR #31 → main `64ab504`, obraz `sha256:672f6efb…77ec31`, 55 migracji, `running:healthy`; szczegóły w `docs/GITHUB-ACTIONS-BUILD.md`). Produkcja bez serwera mediów — decyzja: v2 modułu.
+
+**Następna sesja:** po wdrożeniu próba na żywo wg runbooka, zamknięcie #12–#19; później: przycisk „Wyślij ponownie” dla linku już wysłanego, persystencja adresata (`sentTo`), serwer mediów na produkcji.
 
 ---
 
