@@ -1,6 +1,7 @@
 'use client'
 
 import { useEffect, useState } from 'react'
+import { CircleCheck, ClipboardList, Clock3 } from 'lucide-react'
 
 export type InstallationClarificationView = {
   id: string
@@ -16,12 +17,14 @@ export type InstallationClarificationView = {
   evidenceReference: string | null
 }
 
-export function InstallationClarificationPanel({ orderId, clarifications: initialClarifications, readiness, canEdit, hasSnapshot = true, onChanged }: {
+export function InstallationClarificationPanel({ orderId, clarifications: initialClarifications, readiness, canEdit, hasSnapshot = true, visitFeePending = false, onChanged }: {
   orderId: string
   clarifications: InstallationClarificationView[]
   readiness: { isReady: boolean; openBlockingCount: number; submittedCount: number; visitFeeAcceptanceRequired?: boolean }
   canEdit: boolean
   hasSnapshot?: boolean
+  /** A visit fee is still waiting for administrator approval — keeps the full panel visible. */
+  visitFeePending?: boolean
   onChanged?: () => void
 }) {
   const [clarifications, setClarifications] = useState(initialClarifications)
@@ -58,7 +61,34 @@ export function InstallationClarificationPanel({ orderId, clarifications: initia
 
   const open = clarifications.filter((item) => item.status === 'OPEN')
   const closed = clarifications.filter((item) => item.status !== 'OPEN')
-  return <section className="rounded-xl border p-4" style={{ background: 'var(--wd-white)', borderColor: 'rgba(30,30,30,.12)', boxShadow: 'var(--card-shadow)' }}>
+  const history = closed.length > 0 && <details className="mt-3"><summary className="cursor-pointer text-sm font-semibold">Historia ustaleń ({closed.length})</summary><div className="mt-2 grid gap-2">{closed.map((item) => <article key={item.id} className="rounded-lg border p-3 text-sm"><p className="font-bold">{item.questionLabel} · wersja {item.revisionNumber}</p><p>Odpowiedź: {item.answer ?? 'brak'}</p><p><strong>{item.status === 'RESOLVED' ? 'Ustalono' : 'Odstąpiono'}.</strong> {item.resolution ?? item.resolutionNote}</p>{item.resolution && item.resolutionNote && <p>{item.resolutionNote}</p>}{item.evidenceReference && <p>Materiał: {item.evidenceReference}</p>}</article>)}</div></details>
+  const errorLine = error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>
+  const sectionStyle = { background: 'var(--wd-white)', borderColor: 'rgba(30,30,30,.12)', boxShadow: 'var(--card-shadow)' }
+
+  // Nothing is waiting for the coordinator: collapse the whole panel into a single status bar.
+  const compact = readiness.openBlockingCount === 0 && open.length === 0 && !readiness.visitFeeAcceptanceRequired && !visitFeePending
+  if (compact) {
+    const state = !hasSnapshot ? 'no-form' : readiness.submittedCount === 0 ? 'waiting' : 'clear'
+    const Icon = state === 'clear' ? CircleCheck : state === 'waiting' ? Clock3 : ClipboardList
+    const tone = state === 'clear' ? '#356B43' : '#8C5718'
+    return <section className="rounded-xl border px-4 py-3" style={sectionStyle}>
+      <div className="flex items-center gap-3">
+        <Icon className="h-5 w-5 shrink-0" style={{ color: tone }} aria-hidden="true" />
+        <div className="min-w-0 flex-1">
+          <h2 id="preparation-heading" className="text-sm font-extrabold tracking-tight" style={{ color: 'var(--wd-dark)' }}>Do ustalenia przed montażem</h2>
+          <p className="mt-0.5 text-sm" style={{ color: state === 'clear' ? 'var(--wd-text-muted)' : 'var(--wd-dark)' }} aria-live="polite">
+            {state === 'no-form' ? <a href="#client-form" className="font-semibold underline">Wybierz formularz dla tego zlecenia.</a>
+              : state === 'waiting' ? <a href="#client-form" className="font-semibold underline">Czekamy na formularz klienta — sprawdź link i wysyłkę.</a>
+                : 'Brak otwartych kwestii w systemie.'}
+          </p>
+        </div>
+      </div>
+      {history}
+      {errorLine}
+    </section>
+  }
+
+  return <section className="rounded-xl border p-4" style={sectionStyle}>
     <h2 id="preparation-heading" className="text-xl font-extrabold tracking-tight" style={{ color: 'var(--wd-dark)' }}>Do ustalenia przed montażem</h2>
     {!hasSnapshot ? <p className="mt-2 text-sm"><a href="#client-form" className="font-semibold underline">Wybierz formularz dla tego zlecenia.</a></p>
       : readiness.submittedCount === 0 && <p className="mt-2 text-sm"><a href="#client-form" className="font-semibold underline">Czekamy na formularz klienta — sprawdź link i wysyłkę.</a></p>}
@@ -81,8 +111,8 @@ export function InstallationClarificationPanel({ orderId, clarifications: initia
         }} disabled={workingId === clarification.id}>Odstąp z uzasadnieniem</button></div>
       </div> : <p className="mt-2 text-sm">Tylko opiekun, zastępca, aktywny delegat albo administrator/manager może zamknąć tę kwestię.</p>}
     </article>)}</div>
-    {closed.length > 0 && <details className="mt-3"><summary className="cursor-pointer text-sm font-semibold">Historia ustaleń ({closed.length})</summary><div className="mt-2 grid gap-2">{closed.map((item) => <article key={item.id} className="rounded-lg border p-3 text-sm"><p className="font-bold">{item.questionLabel} · wersja {item.revisionNumber}</p><p>Odpowiedź: {item.answer ?? 'brak'}</p><p><strong>{item.status === 'RESOLVED' ? 'Ustalono' : 'Odstąpiono'}.</strong> {item.resolution ?? item.resolutionNote}</p>{item.resolution && item.resolutionNote && <p>{item.resolutionNote}</p>}{item.evidenceReference && <p>Materiał: {item.evidenceReference}</p>}</article>)}</div></details>}
-    {error && <p role="alert" className="mt-3 text-sm text-red-700">{error}</p>}
+    {history}
+    {errorLine}
   </section>
 
   function formNote(id: string) { return forms[id]?.note.trim() }

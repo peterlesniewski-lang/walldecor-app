@@ -206,6 +206,8 @@ test('admin schedules, reschedules and cancels visits entirely through the calen
   ]))
 
   await page.reload()
+  // Cancelled visits are folded away under "Pokaż odwołane" and must be revealed before interacting.
+  await visitsPanel.getByText('Pokaż odwołane (1)', { exact: true }).click()
   const cancelledSecondCard = visitsPanel.locator('article').filter({ hasText: '16.02.2027, 09:00–13:00' })
   await expect(cancelledSecondCard).toContainText('Odwołana')
   await cancelledSecondCard.getByRole('button', { name: /16\.02\.2027, 09:00–13:00/u }).click()

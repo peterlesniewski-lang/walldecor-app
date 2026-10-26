@@ -192,7 +192,7 @@ export function InstallationOrderDetail({
         </p>
       ) : null}
       {canEditActiveOrder && <section id="preparation" data-card-section aria-labelledby="preparation-heading" className="scroll-mt-6">
-        <InstallationClarificationPanel orderId={order.id} clarifications={clarifications} readiness={readiness} hasSnapshot={selectedSnapshot !== null} canEdit onChanged={() => router.refresh()} />
+        <InstallationClarificationPanel orderId={order.id} clarifications={clarifications} readiness={readiness} hasSnapshot={selectedSnapshot !== null} visitFeePending={visitFee?.fee.status === 'PENDING_APPROVAL'} canEdit onChanged={() => router.refresh()} />
         {visitFee?.fee.status === 'PENDING_APPROVAL' && <p className="mt-2 text-sm"><a href="#visit-fee" className="font-bold underline">Kwota za podjazd oczekuje na akceptację administratora.</a></p>}
       </section>}
       <section id="scope" data-card-section className="scroll-mt-6" aria-label="Zakres prac">

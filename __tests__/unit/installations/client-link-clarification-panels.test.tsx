@@ -109,6 +109,43 @@ describe('installation detail client-link and clarification panels', () => {
     expect(screen.queryByRole('button', { name: 'Zapisz ustalenie' })).toBeNull()
   })
 
+  it('collapses to a single status line with history when nothing is open', async () => {
+    const user = userEvent.setup()
+    render(<InstallationClarificationPanel orderId="order-1" canEdit readiness={{ isReady: true, openBlockingCount: 0, submittedCount: 1 }} clarifications={[{
+      id: 'clarification-done', status: 'RESOLVED', isBlocking: true, questionLabel: 'Czy są glify?', reason: 'Klient wskazał odpowiedź „Nie wiem”.',
+      revisionNumber: 1, answer: 'Nie wiem', createdAt: '2026-08-22T00:00:00.000Z', resolution: 'Glif ma 12 cm', resolutionNote: null, evidenceReference: null,
+    }]} />)
+
+    expect(screen.getByRole('heading', { name: 'Do ustalenia przed montażem' })).not.toBeNull()
+    expect(screen.getByText('Brak otwartych kwestii w systemie.')).not.toBeNull()
+    expect(screen.queryByText(/Otwarte kwestie/)).toBeNull()
+    expect(screen.queryByText(/Czekamy na formularz/)).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Zapisz ustalenie' })).toBeNull()
+    const history = screen.getByText('Historia ustaleń (1)')
+    expect(history.closest('details')?.open).toBe(false)
+    await user.click(history)
+    expect(screen.getByText('Glif ma 12 cm')).not.toBeNull()
+  })
+
+  it('tells the coordinator in the compact line what is still missing before clarifications can exist', () => {
+    const { rerender } = render(<InstallationClarificationPanel orderId="order-1" canEdit hasSnapshot={false} readiness={{ isReady: false, openBlockingCount: 0, submittedCount: 0 }} clarifications={[]} />)
+    expect(screen.getByRole('link', { name: 'Wybierz formularz dla tego zlecenia.' }).getAttribute('href')).toBe('#client-form')
+    expect(screen.queryByText('Brak otwartych kwestii w systemie.')).toBeNull()
+
+    rerender(<InstallationClarificationPanel orderId="order-1" canEdit readiness={{ isReady: false, openBlockingCount: 0, submittedCount: 0 }} clarifications={[]} />)
+    expect(screen.getByRole('link', { name: 'Czekamy na formularz klienta — sprawdź link i wysyłkę.' }).getAttribute('href')).toBe('#client-form')
+  })
+
+  it('keeps the full panel while a visit fee is still waiting for approval or client acceptance', () => {
+    const { rerender } = render(<InstallationClarificationPanel orderId="order-1" canEdit visitFeePending readiness={{ isReady: false, openBlockingCount: 0, submittedCount: 1 }} clarifications={[]} />)
+    expect(screen.getByText('Brak otwartych kwestii w systemie.')).not.toBeNull()
+    expect(screen.getByRole('heading', { name: 'Do ustalenia przed montażem' }).className).toContain('text-xl')
+
+    rerender(<InstallationClarificationPanel orderId="order-1" canEdit readiness={{ isReady: false, openBlockingCount: 0, submittedCount: 1, visitFeeAcceptanceRequired: true }} clarifications={[]} />)
+    expect(screen.getByRole('link', { name: /potwierdzenie informacji o opłacie/ }).getAttribute('href')).toBe('#visit-fee')
+    expect(screen.getByRole('heading', { name: 'Do ustalenia przed montażem' }).className).toContain('text-xl')
+  })
+
   it('uses the snapshot question label rather than a technical key in clarification text and fields', async () => {
     const user = userEvent.setup()
     render(<InstallationClarificationPanel orderId="order-1" canEdit readiness={{ isReady: false, openBlockingCount: 1, submittedCount: 1 }} clarifications={[{

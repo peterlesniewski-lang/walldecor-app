@@ -114,6 +114,7 @@ describe('Task 2 corrective UI invariants', () => {
     vi.stubGlobal('fetch', fetchMock)
     render(createElement(RoomScopeEditor, { orderId: 'order-1', initialRooms: rooms, catalog, canEdit: true }))
 
+    await user.click(screen.getByRole('button', { name: 'Dodaj pomiar ogólny w Salon' }))
     await user.type(screen.getByLabelText('Nazwa pomiaru w Salon'), 'Szerokość glifu')
     await user.type(screen.getByLabelText('Wartość pomiaru w Salon'), '12.5')
     await user.click(screen.getByRole('button', { name: 'Zapisz pomiar' }))

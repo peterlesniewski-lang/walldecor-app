@@ -161,9 +161,41 @@ describe('InstallationVisitsPanel', () => {
       }],
     }))
 
+    await user.click(screen.getByText('Pokaż odwołane (1)'))
     await user.click(screen.getByRole('button', { name: /Odwołana/ }))
 
     expect(screen.queryByRole('link', { name: 'Otwórz w Google Calendar' })).toBeNull()
+  })
+
+  it('keeps cancelled visits out of the main list until the cancelled toggle is opened', async () => {
+    const user = userEvent.setup()
+    const confirmed = { ...draftVisit, id: 'visit-active', status: 'CONFIRMED', startsAt: '2026-09-14T06:00:00.000Z', endsAt: '2026-09-14T14:00:00.000Z', scopeIds: ['scope-salon-tapety'] }
+    const cancelled = { ...draftVisit, id: 'visit-cancelled', status: 'CANCELLED', startsAt: '2026-09-10T06:00:00.000Z', endsAt: '2026-09-10T10:00:00.000Z' }
+    render(createElement(InstallationVisitsPanel, {
+      orderId: 'order-1', scopes, employees, canEdit: true, canForceOverwrite: false, visits: [confirmed, cancelled],
+    }))
+
+    expect(screen.getByRole('button', { name: /Potwierdzona/ })).toBeTruthy()
+    const toggle = screen.getByText('Pokaż odwołane (1)')
+    expect(toggle.closest('details')?.open).toBe(false)
+    expect(screen.getByRole('button', { name: /Odwołana/ }).closest('details')).toBe(toggle.closest('details'))
+    expect(screen.queryByText('Termin nieustalony')).toBeNull()
+    await user.click(toggle)
+    expect(toggle.closest('details')?.open).toBe(true)
+    expect(screen.getByRole('button', { name: /10\.09\.2026, 08:00–12:00/ })).toBeTruthy()
+  })
+
+  it('shows the empty state with an invitation to add a visit when every visit is cancelled', () => {
+    render(createElement(InstallationVisitsPanel, {
+      orderId: 'order-1', scopes, employees, canEdit: true, canForceOverwrite: false,
+      visits: [{ ...draftVisit, id: 'visit-cancelled-only', status: 'CANCELLED', startsAt: '2026-09-10T06:00:00.000Z', endsAt: '2026-09-10T10:00:00.000Z' }],
+    }))
+
+    expect(screen.getByText('Termin nieustalony')).toBeTruthy()
+    expect(screen.getByText('Wszystkie dotychczasowe wizyty zostały odwołane.')).toBeTruthy()
+    expect(screen.getByText(/aby zaplanować nowy termin/)).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Dodaj wizytę' })).toBeTruthy()
+    expect(screen.getByText('Pokaż odwołane (1)')).toBeTruthy()
   })
 
   it('rebases a changed crew revision without rerendering or losing a dirty visit form', async () => {
