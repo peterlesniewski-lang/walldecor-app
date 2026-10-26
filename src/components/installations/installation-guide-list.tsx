@@ -1,5 +1,5 @@
 import Link from 'next/link'
-import { ArrowRight, BookMarked, ShieldCheck, UserRoundCheck, Wrench } from 'lucide-react'
+import { ArrowLeft, ArrowRight, BookMarked, ShieldCheck, UserRoundCheck, Wrench } from 'lucide-react'
 import type { InstallationGuide } from '@/lib/installations/guide-catalog'
 
 const audienceIcon = {
@@ -16,7 +16,12 @@ function updatedLabel(value: string) {
 export function InstallationGuideList({ guides }: { guides: InstallationGuide[] }) {
   return (
     <section className="mx-auto max-w-6xl" aria-labelledby="installation-guides-heading">
-      <div className="rounded-2xl border px-6 py-7 sm:px-8" style={{ background: 'linear-gradient(135deg, #FCF8F0 0%, #FFFFFF 60%)', borderColor: 'rgba(106, 78, 42, 0.18)', boxShadow: 'var(--card-shadow)' }}>
+      <Link href="/installations" className="inline-flex items-center gap-2 text-sm font-bold underline underline-offset-4 focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4" style={{ color: '#8C5718' }}>
+        <ArrowLeft className="h-4 w-4" aria-hidden="true" />
+        Wróć do montaży
+      </Link>
+
+      <div className="mt-5 rounded-2xl border px-6 py-7 sm:px-8" style={{ background: 'linear-gradient(135deg, #FCF8F0 0%, #FFFFFF 60%)', borderColor: 'rgba(106, 78, 42, 0.18)', boxShadow: 'var(--card-shadow)' }}>
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
             <p className="data-label" style={{ color: '#8C5718' }}>Montaże · pomoc w pracy</p>

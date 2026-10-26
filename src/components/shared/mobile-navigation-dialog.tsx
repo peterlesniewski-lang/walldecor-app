@@ -53,6 +53,7 @@ export function MobileNavigationDialog({
           width: 'min(20rem, calc(100vw - 2rem))',
           maxWidth: 'none',
           transform: 'none',
+          translate: 'none',
         }}
       >
         <DialogHeader className="border-b border-white/10 px-4 py-5 pr-12 text-left">
