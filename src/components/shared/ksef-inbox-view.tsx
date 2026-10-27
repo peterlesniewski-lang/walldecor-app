@@ -12,6 +12,7 @@ import { KsefSelectionBar } from '@/components/shared/ksef-selection-bar'
 import { KsefInvoiceTags } from '@/components/shared/ksef-invoice-tags'
 import { monthIssueDateRange } from '@/lib/finance/ksef-date-filter'
 import { warsawToday, type BulkPaymentResult } from '@/lib/finance/ksef-selection'
+import { DUE_URGENCY_STYLES, dueUrgency } from '@/lib/finance/ksef-due-urgency'
 
 export type KsefStatus = 'NEW' | 'MAPPED' | 'APPROVED' | 'IGNORED'
 export type KsefPaymentStatus = 'UNPAID' | 'PAID' | 'PARTIAL' | 'UNKNOWN'
@@ -398,6 +399,7 @@ export function KsefInboxView({
   const selectableInvoices = invoices.filter((invoice) => !invoice.invoiceImportDraft)
   const selectedInvoices = selectableInvoices.filter((invoice) => selectedIds.has(invoice.id))
   const bulkBusy = saving === 'bulk-payment'
+  const [today] = useState(warsawToday)
   const [error, setError] = useState<string | null>(null)
   const [duplicateInvoice, setDuplicateInvoice] = useState<DuplicateInvoiceTarget | null>(null)
   const [existingInvoice, setExistingInvoice] = useState<ExistingInvoiceSummary | null>(null)
@@ -1367,9 +1369,20 @@ export function KsefInboxView({
                 const paymentStatus = invoice.paymentStatus ?? (imported ? 'UNKNOWN' : 'UNPAID')
                 const reportingAmount = invoice.reportingGrossAmount ?? null
                 const needsCurrencyConversion = invoice.currency !== 'PLN' && reportingAmount == null
+                const urgency = dueUrgency(invoice.dueDate, today, paymentStatus)
+                const urgencyStyle = urgency.level > 0 ? DUE_URGENCY_STYLES[urgency.level as 1 | 2 | 3 | 4] : null
+                const selected = selectedIds.has(invoice.id)
                 return (
-                  <tr key={invoice.id} className={`align-top ${selectedIds.has(invoice.id) ? 'bg-amber-50/60' : ''}`}>
-                    <td className="px-3 py-4">
+                  <tr
+                    key={invoice.id}
+                    data-due-urgency={urgency.level || undefined}
+                    className={`align-top transition-colors ${selected && !urgencyStyle ? 'bg-amber-50/60' : ''}`}
+                    style={urgencyStyle ? {
+                      backgroundColor: urgencyStyle.background,
+                      backgroundImage: selected ? 'linear-gradient(rgba(30,30,30,.05), rgba(30,30,30,.05))' : undefined,
+                    } : undefined}
+                  >
+                    <td className="px-3 py-4" style={urgencyStyle ? { boxShadow: `inset 3px 0 0 ${urgencyStyle.stripe}` } : undefined}>
                       <input type="checkbox" aria-label={`Zaznacz fakturę ${invoice.invoiceNumber}`} checked={!imported && selectedIds.has(invoice.id)} disabled={Boolean(imported) || saving !== null} onChange={(event) => {
                         if (imported) return
                         const checked = event.target.checked
@@ -1430,6 +1443,7 @@ export function KsefInboxView({
                         </span>
                         <p className="text-[11px]" style={{ color: 'var(--wd-text-muted)' }}>
                           Termin: {invoice.dueDate ? isoDate(invoice.dueDate) : 'brak'}
+                          {urgency.label && urgencyStyle && <span className="font-semibold" style={{ color: urgencyStyle.text }}> · {urgency.label}</span>}
                         </p>
                       </div>
                     </td>
