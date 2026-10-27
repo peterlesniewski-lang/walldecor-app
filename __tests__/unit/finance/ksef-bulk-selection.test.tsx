@@ -87,4 +87,22 @@ describe('invoice selection and payment workflow', () => {
     expect(screen.getByText('145 / 140 znaków (za dużo o 5)')).toBeTruthy()
     expect(field.getAttribute('aria-invalid')).toBe('true')
   })
+  it('tints rows by due date and states the deadline in words', () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-10-27T10:00:00+01:00') })
+    try {
+      const withDue = [
+        { ...invoices[0], paymentStatus: 'UNKNOWN' as const, dueDate: '2026-10-22T00:00:00.000Z' },
+        { ...invoices[1], paymentStatus: 'UNPAID' as const, dueDate: '2026-10-27T00:00:00.000Z' },
+        { ...invoices[2], paymentStatus: 'PAID' as const, dueDate: '2026-10-01T00:00:00.000Z' },
+      ]
+      render(<KsefInboxView initialInvoices={withDue} initialTotal={3} initialPage={1} initialPageSize={50} initialTotalPages={1} initialGrossAmountTotal={0.3} initialCounts={page.counts} initialRules={[]} costCenters={[]} subCategories={[]} />)
+      const rowOf = (label: string) => screen.getByLabelText(label).closest('tr')!
+      expect(rowOf('Zaznacz fakturę A').getAttribute('data-due-urgency')).toBe('5')
+      expect(within(rowOf('Zaznacz fakturę A')).getByText(/po terminie: 5 dni/)).toBeTruthy()
+      expect(rowOf('Zaznacz fakturę B').getAttribute('data-due-urgency')).toBe('4')
+      expect(rowOf('Zaznacz fakturę C').getAttribute('data-due-urgency')).toBeNull()
+    } finally {
+      vi.useRealTimers()
+    }
+  })
 })
