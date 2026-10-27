@@ -273,10 +273,10 @@ describe('invoice import approval policy', () => {
     })
   })
 
-  it('requires honest explicit payment status but accepts UNKNOWN', () => {
+  it('rejects UNKNOWN payment status so approved invoices always have a definite status', () => {
     expect(validateInvoiceApproval({ ...validPlnDraft, paymentStatus: 'UNKNOWN' })).toMatchObject({
-      ok: true,
-      data: { paymentStatus: 'UNKNOWN' },
+      ok: false,
+      issues: [expect.objectContaining({ field: 'paymentStatus', code: 'PAYMENT_STATUS_REQUIRED' })],
     })
   })
 

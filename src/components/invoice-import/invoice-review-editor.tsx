@@ -80,7 +80,6 @@ const PAYMENT_STATUSES: ChoiceOption[] = [
   { value: 'PAID', label: 'Zapłacona' },
   { value: 'UNPAID', label: 'Niezapłacona' },
   { value: 'PARTIAL', label: 'Częściowo zapłacona' },
-  { value: 'UNKNOWN', label: 'Nie wiadomo' },
 ]
 const inputClassName = 'border-[var(--wd-border)] bg-[var(--wd-surface-2)] text-[var(--wd-dark)] focus-visible:ring-[var(--wd-dark)]/20'
 const textareaClassName = 'min-h-24 w-full resize-y rounded-md border border-[var(--wd-border)] bg-[var(--wd-surface-2)] px-3 py-2 text-sm text-[var(--wd-dark)] outline-none transition-colors placeholder:text-[var(--wd-text-muted)] focus:border-[var(--wd-dark)] focus:ring-2 focus:ring-[var(--wd-dark)]/20 disabled:cursor-not-allowed disabled:opacity-50'

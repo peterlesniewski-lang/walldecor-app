@@ -241,8 +241,8 @@ export function validateInvoiceApproval(input: unknown): InvoiceApprovalResult {
   if (data.gross == null) {
     pushIssue(issues, 'gross', 'GROSS_REQUIRED', 'Uzupełnij kwotę brutto.')
   }
-  if (data.paymentStatus == null) {
-    pushIssue(issues, 'paymentStatus', 'PAYMENT_STATUS_REQUIRED', 'Wybierz status płatności, także gdy jest nieznany.')
+  if (data.paymentStatus == null || data.paymentStatus === 'UNKNOWN') {
+    pushIssue(issues, 'paymentStatus', 'PAYMENT_STATUS_REQUIRED', 'Wybierz status płatności: zapłacona, niezapłacona lub częściowo zapłacona.')
   }
   if (data.costCenterId == null) {
     pushIssue(issues, 'costCenterId', 'COST_CENTER_REQUIRED', 'Wybierz centrum kosztów.')

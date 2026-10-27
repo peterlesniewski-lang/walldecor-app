@@ -83,7 +83,7 @@ export function invoiceDataToForm(data: InvoiceDraftData): InvoiceReviewFormValu
   return invoiceReviewFormBaseSchema.parse({
     ...Object.fromEntries(TEXT_FIELDS.map((field) => [field, data[field] ?? ''])),
     ...Object.fromEntries(MONEY_FIELDS.map((field) => [field, data[field] == null ? '' : String(data[field])])),
-    documentType: data.documentType ?? '', paymentStatus: data.paymentStatus ?? '',
+    documentType: data.documentType ?? '', paymentStatus: data.paymentStatus && data.paymentStatus !== 'UNKNOWN' ? data.paymentStatus : '',
     costCenterId: data.costCenterId ?? '', tagIds: [...(data.tagIds ?? [])],
     conversionConfirmed: data.conversionConfirmed ?? false,
     conversion: data.conversion ?? null,
