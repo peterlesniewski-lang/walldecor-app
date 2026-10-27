@@ -1,6 +1,13 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-10-26 (montaże: protokół odbioru scalony z main, karta uproszczona, link klienta e-mailem; wdrożenie czeka na zgodę)
+**Ostatnia aktualizacja:** 2026-10-27 (KSeF: kopiowanie sumy i tytułu przelewu, podświetlanie terminów płatności — wdrożone; rejestr wdrożeń w `docs/GITHUB-ACTIONS-BUILD.md`)
+
+## KSeF — pasek zaznaczenia i terminy płatności — 27.10.2026 (PR #29, #34, #35)
+
+- Pasek zaznaczonych faktur: klik w sumę kopiuje ją (`4523,69`), edytowalne pole „Tytuł przelewu" z numerami faktur, przycisk „Kopiuj", licznik znaków `N / 140` (czerwony po przekroczeniu). Kod: `ksef-selection-bar.tsx`.
+- Lista faktur: delikatne tło wiersza + pasek z lewej wg dni do terminu dla każdej faktury poza `PAID` (także `UNKNOWN`/`PARTIAL`): 6–7 dni słomkowy, 3–5 bursztyn, 1–2 morela, dziś koral, po terminie róż; dopisek „jutro" / „po terminie: N dni". Logika: `src/lib/finance/ksef-due-urgency.ts`, testy `ksef-due-urgency.test.ts` i `ksef-bulk-selection.test.tsx`.
+- **Wdrożono 27.10.2026 11:28** (main `59a1b60`, obraz `sha256:2219392a…fc548`, bez migracji, `running:healthy`); zweryfikowane w plikach JS i na żywej liście.
+- Lekcja: wdrożenie = ustawienie `WALLDECOR_APPROVED_IMAGE` na nowy digest + deploy; sam „Deploy" bez nowego digestu uruchamia stary obraz mimo statusu `finished`.
 
 ## Montaże — finisz modułu — 26.10.2026 (gałąź `walldecor-install-status-5df92ac3`)
 
