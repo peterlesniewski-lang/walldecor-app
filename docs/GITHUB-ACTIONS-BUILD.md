@@ -89,6 +89,25 @@ uruchomionego kontenera identyczne z obrazem GHCR (różni się tylko lokalny im
 etykiety Coolify). Terminal Coolify (`/terminal`, serwer `localhost`) działa jako root i
 zastępuje brak endpointu `execute` w API.
 
+## Rejestr wdrożeń produkcyjnych
+
+Jedna lista tego, co działa na `app.walldecor.pl`. Aplikację zmieniamy z wielu modułów
+naraz, więc po **każdym** wdrożeniu dopisujemy wiersz (najnowszy na górze): data,
+PR-y, commit, pełny digest, migracje i wynik weryfikacji. Aktualny stan produkcji
+= najwyższy wiersz.
+
+| Data (CEST) | Moduł / PR | Commit | Digest obrazu | Migracje | Weryfikacja |
+|---|---|---|---|---|---|
+| 27.10.2026 11:28 | KSeF: podświetlanie terminów płatności (#34, #35) | `59a1b60` | `sha256:2219392aff08ce15f98bc3d0b5fc9ca4bbef06c313b140bf0aca675da2cfc548` (run `40486237652`) | brak | `running:healthy`; nowy kod w `page-ea7eaf53…js`, 8 wierszy z kolorem na żywej liście |
+| 26.10.2026 18:17 | Montaże: poprawki UX, e-maile alertów (#32) | `40637b6` | `sha256:e9f58f95…52fd9e` (run `40375069002`) | brak | `running:healthy` |
+| 26.10.2026 16:02 | Montaże: cyfrowy protokół odbioru (#31) | `64ab504` | `sha256:672f6efb8d66754c86ad86b53f15599ca42e90f12b8378083618a41e8b77ec31` (run `40350166671`) | 49 → 55 | `running:healthy` |
+
+Uwaga: PR-y #29 (KSeF: kopiowanie sumy, tytuł przelewu), #34 i #35 weszły do `main`
+przed wdrożeniem 27.10 11:28. Dwa „deploye" tego dnia (09:36 i 10:09) tylko ponownie
+uruchomiły obraz z 26.10 18:17, bo nie ustawiono nowego `WALLDECOR_APPROVED_IMAGE`.
+Status `finished` w Coolify nie dowodzi, że działa nowy kod — po wdrożeniu sprawdzamy
+obecność zmiany w plikach JS na produkcji (lub w działającym widoku).
+
 ## Procedura wdrożenia — po zgodzie
 
 1. Potwierdzić zielony run GitHub Actions i jego dokładny digest.
@@ -102,6 +121,7 @@ zastępuje brak endpointu `execute` w API.
    image/config ID z `.Image` uruchomionego kontenera; lokalny tag Coolify nie
    potwierdza tożsamości obrazu. Sprawdzić health i rzeczywisty przepływ logowania
    pod `https://app.walldecor.pl`.
+7. Dopisać wiersz do rejestru wdrożeń powyżej (commit, pełny digest, migracje, weryfikacja).
 
 ## Cofnięcie zmiany
 
