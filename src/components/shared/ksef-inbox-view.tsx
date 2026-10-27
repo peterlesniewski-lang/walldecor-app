@@ -1370,7 +1370,7 @@ export function KsefInboxView({
                 const reportingAmount = invoice.reportingGrossAmount ?? null
                 const needsCurrencyConversion = invoice.currency !== 'PLN' && reportingAmount == null
                 const urgency = dueUrgency(invoice.dueDate, today, paymentStatus)
-                const urgencyStyle = urgency.level > 0 ? DUE_URGENCY_STYLES[urgency.level as 1 | 2 | 3 | 4] : null
+                const urgencyStyle = urgency.level === 0 ? null : DUE_URGENCY_STYLES[urgency.level]
                 const selected = selectedIds.has(invoice.id)
                 return (
                   <tr
