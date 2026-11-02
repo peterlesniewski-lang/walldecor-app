@@ -261,6 +261,28 @@ model Revenue {
   @@unique([year, month, costCenterId, channel])
 }
 
+model SubiektRevenueSnapshot {
+  id              String   @id @default(cuid())
+  year            Int
+  month           Int
+  /// Symbol magazynu w Subiekcie GT (np. PUŁ, MAG, INT) — klucz surowego odczytu, niezależny od mapowania.
+  warehouseSymbol String
+  /// TOWAR | USLUGA (dok_Pozycja.ob_TowRodzaj).
+  kind            String
+  /// Centrum kosztów z SUBIEKT_BRIDGE_WAREHOUSE_MAP; null = magazyn bez przypisania (pokazywany jako ostrzeżenie).
+  costCenterId    String?
+  /// Kanał przychodu (SALON | MONTAZ | ECOMMERCE) wynikający z mapy; null gdy magazyn nieprzypisany.
+  channel         String?
+  grossAmount     Float
+  netAmount       Float
+  documentCount   Int
+  fetchedAt       DateTime
+  sourceHash      String
+
+  @@unique([year, month, warehouseSymbol, kind])
+  @@index([year, costCenterId])
+}
+
 model AreaRevenue {
   id           String     @id @default(cuid())
   year         Int

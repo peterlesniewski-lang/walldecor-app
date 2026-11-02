@@ -6,6 +6,7 @@ import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } f
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { CHANNEL_LABELS, COST_CENTER_CHANNELS, REVENUE_CHANNELS, RevenueEntrySchema, parseRevenueAmount, revenueWarsawToday, type RevenueChannel } from '@/lib/validations/revenue'
+import type { SubiektRevenueCell } from '@/lib/finance/subiekt-revenue'
 import styles from './revenue-ui.module.css'
 
 export interface RevenueActualEntry {
@@ -22,14 +23,19 @@ interface RevenueActualsGridProps {
   year: number
   costCenterId: string
   editable: boolean
+  /** Subiekt snapshot cells for this year (all centers in GLOBAL view); null = integration not configured. */
+  subiektCells: SubiektRevenueCell[] | null
 }
 
 const MONTHS = ['styczeń', 'luty', 'marzec', 'kwiecień', 'maj', 'czerwiec', 'lipiec', 'sierpień', 'wrzesień', 'październik', 'listopad', 'grudzień']
 const money = (value: number) => value.toLocaleString('pl-PL', { style: 'currency', currency: 'PLN' })
 const displayDate = (value: string) => value.split('-').reverse().join('.')
 type EditingCell = { channel: RevenueChannel; month: number }
+const CENTS_EPSILON = 0.005
+type ApplyTarget = { month: number; channel?: RevenueChannel }
+type ApplyResponse = { ok: boolean; error?: string; entries?: Array<{ year: number; month: number; costCenterId: string; channel: string; amount: number; asOfDate: string | null }> }
 
-export function RevenueActualsGrid({ initialEntries, year, costCenterId, editable }: RevenueActualsGridProps) {
+export function RevenueActualsGrid({ initialEntries, year, costCenterId, editable, subiektCells }: RevenueActualsGridProps) {
   const serverSnapshot = JSON.stringify(initialEntries)
   const [data, setData] = useState(() => ({ serverSnapshot, entries: initialEntries }))
   // Reconcile only a changed server snapshot. An unchanged parent render must
@@ -44,9 +50,12 @@ export function RevenueActualsGrid({ initialEntries, year, costCenterId, editabl
   const [saving, setSaving] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const [savedMessage, setSavedMessage] = useState('')
+  const [applying, setApplying] = useState<string | null>(null)
+  const [applyError, setApplyError] = useState<string | null>(null)
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const amountId = useId()
   const dateId = useId()
+  const subiektIdBase = useId()
   const router = useRouter()
   const isCompany = costCenterId === 'GLOBAL'
   const canEdit = editable && !isCompany
@@ -56,6 +65,49 @@ export function RevenueActualsGrid({ initialEntries, year, costCenterId, editabl
   const expectedCenters = (channel: RevenueChannel) => (isCompany ? ['JAG', 'PUL'] : [costCenterId])
     .filter((center) => COST_CENTER_CHANNELS[center]?.includes(channel))
   const expectedCount = channels.reduce((sum, channel) => sum + expectedCenters(channel).length, 0)
+  const subiektRows = (subiektCells ?? []).filter((cell) => cell.year === year && (isCompany || cell.costCenterId === costCenterId))
+  const subiektFor = (month: number, channel: RevenueChannel) => {
+    const cells = subiektRows.filter((cell) => cell.month === month && cell.channel === channel)
+    if (cells.length === 0) return null
+    return {
+      gross: Math.round(cells.reduce((sum, cell) => sum + cell.grossAmount, 0) * 100) / 100,
+      documents: cells.reduce((sum, cell) => sum + cell.documentCount, 0),
+    }
+  }
+  const canApply = canEdit && subiektCells !== null
+
+  async function applySubiekt(target: ApplyTarget) {
+    if (!canApply || applying) return
+    const key = `${target.month}:${target.channel ?? '*'}`
+    setApplying(key)
+    setApplyError(null)
+    setSavedMessage('')
+    try {
+      const response = await fetch('/api/finance/subiekt-revenue/apply', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ year, month: target.month, costCenterId, ...(target.channel ? { channel: target.channel } : {}) }),
+      })
+      const result = await response.json().catch(() => null) as ApplyResponse | null
+      if (!response.ok || !result?.ok || !result.entries) {
+        throw new Error(typeof result?.error === 'string' ? result.error : 'Nie udało się zastosować kwoty z Subiekta.')
+      }
+      const confirmed: RevenueActualEntry[] = result.entries.map((entry) => ({ ...entry, asOfDate: entry.asOfDate ?? null }))
+      setData((current) => ({
+        ...current,
+        entries: [
+          ...current.entries.filter((entry) => !confirmed.some((saved) => entry.year === saved.year && entry.month === saved.month && entry.costCenterId === saved.costCenterId && entry.channel === saved.channel)),
+          ...confirmed,
+        ],
+      }))
+      setSavedMessage(`Zastosowano z Subiekta (${MONTHS[target.month - 1]}): ${confirmed.map((entry) => `${CHANNEL_LABELS[entry.channel as RevenueChannel] ?? entry.channel} ${money(entry.amount)}`).join(', ')}.`)
+    } catch (cause) {
+      setApplyError(cause instanceof Error ? cause.message : 'Błąd połączenia. Spróbuj ponownie.')
+    } finally {
+      setApplying(null)
+      // A partial month apply or a late failure may have changed rows on the server: always re-read.
+      router.refresh()
+    }
+  }
 
   function openEditor(cell: EditingCell, trigger: HTMLButtonElement) {
     if (!canEdit) return
@@ -107,7 +159,8 @@ export function RevenueActualsGrid({ initialEntries, year, costCenterId, editabl
 
   return (
     <div className={styles.theme}>
-      {savedMessage && <p role="status" className={styles.status}>{savedMessage}</p>}
+      {savedMessage && <p role="status" className={styles.status} data-testid="revenue-saved">{savedMessage}</p>}
+      {applyError && <p role="alert" className={styles.error}>{applyError}</p>}
       <div className={styles.tableShell}>
         <table className={styles.table}>
           <caption className="sr-only">Rzeczywiste miesięczne przychody brutto — {year}</caption>
@@ -144,17 +197,51 @@ export function RevenueActualsGrid({ initialEntries, year, costCenterId, editabl
                         </span>
                       })}
                     </>
+                    const subiekt = subiektCells === null ? null : subiektFor(month, channel)
+                    const entered = cellRows.length ? value : null
+                    const difference = subiekt && entered !== null ? Math.round((subiekt.gross - entered) * 100) / 100 : null
+                    const applyKey = `${month}:${channel}`
+                    const subiektLineId = subiektCells === null ? undefined : `${subiektIdBase}-${month}-${channel}`
+                    const subiektLine = subiektCells === null ? null : (
+                      <span id={subiektLineId} className={`${styles.cellMeta} ${styles.subiektLine}`} data-testid={`subiekt-${month}-${channel}`}>
+                        {subiekt
+                          ? <>Subiekt: <span className={styles.subiektAmount}>{money(subiekt.gross)}</span> · dok. {subiekt.documents}
+                            {difference !== null && <span className={Math.abs(difference) < CENTS_EPSILON ? styles.diffZero : styles.diffWarn}>
+                              {Math.abs(difference) < CENTS_EPSILON ? ' · zgodne' : ` · różnica ${difference > 0 ? '+' : ''}${money(difference)}`}
+                            </span>}
+                            {difference === null && <span className={styles.diffWarn}> · brak wpisu</span>}
+                          </>
+                          : <>Subiekt: —</>}
+                      </span>
+                    )
                     return <td key={channel} className={styles.cell}>
                       {canEdit ? <button
                         type="button" aria-label={`Edytuj ${CHANNEL_LABELS[channel]} — ${monthName} ${year}`}
+                        aria-describedby={subiektLineId}
                         onClick={(event) => openEditor({ channel, month }, event.currentTarget)}
                         className={styles.cellButton}
-                      >{contents}</button> : <div className={styles.cellReadOnly}>{contents}</div>}
+                      >{contents}{subiektLine}</button> : <div className={styles.cellReadOnly}>{contents}{subiektLine}</div>}
+                      {canApply && subiekt && (
+                        <button
+                          type="button" className={styles.applyButton} disabled={applying !== null}
+                          aria-label={`Zastosuj kwotę z Subiekta — ${CHANNEL_LABELS[channel]} — ${monthName} ${year}`}
+                          data-testid={`subiekt-apply-${month}-${channel}`}
+                          onClick={() => applySubiekt({ month, channel })}
+                        >{applying === applyKey ? 'Zapisywanie…' : 'Zastosuj'}</button>
+                      )}
                     </td>
                   })}
                   <td className={styles.total}>
                     <span className={styles.amount}>{monthRows.length ? money(monthRows.reduce((sum, row) => sum + row.amount, 0)) : '—'}</span>
                     {monthRows.length > 0 && monthRows.length < expectedCount && <span className={styles.cellMeta}>Częściowe dane</span>}
+                    {canApply && channels.some((channel) => subiektFor(month, channel)) && (
+                      <button
+                        type="button" className={styles.applyButton} disabled={applying !== null}
+                        aria-label={`Zastosuj wszystkie kwoty z Subiekta — ${monthName} ${year}`}
+                        data-testid={`subiekt-apply-month-${month}`}
+                        onClick={() => applySubiekt({ month })}
+                      >{applying === `${month}:*` ? 'Zapisywanie…' : 'Zastosuj wszystkie w miesiącu'}</button>
+                    )}
                   </td>
                 </tr>
               )
@@ -174,6 +261,7 @@ export function RevenueActualsGrid({ initialEntries, year, costCenterId, editabl
       </div>
       <p className={`${styles.help} ${styles.gridNote}`}>
         Sumy obejmują zapisane wpisy. Brak wpisu nie oznacza zera. Brak daty oznacza, że aktualność kwoty nie została określona.
+        {subiektCells !== null && ' Wiersz „Subiekt” to sprzedaż brutto z dokumentów Subiekta GT według daty wystawienia; „Zastosuj” zastępuje wpisaną kwotę kwotą z Subiekta.'}
       </p>
 
       <Dialog open={editing !== null} onOpenChange={(open) => { if (!open && !saving) setEditing(null) }}>
