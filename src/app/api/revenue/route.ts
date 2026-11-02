@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { RevenueEntrySchema, RevenueQuerySchema } from '@/lib/validations/revenue'
+import { upsertRevenueEntry } from '@/lib/finance/revenue-store'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -39,28 +40,6 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: 'Invalid data', details: parsed.error.flatten() }, { status: 400 })
   }
 
-  const data = parsed.data
-  const amount = Math.round(data.amount * 100) / 100
-  const asOfDate = data.asOfDate ?? null
-  const entry = await prisma.revenue.upsert({
-    where: {
-      year_month_costCenterId_channel: {
-        year: data.year,
-        month: data.month,
-        costCenterId: data.costCenterId,
-        channel: data.channel,
-      },
-    },
-    update: { amount, asOfDate },
-    create: {
-      year: data.year,
-      month: data.month,
-      costCenterId: data.costCenterId,
-      channel: data.channel,
-      amount,
-      asOfDate,
-    },
-  })
-
+  const entry = await upsertRevenueEntry(prisma, parsed.data)
   return NextResponse.json(entry)
 }

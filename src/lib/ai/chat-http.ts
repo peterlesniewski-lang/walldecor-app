@@ -4,6 +4,7 @@ import type { PrismaClient } from '@/generated/prisma'
 import { resolveDashboardPeriod, type DashboardPeriod } from '@/lib/finance/actual-dashboard'
 import { loadActualDashboardModel } from '@/lib/finance/actual-dashboard-model-data'
 import { buildFinanceAiContext } from './finance-context'
+import { loadSubiektAiBlock } from '@/lib/finance/subiekt-revenue'
 import { buildWikiContext } from './prompts'
 import { aiChatPayloadSchema, type AiJobKind } from './contracts'
 import { authorizeAiOwner, enqueueAiJob, readAiJob, retryAiJob } from './queue'
@@ -55,7 +56,9 @@ export function createAiChatHandlers({ db, getSession, now = () => new Date() }:
         if (!resolved.ok) throw new AiHttpError('INVALID_INPUT', 400)
         const existing = await recoverRequest(owner, requestId, 'FINANCE_CHAT', question, resolved.period)
         if (existing) return NextResponse.json({ job: existing }, { status: 202, headers: AI_HTTP_HEADERS })
-        const context = JSON.stringify(buildFinanceAiContext(await loadActualDashboardModel(resolved.period, readAt)))
+        // A failed Subiekt read must not block the chat: the block is simply absent.
+        const [model, subiekt] = await Promise.all([loadActualDashboardModel(resolved.period, readAt), loadSubiektAiBlock(db, resolved.period.year).catch(() => null)])
+        const context = JSON.stringify(buildFinanceAiContext(model, subiekt))
         try {
           const job = await enqueueAiJob(db, owner, { kind: 'FINANCE_CHAT', payload: { question, context } }, requestId)
           return NextResponse.json({ job }, { status: 202, headers: AI_HTTP_HEADERS })

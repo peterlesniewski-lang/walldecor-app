@@ -1,5 +1,7 @@
 import type { ActualDashboardModel, DashboardMonth } from '@/lib/finance/actual-dashboard'
 import { KSEF_COST_EVENT_START_MONTH, KSEF_COST_EVENT_START_YEAR } from '@/lib/finance/realized-costs'
+import type { SubiektAiBlock } from '@/lib/finance/subiekt-revenue'
+import { CHANNEL_LABELS } from '@/lib/validations/revenue'
 
 function centerLabel(id: string) {
   return ({ JAG: 'Salon A', PUL: 'Salon B', GLOBAL: 'Global' } as Record<string, string>)[id] ?? 'Inne centrum'
@@ -29,9 +31,30 @@ function monthContext(month: DashboardMonth) {
   }
 }
 
+/** Explicit projection of the Subiekt read; the AI never sees warehouse symbols it cannot act on except in the unmapped warning. */
+function subiektContext(block: SubiektAiBlock | null | undefined) {
+  if (!block) return null
+  return {
+    fetchedAt: block.fetchedAt,
+    lastError: block.lastError,
+    months: block.months.map((row) => ({
+      year: row.year,
+      month: row.month,
+      costCenter: centerLabel(row.costCenterId),
+      channel: CHANNEL_LABELS[row.channel] ?? row.channel,
+      subiektGross: row.subiektGross,
+      documentCount: row.documentCount,
+      enteredAmount: row.enteredAmount,
+      difference: row.difference,
+    })),
+    unmapped: block.unmapped.map((row) => ({ year: row.year, month: row.month, warehouse: row.warehouseSymbol, kind: row.kind, gross: row.grossAmount })),
+  }
+}
+
 /** Pure JSON context for an ADMIN-authorized caller; does not load data or call an AI service. */
-export function buildFinanceAiContext(model: ActualDashboardModel) {
+export function buildFinanceAiContext(model: ActualDashboardModel, subiekt?: SubiektAiBlock | null) {
   const costEventFrom = `${KSEF_COST_EVENT_START_YEAR}-${String(KSEF_COST_EVENT_START_MONTH).padStart(2, '0')}-01`
+  const subiektRevenue = subiektContext(subiekt)
   return {
     currency: 'PLN',
     costEventFrom,
@@ -61,5 +84,6 @@ export function buildFinanceAiContext(model: ActualDashboardModel) {
       plnAmount: model.waiting.plnAmount,
       unconverted: model.waiting.unconverted.map((row) => ({ currency: row.currency, amount: row.amount })),
     },
+    subiektRevenue,
   }
 }
