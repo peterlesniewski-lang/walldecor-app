@@ -35,15 +35,22 @@ export const SUBIEKT_BRIDGE_MESSAGES: Record<SubiektBridgeErrorKind, string> = {
   bridge_error: 'Mostek Subiekt zgłosił błąd zapytania.',
 }
 
+/** Numbers may arrive as numeric strings (DECIMAL serialisation); anything else is invalid. */
+const amount = z.coerce.number().finite()
+const count = z.coerce.number().int().min(0)
+
+/** `INNE` = dok_Pozycja.ob_TowRodzaj other than towar/usługa; never applied, shown as a warning. */
+export const SALES_KINDS = ['TOWAR', 'USLUGA', 'INNE'] as const
+
 export const salesSummaryRowSchema = z.object({
-  year: z.number().int().min(2000).max(2100),
-  month: z.number().int().min(1).max(12),
+  year: z.coerce.number().int().min(2000).max(2100),
+  month: z.coerce.number().int().min(1).max(12),
   warehouse_symbol: z.string().min(1),
   warehouse_name: z.string().nullish(),
-  kind: z.enum(['TOWAR', 'USLUGA']),
-  documents: z.number().int().min(0),
-  net_total: z.number().finite(),
-  gross_total: z.number().finite(),
+  kind: z.enum(SALES_KINDS),
+  documents: count,
+  net_total: amount,
+  gross_total: amount,
 })
 
 export const salesSummarySchema = z.object({
@@ -51,8 +58,8 @@ export const salesSummarySchema = z.object({
   to: z.string().regex(DATE_RE),
   group_by: z.literal('month_warehouse_kind'),
   rows: z.array(salesSummaryRowSchema),
-  total: z.object({ documents: z.number().int(), net_total: z.number(), gross_total: z.number() }).partial().nullish(),
-  excluded: z.record(z.string(), z.number()).nullish(),
+  total: z.object({ documents: count, net_total: amount, gross_total: amount }).partial().nullish(),
+  excluded: z.record(z.string(), z.coerce.number()).nullish(),
   summary: z.string().nullish(),
 })
 
@@ -155,7 +162,11 @@ export async function fetchSalesSummary(
     throw new SubiektBridgeError('invalid_response', SUBIEKT_BRIDGE_MESSAGES.invalid_response)
   }
   const parsed = salesSummarySchema.safeParse(json)
-  if (!parsed.success) throw new SubiektBridgeError('invalid_response', SUBIEKT_BRIDGE_MESSAGES.invalid_response)
+  if (!parsed.success) {
+    // Server log only: field paths help diagnose a contract drift; values never leave the server.
+    console.warn(JSON.stringify({ event: 'SUBIEKT_BRIDGE_INVALID_RESPONSE', issues: parsed.error.issues.slice(0, 10).map((issue) => ({ path: issue.path.join('.'), code: issue.code })) }))
+    throw new SubiektBridgeError('invalid_response', SUBIEKT_BRIDGE_MESSAGES.invalid_response)
+  }
   return parsed.data
 }
 

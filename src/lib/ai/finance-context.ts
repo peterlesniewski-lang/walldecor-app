@@ -66,6 +66,9 @@ export function buildFinanceAiContext(model: ActualDashboardModel, subiekt?: Sub
       'Porównanie rok do roku wolno opisać tylko gdy yoy nie jest null; w przeciwnym razie podaj ograniczenie z yoyReason i nie wyliczaj porównania samodzielnie.',
       'Kontekst nie zawiera budżetu, prognoz, danych dostawców ani konkretnych faktur. Nie wnioskuj o nich z agregatów. Nie zawiera też sald rachunków, należności, zobowiązań ani powiadomień użytkownika.',
       'Ten kontekst nie zawiera sprzedaży netto ani różnicy netto. Nie przeliczaj brutto dzieląc przez stawkę VAT.',
+      ...(subiektRevenue ? [
+        'subiektRevenue to sprzedaż brutto odczytana z dokumentów Subiekta GT (faktury, korekty, paragony minus zwroty) według daty wystawienia, per miesiąc, salon i kanał: subiektGross jest odczytem z Subiekta, nie wpisanym przychodem; enteredAmount to wpisany przychód (Revenue) tej samej komórki, a difference = subiektGross − enteredAmount; enteredAmount null oznacza brak wpisu, nie zero, i wtedy difference też jest null. fetchedAt to czas ostatniego udanego odczytu; lastError różny od null oznacza, że ostatni odczyt się nie powiódł i dane mogą być nieaktualne. unmapped to kwoty z magazynów lub rodzajów pozycji bez przypisanego salonu — nie są wliczone w żaden salon ani kanał.',
+      ] : []),
     ],
     period: { year: model.period.year, month: model.period.month },
     today: model.today,

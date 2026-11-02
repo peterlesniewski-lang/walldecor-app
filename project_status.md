@@ -15,6 +15,7 @@ Plan: `PLAN-WALLDECOR-BRIDGE-2026-11-01.md` w repo walldecor-portal (Loop 4). Do
 [x] UI `/finance/revenue`: wiersz „Subiekt” w komórce (kwota, dok., różnica/zgodne), „Zastosuj” per komórka, „Zastosuj wszystkie w miesiącu”, panel „Ostatni odczyt” / „Odczytaj teraz”, ostrzeżenie o nieprzypisanych magazynach, stan „Mostek niedostępny — dane z …”; Cała firma tylko do odczytu; bez konfiguracji jedna linijka „Mostek Subiekt nie jest skonfigurowany”
 [x] Czat finansowy: blok `subiektRevenue` w `buildFinanceAiContext` (ładowany serwerowo w `chat-http.ts`, bez sieci z workera)
 [x] Testy: Vitest 4 pliki nowe (mapowanie, klient, harmonogram, UI) + integracyjny na świeżej bazie SQLite; Playwright `e2e/finance-revenue-subiekt.spec.ts` z atrapą mostka (`e2e/subiekt-bridge-mock.ts`); walidator `scripts/validate-subiekt-revenue.mjs`
+[x] Po przeglądzie PR #37: zdanie interpretacji `subiektRevenue` dla czatu, harmonogram odporny na rzucony błąd (slot zwalniany, ponowienie po 5 min; jeden prawdziwy tick udowodniony testem integracyjnym z atrapą HTTP), „Zastosuj wszystkie w miesiącu” w jednej transakcji, `kind: INNE` jako ostrzeżenie (nigdy nie stosowane), liczby z mostka przez `z.coerce.number()`, jawne `isAdmin`, `aria-describedby`
 ```
 
 **Do wykonania przez użytkownika (poza repo):** prawdziwy mostek na PC `SERWER` + Tailscale na VPS; zmienne `SUBIEKT_BRIDGE_*` w Coolify; porównanie 2 miesięcy z raportem sprzedaży GT przed pierwszym „Zastosuj” (Loop 7 planu mostka). Nie wdrożone.

@@ -80,11 +80,13 @@ export function SubiektRevenuePanel({ view, year, canRefresh }: SubiektRevenuePa
       )}
       {unmappedForYear.length > 0 && (
         <div className={styles.warning} data-testid="subiekt-unmapped">
-          <p className={styles.strong}>Nieprzypisane magazyny w Subiekcie — kwoty poniżej nie trafiają do żadnego salonu:</p>
+          <p className={styles.strong}>Kwoty z Subiekta bez przypisania do salonu — poniższe pozycje nie trafiają do żadnej komórki:</p>
           <ul className={styles.resultList}>
             {unmappedForYear.map((row) => (
               <li key={`${row.year}-${row.month}-${row.warehouseSymbol}-${row.kind}`}>
-                nieprzypisany magazyn {row.warehouseSymbol} ({row.kind === 'TOWAR' ? 'towar' : 'usługa'}, {MONTHS_SHORT[row.month - 1]} {row.year}): {money(row.grossAmount)} · dokumentów: {row.documentCount}
+                {row.kind === 'INNE'
+                  ? <>nieobsługiwany rodzaj pozycji INNE (magazyn {row.warehouseSymbol}, {MONTHS_SHORT[row.month - 1]} {row.year}): {money(row.grossAmount)} · dokumentów: {row.documentCount}</>
+                  : <>nieprzypisany magazyn {row.warehouseSymbol} ({row.kind === 'TOWAR' ? 'towar' : 'usługa'}, {MONTHS_SHORT[row.month - 1]} {row.year}): {money(row.grossAmount)} · dokumentów: {row.documentCount}</>}
               </li>
             ))}
           </ul>

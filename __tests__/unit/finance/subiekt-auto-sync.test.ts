@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PrismaClient } from '@/generated/prisma'
-import { isSubiektSlotPending, latestDueSubiektSlot, runScheduledSubiektSync } from '@/lib/finance/subiekt-auto-sync'
+import { isSubiektSlotPending, latestDueSubiektSlot, runScheduledSubiektSync, runSubiektAutoSyncTick } from '@/lib/finance/subiekt-auto-sync'
 
 const refreshMock = vi.hoisted(() => vi.fn())
 vi.mock('@/lib/finance/subiekt-revenue', async (importOriginal) => ({
@@ -78,5 +78,28 @@ describe('runScheduledSubiektSync', () => {
     expect(first).toMatchObject({ ran: true, status: 'ERROR', message: 'Mostek Subiekt jest niedostępny.' })
     expect(store.get('subiekt_bridge.auto_sync_message')).toBe('Mostek Subiekt jest niedostępny.')
     await expect(runScheduledSubiektSync(db, NOW)).resolves.toEqual({ ran: false, reason: 'NOT_DUE' })
+  })
+
+  it('should release the slot and record a generic ERROR when the refresh throws, so the next tick retries', async () => {
+    refreshMock.mockRejectedValueOnce(new Error('SQLITE_BUSY: database is locked'))
+    const { db, store } = createDb({ 'subiekt_bridge.auto_sync_slot': '2026-06-09' })
+    const first = await runScheduledSubiektSync(db, NOW)
+    expect(first).toMatchObject({ ran: true, slot: '2026-06-10', status: 'ERROR' })
+    expect(first.ran && first.message).not.toContain('SQLITE')
+    expect(store.get('subiekt_bridge.auto_sync_slot')).toBe('2026-06-09')
+    expect(store.get('subiekt_bridge.auto_sync_status')).toBe('ERROR')
+    const second = await runScheduledSubiektSync(db, NOW)
+    expect(second).toMatchObject({ ran: true, status: 'OK' })
+    expect(store.get('subiekt_bridge.auto_sync_slot')).toBe('2026-06-10')
+  })
+
+  it('should log one JSON line per run from the scheduler tick', async () => {
+    const { db } = createDb({})
+    const log = { info: vi.fn(), error: vi.fn() }
+    await runSubiektAutoSyncTick(db, NOW, log)
+    expect(log.info).toHaveBeenCalledTimes(1)
+    expect(JSON.parse(log.info.mock.calls[0][0] as string)).toMatchObject({ event: 'SUBIEKT_AUTO_SYNC', ran: true, slot: '2026-06-10', status: 'OK' })
+    await runSubiektAutoSyncTick(db, NOW, log)
+    expect(log.info).toHaveBeenCalledTimes(1)
   })
 })

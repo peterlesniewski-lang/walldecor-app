@@ -12,7 +12,7 @@ export interface MockSalesRow {
   month: number
   warehouse_symbol: string
   warehouse_name?: string
-  kind: 'TOWAR' | 'USLUGA'
+  kind: 'TOWAR' | 'USLUGA' | 'INNE'
   documents: number
   net_total: number
   gross_total: number

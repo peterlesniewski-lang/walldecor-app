@@ -42,18 +42,45 @@ async function writeSettings(db: AutoSyncDb, values: Record<string, string>) {
     db.appSetting.upsert({ where: { key }, update: { value }, create: { key, value } })))
 }
 
+const THROWN_MESSAGE = 'Automatyczny odczyt z Subiekta przerwany błędem aplikacji; kolejna próba przy następnym sprawdzeniu.'
+
 export async function runScheduledSubiektSync(db: AutoSyncDb, now: Date = new Date()): Promise<SubiektAutoSyncOutcome> {
   const last = await db.appSetting.findMany({ where: { key: { in: [SUBIEKT_BRIDGE_KEYS.autoSyncSlot] } } })
+  const previousSlot = last[0]?.value ?? ''
   const slot = latestDueSubiektSlot(now)
-  if (!isSubiektSlotPending(slot, last[0]?.value)) return { ran: false, reason: 'NOT_DUE' }
+  if (!isSubiektSlotPending(slot, previousSlot)) return { ran: false, reason: 'NOT_DUE' }
+  // Claim the slot before the network call so a long run is not started twice; a bridge
+  // failure is a normal ERROR outcome for the slot. A thrown error (database busy, transaction
+  // timeout) releases the slot so the next tick retries instead of losing the day.
   await writeSettings(db, { [SUBIEKT_BRIDGE_KEYS.autoSyncSlot]: slot })
-  const result = await refreshSubiektRevenue(db, { now })
-  const status = result.ok ? 'OK' : 'ERROR'
-  const message = result.ok
-    ? `Odczytano ${result.rows} wierszy z Subiekta${result.unmappedWarehouses.length ? `; nieprzypisane magazyny: ${result.unmappedWarehouses.join(', ')}` : ''}.`
-    : result.error
+  let status: 'OK' | 'ERROR'
+  let message: string
+  try {
+    const result = await refreshSubiektRevenue(db, { now })
+    status = result.ok ? 'OK' : 'ERROR'
+    message = result.ok
+      ? `Odczytano ${result.rows} wierszy z Subiekta${result.unmappedWarehouses.length ? `; nieprzypisane magazyny: ${result.unmappedWarehouses.join(', ')}` : ''}.`
+      : result.error
+  } catch {
+    status = 'ERROR'
+    message = THROWN_MESSAGE
+    await writeSettings(db, { [SUBIEKT_BRIDGE_KEYS.autoSyncSlot]: previousSlot, [SUBIEKT_BRIDGE_KEYS.autoSyncStatus]: status, [SUBIEKT_BRIDGE_KEYS.autoSyncMessage]: message })
+    return { ran: true, slot, status, message }
+  }
   await writeSettings(db, { [SUBIEKT_BRIDGE_KEYS.autoSyncStatus]: status, [SUBIEKT_BRIDGE_KEYS.autoSyncMessage]: message })
   return { ran: true, slot, status, message }
+}
+
+/** One scheduler check: runs the due slot (if any) and logs the outcome as a single JSON line. */
+export async function runSubiektAutoSyncTick(db: AutoSyncDb, now: Date = new Date(), log: Pick<Console, 'info' | 'error'> = console) {
+  try {
+    const outcome = await runScheduledSubiektSync(db, now)
+    if (outcome.ran) log.info(JSON.stringify({ event: 'SUBIEKT_AUTO_SYNC', ...outcome }))
+    return outcome
+  } catch {
+    log.error(JSON.stringify({ event: 'SUBIEKT_AUTO_SYNC_FAILED' }))
+    return null
+  }
 }
 
 const SCHEDULER_STARTED = Symbol.for('walldecor.subiektAutoSyncStarted')
@@ -63,14 +90,7 @@ export function startSubiektAutoSyncScheduler(db: AutoSyncDb) {
   const holder = globalThis as { [SCHEDULER_STARTED]?: boolean }
   if (holder[SCHEDULER_STARTED]) return
   holder[SCHEDULER_STARTED] = true
-  const tick = async () => {
-    try {
-      const outcome = await runScheduledSubiektSync(db)
-      if (outcome.ran) console.info(JSON.stringify({ event: 'SUBIEKT_AUTO_SYNC', ...outcome }))
-    } catch {
-      console.error(JSON.stringify({ event: 'SUBIEKT_AUTO_SYNC_FAILED' }))
-    }
-  }
+  const tick = () => runSubiektAutoSyncTick(db)
   setTimeout(() => { void tick() }, FIRST_CHECK_DELAY_MS).unref()
   setInterval(() => { void tick() }, CHECK_INTERVAL_MS).unref()
 }

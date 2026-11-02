@@ -29,7 +29,7 @@ export const SUBIEKT_BRIDGE_KEYS = {
   autoSyncMessage: 'subiekt_bridge.auto_sync_message',
 } as const
 
-export type SubiektKind = 'TOWAR' | 'USLUGA'
+export type SubiektKind = 'TOWAR' | 'USLUGA' | 'INNE'
 export type SubiektCostCenterId = 'JAG' | 'PUL'
 
 export interface WarehouseMapping {
@@ -40,7 +40,8 @@ export interface WarehouseMapping {
 
 export type WarehouseMap = ReadonlyMap<string, WarehouseMapping>
 
-export const KIND_CHANNEL: Record<SubiektKind, RevenueChannel> = { TOWAR: 'SALON', USLUGA: 'MONTAZ' }
+/** `INNE` has no channel: it is reported like an unmapped warehouse and never applied. */
+export const KIND_CHANNEL: Partial<Record<SubiektKind, RevenueChannel>> = { TOWAR: 'SALON', USLUGA: 'MONTAZ' }
 
 const normalizeSymbol = (symbol: string) => symbol.trim().toLocaleUpperCase('pl-PL')
 
@@ -77,8 +78,8 @@ export interface MappedRow {
 export function mapRow(row: Pick<SalesSummaryRow, 'warehouse_symbol' | 'kind'>, map: WarehouseMap): MappedRow {
   const mapping = map.get(normalizeSymbol(row.warehouse_symbol))
   if (!mapping) return { costCenterId: null, channel: null }
-  const channel = mapping.channel ?? KIND_CHANNEL[row.kind]
-  if (!COST_CENTER_CHANNELS[mapping.costCenterId]?.includes(channel)) return { costCenterId: null, channel: null }
+  const channel = row.kind === 'INNE' ? null : (mapping.channel ?? KIND_CHANNEL[row.kind] ?? null)
+  if (!channel || !COST_CENTER_CHANNELS[mapping.costCenterId]?.includes(channel)) return { costCenterId: null, channel: null }
   return { costCenterId: mapping.costCenterId, channel }
 }
 
@@ -102,6 +103,8 @@ export function refreshWindow(now = new Date(), months = SUBIEKT_REFRESH_MONTHS)
 }
 
 type SnapshotDb = Pick<PrismaClient, 'subiektRevenueSnapshot' | 'appSetting' | 'revenue' | '$transaction'>
+/** Enough for applying a snapshot; satisfied by the client and by an interactive-transaction client. */
+type ApplyDb = Pick<PrismaClient, 'subiektRevenueSnapshot' | 'revenue'>
 
 async function writeSettings(db: SnapshotDb, values: Record<string, string>) {
   await db.$transaction(Object.entries(values).map(([key, value]) =>
@@ -147,7 +150,7 @@ export async function refreshSubiektRevenue(db: SnapshotDb, options: RefreshOpti
     .map((row) => {
       const mapped = mapRow(row, map)
       const symbol = normalizeSymbol(row.warehouse_symbol)
-      if (!mapped.costCenterId) unmapped.add(symbol)
+      if (!mapped.costCenterId) unmapped.add(row.kind === 'INNE' ? `${symbol} (rodzaj INNE)` : symbol)
       return {
         year: row.year, month: row.month, warehouseSymbol: symbol, kind: row.kind,
         costCenterId: mapped.costCenterId, channel: mapped.channel,
@@ -275,7 +278,7 @@ export function subiektAsOfDate(year: number, month: number, now = new Date()): 
 }
 
 /** Copies the Subiekt gross amount of one cell into Revenue through the same validation and write path as the manual editor. */
-export async function applySubiektRevenue(db: SnapshotDb, input: ApplyCellInput, now = new Date()): Promise<ApplyResult> {
+export async function applySubiektRevenue(db: ApplyDb, input: ApplyCellInput, now = new Date()): Promise<ApplyResult> {
   const rows = await db.subiektRevenueSnapshot.findMany({ where: { year: input.year, month: input.month, costCenterId: input.costCenterId, channel: input.channel } })
   if (rows.length === 0) return { ok: false, error: 'Brak odczytu z Subiekta dla tej komórki. Najpierw użyj „Odczytaj teraz”.' }
   const amount = round2(rows.reduce((sum, row) => sum + row.grossAmount, 0))
@@ -287,18 +290,29 @@ export async function applySubiektRevenue(db: SnapshotDb, input: ApplyCellInput,
   return { ok: true, entries: [{ year: entry.year, month: entry.month, costCenterId: entry.costCenterId, channel: entry.channel, amount: entry.amount, asOfDate: entry.asOfDate }] }
 }
 
-/** Applies every channel of a month that has a Subiekt snapshot for the center; stops at the first failure. */
+class ApplyMonthAbort extends Error {
+  constructor(readonly result: Extract<ApplyResult, { ok: false }>) { super(result.error) }
+}
+
+/** Applies every channel of a month that has a Subiekt snapshot for the center — all or nothing, in one transaction. */
 export async function applySubiektRevenueMonth(db: SnapshotDb, input: Omit<ApplyCellInput, 'channel'>, now = new Date()): Promise<ApplyResult> {
-  const rows = await db.subiektRevenueSnapshot.findMany({ where: { year: input.year, month: input.month, costCenterId: input.costCenterId, channel: { not: null } }, select: { channel: true } })
-  const channels = [...new Set(rows.map((row) => row.channel).filter((channel): channel is string => channel !== null))].sort()
-  if (channels.length === 0) return { ok: false, error: 'Brak odczytu z Subiekta dla tego miesiąca. Najpierw użyj „Odczytaj teraz”.' }
-  const entries: Extract<ApplyResult, { ok: true }>['entries'] = []
-  for (const channel of channels) {
-    const result = await applySubiektRevenue(db, { ...input, channel }, now)
-    if (!result.ok) return result
-    entries.push(...result.entries)
+  try {
+    return await db.$transaction(async (tx) => {
+      const rows = await tx.subiektRevenueSnapshot.findMany({ where: { year: input.year, month: input.month, costCenterId: input.costCenterId, channel: { not: null } }, select: { channel: true } })
+      const channels = [...new Set(rows.map((row) => row.channel).filter((channel): channel is string => channel !== null))].sort()
+      if (channels.length === 0) throw new ApplyMonthAbort({ ok: false, error: 'Brak odczytu z Subiekta dla tego miesiąca. Najpierw użyj „Odczytaj teraz”.' })
+      const entries: Extract<ApplyResult, { ok: true }>['entries'] = []
+      for (const channel of channels) {
+        const result = await applySubiektRevenue(tx, { ...input, channel }, now)
+        if (!result.ok) throw new ApplyMonthAbort(result)
+        entries.push(...result.entries)
+      }
+      return { ok: true, entries } satisfies ApplyResult
+    })
+  } catch (error) {
+    if (error instanceof ApplyMonthAbort) return error.result
+    throw error
   }
-  return { ok: true, entries }
 }
 
 export interface SubiektAiMonth {

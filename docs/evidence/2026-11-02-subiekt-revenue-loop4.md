@@ -16,7 +16,7 @@ Mostek walldecor-bridge powstaje równolegle; ta gałąź jest rozwijana i testo
 | UI `/finance/revenue` | `src/components/shared/subiekt-revenue-panel.tsx`, `revenue-actuals-grid.tsx`, `revenue-tabs.tsx`, `revenue-ui.module.css`, `src/app/(dashboard)/finance/revenue/page.tsx` |
 | Czat finansowy | `src/lib/ai/finance-context.ts` (blok `subiektRevenue` + zdanie interpretacji), `src/lib/ai/chat-http.ts` (ładowanie serwerowe, błąd odczytu nie blokuje czatu) |
 | Konfiguracja | `.env.example`: `SUBIEKT_BRIDGE_URL`, `SUBIEKT_BRIDGE_TOKEN`, `SUBIEKT_BRIDGE_WAREHOUSE_MAP`, `SUBIEKT_BRIDGE_AUTO_SYNC` |
-| Testy | `__tests__/unit/finance/subiekt-revenue-mapping.test.ts` (18), `subiekt-bridge-client.test.ts` (7), `subiekt-auto-sync.test.ts` (8), `subiekt-revenue-ui.test.tsx` (6), `__tests__/integration/finance/subiekt-revenue.test.ts` (15, świeża baza SQLite z migracji), `e2e/finance-revenue-subiekt.spec.ts`, `scripts/validate-subiekt-revenue.mjs` |
+| Testy | `__tests__/unit/finance/subiekt-revenue-mapping.test.ts` (20), `subiekt-bridge-client.test.ts` (7), `subiekt-auto-sync.test.ts` (10), `subiekt-revenue-ui.test.tsx` (9), `finance-context.test.ts` (+1: blok i zdanie interpretacji), `__tests__/integration/finance/subiekt-revenue.test.ts` (18, świeża baza SQLite z migracji), `__tests__/integration/finance/subiekt-auto-sync-scheduler.test.ts` (1: prawdziwy tick harmonogramu przeciw atrapie HTTP), `e2e/finance-revenue-subiekt.spec.ts`, `scripts/validate-subiekt-revenue.mjs` |
 
 ## Odstępstwa od planu (świadome)
 
@@ -25,6 +25,28 @@ Mostek walldecor-bridge powstaje równolegle; ta gałąź jest rozwijana i testo
 3. **Role:** `/finance/revenue` jest w tym repo stroną wyłącznie dla ADMIN (inne role są przekierowywane do `/finance`), więc punkt planu „STAFF/MANAGER widzą kolumnę bez przycisków” nie ma zastosowania; widok „Cała firma” pokazuje sumy z Subiekta bez przycisków.
 4. **Stan ostatniego odczytu** w `AppSetting` (`subiekt_bridge.last_fetch_at`, `last_error`, `last_error_at`), bez osobnej tabeli.
 5. **ECOMMERCE** dostaje kwotę z Subiekta tylko przez wpis mapy z wymuszonym kanałem (`INT:PUL:ECOMMERCE`); bez niego komórka pokazuje „Subiekt: —” i nie ma przycisku. Próba „Zastosuj” kanału niedozwolonego dla centrum kończy się błędem walidacji `RevenueEntrySchema` (test integracyjny).
+6. **Magazyn z mapy bez dokumentów (np. INT) nie dostaje wiersza ani ostrzeżenia** — zgodnie z zadaniem 5 i §0.2 planu („brak wiersza, nie zero”), a nie z dosłownym brzmieniem dopisku 6b, który sugerował wiersz zerowy. Komórka pokazuje „Subiekt: —” bez przycisku; test integracyjny „mapped warehouse the bridge returns no rows for”.
+7. **Rodzaj pozycji `INNE`** (kontrakt mostka dopuszcza `kind` inny niż TOWAR/USLUGA): wiersz jest zapisywany w snapshocie (CHECK migracji rozszerzony o `INNE` — migracja była tylko na tej niezmergowanej gałęzi, nigdzie nie wdrożona, więc poprawiona w miejscu zamiast dokładać drugą), nigdy nie trafia do komórki ani do „Zastosuj”, a w panelu pojawia się ostrzeżenie „nieobsługiwany rodzaj pozycji INNE (magazyn X, mies rok): kwota”. Testy: mapowanie, agregacja, integracyjny (łącznie z liczbami jako napisami z mostka — `z.coerce.number()`), UI.
+
+## Poprawki po przeglądzie PR #37 (2026-11-02)
+
+- Zdanie interpretacji bloku `subiektRevenue` w `finance-context.ts` (brutto wg daty wystawienia, `difference = subiektGross − enteredAmount`, `enteredAmount: null` = brak wpisu nie zero, znaczenie `lastError`/`unmapped`) + test jednostkowy sprawdzający blok i zdanie.
+- Harmonogram: `refreshSubiektRevenue` w `try/catch`; rzucony błąd (np. zablokowana baza) zapisuje `auto_sync_status=ERROR` z ogólnym komunikatem po polsku **i przywraca poprzedni slot**, więc następne sprawdzenie (5 min) ponawia próbę; błąd mostka obsłużony (`{ok:false}`) nadal zużywa slot. Test: rzucony błąd → slot nietknięty → drugi tick kończy się OK. Tick wydzielony do `runSubiektAutoSyncTick(db, now, log)` (jedna linia JSON na przebieg).
+- `applySubiektRevenueMonth` działa w jednym `db.$transaction` — odmowa któregoś kanału nie zostawia częściowo zapisanego miesiąca (test integracyjny: 0 wierszy `Revenue` po odmowie).
+- Siatka: `router.refresh()` w `finally` (także po błędzie „Zastosuj”), `aria-describedby` z przycisku edycji na wiersz „Subiekt: …” tej komórki (test UI).
+- `RevenueTabs` dostaje jawne `isAdmin` (strona przekazuje `session.user.role === 'ADMIN'`); „Odczytaj teraz” widoczne tylko dla admina.
+- Klient mostka: liczby przez `z.coerce.number()` (DECIMAL serializowany jako napis), `kind` dopuszcza `INNE`; przy błędnym kształcie odpowiedzi ścieżki pól zod trafiają wyłącznie do logu serwera (`SUBIEKT_BRIDGE_INVALID_RESPONSE`), komunikat dla klienta pozostaje ogólny.
+
+### Harmonogram uruchomiony raz lokalnie (test integracyjny `subiekt-auto-sync-scheduler.test.ts`)
+
+Świeża baza SQLite z łańcucha migracji, atrapa HTTP mostka z pakietu Playwright na losowym porcie, konfiguracja wyłącznie z `process.env` (jak w produkcji), slot ustawiony na wczoraj (`2026-11-01`), zegar `2026-11-02T07:00:00Z` = 08:00 Europe/Warsaw (po 07:30):
+
+```
+SCHEDULER-PROOF log: {"event":"SUBIEKT_AUTO_SYNC","ran":true,"slot":"2026-11-02","status":"OK","message":"Odczytano 2 wierszy z Subiekta."}
+SCHEDULER-PROOF fetchedAt: 2026-11-02T07:00:00.000Z last_fetch_at: 2026-11-02T07:00:00.000Z
+```
+
+Sprawdzone w tym samym teście: jedno wywołanie `GET /api/sales/summary?from=2025-11-01&to=2026-11-02&group_by=month_warehouse_kind` z nagłówkiem `Authorization: Bearer <token>`, dwa snapshoty (`PUŁ→PUL/SALON 12 345,67`, `MAG→JAG/MONTAZ 2 300`) z `fetchedAt` równym zegarowi ticku, `subiekt_bridge.auto_sync_slot=2026-11-02`, `auto_sync_status=OK`, tabela `Revenue` pusta (harmonogram nie stosuje), drugi tick 5 min później → `NOT_DUE` bez drugiego wywołania mostka.
 
 ## Bramka (uruchomione 2026-11-02, Mac, Node v26.7.0)
 

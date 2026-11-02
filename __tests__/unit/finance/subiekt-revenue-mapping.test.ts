@@ -49,6 +49,11 @@ describe('mapRow', () => {
   it('should leave an unknown warehouse unmapped', () => {
     expect(mapRow({ warehouse_symbol: 'ZEW', kind: 'TOWAR' }, map)).toEqual({ costCenterId: null, channel: null })
   })
+
+  it('should treat kind INNE like an unmapped warehouse even for a mapped warehouse with a forced channel', () => {
+    expect(mapRow({ warehouse_symbol: 'PUŁ', kind: 'INNE' }, map)).toEqual({ costCenterId: null, channel: null })
+    expect(mapRow({ warehouse_symbol: 'INT', kind: 'INNE' }, map)).toEqual({ costCenterId: null, channel: null })
+  })
 })
 
 describe('aggregateSnapshots', () => {
@@ -72,6 +77,14 @@ describe('aggregateSnapshots', () => {
 
   it('should produce no cell for a month without snapshot rows (absence, not zero)', () => {
     expect(aggregateSnapshots([]).cells).toEqual([])
+  })
+
+  it('should report INNE rows under unmapped, not as a cell', () => {
+    const { cells, unmapped } = aggregateSnapshots([
+      { year: 2026, month: 10, warehouseSymbol: 'PUŁ', kind: 'INNE', costCenterId: null, channel: null, grossAmount: 12.5, ...base },
+    ])
+    expect(cells).toEqual([])
+    expect(unmapped).toEqual([{ year: 2026, month: 10, warehouseSymbol: 'PUŁ', kind: 'INNE', grossAmount: 12.5, documentCount: 1 }])
   })
 })
 

@@ -64,4 +64,35 @@ describe('actual finance AI context', () => {
     expect(context.byCenter.map((row) => row.costCenter)).toEqual(['Salon A', 'Salon B', 'Global'])
     expect(JSON.stringify(context)).not.toMatch(/SENSITIVE|PRIVATE VENDOR|JAG|PUL/)
   })
+
+  it('adds the Subiekt block with its Polish interpretation only when a read exists', () => {
+    const without = buildFinanceAiContext(build(), null)
+    expect(without.subiektRevenue).toBeNull()
+    expect(without.interpretation.join(' ')).not.toContain('subiektRevenue')
+
+    const context = buildFinanceAiContext(build(), {
+      configured: true, fetchedAt: '2026-11-02T06:30:00.000Z', lastError: null,
+      months: [
+        { year: 2026, month: 10, costCenterId: 'PUL', channel: 'SALON', subiektGross: 1000, documentCount: 7, enteredAmount: 900, difference: 100 },
+        { year: 2026, month: 10, costCenterId: 'PUL', channel: 'MONTAZ', subiektGross: 300, documentCount: 2, enteredAmount: null, difference: null },
+      ],
+      unmapped: [{ year: 2026, month: 9, warehouseSymbol: 'ZEW', kind: 'USLUGA', grossAmount: 77.77, documentCount: 1 }],
+    })
+    expect(context.subiektRevenue).toEqual({
+      fetchedAt: '2026-11-02T06:30:00.000Z', lastError: null,
+      months: [
+        { year: 2026, month: 10, costCenter: 'Salon B', channel: 'Sprzedaż towaru', subiektGross: 1000, documentCount: 7, enteredAmount: 900, difference: 100 },
+        { year: 2026, month: 10, costCenter: 'Salon B', channel: 'Montaż', subiektGross: 300, documentCount: 2, enteredAmount: null, difference: null },
+      ],
+      unmapped: [{ year: 2026, month: 9, warehouse: 'ZEW', kind: 'USLUGA', gross: 77.77 }],
+    })
+    const sentence = context.interpretation.find((line) => line.startsWith('subiektRevenue'))
+    expect(sentence).toBeDefined()
+    expect(sentence).toContain('brutto')
+    expect(sentence).toContain('daty wystawienia')
+    expect(sentence).toContain('difference = subiektGross − enteredAmount')
+    expect(sentence).toContain('null oznacza brak wpisu, nie zero')
+    expect(sentence).toContain('lastError')
+    expect(sentence).toContain('unmapped')
+  })
 })

@@ -36,6 +36,7 @@ export default async function RevenuePage({ searchParams }: PageProps) {
       year={year}
       costCenterId={costCenterId}
       editable={session.user.role === 'ADMIN' && !isCompany}
+      isAdmin={session.user.role === 'ADMIN'}
       subiekt={subiekt}
     />
   )

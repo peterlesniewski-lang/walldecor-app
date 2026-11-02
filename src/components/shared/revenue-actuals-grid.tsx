@@ -55,6 +55,7 @@ export function RevenueActualsGrid({ initialEntries, year, costCenterId, editabl
   const triggerRef = useRef<HTMLButtonElement | null>(null)
   const amountId = useId()
   const dateId = useId()
+  const subiektIdBase = useId()
   const router = useRouter()
   const isCompany = costCenterId === 'GLOBAL'
   const canEdit = editable && !isCompany
@@ -99,11 +100,12 @@ export function RevenueActualsGrid({ initialEntries, year, costCenterId, editabl
         ],
       }))
       setSavedMessage(`Zastosowano z Subiekta (${MONTHS[target.month - 1]}): ${confirmed.map((entry) => `${CHANNEL_LABELS[entry.channel as RevenueChannel] ?? entry.channel} ${money(entry.amount)}`).join(', ')}.`)
-      router.refresh()
     } catch (cause) {
       setApplyError(cause instanceof Error ? cause.message : 'Błąd połączenia. Spróbuj ponownie.')
     } finally {
       setApplying(null)
+      // A partial month apply or a late failure may have changed rows on the server: always re-read.
+      router.refresh()
     }
   }
 
@@ -199,8 +201,9 @@ export function RevenueActualsGrid({ initialEntries, year, costCenterId, editabl
                     const entered = cellRows.length ? value : null
                     const difference = subiekt && entered !== null ? Math.round((subiekt.gross - entered) * 100) / 100 : null
                     const applyKey = `${month}:${channel}`
+                    const subiektLineId = subiektCells === null ? undefined : `${subiektIdBase}-${month}-${channel}`
                     const subiektLine = subiektCells === null ? null : (
-                      <span className={`${styles.cellMeta} ${styles.subiektLine}`} data-testid={`subiekt-${month}-${channel}`}>
+                      <span id={subiektLineId} className={`${styles.cellMeta} ${styles.subiektLine}`} data-testid={`subiekt-${month}-${channel}`}>
                         {subiekt
                           ? <>Subiekt: <span className={styles.subiektAmount}>{money(subiekt.gross)}</span> · dok. {subiekt.documents}
                             {difference !== null && <span className={Math.abs(difference) < CENTS_EPSILON ? styles.diffZero : styles.diffWarn}>
@@ -214,6 +217,7 @@ export function RevenueActualsGrid({ initialEntries, year, costCenterId, editabl
                     return <td key={channel} className={styles.cell}>
                       {canEdit ? <button
                         type="button" aria-label={`Edytuj ${CHANNEL_LABELS[channel]} — ${monthName} ${year}`}
+                        aria-describedby={subiektLineId}
                         onClick={(event) => openEditor({ channel, month }, event.currentTarget)}
                         className={styles.cellButton}
                       >{contents}{subiektLine}</button> : <div className={styles.cellReadOnly}>{contents}{subiektLine}</div>}

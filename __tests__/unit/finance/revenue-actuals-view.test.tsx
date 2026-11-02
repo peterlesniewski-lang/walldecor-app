@@ -9,7 +9,7 @@ vi.mock('next/navigation', () => ({ useRouter: () => router }))
 
 const notConfigured = { configured: false, fetchedAt: null, lastError: null, lastErrorAt: null, mapProblems: [], cells: [], unmapped: [] }
 const props = {
-  year: 2026, costCenterId: 'JAG', editable: true, subiekt: notConfigured,
+  year: 2026, costCenterId: 'JAG', editable: true, isAdmin: true, subiekt: notConfigured,
   entries: [{ year: 2026, month: 9, costCenterId: 'JAG', channel: 'SALON', amount: 0, asOfDate: null }],
   // Existing legacy props deliberately contain a plan: it must never affect the actual editor.
   activeTab: 'actuals' as const, planEntries: { SALON_9: 900000 }, actualEntries: { SALON_9: 0 }, canEditPlan: true, canEditActuals: true,

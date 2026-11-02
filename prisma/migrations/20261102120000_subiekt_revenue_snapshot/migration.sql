@@ -6,7 +6,7 @@ CREATE TABLE "SubiektRevenueSnapshot" (
   "year" INTEGER NOT NULL CHECK ("year" BETWEEN 2020 AND 2100),
   "month" INTEGER NOT NULL CHECK ("month" BETWEEN 1 AND 12),
   "warehouseSymbol" TEXT NOT NULL,
-  "kind" TEXT NOT NULL CHECK ("kind" IN ('TOWAR', 'USLUGA')),
+  "kind" TEXT NOT NULL CHECK ("kind" IN ('TOWAR', 'USLUGA', 'INNE')),
   "costCenterId" TEXT,
   "channel" TEXT,
   "grossAmount" REAL NOT NULL,

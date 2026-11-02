@@ -28,7 +28,7 @@ const NOW = new Date('2026-11-02T10:00:00Z')
 const env = { SUBIEKT_BRIDGE_URL: 'https://bridge.test', SUBIEKT_BRIDGE_TOKEN: 'tok' }
 const config = { url: env.SUBIEKT_BRIDGE_URL, token: env.SUBIEKT_BRIDGE_TOKEN }
 
-const row = (year: number, month: number, warehouse_symbol: string, kind: 'TOWAR' | 'USLUGA', gross_total: number, documents = 1) =>
+const row = (year: number, month: number, warehouse_symbol: string, kind: 'TOWAR' | 'USLUGA' | 'INNE', gross_total: number, documents = 1) =>
   ({ year, month, warehouse_symbol, warehouse_name: warehouse_symbol, kind, documents, net_total: Math.round(gross_total / 1.23 * 100) / 100, gross_total })
 
 const bridge = (rows: ReturnType<typeof row>[]): FetchLike => async (url) => {
@@ -112,6 +112,28 @@ describe('refreshSubiektRevenue', () => {
     expect(view.lastErrorAt).toBe('2026-11-03T06:30:00.000Z')
   })
 
+  it('should create no snapshot and no warning for a mapped warehouse the bridge returns no rows for (INT)', async () => {
+    const result = await refreshSubiektRevenue(db, { config, env, now: NOW, fetchImpl: bridge([row(2026, 10, 'PUŁ', 'TOWAR', 1000)]) })
+    expect(result).toMatchObject({ ok: true, rows: 1, unmappedWarehouses: [], mapProblems: [] })
+    expect(await db.subiektRevenueSnapshot.count({ where: { warehouseSymbol: 'INT' } })).toBe(0)
+    const view = await getSubiektRevenueView(db, 2026, 'PUL', env)
+    expect(view.cells.map((c) => c.channel)).toEqual(['SALON'])
+    expect(view.unmapped).toEqual([])
+  })
+
+  it('should keep kind INNE as a warning row that can never be applied, and accept numeric strings from the bridge', async () => {
+    const stringy: FetchLike = async (url) => new Response(JSON.stringify({
+      from: new URL(url).searchParams.get('from'), to: new URL(url).searchParams.get('to'), group_by: 'month_warehouse_kind',
+      rows: [{ year: '2026', month: '10', warehouse_symbol: 'PUŁ', kind: 'INNE', documents: '1', net_total: '10.16', gross_total: '12.50' }],
+    }), { status: 200 })
+    const result = await refreshSubiektRevenue(db, { config, env, now: NOW, fetchImpl: stringy })
+    expect(result).toMatchObject({ ok: true, rows: 1, unmappedWarehouses: ['PUŁ (rodzaj INNE)'] })
+    const view = await getSubiektRevenueView(db, 2026, 'PUL', env)
+    expect(view.cells).toEqual([])
+    expect(view.unmapped).toEqual([{ year: 2026, month: 10, warehouseSymbol: 'PUŁ', kind: 'INNE', grossAmount: 12.5, documentCount: 1 }])
+    expect(await applySubiektRevenueMonth(db, { year: 2026, month: 10, costCenterId: 'PUL' }, NOW)).toMatchObject({ ok: false })
+  })
+
   it('should report not_configured without touching the bridge', async () => {
     const result = await refreshSubiektRevenue(db, { env: {}, now: NOW, fetchImpl: async () => { throw new Error('must not be called') } })
     expect(result).toMatchObject({ ok: false, kind: 'not_configured' })
@@ -171,6 +193,15 @@ describe('applySubiektRevenue', () => {
     const result = await applySubiektRevenueMonth(db, { year: 2026, month: 10, costCenterId: 'PUL' }, NOW)
     expect(result.ok).toBe(true)
     expect((result.ok ? result.entries : []).map((e) => [e.channel, e.amount])).toEqual([['MONTAZ', 300], ['SALON', 1000]])
+  })
+
+  it('should write nothing for the month when one of its channels is refused (all or nothing)', async () => {
+    // MONTAZ is a valid PUL channel; a snapshot row with a channel PUL does not allow makes the second write fail.
+    await db.subiektRevenueSnapshot.create({ data: { year: 2026, month: 6, warehouseSymbol: 'PUŁ', kind: 'TOWAR', costCenterId: 'PUL', channel: 'SALON', grossAmount: 10, netAmount: 8, documentCount: 1, fetchedAt: NOW, sourceHash: 'a' } })
+    await db.subiektRevenueSnapshot.create({ data: { year: 2026, month: 6, warehouseSymbol: 'X', kind: 'USLUGA', costCenterId: 'PUL', channel: 'ZZZ', grossAmount: 5, netAmount: 4, documentCount: 1, fetchedAt: NOW, sourceHash: 'b' } })
+    const result = await applySubiektRevenueMonth(db, { year: 2026, month: 6, costCenterId: 'PUL' }, NOW)
+    expect(result).toMatchObject({ ok: false })
+    expect(await db.revenue.count({ where: { year: 2026, month: 6 } })).toBe(0)
   })
 })
 

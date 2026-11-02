@@ -12,10 +12,12 @@ interface RevenueTabsProps {
   year: number
   costCenterId: string
   editable: boolean
+  /** Only ADMIN may read from the bridge and apply amounts; the page already redirects other roles. */
+  isAdmin: boolean
   subiekt: SubiektRevenueView
 }
 
-export function RevenueTabs({ entries, year, costCenterId, editable, subiekt }: RevenueTabsProps) {
+export function RevenueTabs({ entries, year, costCenterId, editable, isAdmin, subiekt }: RevenueTabsProps) {
   const router = useRouter()
   const navigate = (nextYear: number, center = costCenterId) => {
     router.push(`/finance/revenue?year=${nextYear}&costCenterId=${center}`)
@@ -56,7 +58,7 @@ export function RevenueTabs({ entries, year, costCenterId, editable, subiekt }: 
         </p>
       )}
 
-      <SubiektRevenuePanel view={subiekt} year={year} canRefresh={editable || costCenterId === 'GLOBAL'} />
+      <SubiektRevenuePanel view={subiekt} year={year} canRefresh={isAdmin} />
 
       <RevenueActualsGrid
         key={`${year}:${costCenterId}`} initialEntries={entries} year={year} costCenterId={costCenterId} editable={editable}
