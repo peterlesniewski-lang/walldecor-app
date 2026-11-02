@@ -1,6 +1,23 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-10-27 (KSeF: kopiowanie sumy i tytułu przelewu, podświetlanie terminów płatności — wdrożone; rejestr wdrożeń w `docs/GITHUB-ACTIONS-BUILD.md`)
+**Ostatnia aktualizacja:** 2026-11-02 (Przychody z Subiekta GT obok wpisanych — Loop 4 planu walldecor-bridge, gałąź `feat/subiekt-bridge-revenue`, niewdrożone)
+
+## Przychody z Subiekta GT — Loop 4 mostka walldecor-bridge — 02.11.2026 (gałąź `feat/subiekt-bridge-revenue`)
+
+Plan: `PLAN-WALLDECOR-BRIDGE-2026-11-01.md` w repo walldecor-portal (Loop 4). Dowód: `docs/evidence/2026-11-02-subiekt-revenue-loop4.md`.
+
+```
+[x] Migracja `20261102120000_subiekt_revenue_snapshot`: tabela `SubiektRevenueSnapshot` (rok × miesiąc × magazyn × rodzaj towar/usługa, mapowanie na centrum/kanał, brutto/netto, liczba dokumentów, czas odczytu)
+[x] `src/lib/finance/subiekt-bridge-client.ts` — klient REST mostka (token w nagłówku, timeout 20 s, walidacja zod, błędy domenowe po polsku bez tokena i stack trace)
+[x] `src/lib/finance/subiekt-revenue.ts` — mapa magazynów (`SUBIEKT_BRIDGE_WAREHOUSE_MAP`, domyślnie `PUŁ:PUL,MAG:JAG,INT:PUL:ECOMMERCE`), odczyt 13 miesięcy, snapshoty, widok per komórka, „Zastosuj” (komórka / cały miesiąc) przez `RevenueEntrySchema` i wspólny `upsertRevenueEntry` (`revenue-store.ts`, używany też przez `POST /api/revenue`)
+[x] `src/lib/finance/subiekt-auto-sync.ts` + `src/instrumentation.ts` — codzienny odczyt 07:30 Europe/Warsaw, jeden przebieg na dzień, tylko gdy `SUBIEKT_BRIDGE_AUTO_SYNC=on`
+[x] API ADMIN: `POST /api/finance/subiekt-revenue/refresh`, `POST /api/finance/subiekt-revenue/apply`
+[x] UI `/finance/revenue`: wiersz „Subiekt” w komórce (kwota, dok., różnica/zgodne), „Zastosuj” per komórka, „Zastosuj wszystkie w miesiącu”, panel „Ostatni odczyt” / „Odczytaj teraz”, ostrzeżenie o nieprzypisanych magazynach, stan „Mostek niedostępny — dane z …”; Cała firma tylko do odczytu; bez konfiguracji jedna linijka „Mostek Subiekt nie jest skonfigurowany”
+[x] Czat finansowy: blok `subiektRevenue` w `buildFinanceAiContext` (ładowany serwerowo w `chat-http.ts`, bez sieci z workera)
+[x] Testy: Vitest 4 pliki nowe (mapowanie, klient, harmonogram, UI) + integracyjny na świeżej bazie SQLite; Playwright `e2e/finance-revenue-subiekt.spec.ts` z atrapą mostka (`e2e/subiekt-bridge-mock.ts`); walidator `scripts/validate-subiekt-revenue.mjs`
+```
+
+**Do wykonania przez użytkownika (poza repo):** prawdziwy mostek na PC `SERWER` + Tailscale na VPS; zmienne `SUBIEKT_BRIDGE_*` w Coolify; porównanie 2 miesięcy z raportem sprzedaży GT przed pierwszym „Zastosuj” (Loop 7 planu mostka). Nie wdrożone.
 
 ## KSeF — pasek zaznaczenia i terminy płatności — 27.10.2026 (PR #29, #34, #35)
 

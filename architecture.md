@@ -39,6 +39,14 @@ Addytywna migracja `20260911190000_invoice_ksef_reconciliation` dodaje `InvoiceK
 - GET/POST `/api/finance/invoice-import/drafts/[id]/ksef` wymagają świeżego aktywnego ADMIN-a. POST sprawdza obie wersje i klucz idempotencji; zapis decyzji, danych szkicu i audytu jest atomowy. APPLY wymaga OPEN; nie tworzy kosztu. Zatwierdzenie sprawdza wszystkie nierozstrzygnięte linki wewnątrz swojej transakcji.
 - DTO porównania i paginowane podsumowania list wybierają tylko potrzebne pola, bez XML. Listy sumujące kwoty nie pobierają snapshotów. Koszt zatwierdzony przed konfliktem pozostaje aktywny, dopóki administrator jawnie go nie cofnie.
 
+## Przychody z Subiekta GT — 02.11.2026
+
+Implementacja lokalna (gałąź `feat/subiekt-bridge-revenue`); wdrożenie wymaga mostka walldecor-bridge i zmiennych `SUBIEKT_BRIDGE_*`.
+
+- `SubiektRevenueSnapshot`: ostatni odczyt sprzedaży brutto/netto z mostka Subiekta per `year`/`month`/`warehouseSymbol`/`kind` (`TOWAR`|`USLUGA`); unikalność po tych czterech polach. `costCenterId`/`channel` to wynik mapy `SUBIEKT_BRIDGE_WAREHOUSE_MAP` (null = magazyn nieprzypisany, pokazywany jako ostrzeżenie). Klucz po magazynie, nie po centrum, żeby zmiana mapy nie wymagała ponownego odczytu i nie gubiła magazynów spoza mapy. `fetchedAt`, `sourceHash` (sha256 wiersza z mostka).
+- `Revenue` zmienia się wyłącznie przez „Zastosuj” (ADMIN), tą samą ścieżką co edycja ręczna (`upsertRevenueEntry`, walidacja `RevenueEntrySchema`); `asOfDate` = ostatni dzień zamkniętego miesiąca albo dzisiaj dla bieżącego.
+- `AppSetting`: `subiekt_bridge.last_fetch_at`, `subiekt_bridge.last_error`, `subiekt_bridge.last_error_at`, `subiekt_bridge.auto_sync_slot`, `subiekt_bridge.auto_sync_status`, `subiekt_bridge.auto_sync_message`.
+
 ## Aktualizacja finansów i kasy — 10.09.2026
 
 Implementacja lokalna; wdrożenie wymaga osobnego odbioru. Źródłem bieżącego schematu jest `prisma/schema.prisma`; starsze diagramy i przykłady poniżej dokumentują pierwotny MVP.
