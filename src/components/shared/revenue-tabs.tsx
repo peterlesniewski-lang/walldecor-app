@@ -3,6 +3,8 @@
 import { useRouter } from 'next/navigation'
 import { RevenueActualsGrid, type RevenueActualEntry } from '@/components/shared/revenue-actuals-grid'
 import { Button } from '@/components/ui/button'
+import { SubiektRevenuePanel } from '@/components/shared/subiekt-revenue-panel'
+import type { SubiektRevenueView } from '@/lib/finance/subiekt-revenue'
 import styles from './revenue-ui.module.css'
 
 interface RevenueTabsProps {
@@ -10,9 +12,10 @@ interface RevenueTabsProps {
   year: number
   costCenterId: string
   editable: boolean
+  subiekt: SubiektRevenueView
 }
 
-export function RevenueTabs({ entries, year, costCenterId, editable }: RevenueTabsProps) {
+export function RevenueTabs({ entries, year, costCenterId, editable, subiekt }: RevenueTabsProps) {
   const router = useRouter()
   const navigate = (nextYear: number, center = costCenterId) => {
     router.push(`/finance/revenue?year=${nextYear}&costCenterId=${center}`)
@@ -53,7 +56,12 @@ export function RevenueTabs({ entries, year, costCenterId, editable }: RevenueTa
         </p>
       )}
 
-      <RevenueActualsGrid key={`${year}:${costCenterId}`} initialEntries={entries} year={year} costCenterId={costCenterId} editable={editable} />
+      <SubiektRevenuePanel view={subiekt} year={year} canRefresh={editable || costCenterId === 'GLOBAL'} />
+
+      <RevenueActualsGrid
+        key={`${year}:${costCenterId}`} initialEntries={entries} year={year} costCenterId={costCenterId} editable={editable}
+        subiektCells={subiekt.configured ? subiekt.cells : null}
+      />
     </div>
   )
 }

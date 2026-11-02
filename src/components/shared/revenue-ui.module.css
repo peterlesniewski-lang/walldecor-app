@@ -92,6 +92,13 @@
 .missing { color: var(--revenue-muted); font-weight: var(--revenue-weight-regular); }
 .cellMeta { display: block; margin-top: var(--revenue-space-1); color: var(--revenue-muted); font-size: var(--revenue-font-xs); font-weight: var(--revenue-weight-regular); line-height: var(--revenue-leading); text-transform: none; }
 .total { text-align: right; font-weight: var(--revenue-weight-medium); }
+.subiektLine { border-top: var(--revenue-line-width) dashed var(--revenue-line); padding-top: var(--revenue-space-1); margin-top: var(--revenue-space-2); }
+.subiektAmount { font-family: var(--font-mono), monospace; font-variant-numeric: tabular-nums; color: var(--revenue-ink); }
+.diffZero { color: var(--revenue-ok, color-mix(in srgb, var(--revenue-ink) 70%, #2f8f5b)); }
+.diffWarn { color: var(--revenue-alert); }
+.applyButton { display: inline-flex; align-items: center; justify-content: center; margin: var(--revenue-space-1) var(--revenue-space-3) var(--revenue-space-2); min-height: calc(var(--revenue-control-height) * .7); border: var(--revenue-line-width) solid var(--revenue-line); border-radius: var(--revenue-radius); padding: var(--revenue-space-1) var(--revenue-space-3); background: var(--revenue-accent); color: var(--revenue-ink); font: inherit; font-size: var(--revenue-font-xs); font-weight: var(--revenue-weight-medium); cursor: pointer; transition: background var(--revenue-transition); }
+.applyButton:hover:not(:disabled) { background: var(--revenue-inset); }
+.applyButton:focus-visible { outline: var(--revenue-focus-width) solid var(--revenue-ink); outline-offset: var(--revenue-focus-width); }
 .annualLabel { text-align: left; }
 .editor { max-width: var(--revenue-editor-width); width: calc(100% - var(--revenue-space-6)); max-height: calc(100dvh - var(--revenue-space-6)); overflow-y: auto; background: var(--revenue-paper); border-color: var(--revenue-line); border-radius: var(--revenue-radius-card); padding: var(--revenue-space-6); box-shadow: var(--card-shadow); }
 .form { display: grid; gap: var(--revenue-space-4); }
