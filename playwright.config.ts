@@ -2,6 +2,8 @@ import { defineConfig } from '@playwright/test'
 import { mkdtempSync } from 'node:fs'
 import path from 'node:path'
 import { validateInstallationCalendarE2eDatabase } from './src/lib/installations/calendar-e2e-database'
+// Local mock of the Subiekt GT bridge, started by e2e/finance-revenue-subiekt.spec.ts on a fixed port.
+import { E2E_SUBIEKT_BRIDGE_PORT } from './e2e/subiekt-bridge-mock'
 
 if (process.env.E2E_DATABASE_URL && process.env.WALLDECOR_E2E_PRIVATE_DIRECTORY_OWNED !== 'true') {
   throw new Error('Playwright odmawia użycia bazy E2E, której prywatnego katalogu sam nie utworzył.')
@@ -55,6 +57,10 @@ export default defineConfig({
       INSTALLATION_CALENDAR_ADAPTER: 'fake',
       GOOGLE_CALENDAR_ID: 'e2e-calendar@example.test',
       GOOGLE_CALENDAR_IMPERSONATED_USER: 'info@walldecor.pl',
+      SUBIEKT_BRIDGE_URL: `http://127.0.0.1:${E2E_SUBIEKT_BRIDGE_PORT}`,
+      SUBIEKT_BRIDGE_TOKEN: 'e2e-subiekt-bridge-token',
+      SUBIEKT_BRIDGE_WAREHOUSE_MAP: 'PUŁ:PUL,MAG:JAG,INT:PUL:ECOMMERCE',
+      SUBIEKT_BRIDGE_AUTO_SYNC: 'off',
     },
     reuseExistingServer: false,
     timeout: 120000,
