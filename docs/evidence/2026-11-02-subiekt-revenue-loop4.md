@@ -50,14 +50,20 @@ Sprawdzone w tym samym teście: jedno wywołanie `GET /api/sales/summary?from=20
 
 ## Bramka (uruchomione 2026-11-02, Mac, Node v26.7.0)
 
+Po poprawkach z przeglądu (commit `efb8741`):
+
 ```
-npm test                 → Test Files 1 failed | 301 passed | 2 skipped (304); Tests 11 failed | 3803 passed | 2 skipped (3816)
-                           jedyny FAIL: __tests__/unit/finance/ksef-sync.test.ts (11) — pada identycznie na czystym main 5846188 (sprawdzone po git stash); niezwiązany z tą gałęzią
+npm test                 → Test Files 1 failed | 302 passed | 2 skipped (305); Tests 11 failed | 3815 passed | 2 skipped (3828)
+                           jedyny FAIL: __tests__/unit/finance/ksef-sync.test.ts (11) — pada identycznie na czystym main 5846188; niezwiązany z tą gałęzią
+                           (w pierwszym przebiegu padł dodatkowo __tests__/integration/invoice-import/draft-service.test.ts — „trigger already exists”
+                           w jego własnym resetDatabase; przechodzi osobno 37/37 i w powtórzonym pełnym przebiegu; plik nietknięty na tej gałęzi)
 npm run typecheck:app    → ✓ Types generated successfully, tsc bez błędów
-npm run build            → ✓ Compiled successfully; nowe trasy ƒ /api/finance/subiekt-revenue/apply, ƒ /api/finance/subiekt-revenue/refresh
-npx playwright test finance-revenue-subiekt → 1 passed (10.5s)
+npm run build            → ✓ Compiled successfully in 5.8s; trasy ƒ /api/finance/subiekt-revenue/apply, ƒ /api/finance/subiekt-revenue/refresh
+npx playwright test finance-revenue-subiekt → 1 passed (9.5s)
 node --preserve-symlinks --import tsx scripts/validate-subiekt-revenue.mjs → All Subiekt revenue checks passed (15/15)
 ```
+
+Pierwszy przebieg (commit `e1b72ab`): Tests 11 failed | 3803 passed (3816), typecheck ✓, build ✓, Playwright 1 passed (10.5s), walidator 15/15.
 
 ### Walidator (`scripts/validate-subiekt-revenue.mjs`) — wynik z 2026-11-02
 
