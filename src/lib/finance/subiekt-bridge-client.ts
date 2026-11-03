@@ -71,11 +71,17 @@ const errorBodySchema = z.object({ error: z.object({ code: z.string().optional()
 export interface SubiektBridgeConfig {
   url: string
   token: string
+  /** Cloudflare Access service token (both headers or none); null when the bridge is reached without Access. */
+  access: { clientId: string; clientSecret: string } | null
 }
 
 type BridgeEnv = Record<string, string | undefined>
 
-/** null when the integration is not configured (both URL and token are required). */
+/**
+ * null when the integration is not configured (both URL and token are required).
+ * The Cloudflare Access pair is optional but must be complete: one header without the
+ * other would be rejected by Access, so a half-set pair disables the integration.
+ */
 export function readSubiektBridgeConfig(env: BridgeEnv = process.env): SubiektBridgeConfig | null {
   const url = (env.SUBIEKT_BRIDGE_URL ?? '').trim().replace(/\/+$/, '')
   const token = (env.SUBIEKT_BRIDGE_TOKEN ?? '').trim()
@@ -86,7 +92,20 @@ export function readSubiektBridgeConfig(env: BridgeEnv = process.env): SubiektBr
   } catch {
     return null
   }
-  return { url, token }
+  const clientId = (env.SUBIEKT_BRIDGE_CF_ACCESS_CLIENT_ID ?? '').trim()
+  const clientSecret = (env.SUBIEKT_BRIDGE_CF_ACCESS_CLIENT_SECRET ?? '').trim()
+  if ((clientId === '') !== (clientSecret === '')) return null
+  return { url, token, access: clientId ? { clientId, clientSecret } : null }
+}
+
+/** Request headers for the bridge: bearer token plus the Cloudflare Access service-token pair when configured. */
+export function bridgeRequestHeaders(config: SubiektBridgeConfig): Record<string, string> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${config.token}`, Accept: 'application/json' }
+  if (config.access) {
+    headers['CF-Access-Client-Id'] = config.access.clientId
+    headers['CF-Access-Client-Secret'] = config.access.clientSecret
+  }
+  return headers
 }
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>
@@ -131,7 +150,7 @@ export async function fetchSalesSummary(
   try {
     response = await fetchImpl(url, {
       method: 'GET',
-      headers: { Authorization: `Bearer ${config.token}`, Accept: 'application/json' },
+      headers: bridgeRequestHeaders(config),
       signal: AbortSignal.timeout(timeoutMs),
       cache: 'no-store',
     })

@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import { SubiektBridgeError, fetchSalesSummary, readSubiektBridgeConfig, type FetchLike } from '@/lib/finance/subiekt-bridge-client'
 
-const config = { url: 'https://serwer.example.ts.net', token: 'secret-token' }
+const config = { url: 'https://serwer.example.ts.net', token: 'secret-token', access: null }
 const query = { from: '2026-10-01', to: '2026-10-31' }
 const validBody = {
   from: '2026-10-01', to: '2026-10-31', group_by: 'month_warehouse_kind', doc_types: ['FS', 'KFS', 'PA', 'ZW'], date_basis: 'dok_DataWyst',
@@ -23,8 +23,34 @@ describe('readSubiektBridgeConfig', () => {
   })
 
   it('should strip a trailing slash and reject non-http schemes', () => {
-    expect(readSubiektBridgeConfig({ SUBIEKT_BRIDGE_URL: 'https://x/', SUBIEKT_BRIDGE_TOKEN: 't' })).toEqual({ url: 'https://x', token: 't' })
+    expect(readSubiektBridgeConfig({ SUBIEKT_BRIDGE_URL: 'https://x/', SUBIEKT_BRIDGE_TOKEN: 't' })).toEqual({ url: 'https://x', token: 't', access: null })
     expect(readSubiektBridgeConfig({ SUBIEKT_BRIDGE_URL: 'ftp://x', SUBIEKT_BRIDGE_TOKEN: 't' })).toBeNull()
+  })
+})
+
+describe('readSubiektBridgeConfig — Cloudflare Access', () => {
+  const base = { SUBIEKT_BRIDGE_URL: 'https://bridge.example', SUBIEKT_BRIDGE_TOKEN: 't' }
+
+  it('should carry a complete service-token pair', () => {
+    expect(readSubiektBridgeConfig({ ...base, SUBIEKT_BRIDGE_CF_ACCESS_CLIENT_ID: ' id.access ', SUBIEKT_BRIDGE_CF_ACCESS_CLIENT_SECRET: 'sec' }))
+      .toEqual({ url: 'https://bridge.example', token: 't', access: { clientId: 'id.access', clientSecret: 'sec' } })
+  })
+
+  it('should treat a half-set pair as not configured', () => {
+    expect(readSubiektBridgeConfig({ ...base, SUBIEKT_BRIDGE_CF_ACCESS_CLIENT_ID: 'id' })).toBeNull()
+    expect(readSubiektBridgeConfig({ ...base, SUBIEKT_BRIDGE_CF_ACCESS_CLIENT_SECRET: 'sec' })).toBeNull()
+  })
+
+  it('should send both Access headers next to the bearer token, and none without the pair', async () => {
+    let seen: { init: RequestInit } | null = null
+    const fetchImpl: FetchLike = async (input, init) => { seen = { init }; return respond(200, { from: '2026-01-01', to: '2026-01-31', group_by: 'month_warehouse_kind', rows: [] })(input, init) }
+    await fetchSalesSummary({ url: 'https://bridge.example', token: 't', access: { clientId: 'id', clientSecret: 'sec' } }, { from: '2026-01-01', to: '2026-01-31' }, fetchImpl)
+    const headers = seen!.init.headers as Record<string, string>
+    expect(headers.Authorization).toBe('Bearer t')
+    expect(headers['CF-Access-Client-Id']).toBe('id')
+    expect(headers['CF-Access-Client-Secret']).toBe('sec')
+    await fetchSalesSummary({ url: 'https://bridge.example', token: 't', access: null }, { from: '2026-01-01', to: '2026-01-31' }, fetchImpl)
+    expect(seen!.init.headers).not.toHaveProperty('CF-Access-Client-Id')
   })
 })
 

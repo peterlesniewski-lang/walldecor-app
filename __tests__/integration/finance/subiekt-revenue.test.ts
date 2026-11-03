@@ -26,7 +26,7 @@ let directory = ''
 let db: PrismaClient
 const NOW = new Date('2026-11-02T10:00:00Z')
 const env = { SUBIEKT_BRIDGE_URL: 'https://bridge.test', SUBIEKT_BRIDGE_TOKEN: 'tok' }
-const config = { url: env.SUBIEKT_BRIDGE_URL, token: env.SUBIEKT_BRIDGE_TOKEN }
+const config = { url: env.SUBIEKT_BRIDGE_URL, token: env.SUBIEKT_BRIDGE_TOKEN, access: null }
 
 const row = (year: number, month: number, warehouse_symbol: string, kind: 'TOWAR' | 'USLUGA' | 'INNE', gross_total: number, documents = 1) =>
   ({ year, month, warehouse_symbol, warehouse_name: warehouse_symbol, kind, documents, net_total: Math.round(gross_total / 1.23 * 100) / 100, gross_total })
