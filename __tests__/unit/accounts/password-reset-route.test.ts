@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { NextRequest } from 'next/server'
 import { POST } from '@/app/api/account/request-password-reset/route'
 import { requestPasswordReset, PASSWORD_RESET_ACCEPTED_MESSAGE } from '@/lib/accounts/password-reset'
@@ -31,9 +31,12 @@ function postRequest(body: unknown) {
 
 beforeEach(() => {
   vi.clearAllMocks()
+  vi.stubEnv('NEXTAUTH_URL', undefined)
   mockIsEmailDeliveryConfigured.mockReturnValue(true)
   mockRequestPasswordReset.mockResolvedValue({ status: 'sent' })
 })
+
+afterEach(() => vi.unstubAllEnvs())
 
 describe('/api/account/request-password-reset', () => {
   it('accepts a reset request without revealing whether the account exists', async () => {

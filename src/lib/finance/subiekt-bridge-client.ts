@@ -27,7 +27,7 @@ export class SubiektBridgeError extends Error {
 }
 
 export const SUBIEKT_BRIDGE_MESSAGES: Record<SubiektBridgeErrorKind, string> = {
-  not_configured: 'Mostek Subiekt nie jest skonfigurowany (brak SUBIEKT_BRIDGE_URL lub SUBIEKT_BRIDGE_TOKEN).',
+  not_configured: 'Mostek Subiekt nie jest skonfigurowany. Sprawdź SUBIEKT_BRIDGE_URL, SUBIEKT_BRIDGE_TOKEN oraz kompletność pary SUBIEKT_BRIDGE_CF_ACCESS_CLIENT_ID i SUBIEKT_BRIDGE_CF_ACCESS_CLIENT_SECRET.',
   unauthorized: 'Mostek Subiekt odrzucił token aplikacji. Sprawdź SUBIEKT_BRIDGE_TOKEN i zakres sales:read.',
   unavailable: 'Mostek Subiekt jest niedostępny. Sprawdź, czy komputer z bazą Subiekta jest włączony i połączony z siecią.',
   timeout: 'Mostek Subiekt nie odpowiedział w ciągu 20 sekund.',
@@ -36,8 +36,9 @@ export const SUBIEKT_BRIDGE_MESSAGES: Record<SubiektBridgeErrorKind, string> = {
 }
 
 /** Numbers may arrive as numeric strings (DECIMAL serialisation); anything else is invalid. */
-const amount = z.coerce.number().finite()
-const count = z.coerce.number().int().min(0)
+const numericValue = z.union([z.number(), z.string().trim().min(1)]).transform(Number).pipe(z.number().finite())
+const amount = numericValue
+const count = numericValue.pipe(z.number().int().min(0))
 
 /** `INNE` = dok_Pozycja.ob_TowRodzaj other than towar/usługa; never applied, shown as a warning. */
 export const SALES_KINDS = ['TOWAR', 'USLUGA', 'INNE'] as const
@@ -66,16 +67,30 @@ export const salesSummarySchema = z.object({
 export type SalesSummaryRow = z.infer<typeof salesSummaryRowSchema>
 export type SalesSummary = z.infer<typeof salesSummarySchema>
 
-const errorBodySchema = z.object({ error: z.object({ code: z.string().optional(), message: z.string().optional() }) })
+// Never persist/display arbitrary upstream messages or codes: they can contain credentials or SQL details.
+const bridgeErrorCodes = ['INVALID_INPUT', 'RANGE_TOO_WIDE', 'LIMIT_EXCEEDED', 'RATE_LIMITED', 'UNAUTHORIZED', 'FORBIDDEN_SCOPE', 'DB_UNAVAILABLE', 'QUERY_TIMEOUT', 'NOT_FOUND', 'INTERNAL'] as const
+const errorBodySchema = z.object({ error: z.object({ code: z.enum(bridgeErrorCodes).optional() }) })
+const bridgeErrorMessages: Partial<Record<typeof bridgeErrorCodes[number], string>> = {
+  INVALID_INPUT: 'Nieprawidłowe parametry zapytania do mostka.',
+  RANGE_TOO_WIDE: 'Zakres dat przekracza 24 miesiące. Wybierz krótszy okres.',
+  LIMIT_EXCEEDED: 'Wynik przekracza limit wierszy mostka. Wybierz krótszy okres.',
+  RATE_LIMITED: 'Przekroczono limit zapytań do mostka. Spróbuj ponownie później.',
+}
 
 export interface SubiektBridgeConfig {
   url: string
   token: string
+  /** Cloudflare Access service token (both headers or none); null when the bridge is reached without Access. */
+  access: { clientId: string; clientSecret: string } | null
 }
 
 type BridgeEnv = Record<string, string | undefined>
 
-/** null when the integration is not configured (both URL and token are required). */
+/**
+ * null when the integration is not configured (both URL and token are required).
+ * The Cloudflare Access pair is optional but must be complete: one header without the
+ * other would be rejected by Access, so a half-set pair disables the integration.
+ */
 export function readSubiektBridgeConfig(env: BridgeEnv = process.env): SubiektBridgeConfig | null {
   const url = (env.SUBIEKT_BRIDGE_URL ?? '').trim().replace(/\/+$/, '')
   const token = (env.SUBIEKT_BRIDGE_TOKEN ?? '').trim()
@@ -86,7 +101,20 @@ export function readSubiektBridgeConfig(env: BridgeEnv = process.env): SubiektBr
   } catch {
     return null
   }
-  return { url, token }
+  const clientId = (env.SUBIEKT_BRIDGE_CF_ACCESS_CLIENT_ID ?? '').trim()
+  const clientSecret = (env.SUBIEKT_BRIDGE_CF_ACCESS_CLIENT_SECRET ?? '').trim()
+  if ((clientId === '') !== (clientSecret === '')) return null
+  return { url, token, access: clientId ? { clientId, clientSecret } : null }
+}
+
+/** Request headers for the bridge: bearer token plus the Cloudflare Access service-token pair when configured. */
+export function bridgeRequestHeaders(config: SubiektBridgeConfig): Record<string, string> {
+  const headers: Record<string, string> = { Authorization: `Bearer ${config.token}`, Accept: 'application/json' }
+  if (config.access) {
+    headers['CF-Access-Client-Id'] = config.access.clientId
+    headers['CF-Access-Client-Secret'] = config.access.clientSecret
+  }
+  return headers
 }
 
 export type FetchLike = (input: string, init: RequestInit) => Promise<Response>
@@ -100,13 +128,13 @@ function isAbortError(error: unknown) {
   return error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
 }
 
-async function readErrorBody(response: Response): Promise<{ code: string | null; message: string | null }> {
+async function readErrorBody(response: Response): Promise<{ code: typeof bridgeErrorCodes[number] | null }> {
   try {
     const parsed = errorBodySchema.safeParse(await response.json())
-    if (!parsed.success) return { code: null, message: null }
-    return { code: parsed.data.error.code ?? null, message: parsed.data.error.message ?? null }
+    if (!parsed.success) return { code: null }
+    return { code: parsed.data.error.code ?? null }
   } catch {
-    return { code: null, message: null }
+    return { code: null }
   }
 }
 
@@ -131,7 +159,9 @@ export async function fetchSalesSummary(
   try {
     response = await fetchImpl(url, {
       method: 'GET',
-      headers: { Authorization: `Bearer ${config.token}`, Accept: 'application/json' },
+      headers: bridgeRequestHeaders(config),
+      // Access headers are custom headers and fetch may forward them across origins.
+      redirect: 'error',
       signal: AbortSignal.timeout(timeoutMs),
       cache: 'no-store',
     })
@@ -142,17 +172,19 @@ export async function fetchSalesSummary(
 
   if (response.status === 401 || response.status === 403) {
     const body = await readErrorBody(response)
+    if (config.access && !body.code) {
+      throw new SubiektBridgeError('unauthorized', 'Dostęp do mostka został odrzucony. Sprawdź parę tokenów Cloudflare Access, jej ważność i politykę Service Auth, a następnie token mostka.')
+    }
     throw new SubiektBridgeError('unauthorized', SUBIEKT_BRIDGE_MESSAGES.unauthorized, body.code)
   }
-  if (response.status === 503 || response.status === 502 || response.status === 504) {
+  if (response.status >= 500 && response.status <= 599) {
     const body = await readErrorBody(response)
     const message = response.status === 504 ? SUBIEKT_BRIDGE_MESSAGES.timeout : SUBIEKT_BRIDGE_MESSAGES.unavailable
-    throw new SubiektBridgeError(response.status === 504 ? 'timeout' : 'unavailable', body.message ?? message, body.code)
+    throw new SubiektBridgeError(response.status === 504 ? 'timeout' : 'unavailable', message, body.code)
   }
   if (!response.ok) {
     const body = await readErrorBody(response)
-    const detail = body.message ? ` ${body.message}` : ''
-    throw new SubiektBridgeError('bridge_error', `${SUBIEKT_BRIDGE_MESSAGES.bridge_error}${detail}`, body.code)
+    throw new SubiektBridgeError('bridge_error', (body.code && bridgeErrorMessages[body.code]) || SUBIEKT_BRIDGE_MESSAGES.bridge_error, body.code)
   }
 
   let json: unknown
@@ -166,6 +198,16 @@ export async function fetchSalesSummary(
     // Server log only: field paths help diagnose a contract drift; values never leave the server.
     console.warn(JSON.stringify({ event: 'SUBIEKT_BRIDGE_INVALID_RESPONSE', issues: parsed.error.issues.slice(0, 10).map((issue) => ({ path: issue.path.join('.'), code: issue.code })) }))
     throw new SubiektBridgeError('invalid_response', SUBIEKT_BRIDGE_MESSAGES.invalid_response)
+  }
+  // The bridge's total comes from document headers; rows come from document positions.
+  // Never replace the last valid snapshot with an inconsistent breakdown.
+  for (const field of ['net_total', 'gross_total'] as const) {
+    const total = parsed.data.total?.[field]
+    if (total === undefined) continue
+    const rowCents = parsed.data.rows.reduce((sum, row) => sum + Math.round(row[field] * 100), 0)
+    if (Math.abs(rowCents - Math.round(total * 100)) > 1) {
+      throw new SubiektBridgeError('invalid_response', 'Kwoty towarów i usług z mostka nie zgadzają się z sumą dokumentów. Poprzedni odczyt został zachowany. Wymagana jest weryfikacja mostka.', 'AMOUNT_MISMATCH')
+    }
   }
   return parsed.data
 }

@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest'
@@ -20,6 +20,8 @@ const ENV_KEYS = ['SUBIEKT_BRIDGE_URL', 'SUBIEKT_BRIDGE_TOKEN', 'SUBIEKT_BRIDGE_
 
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), 'walldecor-subiekt-scheduler-'))
+  // Prisma 5 on Windows may fail to create a new SQLite file in migrate deploy.
+  await writeFile(join(directory, 'scheduler.db'), '', { flag: 'wx' })
   const url = `file:${join(directory, 'scheduler.db')}`
   execFileSync(process.execPath, [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy', '--schema', resolve('prisma/schema.prisma')], {
     env: { ...process.env, DATABASE_URL: url }, stdio: 'pipe', timeout: 60_000,

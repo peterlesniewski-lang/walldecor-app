@@ -74,6 +74,10 @@ export function SubiektRevenuePanel({ view, year, canRefresh }: SubiektRevenuePa
           </Button>
         )}
       </div>
+      <p className={styles.help}>
+        Gdy pozycje zaliczki lub faktury końcowej nie określają jej podziału, kwota jest rozdzielana proporcjonalnie do towaru i montażu w powiązanym zamówieniu.
+        {' '}Odczyt korzysta z bieżących wartości zamówienia. Nierozdzielone kwoty i różnice zaokrągleń są pokazane osobno.
+      </p>
       {message && <p role={message.tone === 'error' ? 'alert' : 'status'} className={styles[message.tone]} data-testid="subiekt-refresh-result">{message.text}</p>}
       {view.mapProblems.length > 0 && (
         <p role="alert" className={styles.error}>Mapa magazynów (SUBIEKT_BRIDGE_WAREHOUSE_MAP): {view.mapProblems.join('; ')}.</p>
@@ -85,7 +89,7 @@ export function SubiektRevenuePanel({ view, year, canRefresh }: SubiektRevenuePa
             {unmappedForYear.map((row) => (
               <li key={`${row.year}-${row.month}-${row.warehouseSymbol}-${row.kind}`}>
                 {row.kind === 'INNE'
-                  ? <>nieobsługiwany rodzaj pozycji INNE (magazyn {row.warehouseSymbol}, {MONTHS_SHORT[row.month - 1]} {row.year}): {money(row.grossAmount)} · dokumentów: {row.documentCount}</>
+                  ? <>rodzaj INNE: pozostałe pozycje, nieustalony podział lub zaokrąglenia (magazyn {row.warehouseSymbol}, {MONTHS_SHORT[row.month - 1]} {row.year}): {money(row.grossAmount)} · dokumentów: {row.documentCount}</>
                   : <>nieprzypisany magazyn {row.warehouseSymbol} ({row.kind === 'TOWAR' ? 'towar' : 'usługa'}, {MONTHS_SHORT[row.month - 1]} {row.year}): {money(row.grossAmount)} · dokumentów: {row.documentCount}</>}
               </li>
             ))}
