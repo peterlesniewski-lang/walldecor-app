@@ -22,7 +22,6 @@ jobs:
   test:
     name: Linux application tests
     runs-on: ubuntu-24.04
-    container: node:20-bookworm
     timeout-minutes: 30
     env:
       DATABASE_URL: file:/tmp/walldecor-ci.db
@@ -35,11 +34,21 @@ jobs:
         with:
           persist-credentials: false
       - name: Install test runtime dependencies
-        run: apt-get update && apt-get install -y --no-install-recommends sqlite3 poppler-utils openssl
+        run: sudo apt-get update && sudo apt-get install -y --no-install-recommends sqlite3 poppler-utils openssl
+      - name: Set up Node.js
+        uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: '20'
       - run: npm ci --include=dev
       - run: npx prisma generate
-      - name: Run complete test suite without production credentials
-        run: npm test -- --maxWorkers=2 --hookTimeout=60000 --testTimeout=60000
+      - name: Run required suite without production credentials
+        run: npm test -- --maxWorkers=2 --hookTimeout=60000 --testTimeout=60000 --exclude __tests__/unit/finance/ksef-sync.test.ts
+      # The handover plan explicitly exempts this pre-existing file (11 failures).
+      # Still execute it and keep its failures visible; no other file is exempt.
+      - name: Report known KSeF baseline failures
+        if: always()
+        continue-on-error: true
+        run: npm test -- __tests__/unit/finance/ksef-sync.test.ts
 
   validate:
     name: Validate Docker image

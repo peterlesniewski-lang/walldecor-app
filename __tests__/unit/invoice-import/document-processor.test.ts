@@ -25,7 +25,7 @@ import {
   type InvoiceDocumentProcessorConfig,
 } from '@/lib/invoice-import/document-processor'
 
-const NATIVE_BIN_ROOT = '/Users/piotr/.cache/codex-runtimes/codex-primary-runtime/dependencies/bin/override'
+const NATIVE_BIN_ROOT = process.env.TEST_POPPLER_BIN_DIR ?? '/usr/bin'
 const realDelay = setTimeoutPromise
 
 let sandbox: string
