@@ -55,6 +55,53 @@ describe('readSubiektBridgeConfig — Cloudflare Access', () => {
 })
 
 describe('fetchSalesSummary', () => {
+  it('distinguishes Access rejection from a bridge scope error without exposing upstream text', async () => {
+    const accessConfig = { ...config, access: { clientId: 'synthetic-id', clientSecret: 'synthetic-secret' } }
+    const html: FetchLike = async () => new Response('<html>Cloudflare Access denied</html>', { status: 403 })
+    await expect(fetchSalesSummary(accessConfig, query, html)).rejects.toMatchObject({ kind: 'unauthorized', message: expect.stringContaining('Cloudflare Access') })
+    await expect(fetchSalesSummary(accessConfig, query, respond(403, { error: { code: 'FORBIDDEN_SCOPE', message: 'synthetic-secret' } })))
+      .rejects.toMatchObject({ kind: 'unauthorized', code: 'FORBIDDEN_SCOPE', message: expect.stringContaining('sales:read') })
+  })
+
+  it.each([500, 502, 503, 520, 522, 524, 530])('reports upstream HTTP %i as unavailable', async (status) => {
+    await expect(fetchSalesSummary(config, query, respond(status, { error: { code: 'INTERNAL', message: 'secret-token SQL password' } })))
+      .rejects.toMatchObject({ kind: 'unavailable', message: expect.not.stringContaining('secret-token') })
+  })
+
+  it.each([400, 429, 503, 504])('does not expose arbitrary upstream messages or codes for HTTP %i', async (status) => {
+    try {
+      await fetchSalesSummary(config, query, respond(status, { error: { code: 'secret-token', message: 'SQL password https://private.example' } }))
+      expect.unreachable()
+    } catch (error) {
+      expect(error).toBeInstanceOf(SubiektBridgeError)
+      expect((error as SubiektBridgeError).code).toBeNull()
+      expect((error as Error).message).not.toMatch(/secret-token|SQL password|private.example/)
+    }
+  })
+
+  it.each([null, '', '   ', true, false])('rejects a missing or nonnumeric financial value: %j', async (value) => {
+    for (const field of ['net_total', 'gross_total', 'documents']) {
+      const body = { ...validBody, rows: [{ ...validBody.rows[0], [field]: value }] }
+      expect(await kindOf(fetchSalesSummary(config, query, respond(200, body)))).toBe('invalid_response')
+    }
+  })
+
+  it('accepts numeric decimal strings and zero while preserving negative corrections', async () => {
+    const body = { ...validBody, total: { documents: '0', net_total: '-100.00', gross_total: '0.00' }, rows: [{ ...validBody.rows[0], documents: '0', net_total: '-100.00', gross_total: '0.00' }] }
+    const result = await fetchSalesSummary(config, query, respond(200, body))
+    expect(result.rows[0]).toMatchObject({ documents: 0, net_total: -100, gross_total: 0 })
+  })
+
+  it.each(['net_total', 'gross_total'] as const)('rejects a %s breakdown inconsistent with document totals', async (field) => {
+    const body = { ...validBody, total: { ...validBody.total, [field]: validBody.total[field] + 10 } }
+    await expect(fetchSalesSummary(config, query, respond(200, body))).rejects.toMatchObject({ kind: 'invalid_response', code: 'AMOUNT_MISMATCH' })
+  })
+
+  it('allows a one-cent rounding difference', async () => {
+    const body = { ...validBody, total: { ...validBody.total, gross_total: 123.01 } }
+    expect((await fetchSalesSummary(config, query, respond(200, body))).rows).toHaveLength(1)
+  })
+
   it('should send the bearer token and the month_warehouse_kind grouping', async () => {
     let seen: { url: string; init: RequestInit } | null = null
     const fetchImpl: FetchLike = async (url, init) => { seen = { url, init }; return new Response(JSON.stringify(validBody), { status: 200 }) }

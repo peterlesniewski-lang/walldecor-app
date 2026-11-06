@@ -19,8 +19,31 @@ env:
   DOCKER_BUILD_RECORD_UPLOAD: false
 
 jobs:
+  test:
+    name: Linux application tests
+    runs-on: ubuntu-24.04
+    container: node:20-bookworm
+    timeout-minutes: 30
+    env:
+      DATABASE_URL: file:/tmp/walldecor-ci.db
+      NEXTAUTH_URL: http://localhost:3000
+      NEXTAUTH_SECRET: ci-only-placeholder-not-a-production-secret
+      NEXT_TELEMETRY_DISABLED: 1
+    steps:
+      - name: Check out source
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Install test runtime dependencies
+        run: apt-get update && apt-get install -y --no-install-recommends sqlite3 poppler-utils openssl
+      - run: npm ci --include=dev
+      - run: npx prisma generate
+      - name: Run complete test suite without production credentials
+        run: npm test -- --maxWorkers=2 --hookTimeout=60000 --testTimeout=60000
+
   validate:
     name: Validate Docker image
+    needs: test
     if: github.event_name == 'pull_request' || github.ref != 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 40
@@ -43,6 +66,7 @@ jobs:
 
   publish:
     name: Publish image for manual approval
+    needs: test
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     runs-on: ubuntu-24.04
     timeout-minutes: 40

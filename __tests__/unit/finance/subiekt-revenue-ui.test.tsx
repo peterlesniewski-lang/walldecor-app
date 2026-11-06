@@ -86,7 +86,7 @@ describe('Subiekt column on the revenue page', () => {
   it('should list INNE rows as an unsupported kind warning, never as an applicable cell', () => {
     const withInne = { ...view, unmapped: [{ year: 2026, month: 10, warehouseSymbol: 'PUŁ', kind: 'INNE' as const, grossAmount: 12.5, documentCount: 1 }] }
     render(<RevenueTabs year={2026} costCenterId="PUL" editable isAdmin entries={entries} subiekt={withInne} />)
-    expect(screen.getByTestId('subiekt-unmapped').textContent).toContain('nieobsługiwany rodzaj pozycji INNE (magazyn PUŁ')
+    expect(screen.getByTestId('subiekt-unmapped').textContent).toContain('rodzaj INNE: pozostałe pozycje, nieustalony podział lub zaokrąglenia (magazyn PUŁ')
     expect(screen.getByTestId('subiekt-unmapped').textContent).toContain('12,50')
   })
 

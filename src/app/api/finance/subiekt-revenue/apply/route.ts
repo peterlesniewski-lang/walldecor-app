@@ -5,7 +5,7 @@ import { requireFinanceAdmin } from '@/lib/finance/finance-access'
 import { applySubiektRevenue, applySubiektRevenueMonth } from '@/lib/finance/subiekt-revenue'
 import { REVENUE_CHANNELS } from '@/lib/validations/revenue'
 
-export const applySubiektRevenueSchema = z.object({
+const applySubiektRevenueSchema = z.object({
   year: z.number().int().min(2020).max(2100),
   month: z.number().int().min(1).max(12),
   costCenterId: z.enum(['JAG', 'PUL']),

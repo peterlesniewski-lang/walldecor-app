@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { execFileSync } from 'node:child_process'
-import { mkdtemp, rm } from 'node:fs/promises'
+import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -51,6 +51,8 @@ const request = (path: string, body?: unknown) => new NextRequest(`http://localh
 
 beforeAll(async () => {
   directory = await mkdtemp(join(tmpdir(), 'walldecor-subiekt-revenue-'))
+  // Prisma 5 on Windows may fail to create a new SQLite file in migrate deploy.
+  await writeFile(join(directory, 'subiekt.db'), '', { flag: 'wx' })
   const url = `file:${join(directory, 'subiekt.db')}`
   execFileSync(process.execPath, [resolve('node_modules/prisma/build/index.js'), 'migrate', 'deploy', '--schema', resolve('prisma/schema.prisma')], {
     env: { ...process.env, DATABASE_URL: url }, stdio: 'pipe', timeout: 60_000,
@@ -119,6 +121,40 @@ describe('refreshSubiektRevenue', () => {
     const view = await getSubiektRevenueView(db, 2026, 'PUL', env)
     expect(view.cells.map((c) => c.channel)).toEqual(['SALON'])
     expect(view.unmapped).toEqual([])
+  })
+
+  it('keeps the last valid snapshot when a financial value is null instead of replacing it with zero', async () => {
+    await refreshSubiektRevenue(db, { config, env, now: NOW, fetchImpl: bridge(fixture) })
+    const before = await db.subiektRevenueSnapshot.findMany({ orderBy: { id: 'asc' } })
+    const broken: FetchLike = async (url) => new Response(JSON.stringify({
+      from: new URL(url).searchParams.get('from'), to: new URL(url).searchParams.get('to'), group_by: 'month_warehouse_kind',
+      rows: [{ ...fixture[0], gross_total: null }],
+    }), { status: 200 })
+    const result = await refreshSubiektRevenue(db, { config, env, now: NOW, fetchImpl: broken })
+    expect(result).toMatchObject({ ok: false, kind: 'invalid_response' })
+    expect(await db.subiektRevenueSnapshot.findMany({ orderBy: { id: 'asc' } })).toEqual(before)
+  })
+
+  it('does not persist sensitive upstream errors in application settings', async () => {
+    const failed: FetchLike = async () => new Response(JSON.stringify({ error: { code: 'INTERNAL', message: 'secret-token SQL connection password' } }), { status: 503 })
+    const result = await refreshSubiektRevenue(db, { config, env, now: NOW, fetchImpl: failed })
+    expect(result).toMatchObject({ ok: false, kind: 'unavailable' })
+    const saved = await db.appSetting.findUniqueOrThrow({ where: { key: SUBIEKT_BRIDGE_KEYS.lastError } })
+    expect(saved.value).toContain('niedostępny')
+    expect(saved.value).not.toMatch(/secret-token|SQL connection|password/)
+  })
+
+  it('preserves snapshot and last successful read when position sums differ from document totals', async () => {
+    await refreshSubiektRevenue(db, { config, env, now: NOW, fetchImpl: bridge(fixture) })
+    const before = await db.subiektRevenueSnapshot.findMany({ orderBy: { id: 'asc' } })
+    const inconsistent: FetchLike = async (url) => new Response(JSON.stringify({
+      from: new URL(url).searchParams.get('from'), to: new URL(url).searchParams.get('to'), group_by: 'month_warehouse_kind',
+      rows: [fixture[0]], total: { gross_total: 500, net_total: 400 },
+    }), { status: 200 })
+    const result = await refreshSubiektRevenue(db, { config, env, now: new Date('2026-11-03T10:00:00Z'), fetchImpl: inconsistent })
+    expect(result).toMatchObject({ ok: false, kind: 'invalid_response', error: expect.stringContaining('nie zgadzają') })
+    expect(await db.subiektRevenueSnapshot.findMany({ orderBy: { id: 'asc' } })).toEqual(before)
+    expect((await db.appSetting.findUniqueOrThrow({ where: { key: SUBIEKT_BRIDGE_KEYS.lastFetchAt } })).value).toBe(NOW.toISOString())
   })
 
   it('should keep kind INNE as a warning row that can never be applied, and accept numeric strings from the bridge', async () => {
