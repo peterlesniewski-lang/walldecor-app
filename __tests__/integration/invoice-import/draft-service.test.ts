@@ -76,15 +76,19 @@ async function seedUsers() {
 }
 
 async function resetDatabase() {
-  await db.$executeRawUnsafe('DROP TRIGGER IF EXISTS "InvoiceDraftAudit_delete_guard"')
-  await db.invoiceDraftAudit.deleteMany()
-  await db.$executeRawUnsafe(`
-    CREATE TRIGGER "InvoiceDraftAudit_delete_guard"
-    BEFORE DELETE ON "InvoiceDraftAudit"
-    BEGIN
-      SELECT RAISE(ABORT, 'InvoiceDraftAudit rows are immutable');
-    END
-  `)
+  // Keep temporary guard removal, cleanup and restoration on one connection.
+  // The fixture must never expose a partially reset schema to the client pool.
+  await db.$transaction(async (tx) => {
+    await tx.$executeRawUnsafe('DROP TRIGGER IF EXISTS "InvoiceDraftAudit_delete_guard"')
+    await tx.invoiceDraftAudit.deleteMany()
+    await tx.$executeRawUnsafe(`
+      CREATE TRIGGER "InvoiceDraftAudit_delete_guard"
+      BEFORE DELETE ON "InvoiceDraftAudit"
+      BEGIN
+        SELECT RAISE(ABORT, 'InvoiceDraftAudit rows are immutable');
+      END
+    `)
+  })
   await db.invoiceImportDraft.deleteMany()
   await db.invoiceAttachment.deleteMany()
   await db.invoiceImportBatch.deleteMany()
