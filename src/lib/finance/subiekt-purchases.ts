@@ -7,7 +7,8 @@ import {
   type FetchLike, type PurchaseDocument, type SubiektBridgeErrorKind,
 } from '@/lib/finance/subiekt-bridge-client'
 import {
-  SUBIEKT_SOURCE, isForeignPurchase, matchPurchases, subiektExternalId, type AppInvoiceForMatch,
+  SUBIEKT_SOURCE, isForeignPurchase, matchPurchases, reconcilePayments, subiektExternalId,
+  type AppInvoiceForMatch, type SettlementRow,
 } from '@/lib/finance/subiekt-purchase-matching'
 
 /** Rolling import window after the first (backfill) run. */
@@ -133,9 +134,9 @@ export function toInvoiceAmounts(document: PurchaseDocument) {
 
 export type PurchaseImportResult =
   | { ok: true; created: number; alreadyInApp: number; ambiguous: number; skippedDomestic: number; message: string }
-  | { ok: false; kind: SubiektBridgeErrorKind; error: string }
+  | { ok: false; kind: SubiektBridgeErrorKind | 'forbidden'; error: string }
 
-const UNAUTHORIZED = { ok: false as const, kind: 'unauthorized' as const, error: 'Brak uprawnień administratora.' }
+const UNAUTHORIZED = { ok: false as const, kind: 'forbidden' as const, error: 'Brak uprawnień administratora.' }
 const UNKNOWN_SUPPLIER = 'Nieznany dostawca'
 
 /** Thrown inside a write transaction when the actor lost ADMIN rights mid-import. */
@@ -265,4 +266,54 @@ async function writeImportStatus(db: Pick<PrismaClient, 'appSetting' | '$transac
   const values = { [SUBIEKT_PURCHASE_KEYS.lastImportAt]: now.toISOString(), [SUBIEKT_PURCHASE_KEYS.lastImportMessage]: message, ...extra }
   await db.$transaction(Object.entries(values).map(([key, value]) =>
     db.appSetting.upsert({ where: { key }, update: { value }, create: { key, value } })))
+}
+
+export interface SettlementView {
+  invoiceId: string
+  subiektNumber: string
+  originalNumber: string | null
+  supplierName: string | null
+  issuedAt: string
+  remaining: number | null
+  grossPln: number
+  appGrossPln: number | null
+  paidAt: string | null
+  amountDiffers: boolean
+}
+
+const toView = ({ document, invoice, amountDiffers }: SettlementRow): SettlementView => ({
+  invoiceId: invoice.id, subiektNumber: document.number, originalNumber: document.original_number, supplierName: document.supplier_name,
+  issuedAt: document.issued_at, remaining: document.remaining, grossPln: document.gross_total, appGrossPln: invoice.plnGross,
+  paidAt: invoice.paidAt?.slice(0, 10) ?? null, amountDiffers,
+})
+
+export type ReconciliationResult =
+  | {
+      ok: true; from: string; to: string; checkedAt: string
+      settleInSubiekt: SettlementView[]
+      paidOnlyInSubiekt: SettlementView[]
+      paidInAppMissingInSubiekt: Array<{ invoiceId: string; supplierName: string; invoiceNumber: string; issueDate: string; paidAt: string | null }>
+      ambiguous: Array<{ subiektNumber: string; candidates: number }>
+    }
+  | { ok: false; kind: SubiektBridgeErrorKind; error: string }
+
+/** Read-only: compares app payment status with Subiekt liabilities for all FZ/KFZ in the window. */
+export async function reconcileSubiektPayments(db: PrismaClient, options: PurchaseFetchOptions = {}): Promise<ReconciliationResult> {
+  const now = options.now ?? new Date()
+  // No import floor here: reconciliation covers domestic KSeF invoices that were in the app long before this feature.
+  const fetched = await fetchPurchaseRange({ ...options, ...reconciliationRange(now) })
+  if (!fetched.ok) return fetched
+  const invoices = await loadInvoicesForMatch(db, fetched.from, fetched.to, SUBIEKT_PURCHASE_MATCH_MARGIN_DAYS)
+  const windowInvoices = invoices.filter((i) => i.issueDate >= fetched.from && i.issueDate <= fetched.to)
+  const result = reconcilePayments(matchPurchases(fetched.documents, invoices), windowInvoices)
+  const byIssue = (a: { issuedAt: string }, b: { issuedAt: string }) => a.issuedAt.localeCompare(b.issuedAt)
+  return {
+    ok: true, from: fetched.from, to: fetched.to, checkedAt: now.toISOString(),
+    settleInSubiekt: result.settleInSubiekt.map(toView).sort(byIssue),
+    paidOnlyInSubiekt: result.paidOnlyInSubiekt.map(toView).sort(byIssue),
+    paidInAppMissingInSubiekt: result.paidInAppMissingInSubiekt.map((i) => ({
+      invoiceId: i.id, supplierName: i.supplierName, invoiceNumber: i.invoiceNumber, issueDate: i.issueDate, paidAt: i.paidAt?.slice(0, 10) ?? null,
+    })),
+    ambiguous: result.ambiguous.map((a) => ({ subiektNumber: a.document.number, candidates: a.invoiceIds.length })),
+  }
 }

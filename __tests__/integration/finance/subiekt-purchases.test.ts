@@ -15,7 +15,9 @@ vi.mock('@/lib/prisma', () => ({ get prisma() { return state.client } }))
 vi.mock('next-auth', () => ({ getServerSession: async () => state.session }))
 vi.mock('@/lib/auth', () => ({ authOptions: {} }))
 
-import { importSubiektForeignPurchases } from '@/lib/finance/subiekt-purchases'
+import { importSubiektForeignPurchases, reconcileSubiektPayments, warsawToday } from '@/lib/finance/subiekt-purchases'
+import { GET as reconciliationRoute } from '@/app/api/finance/subiekt-purchases/reconciliation/route'
+import { POST as importRoute } from '@/app/api/finance/subiekt-purchases/import/route'
 
 let directory = ''
 let db: PrismaClient
@@ -251,12 +253,12 @@ describe('importSubiektForeignPurchases', () => {
     const fetchImpl = vi.fn(bridgeWith({ '2026-10': [doc()] }))
     const result = await importSubiektForeignPurchases(db, { actorId: 'employee', now: NOW, env, fetchImpl })
     expect([result.ok ? null : result.kind, result.ok ? null : result.error, fetchImpl.mock.calls.length, await db.ksefInvoice.count()])
-      .toEqual(['unauthorized', 'Brak uprawnień administratora.', 0, 0])
+      .toEqual(['forbidden', 'Brak uprawnień administratora.', 0, 0])
   })
 
   it('should refuse an admin who must change the password', async () => {
     const result = await importSubiektForeignPurchases(db, { actorId: 'admin-pending', now: NOW, env, fetchImpl: bridgeWith({ '2026-10': [doc()] }) })
-    expect(result.ok ? null : result.kind).toBe('unauthorized')
+    expect(result.ok ? null : result.kind).toBe('forbidden')
   })
 
   it('should stop writing when the actor loses admin rights during the import', async () => {
@@ -267,7 +269,7 @@ describe('importSubiektForeignPurchases', () => {
       return bridgeWith({ '2026-10': [doc()] })(url, {})
     }
     const result = await importSubiektForeignPurchases(db, { actorId: 'employee', now: NOW, env, fetchImpl })
-    expect([result.ok ? null : result.kind, await db.ksefInvoice.count()]).toEqual(['unauthorized', 0])
+    expect([result.ok ? null : result.kind, await db.ksefInvoice.count()]).toEqual(['forbidden', 0])
   })
 
   it('should report an unexpected write error without internals and keep invoices created before it', async () => {
@@ -291,5 +293,68 @@ describe('importSubiektForeignPurchases', () => {
       message: 'Błąd: Import faktur UE przerwany nieoczekiwanym błędem po dodaniu 1 faktur. Ponowne uruchomienie dokończy import bez duplikatów.',
       backfill: null,
     })
+  })
+})
+
+describe('payment reconciliation and import routes', () => {
+  // requireFinanceAdmin's return type makes handlers `Response | undefined`; at runtime they always respond.
+  const call = async (handler: () => Promise<Response | undefined>) => (await handler()) as Response
+  const asRole = (id: string, role: 'ADMIN' | 'MANAGER') => { state.session = { user: { id, role, name: id, email: `${id}@test.pl` }, expires: '' } as Session }
+  const stubBridge = (rowsByMonth: Record<string, PurchaseDocument[]>) => {
+    vi.stubEnv('SUBIEKT_BRIDGE_URL', 'https://bridge.test'); vi.stubEnv('SUBIEKT_BRIDGE_TOKEN', 'tok')
+    vi.stubGlobal('fetch', (url: string) => bridgeWith(rowsByMonth)(url, {}))
+  }
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); state.session = null })
+
+  it('should list an invoice paid in the app and open in Subiekt', async () => {
+    await db.ksefInvoice.create({ data: { supplierName: 'Hurt', supplierNip: '5260000000', invoiceNumber: 'FV 10/10/2026', externalId: 'K-3', issueDate: new Date('2026-10-10'), grossAmount: 123, paymentStatus: 'PAID', paidAt: new Date('2026-10-20') } })
+    const domestic = doc({ id: 32, currency: 'PLN', supplier_tax_id: '5260000000', original_number: 'FV 10/10/2026', ksef_number: 'K-3', gross_total: 123, payable: 123, remaining: 123 })
+    const result = await reconcileSubiektPayments(db, { now: NOW, env, fetchImpl: bridgeWith({ '2026-10': [domestic] }) })
+    expect(result.ok && result.settleInSubiekt.map((r) => [r.subiektNumber, r.originalNumber, r.remaining, r.paidAt])).toEqual([['FZ 1/MAG/10/2026', 'FV 10/10/2026', 123, '2026-10-20']])
+  })
+
+  it('should return 403 for MANAGER', async () => {
+    asRole('manager', 'MANAGER')
+    expect((await call(reconciliationRoute)).status).toBe(403)
+  })
+
+  it('should return 200 with the settlement list for ADMIN', async () => {
+    asRole('admin', 'ADMIN'); stubBridge({})
+    const response = await call(reconciliationRoute)
+    expect([response.status, (await response.json()).settleInSubiekt]).toEqual([200, []])
+  })
+
+  it('should return 503 with a Polish message when the bridge is down', async () => {
+    asRole('admin', 'ADMIN')
+    vi.stubEnv('SUBIEKT_BRIDGE_URL', 'https://bridge.test'); vi.stubEnv('SUBIEKT_BRIDGE_TOKEN', 'tok')
+    vi.stubGlobal('fetch', async () => { throw new TypeError('down') })
+    const response = await call(reconciliationRoute)
+    expect([response.status, (await response.json()).error]).toEqual([503, 'Mostek Subiekt jest niedostępny. Sprawdź, czy komputer z bazą Subiekta jest włączony i połączony z siecią.'])
+  })
+
+  it('should return 409 from reconciliation when the bridge is not configured', async () => {
+    asRole('admin', 'ADMIN')
+    vi.stubEnv('SUBIEKT_BRIDGE_URL', ''); vi.stubEnv('SUBIEKT_BRIDGE_TOKEN', '')
+    expect((await call(reconciliationRoute)).status).toBe(409)
+  })
+
+  it('should import foreign invoices through the route for ADMIN', async () => {
+    const today = warsawToday(new Date())
+    asRole('admin', 'ADMIN'); stubBridge({ [today.slice(0, 7)]: [doc({ issued_at: `${today.slice(0, 7)}-01` })] })
+    vi.stubEnv('SUBIEKT_PURCHASES_IMPORT_FROM', '2026-01-01')
+    const response = await call(importRoute)
+    const body = await response.json()
+    expect([response.status, body.created, await db.ksefInvoice.count()]).toEqual([200, 1, 1])
+  })
+
+  it('should return 409 from import when import is not configured', async () => {
+    asRole('admin', 'ADMIN'); stubBridge({})
+    vi.stubEnv('SUBIEKT_PURCHASES_IMPORT_FROM', '')
+    expect((await call(importRoute)).status).toBe(409)
+  })
+
+  it('should return 403 from import for MANAGER', async () => {
+    asRole('manager', 'MANAGER')
+    expect((await call(importRoute)).status).toBe(403)
   })
 })
