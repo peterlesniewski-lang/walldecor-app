@@ -41,7 +41,11 @@ export function latestDueSubiektSlot(now: Date, time: { hour: number; minute: nu
 
 export const isSubiektSlotPending = (slot: string, lastSlot: string | null | undefined) => !lastSlot || slot > lastSlot
 
-type AutoSyncDb = Pick<PrismaClient, 'subiektRevenueSnapshot' | 'appSetting' | 'revenue' | 'user' | '$transaction'>
+/**
+ * Full client: the EU purchases import writes through withAiQueueMutation, which needs a PrismaClient
+ * (interactive transactions + raw writer reservation). instrumentation.ts passes the `prisma` singleton.
+ */
+type AutoSyncDb = PrismaClient
 
 async function writeSettings(db: AutoSyncDb, values: Record<string, string>) {
   await db.$transaction(Object.entries(values).map(([key, value]) =>
@@ -75,7 +79,7 @@ async function runScheduledPurchasesImport(db: AutoSyncDb, now: Date, deps: Subi
       log.info(JSON.stringify({ event: 'SUBIEKT_PURCHASES_AUTO_IMPORT', ok: false, kind: 'no_admin' }))
       return
     }
-    const result = await importPurchases(db as PrismaClient, { actorId: admin.id, now })
+    const result = await importPurchases(db, { actorId: admin.id, now })
     log.info(JSON.stringify({ event: 'SUBIEKT_PURCHASES_AUTO_IMPORT', ok: result.ok, ...(result.ok ? { created: result.created } : { kind: result.kind }) }))
   } catch {
     log.error(JSON.stringify({ event: 'SUBIEKT_PURCHASES_AUTO_IMPORT', ok: false, kind: 'thrown' }))
