@@ -94,14 +94,7 @@ export default async function KsefInboxPage() {
     grossAmount: paymentSummary.paymentAging[bucket].plnAmount,
   }])) as Record<PaymentAgingBucket, typeof paymentSummary.paymentAging[PaymentAgingBucket] & { grossAmount: number }>
 
-  return (
-    <>
-    {subiektConfigured && (
-      <SubiektPurchasesPanel
-        lastImportAt={subiektSetting(SUBIEKT_PURCHASE_KEYS.lastImportAt)}
-        lastImportMessage={subiektSetting(SUBIEKT_PURCHASE_KEYS.lastImportMessage)}
-      />
-    )}
+  const inbox = (
     <KsefInboxView
       initialInvoices={invoices.map((invoice) => ({
         ...invoice,
@@ -141,6 +134,16 @@ export default async function KsefInboxPage() {
         tags: group.tags,
       })))}
     />
+  )
+  // Without the Subiekt bridge the page stays exactly the inbox view.
+  if (!subiektConfigured) return inbox
+  return (
+    <>
+      <SubiektPurchasesPanel
+        lastImportAt={subiektSetting(SUBIEKT_PURCHASE_KEYS.lastImportAt)}
+        lastImportMessage={subiektSetting(SUBIEKT_PURCHASE_KEYS.lastImportMessage)}
+      />
+      {inbox}
     </>
   )
 }
