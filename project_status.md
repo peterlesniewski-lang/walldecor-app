@@ -13,7 +13,8 @@ Plan: `docs/superpowers/plans/2026-11-18-subiekt-eu-invoices-and-payment-reconci
 [x] Panel „Subiekt GT — faktury zakupu” na `/finance/ksef` (tylko gdy mostek skonfigurowany): import, „Sprawdź rozliczenia” → „Do odhaczenia w Subiekcie” / „Opłacone w Subiekcie, otwarte w aplikacji” / „Opłacone w aplikacji, brak w Subiekcie” (6 miesięcy)
 [x] Codzienny import w slocie 07:30 przy `SUBIEKT_PURCHASES_AUTO_IMPORT=on`
 [ ] Mostek `purchase_documents` + sonda na SERWER (Codex) — wymagane przed wdrożeniem
-[ ] Coolify: `SUBIEKT_BRIDGE_TOKEN` z `sales:read,purchases:read`, `SUBIEKT_PURCHASES_IMPORT_FROM=2026-01-01`, później `SUBIEKT_PURCHASES_AUTO_IMPORT=on`
+[ ] Coolify: `SUBIEKT_BRIDGE_TOKEN` z `sales:read,purchases:read`, `SUBIEKT_PURCHASES_IMPORT_FROM=2026-01-01`, później `SUBIEKT_PURCHASES_AUTO_IMPORT=on` razem z `SUBIEKT_BRIDGE_AUTO_SYNC=on` (główny przełącznik harmonogramu — bez niego import dzienny się nie uruchomi)
+[x] Poprawki po przeglądzie: zatwierdzanie faktur `SUBIEKT` do kosztów (+ filtr „Subiekt GT” w kosztach), brak pobierania XML KSeF dla faktur z Subiekta, dopasowanie po samym numerze (brak NIP, ±31 dni) → „niejednoznaczne”, dokumenty bez rozrachunku w GT (`is_paid = null`, także KFZ) jako zapłacone bez daty
 [ ] Pierwszy import ręcznie z panelu + przegląd „niejednoznacznych”
 
 Decyzje: faktury UE wprowadzane wyłącznie w Subiekcie; WNT — kwota faktury = kwota płacona dostawcy; do Subiektu nic nie zapisujemy (Sfera ewentualnie później).

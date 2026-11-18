@@ -161,6 +161,14 @@ class ImportForbiddenError extends Error {}
 /**
  * Imports foreign (EU) purchase invoices from Subiekt GT as KsefInvoice rows (source SUBIEKT).
  * Domestic invoices arrive from KSeF and are skipped; invoices already in the app are never modified.
+ *
+ * Known limitations:
+ * - A KFZ whose parent FZ was issued before the fetched window and was matched to a manual invoice
+ *   (so there is no `subiekt:<parent>` row and the FZ is not in this run's pairs) gets
+ *   `correctsInvoiceId: null`; the admin links it by hand if needed.
+ * - A non-PLN document without a tax id is guarded against duplicates only when its KSeF invoice is
+ *   already in the app (number-only fallback in matchPurchases). If KSeF delivers that invoice AFTER
+ *   the Subiekt import, the KSeF sync does not know the `subiekt:` row and may create a duplicate.
  */
 export async function importSubiektForeignPurchases(
   db: PrismaClient,
