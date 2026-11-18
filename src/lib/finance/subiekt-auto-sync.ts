@@ -1,11 +1,17 @@
 import type { PrismaClient } from '@/generated/prisma'
 import { SUBIEKT_BRIDGE_KEYS, refreshSubiektRevenue } from '@/lib/finance/subiekt-revenue'
+import { SUBIEKT_PURCHASE_KEYS, importSubiektForeignPurchases } from '@/lib/finance/subiekt-purchases'
 
 /**
  * Daily read of Subiekt sales at 07:30 Europe/Warsaw, in the server process
  * (same pattern as ksef-auto-sync.ts): one run per daily slot, a missed slot is
  * caught up after a restart, the slot is claimed before the network call.
- * Enabled only with SUBIEKT_BRIDGE_AUTO_SYNC=on.
+ * Enabled only with SUBIEKT_BRIDGE_AUTO_SYNC=on (master switch of the scheduler).
+ *
+ * The same slot also imports foreign (EU) purchase invoices from Subiekt, but only when
+ * SUBIEKT_PURCHASES_AUTO_IMPORT=on and SUBIEKT_PURCHASES_IMPORT_FROM is set (the import itself
+ * reports "not configured" without it). The import is independent of the sales read: its outcome
+ * never changes the sales status and it runs even when the sales read failed.
  */
 export const SUBIEKT_AUTO_SYNC_TIME = { hour: 7, minute: 30 } as const
 export const SUBIEKT_AUTO_SYNC_TIME_ZONE = 'Europe/Warsaw'
@@ -35,7 +41,7 @@ export function latestDueSubiektSlot(now: Date, time: { hour: number; minute: nu
 
 export const isSubiektSlotPending = (slot: string, lastSlot: string | null | undefined) => !lastSlot || slot > lastSlot
 
-type AutoSyncDb = Pick<PrismaClient, 'subiektRevenueSnapshot' | 'appSetting' | 'revenue' | '$transaction'>
+type AutoSyncDb = Pick<PrismaClient, 'subiektRevenueSnapshot' | 'appSetting' | 'revenue' | 'user' | '$transaction'>
 
 async function writeSettings(db: AutoSyncDb, values: Record<string, string>) {
   await db.$transaction(Object.entries(values).map(([key, value]) =>
@@ -44,7 +50,40 @@ async function writeSettings(db: AutoSyncDb, values: Record<string, string>) {
 
 const THROWN_MESSAGE = 'Automatyczny odczyt z Subiekta przerwany błędem aplikacji; kolejna próba przy następnym sprawdzeniu.'
 
-export async function runScheduledSubiektSync(db: AutoSyncDb, now: Date = new Date()): Promise<SubiektAutoSyncOutcome> {
+export interface SubiektAutoSyncDeps {
+  importPurchases?: typeof importSubiektForeignPurchases
+  log?: Pick<Console, 'info' | 'error'>
+}
+
+const NO_ADMIN_MESSAGE = 'Błąd: Brak aktywnego administratora do automatycznego importu faktur UE.'
+const IMPORT_THROWN_MESSAGE = 'Błąd: Automatyczny import faktur UE przerwany błędem aplikacji.'
+
+/** Daily EU purchases import; never throws and never touches the sales status. */
+async function runScheduledPurchasesImport(db: AutoSyncDb, now: Date, deps: SubiektAutoSyncDeps) {
+  if (process.env.SUBIEKT_PURCHASES_AUTO_IMPORT !== 'on') return
+  const log = deps.log ?? console
+  const importPurchases = deps.importPurchases ?? importSubiektForeignPurchases
+  const writeImportMessage = (message: string) => writeSettings(db, {
+    [SUBIEKT_PURCHASE_KEYS.lastImportAt]: now.toISOString(), [SUBIEKT_PURCHASE_KEYS.lastImportMessage]: message,
+  })
+  try {
+    const admin = await db.user.findFirst({
+      where: { role: 'ADMIN', isActive: true, mustChangePassword: false }, select: { id: true }, orderBy: { createdAt: 'asc' },
+    })
+    if (!admin) {
+      await writeImportMessage(NO_ADMIN_MESSAGE)
+      log.info(JSON.stringify({ event: 'SUBIEKT_PURCHASES_AUTO_IMPORT', ok: false, kind: 'no_admin' }))
+      return
+    }
+    const result = await importPurchases(db as PrismaClient, { actorId: admin.id, now })
+    log.info(JSON.stringify({ event: 'SUBIEKT_PURCHASES_AUTO_IMPORT', ok: result.ok, ...(result.ok ? { created: result.created } : { kind: result.kind }) }))
+  } catch {
+    log.error(JSON.stringify({ event: 'SUBIEKT_PURCHASES_AUTO_IMPORT', ok: false, kind: 'thrown' }))
+    try { await writeImportMessage(IMPORT_THROWN_MESSAGE) } catch { /* database unavailable; the log line above remains */ }
+  }
+}
+
+export async function runScheduledSubiektSync(db: AutoSyncDb, now: Date = new Date(), deps: SubiektAutoSyncDeps = {}): Promise<SubiektAutoSyncOutcome> {
   const last = await db.appSetting.findMany({ where: { key: { in: [SUBIEKT_BRIDGE_KEYS.autoSyncSlot] } } })
   const previousSlot = last[0]?.value ?? ''
   const slot = latestDueSubiektSlot(now)
@@ -65,16 +104,18 @@ export async function runScheduledSubiektSync(db: AutoSyncDb, now: Date = new Da
     status = 'ERROR'
     message = THROWN_MESSAGE
     await writeSettings(db, { [SUBIEKT_BRIDGE_KEYS.autoSyncSlot]: previousSlot, [SUBIEKT_BRIDGE_KEYS.autoSyncStatus]: status, [SUBIEKT_BRIDGE_KEYS.autoSyncMessage]: message })
+    await runScheduledPurchasesImport(db, now, deps)
     return { ran: true, slot, status, message }
   }
   await writeSettings(db, { [SUBIEKT_BRIDGE_KEYS.autoSyncStatus]: status, [SUBIEKT_BRIDGE_KEYS.autoSyncMessage]: message })
+  await runScheduledPurchasesImport(db, now, deps)
   return { ran: true, slot, status, message }
 }
 
 /** One scheduler check: runs the due slot (if any) and logs the outcome as a single JSON line. */
-export async function runSubiektAutoSyncTick(db: AutoSyncDb, now: Date = new Date(), log: Pick<Console, 'info' | 'error'> = console) {
+export async function runSubiektAutoSyncTick(db: AutoSyncDb, now: Date = new Date(), log: Pick<Console, 'info' | 'error'> = console, deps: SubiektAutoSyncDeps = {}) {
   try {
-    const outcome = await runScheduledSubiektSync(db, now)
+    const outcome = await runScheduledSubiektSync(db, now, { ...deps, log })
     if (outcome.ran) log.info(JSON.stringify({ event: 'SUBIEKT_AUTO_SYNC', ...outcome }))
     return outcome
   } catch {
