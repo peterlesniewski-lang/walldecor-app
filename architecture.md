@@ -30,6 +30,10 @@ Addytywna migracja `20260911150000_invoice_import_drafts` nie zmienia istniejąc
 
 Relacje mają FK RESTRICT. Nie ma kaskadowego usuwania historii. Odczyt AI może proponować dokładnie 12 pól; ręcznie ustawione `null` także jest chronione, a przeliczenie PLN i klasyfikacja nie należą do pól AI. Świeży łańcuch i migracja wcześniejszego łańcucha zweryfikowane na syntetycznych bazach, wraz z integralnością i zachowaniem dotychczasowych danych. Sam schemat nie oznacza ukończenia uploadu/finansowego przebiegu.
 
+## Faktury zakupu z Subiekta GT — 18.11.2026 (bez migracji)
+
+`KsefInvoice.source` przyjmuje dodatkowo wartość `"SUBIEKT"`; `externalId` = `subiekt:<dok_Id>` (unikalny jak numer KSeF). Importowane są wyłącznie faktury zagraniczne (FZ/KFZ bez numeru KSeF i bez polskiego NIP); kwoty w PLN z Subiekta (`currency = "PLN"`, kurs w `currencyConversionNote`). KFZ → `documentStatus = "CORRECTION"` z `correctsInvoiceId`, bez automatycznej klasyfikacji. Stan importu w `AppSetting`: `subiekt_purchases.last_import_at`, `.last_import_message`, `.backfill_done`. Uzgodnienie płatności jest liczone na żądanie i niczego nie zapisuje.
+
 ## Późniejsze powiązanie KSeF — 12.09.2026 (lokalnie)
 
 Addytywna migracja `20260911190000_invoice_ksef_reconciliation` dodaje `InvoiceKsefReconciliation`: niezmienne powiązanie numeru KSeF ze szkicem, wersję, ograniczony snapshot/hash i zachowany prywatny XML. Relacje RESTRICT i triggery chronią tożsamość oraz audyt; tabela `WITHOUT ROWID` blokuje także obchodzenie ochrony przez alternatywne aliasy SQLite. Testy obejmują rzeczywisty klient Prisma.
