@@ -1,5 +1,6 @@
 import type { Prisma, PrismaClient } from '@/generated/prisma'
 import { withAiQueueMutation } from '@/lib/ai/queue'
+import { isCurrentAdmin } from '@/lib/finance/current-admin'
 import { resolveSupplierRuleMatch } from '@/lib/finance/ksef-inbox'
 import {
   SubiektBridgeError, describeSubiektBridgeError, fetchPurchaseDocuments, readSubiektBridgeConfig,
@@ -11,6 +12,8 @@ import {
 
 /** Rolling import window after the first (backfill) run. */
 export const SUBIEKT_PURCHASE_IMPORT_DAYS = 60
+/** Manual invoices are often dated a few days off the GT issue date; match against a wider window than the fetched range. */
+export const SUBIEKT_PURCHASE_MATCH_MARGIN_DAYS = 31
 /** Reconciliation: current + 5 previous months (payment terms rarely exceed 60 days; forgotten items stay visible for half a year). */
 export const SUBIEKT_RECONCILIATION_MONTHS = 6
 export const SUBIEKT_PURCHASE_KEYS = {
@@ -103,10 +106,15 @@ export function toMatchInvoice(row: InvoiceRow): AppInvoiceForMatch {
   }
 }
 
-/** App invoices issued in [from, to] plus every invoice imported from Subiekt (regardless of date). */
-export async function loadInvoicesForMatch(db: Pick<PrismaClient, 'ksefInvoice'>, from: string, to: string) {
+const issueDateWindow = (from: string, to: string, marginDays: number) => ({
+  gte: new Date(`${addDays(from, -marginDays)}T00:00:00.000Z`),
+  lte: new Date(`${addDays(to, marginDays)}T23:59:59.999Z`),
+})
+
+/** App invoices issued in [from − marginDays, to + marginDays] plus every invoice imported from Subiekt (regardless of date). */
+export async function loadInvoicesForMatch(db: Pick<PrismaClient, 'ksefInvoice'>, from: string, to: string, marginDays = 0) {
   const rows = await db.ksefInvoice.findMany({
-    where: { OR: [{ issueDate: { gte: new Date(`${from}T00:00:00.000Z`), lte: new Date(`${to}T23:59:59.999Z`) } }, { source: SUBIEKT_SOURCE }] },
+    where: { OR: [{ issueDate: issueDateWindow(from, to, marginDays) }, { source: SUBIEKT_SOURCE }] },
     select: MATCH_SELECT,
   })
   return rows.map(toMatchInvoice)
@@ -127,6 +135,12 @@ export type PurchaseImportResult =
   | { ok: true; created: number; alreadyInApp: number; ambiguous: number; skippedDomestic: number; message: string }
   | { ok: false; kind: SubiektBridgeErrorKind; error: string }
 
+const UNAUTHORIZED = { ok: false as const, kind: 'unauthorized' as const, error: 'Brak uprawnień administratora.' }
+const UNKNOWN_SUPPLIER = 'Nieznany dostawca'
+
+/** Thrown inside a write transaction when the actor lost ADMIN rights mid-import. */
+class ImportForbiddenError extends Error {}
+
 /**
  * Imports foreign (EU) purchase invoices from Subiekt GT as KsefInvoice rows (source SUBIEKT).
  * Domestic invoices arrive from KSeF and are skipped; invoices already in the app are never modified.
@@ -136,6 +150,7 @@ export async function importSubiektForeignPurchases(
   options: PurchaseFetchOptions & { actorId: string },
 ): Promise<PurchaseImportResult> {
   const now = options.now ?? new Date()
+  if (!(await isCurrentAdmin(db, options.actorId))) return UNAUTHORIZED
   const importFrom = readImportFrom(options.env ?? process.env)
   if (!importFrom) {
     return { ok: false, kind: 'not_configured', error: 'Import faktur UE jest wyłączony. Ustaw SUBIEKT_PURCHASES_IMPORT_FROM (RRRR-MM-DD) — od tej daty wystawienia faktury trafią do aplikacji.' }
@@ -152,71 +167,98 @@ export async function importSubiektForeignPurchases(
   const skippedDomestic = eligible.length - foreign.length
   // Corrections after their originals so correctsInvoiceId can resolve within one run.
   foreign.sort((a, b) => (a.type === b.type ? a.id - b.id : a.type === 'FZ' ? -1 : 1))
-  const match = matchPurchases(foreign, await loadInvoicesForMatch(db, fetched.from, fetched.to))
+  const match = matchPurchases(foreign, await loadInvoicesForMatch(db, fetched.from, fetched.to, SUBIEKT_PURCHASE_MATCH_MARGIN_DAYS))
+  // A KFZ whose FZ was matched to an existing (e.g. manual) invoice links to that invoice.
+  const matchedInvoiceByDocumentId = new Map(match.pairs.map((pair) => [pair.document.id, pair.invoice.id]))
   const rules = await db.ksefSupplierRule.findMany({ where: { active: true }, include: { tags: true } })
 
   let created = 0
-  for (const document of match.unmatchedDocuments) {
-    const outcome = await withAiQueueMutation(db, () => now, async (tx) => {
-      const externalId = subiektExternalId(document.id)
-      if (await tx.ksefInvoice.findUnique({ where: { externalId }, select: { id: true } })) return 'EXISTS' as const
-      const supplierName = document.supplier_name ?? document.number
-      const invoiceNumber = document.original_number ?? document.number
-      const decision = resolveSupplierRuleMatch({ supplierName, supplierNip: document.supplier_tax_id }, rules)
-      const rule = decision.status === 'MATCHED' ? decision.rule : null
-      const parent = document.type === 'KFZ' && document.parent_id !== null
-        ? await tx.ksefInvoice.findUnique({ where: { externalId: subiektExternalId(document.parent_id) }, select: { id: true } })
-        : null
-      const amounts = toInvoiceAmounts(document)
-      await tx.ksefInvoice.create({
-        data: {
-          source: SUBIEKT_SOURCE,
-          externalId,
-          supplierName,
-          supplierNip: document.supplier_tax_id,
-          invoiceNumber,
-          issueDate: new Date(`${document.issued_at}T00:00:00.000Z`),
-          ...amounts,
-          currency: 'PLN',
-          currencyConversionNote: document.currency === 'PLN'
-            ? null
-            : `Przeliczone w Subiekcie GT: ${document.currency} po kursie ${rate(document.exchange_rate)} (${document.number}).`,
-          dueDate: document.due_date ? new Date(`${document.due_date}T00:00:00.000Z`) : null,
-          // GT does not report the payment date in this tool, so paidAt stays empty.
-          paymentStatus: document.is_paid === true ? 'PAID' : 'UNPAID',
-          documentStatus: document.type === 'KFZ' ? 'CORRECTION' : 'ACTIVE',
-          correctsInvoiceId: parent?.id ?? null,
-          status: rule ? 'MAPPED' : 'NEW',
-          ruleMatchStatus: decision.status === 'CONFLICT' ? 'CONFLICT' : rule ? 'MATCHED' : 'NO_RULE',
-          costCenterId: rule?.costCenterId ?? null,
-          subCategoryId: rule?.subCategoryId ?? null,
-          supplierRuleId: rule?.id ?? null,
-          notes: `Subiekt GT: ${document.number}`,
-          // Same as KSeF sync: a rule with tags creates one tagged part so cost reports treat both sources alike.
-          ...(rule?.tags && rule.tags.length > 0
-            ? {
-                parts: {
-                  create: {
-                    label: invoiceNumber,
-                    grossAmount: amounts.grossAmount,
-                    order: 0,
-                    tags: { create: rule.tags.map((tag) => ({ tagId: tag.tagId })) },
-                    allocations: { create: { costCenterId: rule.costCenterId, percent: 100 } },
+  let alreadyInApp = match.pairs.length
+  try {
+    for (const document of match.unmatchedDocuments) {
+      const outcome = await withAiQueueMutation(db, () => now, async (tx) => {
+        if (!(await isCurrentAdmin(tx, options.actorId))) throw new ImportForbiddenError()
+        const externalId = subiektExternalId(document.id)
+        if (await tx.ksefInvoice.findUnique({ where: { externalId }, select: { id: true } })) return 'EXISTS' as const
+        // Re-check NIP + number inside the writer reservation: an invoice may have been entered since the snapshot.
+        const nearby = await tx.ksefInvoice.findMany({
+          where: { issueDate: issueDateWindow(document.issued_at, document.issued_at, SUBIEKT_PURCHASE_MATCH_MARGIN_DAYS) },
+          select: MATCH_SELECT,
+        })
+        if (matchPurchases([document], nearby.map(toMatchInvoice)).unmatchedDocuments.length === 0) return 'EXISTS' as const
+
+        const supplierName = document.supplier_name ?? document.supplier_tax_id ?? UNKNOWN_SUPPLIER
+        const invoiceNumber = document.original_number ?? document.number
+        // Corrections are never auto-classified (same as KSeF sync): an admin decides how to book them.
+        const decision = document.type === 'KFZ'
+          ? { status: 'NO_RULE' as const }
+          : resolveSupplierRuleMatch({ supplierName, supplierNip: document.supplier_tax_id }, rules)
+        const rule = decision.status === 'MATCHED' ? decision.rule : null
+        const parentId = document.type === 'KFZ' && document.parent_id !== null
+          ? (await tx.ksefInvoice.findUnique({ where: { externalId: subiektExternalId(document.parent_id) }, select: { id: true } }))?.id
+            ?? matchedInvoiceByDocumentId.get(document.parent_id) ?? null
+          : null
+        const amounts = toInvoiceAmounts(document)
+        await tx.ksefInvoice.create({
+          data: {
+            source: SUBIEKT_SOURCE,
+            externalId,
+            supplierName,
+            supplierNip: document.supplier_tax_id,
+            invoiceNumber,
+            issueDate: new Date(`${document.issued_at}T00:00:00.000Z`),
+            ...amounts,
+            currency: 'PLN',
+            currencyConversionNote: document.currency === 'PLN'
+              ? null
+              : `Przeliczone w Subiekcie GT: ${document.currency} po kursie ${rate(document.exchange_rate)} (${document.number}).`,
+            dueDate: document.due_date ? new Date(`${document.due_date}T00:00:00.000Z`) : null,
+            // GT does not report the payment date in this tool, so paidAt stays empty.
+            paymentStatus: document.is_paid === true ? 'PAID' : 'UNPAID',
+            documentStatus: document.type === 'KFZ' ? 'CORRECTION' : 'ACTIVE',
+            correctsInvoiceId: parentId,
+            status: rule ? 'MAPPED' : 'NEW',
+            ruleMatchStatus: decision.status === 'CONFLICT' ? 'CONFLICT' : rule ? 'MATCHED' : 'NO_RULE',
+            costCenterId: rule?.costCenterId ?? null,
+            subCategoryId: rule?.subCategoryId ?? null,
+            supplierRuleId: rule?.id ?? null,
+            notes: `Subiekt GT: ${document.number}`,
+            // Same as KSeF sync: a rule with tags creates one tagged part so cost reports treat both sources alike.
+            ...(rule?.tags && rule.tags.length > 0
+              ? {
+                  parts: {
+                    create: {
+                      label: invoiceNumber,
+                      grossAmount: amounts.grossAmount,
+                      order: 0,
+                      tags: { create: rule.tags.map((tag) => ({ tagId: tag.tagId })) },
+                      allocations: { create: { costCenterId: rule.costCenterId, percent: 100 } },
+                    },
                   },
-                },
-              }
-            : {}),
-        },
+                }
+              : {}),
+          },
+        })
+        return 'CREATED' as const
       })
-      return 'CREATED' as const
-    })
-    // The callback may be retried after a rolled-back SQLite transaction; count only the final outcome.
-    if (outcome === 'CREATED') created += 1
+      // The callback may be retried after a rolled-back SQLite transaction; count only the final outcome.
+      if (outcome === 'CREATED') created += 1
+      else alreadyInApp += 1
+    }
+  } catch (error) {
+    if (error instanceof ImportForbiddenError) {
+      await writeImportStatus(db, now, `Błąd: ${UNAUTHORIZED.error} Dodano ${created} faktur przed przerwaniem.`)
+      return UNAUTHORIZED
+    }
+    console.error(JSON.stringify({ event: 'SUBIEKT_PURCHASE_IMPORT_FAILED', created, error: error instanceof Error ? error.name : 'unknown' }))
+    const message = `Import faktur UE przerwany nieoczekiwanym błędem po dodaniu ${created} faktur. Ponowne uruchomienie dokończy import bez duplikatów.`
+    await writeImportStatus(db, now, `Błąd: ${message}`)
+    return { ok: false, kind: 'unavailable', error: message }
   }
 
-  const message = `Faktury UE z Subiekta: dodano ${created}, już w aplikacji ${match.pairs.length}, niejednoznaczne ${match.ambiguous.length}, krajowe pominięte ${skippedDomestic}.`
+  const message = `Faktury UE z Subiekta: dodano ${created}, już w aplikacji ${alreadyInApp}, niejednoznaczne ${match.ambiguous.length}, krajowe pominięte ${skippedDomestic}.`
   await writeImportStatus(db, now, message, { [SUBIEKT_PURCHASE_KEYS.backfillDone]: 'true' })
-  return { ok: true, created, alreadyInApp: match.pairs.length, ambiguous: match.ambiguous.length, skippedDomestic, message }
+  return { ok: true, created, alreadyInApp, ambiguous: match.ambiguous.length, skippedDomestic, message }
 }
 
 async function writeImportStatus(db: Pick<PrismaClient, 'appSetting' | '$transaction'>, now: Date, message: string, extra: Record<string, string> = {}) {

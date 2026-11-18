@@ -9,6 +9,7 @@ import {
   mapKsefMetadataToInvoice,
   type KsefEnvironment,
 } from '@/lib/finance/ksef-client'
+import { isCurrentAdmin } from '@/lib/finance/current-admin'
 import { resolveSupplierRuleMatch } from '@/lib/finance/ksef-inbox'
 import { applySupplierRulesToNewInvoices } from '@/lib/finance/ksef-rule-application'
 import { buildKsefSyncDateRanges } from '@/lib/finance/ksef-sync-ranges'
@@ -62,12 +63,7 @@ type ExistingInvoiceDetails = {
 } | null
 
 async function assertCurrentAdmin(db: Pick<PrismaClient, 'user'>, actorId: string) {
-  const user = await db.user.findUnique({
-    where: { id: actorId }, select: { role: true, isActive: true, mustChangePassword: true },
-  })
-  if (!user || user.role !== 'ADMIN' || !user.isActive || user.mustChangePassword) {
-    throw new InvoiceImportError('FORBIDDEN', 403)
-  }
+  if (!(await isCurrentAdmin(db, actorId))) throw new InvoiceImportError('FORBIDDEN', 403)
 }
 
 function splitMappedInvoice(invoice: MappedKsefInvoice) {

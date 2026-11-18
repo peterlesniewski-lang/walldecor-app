@@ -3,7 +3,7 @@ import { execFileSync } from 'node:child_process'
 import { mkdtemp, rm, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Session } from 'next-auth'
 import { PrismaClient } from '@/generated/prisma'
 import type { FetchLike, PurchaseDocument } from '@/lib/finance/subiekt-bridge-client'
@@ -49,6 +49,10 @@ beforeAll(async () => {
   await db.user.create({ data: {
     id: 'admin', email: 'admin@test.pl', name: 'Admin', passwordHash: 'x', role: 'ADMIN', isActive: true, mustChangePassword: false,
   } })
+  await db.user.createMany({ data: [
+    { id: 'employee', email: 'employee@test.pl', name: 'Pracownik', passwordHash: 'x', role: 'EMPLOYEE', isActive: true, mustChangePassword: false },
+    { id: 'admin-pending', email: 'pending@test.pl', name: 'Nowy admin', passwordHash: 'x', role: 'ADMIN', isActive: true, mustChangePassword: true },
+  ] })
   await db.costCenter.createMany({ data: [{ id: 'JAG', name: 'Jagiellońska' }, { id: 'PUL', name: 'Puławska' }, { id: 'GLOBAL', name: 'Firma' }] })
   await db.costTagGroup.create({ data: { id: 'grp', name: 'Grupa', slug: 'grupa', tags: { create: { id: 'tag-tapety', name: 'Tapety', slug: 'tapety' } } } })
 }, 90_000)
@@ -63,6 +67,8 @@ beforeEach(async () => {
   await db.ksefSupplierRule.deleteMany()
   await db.appSetting.deleteMany()
 })
+
+afterEach(() => { vi.restoreAllMocks() })
 
 afterAll(async () => {
   await db?.$disconnect()
@@ -191,5 +197,99 @@ describe('importSubiektForeignPurchases', () => {
       : new Response(JSON.stringify({ from: '2026-01-01', to: '2026-01-31', limit: 500, rows: [doc({ id: 40, issued_at: '2026-01-10', original_number: 'RE-2026-0001' })], truncated: false, total: { documents: 1 } }), { status: 200 })
     const result = await importSubiektForeignPurchases(db, { actorId: 'admin', now: NOW, env, fetchImpl: failing })
     expect([result.ok, result.ok ? null : result.kind, await db.ksefInvoice.count()]).toEqual([false, 'unavailable', 0])
+  })
+  it('should never auto-classify a KFZ correction, even when a tagged rule matches', async () => {
+    await db.ksefSupplierRule.create({ data: { supplierNip: '123456789', costCenterId: 'PUL', active: true, tags: { create: { tagId: 'tag-tapety' } } } })
+    const kfz = doc({ id: 33, type: 'KFZ', number: 'KFZ 1/MAG/10/2026', original_number: 'RE-2026-0042-K', parent_id: 30, net_total: -425, gross_total: -425 })
+    await importSubiektForeignPurchases(db, { actorId: 'admin', now: NOW, env, fetchImpl: bridgeWith({ '2026-10': [doc(), kfz] }) })
+    const correction = await db.ksefInvoice.findUniqueOrThrow({ where: { externalId: 'subiekt:33' }, include: { parts: true } })
+    expect({ status: correction.status, rule: correction.ruleMatchStatus, costCenterId: correction.costCenterId, supplierRuleId: correction.supplierRuleId, parts: correction.parts.length })
+      .toEqual({ status: 'NEW', rule: 'NO_RULE', costCenterId: null, supplierRuleId: null, parts: 0 })
+  })
+
+  it('should link a KFZ to the manual invoice its FZ was matched with', async () => {
+    const manual = await db.ksefInvoice.create({ data: { supplierName: 'Tapeten', supplierNip: '123456789', invoiceNumber: 'RE-2026-0042', issueDate: new Date('2026-10-03'), grossAmount: 4250 } })
+    const kfz = doc({ id: 33, type: 'KFZ', number: 'KFZ 1/MAG/10/2026', original_number: 'RE-2026-0042-K', parent_id: 30, net_total: -425, gross_total: -425 })
+    await importSubiektForeignPurchases(db, { actorId: 'admin', now: NOW, env, fetchImpl: bridgeWith({ '2026-10': [doc(), kfz] }) })
+    expect((await db.ksefInvoice.findUniqueOrThrow({ where: { externalId: 'subiekt:33' } })).correctsInvoiceId).toBe(manual.id)
+  })
+
+  it('should match a manual invoice dated just before the fetched range', async () => {
+    await db.ksefInvoice.create({ data: { supplierName: 'Tapeten', supplierNip: '123456789', invoiceNumber: 'RE-2026-0042', issueDate: new Date('2026-09-30'), grossAmount: 4250 } })
+    const result = await importSubiektForeignPurchases(db, {
+      actorId: 'admin', now: NOW, env: { ...env, SUBIEKT_PURCHASES_IMPORT_FROM: '2026-10-01' }, fetchImpl: bridgeWith({ '2026-10': [doc({ issued_at: '2026-10-01' })] }),
+    })
+    expect([result.ok && result.alreadyInApp, await db.ksefInvoice.count()]).toEqual([1, 1])
+  })
+
+  it('should not create a duplicate inserted concurrently after matching', async () => {
+    const original = db.$transaction.bind(db)
+    let raced = false
+    // The first write transaction starts after the match snapshot: simulate a manual entry racing the import.
+    vi.spyOn(db, '$transaction').mockImplementation((async (...args: Parameters<typeof original>) => {
+      if (!raced) {
+        raced = true
+        await db.ksefInvoice.create({ data: { supplierName: 'Tapeten', supplierNip: 'DE 123 456 789', invoiceNumber: 're-2026-0042 ', issueDate: new Date('2026-10-04'), grossAmount: 4250 } })
+      }
+      return original(...args)
+    }) as typeof db.$transaction)
+    const result = await importSubiektForeignPurchases(db, { actorId: 'admin', now: NOW, env, fetchImpl: bridgeWith({ '2026-10': [doc()] }) })
+    expect([result.ok && result.created, await db.ksefInvoice.count()]).toEqual([0, 1])
+  })
+
+  it('should use the tax id as the supplier name when Subiekt has no name', async () => {
+    await importSubiektForeignPurchases(db, { actorId: 'admin', now: NOW, env, fetchImpl: bridgeWith({ '2026-10': [doc({ supplier_name: null })] }) })
+    expect((await db.ksefInvoice.findUniqueOrThrow({ where: { externalId: 'subiekt:30' } })).supplierName).toBe('DE123456789')
+  })
+
+  it('should fall back to a generic supplier name without name and tax id', async () => {
+    await importSubiektForeignPurchases(db, { actorId: 'admin', now: NOW, env, fetchImpl: bridgeWith({ '2026-10': [doc({ supplier_name: null, supplier_tax_id: null })] }) })
+    expect((await db.ksefInvoice.findUniqueOrThrow({ where: { externalId: 'subiekt:30' } })).supplierName).toBe('Nieznany dostawca')
+  })
+
+  it('should refuse a non-admin actor before contacting the bridge', async () => {
+    const fetchImpl = vi.fn(bridgeWith({ '2026-10': [doc()] }))
+    const result = await importSubiektForeignPurchases(db, { actorId: 'employee', now: NOW, env, fetchImpl })
+    expect([result.ok ? null : result.kind, result.ok ? null : result.error, fetchImpl.mock.calls.length, await db.ksefInvoice.count()])
+      .toEqual(['unauthorized', 'Brak uprawnień administratora.', 0, 0])
+  })
+
+  it('should refuse an admin who must change the password', async () => {
+    const result = await importSubiektForeignPurchases(db, { actorId: 'admin-pending', now: NOW, env, fetchImpl: bridgeWith({ '2026-10': [doc()] }) })
+    expect(result.ok ? null : result.kind).toBe('unauthorized')
+  })
+
+  it('should stop writing when the actor loses admin rights during the import', async () => {
+    await db.user.update({ where: { id: 'employee' }, data: { role: 'ADMIN' } })
+    const fetchImpl: FetchLike = async (url) => {
+      // Demote after the up-front check, while the documents are being fetched.
+      await db.user.update({ where: { id: 'employee' }, data: { role: 'EMPLOYEE' } })
+      return bridgeWith({ '2026-10': [doc()] })(url, {})
+    }
+    const result = await importSubiektForeignPurchases(db, { actorId: 'employee', now: NOW, env, fetchImpl })
+    expect([result.ok ? null : result.kind, await db.ksefInvoice.count()]).toEqual(['unauthorized', 0])
+  })
+
+  it('should report an unexpected write error without internals and keep invoices created before it', async () => {
+    const original = db.$transaction.bind(db)
+    let calls = 0
+    vi.spyOn(db, '$transaction').mockImplementation(((...args: Parameters<typeof original>) => {
+      calls += 1
+      return calls === 2 ? Promise.reject(new Error('SQLITE internal detail')) : original(...args)
+    }) as typeof db.$transaction)
+    const second = doc({ id: 31, number: 'FZ 2/MAG/10/2026', original_number: 'RE-2026-0043' })
+    const result = await importSubiektForeignPurchases(db, { actorId: 'admin', now: NOW, env, fetchImpl: bridgeWith({ '2026-10': [doc(), second] }) })
+    const message = await db.appSetting.findUniqueOrThrow({ where: { key: 'subiekt_purchases.last_import_message' } })
+    expect({
+      kind: result.ok ? null : result.kind,
+      leaks: result.ok ? null : result.error.includes('SQLITE'),
+      count: await db.ksefInvoice.count(),
+      message: message.value,
+      backfill: await db.appSetting.findUnique({ where: { key: 'subiekt_purchases.backfill_done' } }),
+    }).toEqual({
+      kind: 'unavailable', leaks: false, count: 1,
+      message: 'Błąd: Import faktur UE przerwany nieoczekiwanym błędem po dodaniu 1 faktur. Ponowne uruchomienie dokończy import bez duplikatów.',
+      backfill: null,
+    })
   })
 })

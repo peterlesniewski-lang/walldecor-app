@@ -18,6 +18,11 @@ describe('isForeignPurchase', () => {
   it('should treat a EUR invoice as foreign', () => { expect(isForeignPurchase(doc())).toBe(true) })
   it('should treat a PLN invoice from a DE VAT id as foreign', () => { expect(isForeignPurchase(doc({ currency: 'PLN' }))).toBe(true) })
   it('should treat a PLN invoice with a digits-only NIP as domestic', () => { expect(isForeignPurchase(doc({ currency: 'PLN', supplier_tax_id: '5260000000' }))).toBe(false) })
+  it('should treat a PL-prefixed NIP in PLN as domestic', () => { expect(isForeignPurchase(doc({ currency: 'PLN', supplier_tax_id: 'PL 526-000-00-00' }))).toBe(false) })
+  it('should treat a Polish 10-digit NIP in EUR as domestic (arrives via KSeF)', () => { expect(isForeignPurchase(doc({ currency: 'EUR', supplier_tax_id: '526-000-00-00' }))).toBe(false) })
+  it('should treat a EUR invoice without a tax id and without a KSeF number as foreign', () => { expect(isForeignPurchase(doc({ supplier_tax_id: null }))).toBe(true) })
+  it('should never treat a document with a KSeF number as foreign', () => { expect(isForeignPurchase(doc({ ksef_number: '5260000000-20261003-ABCDEF-01' }))).toBe(false) })
+  it('should treat a lowercase DE VAT id with spaces as foreign', () => { expect(isForeignPurchase(doc({ currency: 'PLN', supplier_tax_id: 'de 123 456 789' }))).toBe(true) })
 })
 
 describe('numberKey', () => {

@@ -28,9 +28,16 @@ function documentKey(taxId: string | null, number: string | null): string | null
   return tax && num ? `${tax}|${num}` : null
 }
 
-export function isForeignPurchase(document: Pick<PurchaseDocument, 'currency' | 'supplier_tax_id'>): boolean {
-  if (document.currency !== 'PLN') return true
-  return /^[A-Z]{2}/.test((document.supplier_tax_id ?? '').toUpperCase())
+/**
+ * Foreign = will never arrive via KSeF. A KSeF number or a Polish NIP (even on a EUR
+ * invoice) means the document belongs to the KSeF flow and must not be imported twice.
+ */
+export function isForeignPurchase(document: Pick<PurchaseDocument, 'currency' | 'supplier_tax_id' | 'ksef_number'>): boolean {
+  if (document.ksef_number) return false
+  const taxId = (document.supplier_tax_id ?? '').toUpperCase().replace(/[^A-Z0-9]/g, '')
+  if (/^[A-Z]{2}/.test(taxId) && !taxId.startsWith('PL')) return true
+  if (/^(PL)?\d{10}$/.test(taxId)) return false
+  return document.currency !== 'PLN'
 }
 
 export interface MatchedPair { document: PurchaseDocument; invoice: AppInvoiceForMatch; via: 'SUBIEKT_ID' | 'KSEF' | 'NUMBER' }
