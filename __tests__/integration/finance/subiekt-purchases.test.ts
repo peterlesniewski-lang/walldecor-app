@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os'
 import { join, resolve } from 'node:path'
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { Session } from 'next-auth'
+import { NextRequest } from 'next/server'
 import { PrismaClient } from '@/generated/prisma'
 import type { FetchLike, PurchaseDocument } from '@/lib/finance/subiekt-bridge-client'
 
@@ -18,6 +19,7 @@ vi.mock('@/lib/auth', () => ({ authOptions: {} }))
 import { importSubiektForeignPurchases, reconcileSubiektPayments, warsawToday } from '@/lib/finance/subiekt-purchases'
 import { GET as reconciliationRoute } from '@/app/api/finance/subiekt-purchases/reconciliation/route'
 import { POST as importRoute } from '@/app/api/finance/subiekt-purchases/import/route'
+import { POST as approveRoute } from '@/app/api/finance/ksef/invoices/[id]/approve/route'
 
 let directory = ''
 let db: PrismaClient
@@ -60,6 +62,11 @@ beforeAll(async () => {
 }, 90_000)
 
 beforeEach(async () => {
+  await db.costAuditLog.deleteMany()
+  await db.costEventPartAllocation.deleteMany()
+  await db.costEventPartTag.deleteMany()
+  await db.costEventPart.deleteMany()
+  await db.costEvent.deleteMany()
   await db.ksefInvoicePartAllocation.deleteMany()
   await db.ksefInvoicePartTag.deleteMany()
   await db.ksefInvoicePart.deleteMany()
@@ -351,6 +358,16 @@ describe('payment reconciliation and import routes', () => {
     asRole('admin', 'ADMIN'); stubBridge({})
     vi.stubEnv('SUBIEKT_PURCHASES_IMPORT_FROM', '')
     expect((await call(importRoute)).status).toBe(409)
+  })
+
+  it('should approve an imported Subiekt invoice into a PLN cost event', async () => {
+    await importSubiektForeignPurchases(db, { actorId: 'admin', now: NOW, env, fetchImpl: bridgeWith({ '2026-10': [doc()] }) })
+    const invoice = await db.ksefInvoice.findUniqueOrThrow({ where: { externalId: 'subiekt:30' } })
+    asRole('admin', 'ADMIN')
+    const response = await approveRoute(new NextRequest(`http://localhost/api/finance/ksef/invoices/${invoice.id}/approve`, { method: 'POST' }), { params: Promise.resolve({ id: invoice.id }) })
+    const event = await db.costEvent.findFirst({ where: { sourceInvoiceId: invoice.id } })
+    expect({ status: response.status, event: event && { source: event.source, currency: event.currency, grossAmount: event.grossAmount } })
+      .toEqual({ status: 200, event: { source: 'SUBIEKT', currency: 'PLN', grossAmount: 4250 } })
   })
 
   it('should return 403 from import for MANAGER', async () => {
