@@ -39,7 +39,10 @@ describe('KSeF inbox SSR money summaries', () => {
   })
 
   it('uses the same active mixed-currency semantics and metadata as the list API', async () => {
-    const view = await KsefInboxPage()
+    const page = await KsefInboxPage()
+    // The page is a fragment: optional Subiekt panel (absent without bridge config) followed by the inbox view.
+    const children = Array.isArray(page.props.children) ? page.props.children : [page.props.children]
+    const view = children[children.length - 1]
 
     expect(view.props.initialGrossAmountTotal).toBe(218)
     expect(view.props.initialGrossAmountSummary).toEqual({

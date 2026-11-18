@@ -7,6 +7,9 @@ import { sortCostTagGroupsForDisplay } from '@/lib/finance/cost-tags'
 import { summarizeInvoicePayments } from '@/lib/finance/invoice-money'
 import { isActiveInvoiceMoneyRow } from '@/lib/finance/invoice-money-scope'
 import { KsefInboxView, type KsefPaymentStatus, type KsefStatus } from '@/components/shared/ksef-inbox-view'
+import { SubiektPurchasesPanel } from '@/components/shared/subiekt-purchases-panel'
+import { readSubiektBridgeConfig } from '@/lib/finance/subiekt-bridge-client'
+import { SUBIEKT_PURCHASE_KEYS } from '@/lib/finance/subiekt-purchases'
 import { INVOICE_IMPORT_LIST_SELECT, invoiceImportListSummary } from '@/lib/invoice-import/invoice-list-ksef-summary'
 
 const INITIAL_PAGE = 1
@@ -76,6 +79,11 @@ export default async function KsefInboxPage() {
       },
     }),
   ])
+  const subiektConfigured = readSubiektBridgeConfig() !== null
+  const subiektSettings = subiektConfigured
+    ? await prisma.appSetting.findMany({ where: { key: { in: [SUBIEKT_PURCHASE_KEYS.lastImportAt, SUBIEKT_PURCHASE_KEYS.lastImportMessage] } } })
+    : []
+  const subiektSetting = (key: string) => subiektSettings.find((row) => row.key === key)?.value ?? null
   const counts: Record<KsefStatus, number> = { NEW: 0, MAPPED: 0, APPROVED: 0, IGNORED: 0 }
   for (const row of statusCounts) {
     counts[row.status as KsefStatus] = row._count._all
@@ -87,6 +95,13 @@ export default async function KsefInboxPage() {
   }])) as Record<PaymentAgingBucket, typeof paymentSummary.paymentAging[PaymentAgingBucket] & { grossAmount: number }>
 
   return (
+    <>
+    {subiektConfigured && (
+      <SubiektPurchasesPanel
+        lastImportAt={subiektSetting(SUBIEKT_PURCHASE_KEYS.lastImportAt)}
+        lastImportMessage={subiektSetting(SUBIEKT_PURCHASE_KEYS.lastImportMessage)}
+      />
+    )}
     <KsefInboxView
       initialInvoices={invoices.map((invoice) => ({
         ...invoice,
@@ -126,5 +141,6 @@ export default async function KsefInboxPage() {
         tags: group.tags,
       })))}
     />
+    </>
   )
 }

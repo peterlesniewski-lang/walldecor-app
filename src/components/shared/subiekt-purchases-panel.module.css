@@ -1,0 +1,7 @@
+.badge { display: inline-flex; align-items: center; border-radius: 999px; padding: 2px var(--revenue-space-3, 12px); font-size: var(--revenue-font-xs, .75rem); font-weight: 600; background: var(--revenue-accent, var(--wd-sand)); color: var(--revenue-ink, var(--foreground)); }
+.badgeWarn { background: var(--revenue-alert-bg); color: var(--revenue-alert); border: 1px solid var(--revenue-alert); }
+.sectionHead { display: flex; align-items: center; gap: var(--revenue-space-2, 8px); font-size: var(--revenue-font-sm, .875rem); font-weight: 600; }
+.copy { display: inline-flex; align-items: center; gap: var(--revenue-space-2, 8px); font-family: var(--font-mono), monospace; font-size: var(--revenue-font-xs, .75rem); background: transparent; border: 1px dashed var(--revenue-line); border-radius: var(--revenue-radius); padding: 2px var(--revenue-space-2, 8px); cursor: pointer; color: inherit; }
+.copy:hover { background: var(--revenue-inset); }
+.copy:focus-visible { outline: 2px solid var(--revenue-ink); outline-offset: 2px; }
+.num { font-family: var(--font-mono), monospace; font-variant-numeric: tabular-nums; white-space: nowrap; }
