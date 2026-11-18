@@ -28,7 +28,7 @@ export class SubiektBridgeError extends Error {
 
 export const SUBIEKT_BRIDGE_MESSAGES: Record<SubiektBridgeErrorKind, string> = {
   not_configured: 'Mostek Subiekt nie jest skonfigurowany. Sprawdź SUBIEKT_BRIDGE_URL, SUBIEKT_BRIDGE_TOKEN oraz kompletność pary SUBIEKT_BRIDGE_CF_ACCESS_CLIENT_ID i SUBIEKT_BRIDGE_CF_ACCESS_CLIENT_SECRET.',
-  unauthorized: 'Mostek Subiekt odrzucił token aplikacji. Sprawdź SUBIEKT_BRIDGE_TOKEN i zakres sales:read.',
+  unauthorized: 'Mostek Subiekt odrzucił token aplikacji. Sprawdź SUBIEKT_BRIDGE_TOKEN i zakresy sales:read oraz purchases:read.',
   unavailable: 'Mostek Subiekt jest niedostępny. Sprawdź, czy komputer z bazą Subiekta jest włączony i połączony z siecią.',
   timeout: 'Mostek Subiekt nie odpowiedział w ciągu 20 sekund.',
   invalid_response: 'Mostek Subiekt zwrócił odpowiedź w nieoczekiwanym formacie.',
@@ -138,22 +138,15 @@ async function readErrorBody(response: Response): Promise<{ code: typeof bridgeE
   }
 }
 
-/**
- * Fetches gross/net sales per month × warehouse × kind (towar/usługa) for
- * `[from, to]` (issue dates). Throws SubiektBridgeError; never returns partial data.
- */
-export async function fetchSalesSummary(
+async function bridgeGetJson(
   config: SubiektBridgeConfig | null,
-  query: SalesSummaryQuery,
-  fetchImpl: FetchLike = fetch,
-  timeoutMs = SUBIEKT_BRIDGE_TIMEOUT_MS,
-): Promise<SalesSummary> {
+  path: string,
+  params: URLSearchParams,
+  fetchImpl: FetchLike,
+  timeoutMs: number,
+): Promise<unknown> {
   if (!config) throw new SubiektBridgeError('not_configured', SUBIEKT_BRIDGE_MESSAGES.not_configured)
-  if (!DATE_RE.test(query.from) || !DATE_RE.test(query.to)) {
-    throw new SubiektBridgeError('bridge_error', 'Nieprawidłowy zakres dat zapytania do mostka.', 'INVALID_INPUT')
-  }
-  const params = new URLSearchParams({ from: query.from, to: query.to, group_by: 'month_warehouse_kind' })
-  const url = `${config.url}/api/sales/summary?${params.toString()}`
+  const url = `${config.url}${path}?${params.toString()}`
 
   let response: Response
   try {
@@ -187,29 +180,100 @@ export async function fetchSalesSummary(
     throw new SubiektBridgeError('bridge_error', (body.code && bridgeErrorMessages[body.code]) || SUBIEKT_BRIDGE_MESSAGES.bridge_error, body.code)
   }
 
-  let json: unknown
   try {
-    json = await response.json()
+    return await response.json()
   } catch {
     throw new SubiektBridgeError('invalid_response', SUBIEKT_BRIDGE_MESSAGES.invalid_response)
   }
-  const parsed = salesSummarySchema.safeParse(json)
+}
+
+function parseOrThrow<T extends z.ZodType>(schema: T, json: unknown): z.infer<T> {
+  const parsed = schema.safeParse(json)
   if (!parsed.success) {
     // Server log only: field paths help diagnose a contract drift; values never leave the server.
     console.warn(JSON.stringify({ event: 'SUBIEKT_BRIDGE_INVALID_RESPONSE', issues: parsed.error.issues.slice(0, 10).map((issue) => ({ path: issue.path.join('.'), code: issue.code })) }))
     throw new SubiektBridgeError('invalid_response', SUBIEKT_BRIDGE_MESSAGES.invalid_response)
   }
+  return parsed.data
+}
+
+/**
+ * Fetches gross/net sales per month × warehouse × kind (towar/usługa) for
+ * `[from, to]` (issue dates). Throws SubiektBridgeError; never returns partial data.
+ */
+export async function fetchSalesSummary(
+  config: SubiektBridgeConfig | null,
+  query: SalesSummaryQuery,
+  fetchImpl: FetchLike = fetch,
+  timeoutMs = SUBIEKT_BRIDGE_TIMEOUT_MS,
+): Promise<SalesSummary> {
+  if (!DATE_RE.test(query.from) || !DATE_RE.test(query.to)) {
+    throw new SubiektBridgeError('bridge_error', 'Nieprawidłowy zakres dat zapytania do mostka.', 'INVALID_INPUT')
+  }
+  const params = new URLSearchParams({ from: query.from, to: query.to, group_by: 'month_warehouse_kind' })
+  const data = parseOrThrow(salesSummarySchema, await bridgeGetJson(config, '/api/sales/summary', params, fetchImpl, timeoutMs))
   // The bridge's total comes from document headers; rows come from document positions.
   // Never replace the last valid snapshot with an inconsistent breakdown.
   for (const field of ['net_total', 'gross_total'] as const) {
-    const total = parsed.data.total?.[field]
+    const total = data.total?.[field]
     if (total === undefined) continue
-    const rowCents = parsed.data.rows.reduce((sum, row) => sum + Math.round(row[field] * 100), 0)
+    const rowCents = data.rows.reduce((sum, row) => sum + Math.round(row[field] * 100), 0)
     if (Math.abs(rowCents - Math.round(total * 100)) > 1) {
       throw new SubiektBridgeError('invalid_response', 'Kwoty towarów i usług z mostka nie zgadzają się z sumą dokumentów. Poprzedni odczyt został zachowany. Wymagana jest weryfikacja mostka.', 'AMOUNT_MISMATCH')
     }
   }
-  return parsed.data
+  return data
+}
+
+const dateString = z.string().regex(DATE_RE)
+
+export const purchaseDocumentSchema = z.object({
+  id: z.number().int().positive(),
+  type: z.enum(['FZ', 'KFZ']),
+  number: z.string().min(1),
+  original_number: z.string().nullable(),
+  issued_at: dateString,
+  parent_id: z.number().int().nullable(),
+  supplier_name: z.string().nullable(),
+  supplier_tax_id: z.string().nullable(),
+  currency: z.string().regex(/^[A-Z]{3}$/),
+  exchange_rate: numericValue.nullable(),
+  net_total: amount,
+  gross_total: amount,
+  ksef_number: z.string().nullable(),
+  payable: amount.nullable(),
+  remaining: amount.nullable(),
+  is_paid: z.boolean().nullable(),
+  due_date: dateString.nullable(),
+})
+
+export const purchaseDocumentsSchema = z.object({
+  from: dateString,
+  to: dateString,
+  rows: z.array(purchaseDocumentSchema),
+  truncated: z.boolean(),
+  total: z.object({ documents: count }),
+})
+
+export type PurchaseDocument = z.infer<typeof purchaseDocumentSchema>
+export const PURCHASE_PAGE_LIMIT = 500
+
+/** FZ/KFZ issued in [from, to]. Never returns a truncated list: callers query month by month. */
+export async function fetchPurchaseDocuments(
+  config: SubiektBridgeConfig | null,
+  query: SalesSummaryQuery,
+  fetchImpl: FetchLike = fetch,
+  timeoutMs = SUBIEKT_BRIDGE_TIMEOUT_MS,
+): Promise<z.infer<typeof purchaseDocumentsSchema>> {
+  if (!DATE_RE.test(query.from) || !DATE_RE.test(query.to)) {
+    throw new SubiektBridgeError('bridge_error', 'Nieprawidłowy zakres dat zapytania do mostka.', 'INVALID_INPUT')
+  }
+  const params = new URLSearchParams({ from: query.from, to: query.to, limit: String(PURCHASE_PAGE_LIMIT) })
+  const data = parseOrThrow(purchaseDocumentsSchema, await bridgeGetJson(config, '/api/purchases/documents', params, fetchImpl, timeoutMs))
+  if (data.truncated) {
+    throw new SubiektBridgeError('invalid_response', `Subiekt zwrócił ponad ${PURCHASE_PAGE_LIMIT} faktur zakupu w okresie ${query.from} – ${query.to}. Import przerwany bez zmian.`, 'LIMIT_EXCEEDED')
+  }
+  return data
 }
 
 /** Message safe to show to an ADMIN; unknown errors never expose internals. */
