@@ -1469,9 +1469,11 @@ export function KsefInboxView({
                         <button type="button" disabled={approved || saving === invoice.id} onClick={() => saveClassification(invoice.id)} className="rounded border border-[var(--wd-border)] p-2 hover:bg-gray-50 disabled:opacity-40" title="Zapisz klasyfikację">
                           <Save size={15} />
                         </button>
-                        <button type="button" disabled={saving === `content-${invoice.id}`} onClick={() => loadInvoiceContent(invoice)} className="rounded border border-[var(--wd-border)] p-2 hover:bg-gray-50 disabled:opacity-40" title="Podgląd faktury">
-                          <Eye size={15} />
-                        </button>
+                        {invoice.source !== 'SUBIEKT' && (
+                          <button type="button" disabled={saving === `content-${invoice.id}`} onClick={() => loadInvoiceContent(invoice)} className="rounded border border-[var(--wd-border)] p-2 hover:bg-gray-50 disabled:opacity-40" title="Podgląd faktury">
+                            <Eye size={15} />
+                          </button>
+                        )}
                         <button type="button" disabled={approved} onClick={() => setPartsEditorInvoice(invoice)} className="rounded border border-[var(--wd-border)] p-2 hover:bg-gray-50 disabled:opacity-40" title="Rozbij fakturę">
                           <Settings2 size={15} />
                         </button>

@@ -9,6 +9,7 @@ import {
   type KsefEnvironment,
 } from '@/lib/finance/ksef-client'
 import { parseKsefInvoiceXmlDetails } from '@/lib/finance/ksef-xml-details'
+import { SUBIEKT_SOURCE } from '@/lib/finance/subiekt-purchase-matching'
 
 const KSEF_SETTINGS = [
   'ksef_enabled',
@@ -27,6 +28,11 @@ export async function GET(
   const { id } = await params
   const invoice = await prisma.ksefInvoice.findUnique({ where: { id } })
   if (!invoice) return NextResponse.json({ error: 'Invoice not found' }, { status: 404 })
+  // externalId of a Subiekt GT import is `subiekt:<dok_Id>`, not a KSeF number: never ask KSeF for it.
+  // 400 like the other "this invoice has no KSeF XML" case below.
+  if (invoice.source === SUBIEKT_SOURCE) {
+    return NextResponse.json({ error: 'Faktura z Subiekta GT nie ma XML KSeF.' }, { status: 400 })
+  }
   if (invoice.xmlContent) {
     return NextResponse.json({
       invoiceId: invoice.id,
