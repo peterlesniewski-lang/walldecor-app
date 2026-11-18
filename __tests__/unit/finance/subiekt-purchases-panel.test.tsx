@@ -48,6 +48,17 @@ describe('SubiektPurchasesPanel', () => {
     expect(router.refresh).toHaveBeenCalled()
   })
 
+  it('should clear the previous reconciliation result after a successful import', async () => {
+    mockFetch(reconciliation())
+    renderPanel()
+    await userEvent.click(screen.getByRole('button', { name: 'Sprawdź rozliczenia' }))
+    await screen.findByTestId('subiekt-reconciliation')
+    mockFetch({ ok: true, created: 1, alreadyInApp: 0, ambiguous: 0, skippedDomestic: 0, message: 'Faktury UE z Subiekta: dodano 1, już w aplikacji 0, niejednoznaczne 0, krajowe pominięte 0.' })
+    await userEvent.click(screen.getByRole('button', { name: 'Pobierz faktury UE z Subiekta' }))
+    await screen.findByText(/dodano 1/)
+    expect(screen.queryByTestId('subiekt-reconciliation')).toBeNull()
+  })
+
   it('should show the amount-differs badge when amountDiffers is true', async () => {
     mockFetch(reconciliation({ settleInSubiekt: [{ ...settlement, amountDiffers: true }] }))
     renderPanel()

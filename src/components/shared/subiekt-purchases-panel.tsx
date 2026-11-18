@@ -101,6 +101,8 @@ export function SubiektPurchasesPanel({ lastImportAt, lastImportMessage }: Subie
         setImportNotice({ tone: 'error', text: body && !body.ok && typeof body.error === 'string' ? body.error : 'Nie udało się pobrać faktur z Subiekta.' })
       } else {
         setImportNotice({ tone: 'status', text: body.message })
+        // The import changed app invoices: an earlier reconciliation list would be stale.
+        setResult(null)
         router.refresh()
       }
     } catch {
