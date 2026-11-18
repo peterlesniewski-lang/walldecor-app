@@ -1,6 +1,6 @@
 // @vitest-environment node
 import { describe, expect, it } from 'vitest'
-import { importRange, monthChunks, readImportFrom, reconciliationRange } from '@/lib/finance/subiekt-purchases'
+import { importRange, importedPaymentStatus, monthChunks, readImportFrom, reconciliationRange } from '@/lib/finance/subiekt-purchases'
 
 describe('monthChunks', () => {
   it('should split a range crossing the year boundary at December 31', () => {
@@ -62,5 +62,23 @@ describe('readImportFrom', () => {
 
   it('should return null when the variable is missing', () => {
     expect(readImportFrom({})).toBeNull()
+  })
+})
+
+describe('importedPaymentStatus', () => {
+  it('should import an FZ without a liability in Subiekt (is_paid null) as PAID', () => {
+    expect(importedPaymentStatus({ type: 'FZ', is_paid: null })).toBe('PAID')
+  })
+
+  it('should import a KFZ without a liability as PAID so it stays out of unpaid totals and aging', () => {
+    expect(importedPaymentStatus({ type: 'KFZ', is_paid: null })).toBe('PAID')
+  })
+
+  it('should import an open FZ liability as UNPAID', () => {
+    expect(importedPaymentStatus({ type: 'FZ', is_paid: false })).toBe('UNPAID')
+  })
+
+  it('should import a settled FZ liability as PAID', () => {
+    expect(importedPaymentStatus({ type: 'FZ', is_paid: true })).toBe('PAID')
   })
 })

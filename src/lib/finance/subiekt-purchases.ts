@@ -132,6 +132,22 @@ export function toInvoiceAmounts(document: PurchaseDocument) {
   }
 }
 
+/**
+ * Payment status of an imported document. `is_paid === null` means GT keeps no liability
+ * (rozrachunek) for it — the purchase was settled at once (e.g. card / cash) — so it is PAID;
+ * the payment date is unknown, hence paidAt stays null.
+ *
+ * KFZ with no liability: also PAID. Unpaid totals and aging (summarizeInvoicePayments) count every
+ * non-PAID row whose documentStatus is not CANCELLED, corrections included, so an UNPAID KFZ would put
+ * a negative amount into "do zapłaty" and the MISSING_DUE_DATE bucket. KSeF corrections avoid this the
+ * same way: an invoice without a due date gets PAID when its XML is read (content route), and a
+ * correction carries no separate payment of its own. A KFZ with a real liability (is_paid true/false)
+ * keeps the status GT reports.
+ */
+export function importedPaymentStatus(document: Pick<PurchaseDocument, 'type' | 'is_paid'>): 'PAID' | 'UNPAID' {
+  return document.is_paid === false ? 'UNPAID' : 'PAID'
+}
+
 export type PurchaseImportResult =
   | { ok: true; created: number; alreadyInApp: number; ambiguous: number; skippedDomestic: number; message: string }
   | { ok: false; kind: SubiektBridgeErrorKind | 'forbidden'; error: string }
@@ -215,7 +231,7 @@ export async function importSubiektForeignPurchases(
               : `Przeliczone w Subiekcie GT: ${document.currency} po kursie ${rate(document.exchange_rate)} (${document.number}).`,
             dueDate: document.due_date ? new Date(`${document.due_date}T00:00:00.000Z`) : null,
             // GT does not report the payment date in this tool, so paidAt stays empty.
-            paymentStatus: document.is_paid === true ? 'PAID' : 'UNPAID',
+            paymentStatus: importedPaymentStatus(document),
             documentStatus: document.type === 'KFZ' ? 'CORRECTION' : 'ACTIVE',
             correctsInvoiceId: parentId,
             status: rule ? 'MAPPED' : 'NEW',

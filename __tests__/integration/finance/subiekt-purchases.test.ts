@@ -151,6 +151,17 @@ describe('importSubiektForeignPurchases', () => {
     expect([fz.paymentStatus, fz.paidAt, correction.documentStatus, correction.correctsInvoiceId]).toEqual(['PAID', null, 'CORRECTION', fz.id])
   })
 
+  it('should import documents without a liability in Subiekt as PAID without a payment date', async () => {
+    const fz = doc({ payable: null, remaining: null, is_paid: null, due_date: null })
+    const kfz = doc({ id: 33, type: 'KFZ', number: 'KFZ 1/MAG/10/2026', original_number: 'RE-2026-0042-K', parent_id: 30, net_total: -425, gross_total: -425, payable: null, remaining: null, is_paid: null, due_date: null })
+    await importSubiektForeignPurchases(db, { actorId: 'admin', now: NOW, env, fetchImpl: bridgeWith({ '2026-10': [fz, kfz] }) })
+    const rows = await db.ksefInvoice.findMany({ orderBy: { externalId: 'asc' }, select: { externalId: true, paymentStatus: true, paidAt: true } })
+    expect(rows).toEqual([
+      { externalId: 'subiekt:30', paymentStatus: 'PAID', paidAt: null },
+      { externalId: 'subiekt:33', paymentStatus: 'PAID', paidAt: null },
+    ])
+  })
+
   it('should apply a matching supplier rule', async () => {
     await db.ksefSupplierRule.create({ data: { supplierNip: '123456789', costCenterId: 'PUL', active: true } })
     await importSubiektForeignPurchases(db, { actorId: 'admin', now: NOW, env, fetchImpl: bridgeWith({ '2026-10': [doc()] }) })
