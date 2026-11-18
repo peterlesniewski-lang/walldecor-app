@@ -49,13 +49,35 @@ export interface MatchResult {
   matchedInvoiceIds: Set<string>
 }
 
+/** Max distance between issue dates for a number-only (no NIP) candidate. */
+export const NUMBER_ONLY_MATCH_DAYS = 31
+const DAY_MS = 24 * 60 * 60 * 1000
+const daysApart = (a: string, b: string) => Math.abs(Date.parse(`${a}T00:00:00Z`) - Date.parse(`${b}T00:00:00Z`)) / DAY_MS
+
 export function matchPurchases(documents: PurchaseDocument[], invoices: AppInvoiceForMatch[]): MatchResult {
   const byExternalId = new Map<string, AppInvoiceForMatch>()
   const byKey = new Map<string, AppInvoiceForMatch[]>()
+  const byNumber = new Map<string, AppInvoiceForMatch[]>()
   for (const invoice of invoices) {
     if (invoice.externalId) byExternalId.set(invoice.externalId, invoice)
     const key = documentKey(invoice.supplierNip, invoice.invoiceNumber)
     if (key) byKey.set(key, [...(byKey.get(key) ?? []), invoice])
+    const number = numberKey(invoice.invoiceNumber)
+    if (number) byNumber.set(number, [...(byNumber.get(number) ?? []), invoice])
+  }
+  /**
+   * Safety net when the NIP cannot be compared (document without tax digits, or an app invoice
+   * entered without NIP): same number and issue dates ≤ 31 days apart. Such a hit is never paired
+   * automatically — the owner rule is "when unsure, do not create" — so the document becomes ambiguous.
+   * Already-paired invoices count too: a second document with the same number must not slip through.
+   */
+  const numberOnlyCandidates = (document: PurchaseDocument) => {
+    const number = numberKey(document.original_number)
+    if (!number) return []
+    const documentHasTax = normalizeSupplierNip(document.supplier_tax_id) !== ''
+    return (byNumber.get(number) ?? []).filter((invoice) =>
+      (!documentHasTax || normalizeSupplierNip(invoice.supplierNip) === '')
+      && daysApart(invoice.issueDate, document.issued_at) <= NUMBER_ONLY_MATCH_DAYS)
   }
   const used = new Set<string>()
   const result: MatchResult = { pairs: [], ambiguous: [], unmatchedDocuments: [], matchedInvoiceIds: used }
@@ -72,7 +94,11 @@ export function matchPurchases(documents: PurchaseDocument[], invoices: AppInvoi
     const candidates = (key ? byKey.get(key) ?? [] : []).filter((invoice) => !used.has(invoice.id))
     if (candidates.length === 1) take(document, candidates[0] as AppInvoiceForMatch, 'NUMBER')
     else if (candidates.length > 1) result.ambiguous.push({ document, invoiceIds: candidates.map((c) => c.id) })
-    else result.unmatchedDocuments.push(document)
+    else {
+      const numberOnly = numberOnlyCandidates(document)
+      if (numberOnly.length > 0) result.ambiguous.push({ document, invoiceIds: numberOnly.map((c) => c.id) })
+      else result.unmatchedDocuments.push(document)
+    }
   }
   return result
 }

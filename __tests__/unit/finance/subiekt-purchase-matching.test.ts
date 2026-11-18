@@ -49,6 +49,47 @@ describe('matchPurchases', () => {
     expect([result.pairs.length, result.ambiguous.map((a) => a.document.id)]).toEqual([0, [30]])
   })
 
+  describe('number-only fallback (missing NIP)', () => {
+    const ambiguousIds = (result: ReturnType<typeof matchPurchases>) => ({
+      pairs: result.pairs.length, ambiguous: result.ambiguous.map((a) => [a.document.id, a.invoiceIds]), unmatched: result.unmatchedDocuments.length,
+    })
+
+    it('should report a document as ambiguous when an app invoice without NIP has the same number', () => {
+      expect(ambiguousIds(matchPurchases([doc()], [inv({ id: 'm', supplierNip: null })]))).toEqual({ pairs: 0, ambiguous: [[30, ['m']]], unmatched: 0 })
+    })
+
+    it('should treat an empty-string NIP like a missing one', () => {
+      expect(ambiguousIds(matchPurchases([doc()], [inv({ id: 'm', supplierNip: '' })])).ambiguous).toEqual([[30, ['m']]])
+    })
+
+    it('should report a document without tax id as ambiguous when any app invoice has the same number', () => {
+      const ksef = inv({ id: 'k', externalId: '5260000000-20261003-ABCDEF-01', supplierNip: '5260000000' })
+      expect(ambiguousIds(matchPurchases([doc({ supplier_tax_id: null })], [ksef]))).toEqual({ pairs: 0, ambiguous: [[30, ['k']]], unmatched: 0 })
+    })
+
+    it('should accept a number-only hit exactly 31 days apart', () => {
+      expect(ambiguousIds(matchPurchases([doc()], [inv({ id: 'm', supplierNip: null, issueDate: '2026-11-03' })])).ambiguous).toEqual([[30, ['m']]])
+    })
+
+    it('should ignore a number-only hit more than 31 days apart', () => {
+      expect(ambiguousIds(matchPurchases([doc()], [inv({ id: 'm', supplierNip: null, issueDate: '2026-09-01' })]))).toEqual({ pairs: 0, ambiguous: [], unmatched: 1 })
+    })
+
+    it('should ignore an app invoice with a different non-empty NIP when the document has a tax id', () => {
+      expect(ambiguousIds(matchPurchases([doc()], [inv({ id: 'x', supplierNip: '5260000000' })]))).toEqual({ pairs: 0, ambiguous: [], unmatched: 1 })
+    })
+
+    it('should not use the fallback for a document without an original number', () => {
+      expect(ambiguousIds(matchPurchases([doc({ supplier_tax_id: null, original_number: null })], [inv({ id: 'm', supplierNip: null, invoiceNumber: '' })])))
+        .toEqual({ pairs: 0, ambiguous: [], unmatched: 1 })
+    })
+
+    it('should still pair by NIP and number when that match is unique', () => {
+      const result = matchPurchases([doc()], [inv({ id: 'nip' }), inv({ id: 'no-nip', supplierNip: null })])
+      expect([result.pairs.map((p) => p.invoice.id), result.ambiguous.length]).toEqual([['nip'], 0])
+    })
+  })
+
   it('should not reuse one app invoice for two Subiekt documents', () => {
     const result = matchPurchases([doc({ id: 30 }), doc({ id: 31 })], [inv()])
     expect([result.pairs.length, result.unmatchedDocuments.map((d) => d.id)]).toEqual([1, [31]])

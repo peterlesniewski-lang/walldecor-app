@@ -130,6 +130,12 @@ describe('importSubiektForeignPurchases', () => {
     expect([result.ok && result.ambiguous, result.ok && result.created, await db.ksefInvoice.count()]).toEqual([1, 0, 2])
   })
 
+  it('should not duplicate a manual invoice entered without NIP and report the document as ambiguous', async () => {
+    await db.ksefInvoice.create({ data: { supplierName: 'Tapeten', supplierNip: null, invoiceNumber: 'RE-2026-0042', issueDate: new Date('2026-10-06'), grossAmount: 4250 } })
+    const result = await importSubiektForeignPurchases(db, { actorId: 'admin', now: NOW, env, fetchImpl: bridgeWith({ '2026-10': [doc()] }) })
+    expect([result.ok && result.created, result.ok && result.ambiguous, await db.ksefInvoice.count()]).toEqual([0, 1, 1])
+  })
+
   it('should skip domestic PLN invoices', async () => {
     const domestic = doc({ id: 32, currency: 'PLN', supplier_tax_id: '5260000000', original_number: 'FV 10/10/2026' })
     const result = await importSubiektForeignPurchases(db, { actorId: 'admin', now: NOW, env, fetchImpl: bridgeWith({ '2026-10': [domestic] }) })
