@@ -317,6 +317,7 @@ export type ReconciliationResult =
       settleInSubiekt: SettlementView[]
       paidOnlyInSubiekt: SettlementView[]
       paidInAppMissingInSubiekt: Array<{ invoiceId: string; supplierName: string; invoiceNumber: string; issueDate: string; paidAt: string | null }>
+      skippedNonSubiektSuppliers: number
       ambiguous: Array<{ subiektNumber: string; candidates: number }>
     }
   | { ok: false; kind: SubiektBridgeErrorKind; error: string }
@@ -338,6 +339,7 @@ export async function reconcileSubiektPayments(db: PrismaClient, options: Purcha
     paidInAppMissingInSubiekt: result.paidInAppMissingInSubiekt.map((i) => ({
       invoiceId: i.id, supplierName: i.supplierName, invoiceNumber: i.invoiceNumber, issueDate: i.issueDate, paidAt: i.paidAt?.slice(0, 10) ?? null,
     })),
+    skippedNonSubiektSuppliers: result.skippedNonSubiektSuppliers,
     ambiguous: result.ambiguous.map((a) => ({ subiektNumber: a.document.number, candidates: a.invoiceIds.length })),
   }
 }

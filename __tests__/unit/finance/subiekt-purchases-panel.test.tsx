@@ -12,7 +12,7 @@ const settlement = {
 }
 const reconciliation = (overrides: Record<string, unknown> = {}) => ({
   ok: true, from: '2025-11-01', to: '2026-11-30', checkedAt: '2026-11-18T09:00:00.000Z',
-  settleInSubiekt: [settlement], paidOnlyInSubiekt: [], paidInAppMissingInSubiekt: [], ambiguous: [], ...overrides,
+  settleInSubiekt: [settlement], paidOnlyInSubiekt: [], paidInAppMissingInSubiekt: [], skippedNonSubiektSuppliers: 0, ambiguous: [], ...overrides,
 })
 const mockFetch = (body: unknown, status = 200) => {
   const fn = vi.fn(async () => new Response(JSON.stringify(body), { status }))
@@ -30,6 +30,21 @@ describe('SubiektPurchasesPanel', () => {
     renderPanel()
     await userEvent.click(screen.getByRole('button', { name: 'Sprawdź rozliczenia' }))
     expect(await screen.findByText('FZ 3/MAG/10/2026')).toBeTruthy()
+  })
+
+  it('should say how many paid invoices were skipped because their supplier is not in Subiekt', async () => {
+    mockFetch(reconciliation({ skippedNonSubiektSuppliers: 37 }))
+    renderPanel()
+    await userEvent.click(screen.getByRole('button', { name: 'Sprawdź rozliczenia' }))
+    expect((await screen.findByTestId('subiekt-skipped-suppliers')).textContent).toBe('Pominięto 37 opłaconych faktur od dostawców, których nie ma w Subiekcie (koszty spoza magazynu).')
+  })
+
+  it('should not show the skipped line when nothing was skipped', async () => {
+    mockFetch(reconciliation())
+    renderPanel()
+    await userEvent.click(screen.getByRole('button', { name: 'Sprawdź rozliczenia' }))
+    await screen.findByTestId('subiekt-reconciliation')
+    expect(screen.queryByTestId('subiekt-skipped-suppliers')).toBeNull()
   })
 
   it('should show the API error message when the bridge is down', async () => {

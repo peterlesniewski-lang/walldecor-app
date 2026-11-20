@@ -120,7 +120,26 @@ describe('reconcilePayments', () => {
   it('should list paid app invoices in the window with no Subiekt document, excluding cancelled ones', () => {
     const paidElsewhere = inv({ id: 'z', invoiceNumber: 'NOPE', paymentStatus: 'PAID' })
     const cancelled = inv({ id: 'c', invoiceNumber: 'GONE', paymentStatus: 'PAID', documentStatus: 'CANCELLED' })
-    const result = reconcilePayments(matchPurchases([], [paidElsewhere, cancelled]), [paidElsewhere, cancelled])
+    const result = reconcilePayments(matchPurchases([doc()], [paidElsewhere, cancelled]), [paidElsewhere, cancelled])
     expect(result.paidInAppMissingInSubiekt.map((i) => i.id)).toEqual(['z'])
+  })
+
+  it('should not list paid invoices from suppliers that have no document in Subiekt', () => {
+    const utility = inv({ id: 'u', supplierNip: '5260000000', invoiceNumber: 'PRAD/10', paymentStatus: 'PAID' })
+    const result = reconcilePayments(matchPurchases([doc()], [utility]), [utility])
+    expect(result.paidInAppMissingInSubiekt).toEqual([])
+  })
+
+  it('should count paid invoices skipped because their supplier is not in Subiekt', () => {
+    const utility = inv({ id: 'u', supplierNip: '5260000000', invoiceNumber: 'PRAD/10', paymentStatus: 'PAID' })
+    const noNip = inv({ id: 'n', supplierNip: null, invoiceNumber: 'PARAGON 7', paymentStatus: 'PAID' })
+    const result = reconcilePayments(matchPurchases([doc()], [utility, noNip]), [utility, noNip])
+    expect(result.skippedNonSubiektSuppliers).toBe(2)
+  })
+
+  it('should recognise a Subiekt supplier by tax digits regardless of country prefix', () => {
+    const missing = inv({ id: 'm', supplierNip: '123456789', invoiceNumber: 'RE-2026-0099', paymentStatus: 'PAID' })
+    const result = reconcilePayments(matchPurchases([doc({ supplier_tax_id: 'DE123456789' })], [missing]), [missing])
+    expect(result.paidInAppMissingInSubiekt.map((i) => i.id)).toEqual(['m'])
   })
 })

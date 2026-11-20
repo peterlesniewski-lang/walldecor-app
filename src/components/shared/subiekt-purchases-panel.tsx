@@ -184,6 +184,11 @@ export function SubiektPurchasesPanel({ lastImportAt, lastImportMessage }: Subie
                 </table>
               </div>
             )}
+            {result.skippedNonSubiektSuppliers > 0 && (
+              <p className={styles.help} data-testid="subiekt-skipped-suppliers">
+                Pominięto {skippedInvoices(result.skippedNonSubiektSuppliers)} od dostawców, których nie ma w Subiekcie (koszty spoza magazynu).
+              </p>
+            )}
             {result.ambiguous.length > 0 && (
               <p className={styles.warning}>
                 Niejednoznaczne dopasowania ({result.ambiguous.length}): {result.ambiguous.map((item) => `${item.subiektNumber} (${item.candidates})`).join(', ')} — sprawdź ręcznie.
@@ -194,4 +199,11 @@ export function SubiektPurchasesPanel({ lastImportAt, lastImportMessage }: Subie
       )}
     </section>
   )
+}
+
+/** „1 opłaconą fakturę”, „3 opłacone faktury”, „37 opłaconych faktur”. */
+function skippedInvoices(n: number): string {
+  if (n === 1) return '1 opłaconą fakturę'
+  const few = n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14)
+  return few ? `${n} opłacone faktury` : `${n} opłaconych faktur`
 }

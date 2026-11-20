@@ -17,6 +17,8 @@ Plan: `docs/superpowers/plans/2026-11-18-subiekt-eu-invoices-and-payment-reconci
 [x] Poprawki po przeglądzie: zatwierdzanie faktur `SUBIEKT` do kosztów (+ filtr „Subiekt GT” w kosztach), brak pobierania XML KSeF dla faktur z Subiekta, dopasowanie po samym numerze (brak NIP, ±31 dni) → „niejednoznaczne”, dokumenty bez rozrachunku w GT (`is_paid = null`, także KFZ) jako zapłacone bez daty
 [ ] Pierwszy import ręcznie z panelu + przegląd „niejednoznacznych”
 
+[x] 20.11.2026: lista „Opłacone w aplikacji, brak w Subiekcie” obejmuje tylko dostawców obecnych w Subiekcie w sprawdzanym okresie (towar do odsprzedaży); pozostałe koszty są pomijane z licznikiem „Pominięto N…”
+
 Decyzje: faktury UE wprowadzane wyłącznie w Subiekcie; WNT — kwota faktury = kwota płacona dostawcy; do Subiektu nic nie zapisujemy (Sfera ewentualnie później).
 
 **Następna sesja:** po dowodzie z mostka (raport sondy D1–D5) — test end-to-end na prawdziwym mostku, wdrożenie, pierwszy import.
