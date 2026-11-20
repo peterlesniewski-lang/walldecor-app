@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { SubiektBridgeError, fetchSalesSummary, readSubiektBridgeConfig, type FetchLike } from '@/lib/finance/subiekt-bridge-client'
+import { SubiektBridgeError, fetchPurchaseDocuments, fetchSalesSummary, readSubiektBridgeConfig, type FetchLike } from '@/lib/finance/subiekt-bridge-client'
 
 const config = { url: 'https://serwer.example.ts.net', token: 'secret-token', access: null }
 const query = { from: '2026-10-01', to: '2026-10-31' }
@@ -142,5 +142,35 @@ describe('fetchSalesSummary', () => {
       expect((error as SubiektBridgeError).message).toContain('24 miesiące')
       expect((error as SubiektBridgeError).message).not.toContain('secret-token')
     }
+  })
+})
+
+const purchaseRow = {
+  id: 30, type: 'FZ', number: 'FZ 1/MAG/10/2026', original_number: 'RE-2026-0042', issued_at: '2026-10-03', parent_id: null,
+  supplier_name: 'Tapeten Fabrik GmbH', supplier_tax_id: 'DE123456789', currency: 'EUR', exchange_rate: 4.25,
+  net_total: 4250, gross_total: 4250, ksef_number: null, payable: 4250, remaining: 4250, is_paid: false, due_date: '2026-10-17',
+}
+const purchaseBody = { from: '2026-10-01', to: '2026-10-31', limit: 500, rows: [purchaseRow], truncated: false, total: { documents: 1 }, summary: 'ok' }
+
+describe('fetchPurchaseDocuments', () => {
+  it('should call /api/purchases/documents with the date range and parse rows', async () => {
+    let calledUrl = ''
+    const fetcher: FetchLike = async (url) => { calledUrl = url; return new Response(JSON.stringify(purchaseBody), { status: 200 }) }
+    const result = await fetchPurchaseDocuments(config, { from: '2026-10-01', to: '2026-10-31' }, fetcher)
+    expect(calledUrl).toBe('https://serwer.example.ts.net/api/purchases/documents?from=2026-10-01&to=2026-10-31&limit=500')
+    expect(result.rows[0]).toMatchObject({ id: 30, type: 'FZ', currency: 'EUR', remaining: 4250, is_paid: false })
+  })
+
+  it('should reject a truncated month instead of returning partial data', async () => {
+    await expect(kindOf(fetchPurchaseDocuments(config, query, respond(200, { ...purchaseBody, truncated: true })))).resolves.toBe('invalid_response')
+  })
+
+  it('should report a token without purchases:read as unauthorized', async () => {
+    await expect(kindOf(fetchPurchaseDocuments(config, query, respond(403, { error: { code: 'FORBIDDEN_SCOPE' } })))).resolves.toBe('unauthorized')
+  })
+
+  it('should reject an unknown document type', async () => {
+    const body = { ...purchaseBody, rows: [{ ...purchaseRow, type: 'FS' }] }
+    await expect(kindOf(fetchPurchaseDocuments(config, query, respond(200, body)))).resolves.toBe('invalid_response')
   })
 })

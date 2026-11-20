@@ -77,6 +77,22 @@ describe('GET /api/finance/ksef/invoices/[id]/content', () => {
 </Faktura>`)
   })
 
+  it('should reject a Subiekt GT invoice without contacting KSeF', async () => {
+    prismaMock.ksefInvoice.findUnique.mockResolvedValue({
+      id: 'invoice-subiekt', source: 'SUBIEKT', externalId: 'subiekt:30', xmlContent: null,
+      issueDate: new Date('2026-10-03T00:00:00.000Z'), dueDate: null, bankAccount: null, paymentStatus: 'UNPAID', paidAt: null,
+    })
+
+    const response = await GET(new Request('http://localhost'), { params: Promise.resolve({ id: 'invoice-subiekt' }) })
+
+    expect({
+      status: response.status,
+      error: (await response.json()).error,
+      ksefCalls: ksefClientMock.authenticateWithToken.mock.calls.length + ksefClientMock.downloadInvoiceXml.mock.calls.length,
+      updates: prismaMock.ksefInvoice.update.mock.calls.length,
+    }).toEqual({ status: 400, error: 'Faktura z Subiekta GT nie ma XML KSeF.', ksefCalls: 0, updates: 0 })
+  })
+
   it('returns cached invoice XML without calling KSeF again', async () => {
     prismaMock.ksefInvoice.findUnique.mockResolvedValue({
       id: 'invoice-1',

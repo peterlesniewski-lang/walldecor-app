@@ -75,6 +75,14 @@ describe('KsefInboxView', () => {
     expect(row.queryByTitle('Podgląd faktury')).toBeNull()
   })
 
+  it('should not offer the KSeF preview for an invoice imported from Subiekt GT', () => {
+    const subiekt = { ...invoices[0], id: 'subiekt', invoiceNumber: 'RE-2026-0042', source: 'SUBIEKT', externalId: 'subiekt:30' }
+    render(<KsefInboxView initialInvoices={[subiekt]} initialTotal={1} initialPage={1} initialPageSize={50} initialTotalPages={1}
+      initialGrossAmountTotal={123} initialCounts={{ NEW: 1, MAPPED: 0, APPROVED: 0, IGNORED: 0 }} initialRules={[]}
+      costCenters={costCenters} subCategories={subCategories} />)
+    expect(within(screen.getByText('RE-2026-0042').closest('tr')!).queryByTitle('Podgląd faktury')).toBeNull()
+  })
+
   it.each(['OPEN', 'APPROVED', 'ARCHIVED'] as const)('keeps an imported %s document out of all legacy editors and bulk selection', async (state) => {
     const user = userEvent.setup()
     const imported = { ...invoices[0], id: 'imported', invoiceNumber: 'IMPORT/1', source: 'MANUAL',

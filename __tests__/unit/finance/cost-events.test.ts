@@ -67,6 +67,24 @@ describe('buildCostEventDraftFromKsefInvoice', () => {
     expect(draft.source).toBe('KSEF')
   })
 
+  it('should accept a Subiekt GT invoice (already in PLN) and keep SUBIEKT as the source', () => {
+    const draft = buildCostEventDraftFromKsefInvoice({
+      id: 'inv-subiekt',
+      source: 'SUBIEKT',
+      currency: 'PLN',
+      issueDate: new Date('2026-10-03T00:00:00.000Z'),
+      supplierName: 'Tapeten Fabrik GmbH',
+      supplierNip: 'DE123456789',
+      invoiceNumber: 'RE-2026-0042',
+      grossAmount: 4250,
+      netAmount: 4250,
+      vatAmount: 0,
+      parts: [],
+    })
+
+    expect({ source: draft.source, currency: draft.currency, grossAmount: draft.grossAmount }).toEqual({ source: 'SUBIEKT', currency: 'PLN', grossAmount: 4250 })
+  })
+
   it('rejects an unknown source without replacing it with a default', () => {
     expect(() => buildCostEventDraftFromKsefInvoice({
       id: 'inv-unknown-source',

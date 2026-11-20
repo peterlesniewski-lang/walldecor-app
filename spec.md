@@ -4,6 +4,10 @@
 **Autor:** Piotr + Claude Code
 **Status:** Draft MVP
 
+## Uzupełnienie — faktury UE z Subiekta GT, 18.11.2026
+
+Faktury od dostawców z UE (FZ/KFZ, już przeliczone na PLN) wprowadzane są **wyłącznie w Subiekcie GT**; aplikacja pobiera je przez mostek tylko do odczytu `walldecor-bridge` (pierwszy import od 2026-01-01, potem 60 dni wstecz, duplikaty pomijane). Faktury krajowe nadal przychodzą z KSeF. Kwota faktury WNT = kwota płacona dostawcy. Płatności oznaczane są w aplikacji; panel na `/finance/ksef` pokazuje, które z nich trzeba jeszcze ręcznie rozliczyć w Subiekcie — aplikacja nic do Subiektu nie zapisuje. [Plan](docs/superpowers/plans/2026-11-18-subiekt-eu-invoices-and-payment-reconciliation.md).
+
 ## Uzupełnienie — faktury spoza KSeF i wspólne AI, 10.09.2026
 
 Zatwierdzony zakres: [plan importu i AI](docs/plans/2026-09-10-invoice-import-codex-ai.md). Wszystkie trzy zastosowania AI mają korzystać z jednej trwałej kolejki i prywatnego oficjalnego Codex CLI, dedykowanego logowania ChatGPT właściciela, `gpt-5.6-luna/low`, bez płatnego fallbacku ani narzędzi modelu. Finansowy czat korzysta ze wspólnego modelu rzeczywistych danych dashboardu; encyklopedia zachowuje uprawnienia i zakres kontekstu.
@@ -233,7 +237,7 @@ Dane w Excelu mają ustaloną strukturę — migracja powinna być wykonalna prz
 
 | System | Status |
 |---|---|
-| SubiektGT INSERT | Brak integracji w MVP — dane ręczne |
+| SubiektGT INSERT | Odczyt przez mostek `walldecor-bridge`: przychody (sprzedaż) i faktury zakupu UE; bez zapisu do Subiekta |
 | GA4 | Faza 2 |
 | Google Business | Faza 2 |
 | Zewnętrzna kadrowa | Brak integracji — eksport raportu PDF/Excel do wysyłki ręcznej |

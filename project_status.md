@@ -1,6 +1,27 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-11-02 (Przychody z Subiekta GT obok wpisanych — Loop 4 planu walldecor-bridge, gałąź `feat/subiekt-bridge-revenue`, niewdrożone)
+**Ostatnia aktualizacja:** 2026-11-18 (Faktury UE z Subiekta + uzgodnienie płatności — gałąź `eu-invoice-mcp-bridge-6f82721a`, niewdrożone; mostek `bridge/purchases` w realizacji przez Codex na SERWER)
+
+## Faktury UE z Subiekta i uzgodnienie płatności — 18.11.2026 (gałąź `eu-invoice-mcp-bridge-6f82721a`)
+
+Plan: `docs/superpowers/plans/2026-11-18-subiekt-eu-invoices-and-payment-reconciliation.md`. Mostek: repo `walldecor-bridge`, gałąź `bridge/purchases`, plik przekazania `docs/PLAN-PURCHASES-2026-11-18.md` (Codex na SERWER).
+
+[x] Klient mostka `fetchPurchaseDocuments` (`GET /api/purchases/documents`, zakres `purchases:read`, miesiąc po miesiącu, odrzuca `truncated`)
+[x] `src/lib/finance/subiekt-purchase-matching.ts` — dopasowanie FZ/KFZ ↔ `KsefInvoice` (externalId `subiekt:<id>` → numer KSeF → cyfry NIP + numer obcy; niejednoznaczne nie są zgadywane) i klasyfikacja płatności
+[x] `src/lib/finance/subiekt-purchases.ts` — import tylko faktur zagranicznych (bez numeru KSeF, NIP z prefiksem ≠ PL albo waluta ≠ PLN przy braku polskiego NIP) jako `KsefInvoice` `source = "SUBIEKT"`, kwoty PLN z Subiekta, reguły dostawców (KFZ bez automatycznej klasyfikacji); pierwszy import od `SUBIEKT_PURCHASES_IMPORT_FROM` (2026-01-01), potem 60 dni wstecz; duplikaty ignorowane; bez migracji Prisma
+[x] `GET /api/finance/subiekt-purchases/reconciliation`, `POST /api/finance/subiekt-purchases/import` (ADMIN)
+[x] Panel „Subiekt GT — faktury zakupu” na `/finance/ksef` (tylko gdy mostek skonfigurowany): import, „Sprawdź rozliczenia” → „Do odhaczenia w Subiekcie” / „Opłacone w Subiekcie, otwarte w aplikacji” / „Opłacone w aplikacji, brak w Subiekcie” (6 miesięcy)
+[x] Codzienny import w slocie 07:30 przy `SUBIEKT_PURCHASES_AUTO_IMPORT=on`
+[ ] Mostek `purchase_documents` + sonda na SERWER (Codex) — wymagane przed wdrożeniem
+[ ] Coolify: `SUBIEKT_BRIDGE_TOKEN` z `sales:read,purchases:read`, `SUBIEKT_PURCHASES_IMPORT_FROM=2026-01-01`, później `SUBIEKT_PURCHASES_AUTO_IMPORT=on` razem z `SUBIEKT_BRIDGE_AUTO_SYNC=on` (główny przełącznik harmonogramu — bez niego import dzienny się nie uruchomi)
+[x] Poprawki po przeglądzie: zatwierdzanie faktur `SUBIEKT` do kosztów (+ filtr „Subiekt GT” w kosztach), brak pobierania XML KSeF dla faktur z Subiekta, dopasowanie po samym numerze (brak NIP, ±31 dni) → „niejednoznaczne”, dokumenty bez rozrachunku w GT (`is_paid = null`, także KFZ) jako zapłacone bez daty
+[ ] Pierwszy import ręcznie z panelu + przegląd „niejednoznacznych”
+
+Decyzje: faktury UE wprowadzane wyłącznie w Subiekcie; WNT — kwota faktury = kwota płacona dostawcy; do Subiektu nic nie zapisujemy (Sfera ewentualnie później).
+
+**Następna sesja:** po dowodzie z mostka (raport sondy D1–D5) — test end-to-end na prawdziwym mostku, wdrożenie, pierwszy import.
+
+---
 
 ## Przychody z Subiekta GT — Loop 4 mostka walldecor-bridge — 02.11.2026 (gałąź `feat/subiekt-bridge-revenue`)
 

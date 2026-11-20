@@ -28,7 +28,8 @@ export interface KsefInvoiceForCostEvent {
 }
 
 export function buildCostEventDraftFromKsefInvoice(invoice: KsefInvoiceForCostEvent) {
-  if (invoice.source !== 'MANUAL' && invoice.source !== 'KSEF') {
+  // SUBIEKT: foreign purchases imported from Subiekt GT, amounts already in PLN.
+  if (invoice.source !== 'MANUAL' && invoice.source !== 'KSEF' && invoice.source !== 'SUBIEKT') {
     throw new Error(`Unsupported invoice source: ${invoice.source}`)
   }
   const isForeignCurrency = invoice.currency !== 'PLN'
