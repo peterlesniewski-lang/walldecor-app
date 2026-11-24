@@ -113,7 +113,8 @@ test.describe('HR payroll — admin monthly settlement', () => {
 
     // 1. Base salary with an effective date.
     const row = page.getByTestId(`payroll-row-${EMPLOYEE_A.id}`)
-    await row.getByRole('button', { name: 'Podstawa' }).click()
+    await row.getByRole('button', { name: /^Akcje — / }).click()
+    await page.getByRole('menuitem', { name: 'Angaż…' }).click()
     const dialog = page.getByRole('dialog')
     await dialog.getByLabel('Obowiązuje od').fill('2026-01-01')
     await dialog.getByLabel('Kwota (PLN)').fill('4321,00')
@@ -123,7 +124,8 @@ test.describe('HR payroll — admin monthly settlement', () => {
     await expect(row.getByText('4321,00 zł')).toBeVisible()
 
     // 2. Draft settlement pulls overtime from the HR calendar; pending entries do not count.
-    await row.getByRole('button', { name: 'Przygotuj rozliczenie' }).click()
+    await row.getByRole('button', { name: /^Akcje — / }).click()
+    await page.getByRole('menuitem', { name: 'Otwórz rozliczenie szczegółowe (utworzy szkic)' }).click()
     await expect(page).toHaveURL(/\/hr\/payroll\/[^/?]+$/)
     settlementId = page.url().split('/').pop()!
     await expect(page.getByTestId('ot-2026-08-12').getByText('niezatwierdzony wpis')).toBeVisible()
@@ -175,6 +177,8 @@ test.describe('HR payroll — admin monthly settlement', () => {
     const office = page.getByRole('region', { name: 'Dane od kadrowej' })
     await office.getByLabel('Brutto (ostateczne)').fill('4 781,11')
     await office.getByLabel('Netto do wypłaty').fill('3 518,34')
+    // Since #21 the cost is calculated by default; an explicit amount needs the manual override.
+    await office.getByLabel('wpisz ręcznie (wyjątek — zapisze się jako nadpisany)').check()
     await office.getByLabel('Pełny koszt pracodawcy').fill('5 760,26')
     await office.getByLabel('Numer listy płac / notatka').fill('LP test 08/2026')
     await office.getByRole('button', { name: 'Potwierdź dane kadrowej' }).click()
@@ -204,7 +208,8 @@ test.describe('HR payroll — admin monthly settlement', () => {
     await expect(history.getByText('Zmieniono pozycję · E2E Administrator')).toBeVisible()
     await expect(history.getByText('Powód: Wpisana omyłkowo')).toBeVisible()
     await page.goto('/hr/payroll?month=2026-08')
-    await expect(page.getByTestId(`payroll-row-${EMPLOYEE_A.id}`).getByText('5760,26 zł')).toBeVisible()
+    // The month sheet shows a manually entered employer cost in the row's cost field.
+    await expect(page.getByTestId(`payroll-row-${EMPLOYEE_A.id}`).getByRole('textbox', { name: /^Koszt pracodawcy — / })).toHaveValue('5760,26')
     await expect(page.getByRole('region', { name: 'Pracownicy w miesiącu' })).toHaveCSS('opacity', '1')
     await page.screenshot({ path: path.join(EVIDENCE_DIR, '00-month-list.png'), animations: 'disabled' })
 

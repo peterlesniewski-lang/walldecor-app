@@ -16,6 +16,11 @@ export function payrollMonthKey({ year, month }: PayrollPeriod): string {
   return `${year}-${String(month).padStart(2, '0')}`
 }
 
+/** The month immediately before `period`; January rolls back to December of the previous year. */
+export function previousPayrollPeriod({ year, month }: PayrollPeriod): PayrollPeriod {
+  return month === 1 ? { year: year - 1, month: 12 } : { year, month: month - 1 }
+}
+
 export function periodFirstDay(period: PayrollPeriod): string {
   return `${payrollMonthKey(period)}-01`
 }

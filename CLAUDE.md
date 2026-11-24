@@ -215,7 +215,7 @@ Ecommerce to kanał przychodów przypisany zawsze do `PUL`.
 
 1. **Double navigation (hr/layout.tsx)** — `hr/layout.tsx` renderował `HrSidebar` jako dodatkowy panel obok globalnego sidebaru. Fix: usunięto `HrSidebar` z layout — renderuje tylko `{children}`.
 
-2. **Produkcja P2021 (Prisma migrate)** — entrypoint Docker używał `prisma migrate deploy`, ale repo nie zawiera plików migracji — Prisma rzucał P2021. Fix: zmieniono na `prisma db push --accept-data-loss`.
+2. **Produkcja P2021 (Prisma migrate)** — entrypoint Docker używał `prisma migrate deploy`, ale repo nie zawiera plików migracji — Prisma rzucał P2021. Fix: zmieniono na `prisma db push --accept-data-loss`. **Nieaktualne:** repo ma dziś migracje SQL w `prisma/migrations/`, a `docker-entrypoint.sh` uruchamia `prisma migrate deploy` — nie używać `db push`.
 
 3. **Next.js 16 params — patrz reguła na górze CLAUDE.md** — `{ params: { id: string } }` nie kompiluje się w Next.js 16. Fix: `{ params: Promise<{ id: string }> }` + `await params`. Dotknięte pliki: `alerts/thresholds/[id]`, `alerts/payment-reminders/[id]`, `users/[id]`, `users/[id]/reset-password`.
 
