@@ -13,7 +13,9 @@ Plan i decyzje właściciela: `docs/plans/2026-11-24-payroll-ux-simplification.m
 [ ] Etap 5 — Uporządkowanie strony szczegółów rozliczenia (Sonnet)
 [ ] Scenariusz finałowy „miesiąc właściciela" na czystej bazie
 
-**Następna sesja:** akceptacja planu przez właściciela → założenie pięciu zgłoszeń GitHub (`ready-for-agent`) → start etapu 1.
+Zgłoszenia: #42 (etap 1, `ready-for-agent`), #43, #44, #45, #46 — kolejne dostają etykietę po scaleniu poprzedników.
+
+**Następna sesja:** plan zaakceptowany 24.11.2026 → scalić gałąź z planem do `main` → start etapu 1 (#42, Opus).
 
 ## Faktury UE z Subiekta i uzgodnienie płatności — 18.11.2026 (gałąź `eu-invoice-mcp-bridge-6f82721a`)
 

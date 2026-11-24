@@ -436,7 +436,7 @@ Etap 1 ──► Etap 2 ──► Etap 3 ──► Etap 5 ──► Scenariusz f
 - Każdy etap: gałąź od aktualnego `main`, PR, przegląd, akceptacja właściciela, wdrożenie. Następny etap startuje po scaleniu poprzedniego.
 - Migracje: etap 1 (`PayrollMonth`), etap 2 (`origin` + odtworzenie triggera). Etapy 3–5 bez migracji. Na produkcji migracje stosuje `docker-entrypoint.sh` (kopia zapasowa bazy, potem `migrate deploy`).
 - Po wdrożeniu etapu 2 właściciel sam włącza automat w ustawieniach płac.
-- Zgłoszenia GitHub: pięć zgłoszeń z etykietą `ready-for-agent`, każde wskazuje ten plik i swoją sekcję. Zakładane po akceptacji planu.
+- Zgłoszenia GitHub: etap 1 → #42, etap 2 → #43, etap 3 → #44, etap 4 → #45, etap 5 i scenariusz finałowy → #46. Etykietę `ready-for-agent` ma zgłoszenie, którego zależności są już scalone (na start tylko #42); kolejnym nadaje się ją po scaleniu poprzedników.
 
 Polecenie startowe dla agenta:
 
