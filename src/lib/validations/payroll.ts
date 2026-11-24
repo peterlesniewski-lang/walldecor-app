@@ -127,3 +127,32 @@ export const PayrollCostSplitCreateSchema = z.object({
 }).strict()
 
 export const PayrollRevokeSchema = z.object({ reason }).strict()
+
+// ─── Month sheet ─────────────────────────────────────────────────────────────
+
+/** One row of the month sheet; validated separately so one bad row is reported as INVALID alone. */
+export const PayrollSheetRowSchema = z.object({
+  employeeId: z.string().min(1),
+  finalGross: plnAmount('Brutto'),
+  finalNet: plnAmount('Netto do wypłaty'),
+  // Omitted → calculated on the server from gross and current rates; given → manual override.
+  employerCost: plnAmount('Pełny koszt pracodawcy').nullish(),
+  // The settlement revision the sheet showed; omitted when the row had no settlement yet.
+  expectedRevision: expectedRevision.nullish(),
+}).strict()
+  .refine((row) => row.finalGross > 0, { message: 'Brutto musi być większe od zera.', path: ['finalGross'] })
+  .refine((row) => row.employerCost == null || row.employerCost > 0, {
+    message: 'Pełny koszt pracodawcy musi być większy od zera.',
+    path: ['employerCost'],
+  })
+
+export type PayrollSheetRowInput = z.infer<typeof PayrollSheetRowSchema>
+
+export const PayrollSheetSubmitSchema = z.object({
+  month: monthKey,
+  rows: z.array(z.unknown()).min(1, 'Wybierz co najmniej jeden wiersz.').max(300),
+}).strict()
+
+export const PayrollMonthUpdateSchema = z.object({
+  listReference: optionalText(200),
+}).strict()

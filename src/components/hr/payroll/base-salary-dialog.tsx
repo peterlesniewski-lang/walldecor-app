@@ -21,10 +21,13 @@ export function BaseSalaryDialog({
   employee,
   onClose,
   onChanged,
+  defaultEffectiveFrom,
 }: {
   employee: { id: string; firstName: string; lastName: string }
   onClose: () => void
   onChanged: () => void
+  /** "YYYY-MM-DD" prefilled in "Obowiązuje od", e.g. the first day of the month being settled. */
+  defaultEffectiveFrom?: string
 }) {
   const [rows, setRows] = useState<BaseRow[] | null>(null)
   const [error, setError] = useState<string | null>(null)
@@ -137,7 +140,7 @@ export function BaseSalaryDialog({
         <form className={styles.form} onSubmit={submit}>
           <label className={styles.field}>
             Obowiązuje od
-            <input name="effectiveFrom" type="date" required />
+            <input name="effectiveFrom" type="date" required defaultValue={defaultEffectiveFrom} />
           </label>
           <label className={styles.field}>
             Kwota (PLN)

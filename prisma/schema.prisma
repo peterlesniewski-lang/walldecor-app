@@ -2160,6 +2160,18 @@ model PayrollCostSplit {
   @@index([employeeId, effectiveFrom])
 }
 
+// Month-level payroll data. listReference = payroll list number for the month (max 200 chars);
+// editable at any time, copied into payrollOfficeReference when a version is approved from the sheet.
+model PayrollMonth {
+  year          Int
+  month         Int
+  listReference String?
+  updatedById   String
+  updatedAt     DateTime @updatedAt
+
+  @@id([year, month])
+}
+
 // Append-only history. employeeId is always set; settlementId is null for base-salary events.
 model PayrollAuditEvent {
   id           String             @id @default(cuid())

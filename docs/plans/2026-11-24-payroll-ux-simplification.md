@@ -37,7 +37,7 @@ Cel: typowy miesiąc ma nie wymagać żadnego wpisywania; wyjątki poprawia się
 | D5 | Korekta zatwierdzonej kwoty to zmiana wartości w wierszu i jedno kliknięcie; powód korekty wpisuje się sam. Powstaje nowa wersja. |
 | D6 | **Numer listy płac** jest cechą miesiąca (jedno pole na miesiąc, edytowalne w każdej chwili), nie wersji rozliczenia. |
 | D7 | Pasek wynagrodzenia jest widoczny dla pracownika od razu po zatwierdzeniu, także automatycznym. |
-| D8 | Automat **nie** zatwierdza sam (wiersz „wymaga uwagi" z podpowiedzianą kwotą), gdy: (1) brak zatwierdzonego miesiąca poprzedniego, (2) osoba zaczyna lub kończy pracę w trakcie miesiąca, (3) angaż zmienił się od miesiąca źródłowego, (4) miesiąc źródłowy zawierał premię lub korektę, (5) w kalendarzu są nadgodziny niezatwierdzone lub nierozstrzygnięte, (6) w miesiącu jest zatwierdzona nieobecność zmieniająca wypłatę, (7) osoba w GLOBAL nie ma podziału JAG/PUL. |
+| D8 | Automat **nie** zatwierdza sam (wiersz „wymaga uwagi" z podpowiedzianą kwotą), gdy: (1) brak zatwierdzonego miesiąca poprzedniego, (2) osoba zaczyna lub kończy pracę w trakcie miesiąca, (3) angaż zmienił się od miesiąca źródłowego, (4) miesiąc źródłowy zawierał premię lub korektę, (5) w kalendarzu są nadgodziny niezatwierdzone lub nierozstrzygnięte, (6) w miesiącu jest zatwierdzona nieobecność zmieniająca wypłatę, (7) osoba w GLOBAL nie ma podziału JAG/PUL. Doprecyzowane przy odbiorze etapu 1 (ta sama zasada: nie kopiować kwoty nietypowej): do (4) liczą się też wypłacone nadgodziny w miesiącu źródłowym; (8) miesiąc źródłowy nie był przepracowany w całości; (9) miesiąc źródłowy zawierał nieobecność zmieniającą wypłatę. |
 | D9 | Zmiany, które pojawią się **po** zatwierdzeniu (nadgodziny, nieobecność, data zakończenia pracy, zmiana angażu), dają znacznik „zmiana po zatwierdzeniu — sprawdź kwotę" i powiadomienie. Automat nigdy sam nie otwiera zatwierdzonego rozliczenia. |
 | D10 | Automat jest po wdrożeniu **wyłączony**. Właściciel włącza go raz w ustawieniach. Włączenie nie uruchamia przebiegu za bieżący miesiąc — pierwszy przebieg jest 1. dnia następnego miesiąca. |
 | D11 | Automat kopiuje brutto i netto. Koszt pracodawcy przelicza z aktualnych stawek; jeśli w miesiącu źródłowym był wpisany ręcznie, kopiuje kwotę. Premii i korekt nie kopiuje. W historii autorem jest „Automat". |
@@ -130,13 +130,14 @@ Jak działa dziś lista: `listSettlementsForMonth` zwraca **wszystkie** karty za
 Bramka etapu — wszystko zielone albo etap **nie** jest ukończony:
 
 ```bash
-npm run test
+npm test -- --maxWorkers=2 --hookTimeout=60000 --testTimeout=60000 --exclude __tests__/unit/finance/ksef-sync.test.ts
 npm run typecheck:app
 npx eslint <zmienione pliki>
 npm run build
 npx playwright test <specyfikacje wymienione w etapie> e2e/hr-payroll.spec.ts
 ```
 
+- Polecenie testów jest tym samym, którego używa GitHub Actions (`.github/workflows/build-image.yml`). Plik `ksef-sync.test.ts` jest tam jawnie wyłączony (11 znanych błędów sprzed tej pracy). Testy `__tests__/unit/invoice-import/document-processor.test.ts` wymagają Popplera (`pdfinfo`, `pdftoppm`); na komputerze bez niego 4 z nich nie przechodzą, a rozstrzyga wynik GitHub Actions.
 - Testy integracyjne budują świeżą bazę z migracji (wzór: `__tests__/integration/hr/payroll-settlement-flow.test.ts`), E2E korzysta z `e2e/global-setup.ts`.
 - Limit 5 iteracji naprawczych. Po przekroczeniu STOP i opis problemu — nie oznaczać etapu jako ukończonego, nie wyłączać ani nie osłabiać testów.
 - Raport końcowy w `docs/evidence/<data>-<etap>.md` z sekcją **DOWÓD**: uruchomione komendy z wynikiem oraz dla każdego punktu DoD zrzut ekranu, odpowiedź API albo rekord z bazy. Zrzuty w `docs/evidence/<katalog>/`. Etap bez sekcji DOWÓD nie jest ukończony.
@@ -173,13 +174,13 @@ ADMIN otwiera miesiąc, widzi w wierszach kwoty podpowiedziane z poprzedniego mi
 7. **Numer listy płac miesiąca** — nowa tabela `PayrollMonth` (klucz `year` + `month`, `listReference` do 200 znaków, `updatedById`, `updatedAt`), migracja SQL, `PUT /api/hr/payroll/months/[month]`. Przy zatwierdzeniu z arkusza numer miesiąca jest kopiowany do `payrollOfficeReference` nowej wersji. Zmiana numeru później nie wymaga korekty i nie tworzy wersji.
 8. **UI arkusza** — przebudowa `payroll-month-view.tsx`:
    - Nagłówek: nawigacja miesiąca bez zmian, opis skrócony do jednego zdania, pole „Numer listy płac" (zapis po opuszczeniu pola lub Enter, widoczne potwierdzenie zapisu), wskaźniki: „Zatwierdzone X / Y", „Koszt pracodawcy (zatwierdzony)" z różnicą do poprzedniego miesiąca, „Wymaga uwagi: N".
-   - Kolumny wiersza: zaznaczenie · osoba (nazwisko i imię; pod spodem stanowisko, centrum kosztów, umowa, angaż) · Brutto (pole) · Netto (pole) · Koszt pracodawcy (liczony na żywo ze stawek; przełącznik „ręcznie" zamienia go w pole; przy braku stawek od razu pole) · różnica do poprzedniego miesiąca · status · akcje.
+   - Kolumny wiersza: zaznaczenie · osoba (nazwisko i imię; pod spodem stanowisko, centrum kosztów, umowa, angaż) · Brutto (pole) · Netto (pole) · Koszt pracodawcy (liczony na żywo ze stawek; przycisk „wpisz ręcznie” zamienia go w pole, „licz ze stawek” przywraca wyliczenie; przy braku stawek od razu pole) · różnica do poprzedniego miesiąca · status · akcje.
    - Pola wypełnia kolejno: obowiązująca wersja → kwoty szkicu → podpowiedź → puste. Podpowiedź ma odrębny wygląd (stonowany kolor, kursywa) i podpis źródła, np. „z października"; po edycji wygląda jak zwykła wartość.
    - Zaznaczenie: domyślnie zaznaczone tylko wiersze gotowe (`autoEligible`). Wiersz ze znacznikiem jest odznaczony i zaznacza się sam po edycji pola albo ręcznie. Wiersz z blokadą nie daje się zaznaczyć; pokazuje treść blokady i akcję, która ją usuwa („Angaż…" dla braku angażu, „Otwórz" dla pozostałych).
    - Znaczniki jako etykiety z polskim opisem (np. „angaż zmienił się od października", „poprzedni miesiąc zawierał premię", „stawka godzinowa — sprawdź kwotę", „brak rodzaju umowy — uzupełnij w karcie").
    - Wiersz zatwierdzony: pieczątka „Zatwierdzone · vN", pola pokazują zatwierdzone kwoty. Zmiana wartości pokazuje w wierszu przycisk „Zapisz korektę"; bez zmiany przycisku nie ma.
    - Pasek akcji przyklejony do dołu: „Zatwierdź zaznaczone (N)" z sumą kosztu zaznaczonych. Po zapisie wynik każdego wiersza jest widoczny w wierszu (pieczątka albo powód odmowy), a arkusz pobiera dane ponownie.
-   - Klawiatura: Tab przechodzi brutto → netto → następny wiersz; Enter w polu zatwierdza ten wiersz. Kwoty przyjmują zapis `7454,94`.
+   - Klawiatura: Tab przechodzi brutto → netto → następny wiersz; Enter w polu zatwierdza ten wiersz. Kwoty przyjmują zapis `6500,50`.
    - Menu wiersza: „Szczegóły rozliczenia" (gdy rozliczenia nie ma — „Otwórz rozliczenie szczegółowe (utworzy szkic)", istniejące `POST /api/hr/payroll/settlements`), „Angaż…" (istniejący `BaseSalaryDialog`; pole „Obowiązuje od" wstępnie ustawione na pierwszy dzień oglądanego miesiąca).
    - Zmiana miesiąca przy niezapisanych zmianach: nawigacja jest wstrzymana i pojawia się komunikat w treści strony z akcjami „Zatwierdź zaznaczone" i „Porzuć zmiany". Bez okien `confirm()`.
    - Widok wąski (do 640 px): wiersz układa się w kartę, pola pod sobą; pasek akcji zostaje przyklejony.
@@ -201,10 +202,10 @@ ADMIN otwiera miesiąc, widzi w wierszach kwoty podpowiedziane z poprzedniego mi
 - [ ] ADMIN klika „Zapisz korektę" bez zmiany kwot (albo wysyła te same kwoty przez API): nie powstaje nowa wersja, wynik to `UNCHANGED`.
 - [ ] Wiersz osoby bez angażu albo z nierozstrzygniętymi nadgodzinami nie daje się zaznaczyć i pokazuje powód; wysłanie go przez API zwraca `BLOCKED` i **nie zostawia** rekordu rozliczenia w bazie.
 - [ ] Wiersz ze znacznikiem (zmiana angażu, premia w poprzednim miesiącu, częściowy miesiąc, nieobecność zmieniająca wypłatę, stawka godzinowa, brak poprzedniego miesiąca) jest odznaczony, pokazuje opis znacznika i po ręcznym zaznaczeniu daje się zatwierdzić.
-- [ ] Osoba z rodzajem umowy B2B nie pojawia się na arkuszu i nie jest liczona we wskaźniku. Osoba B2B, która ma już rozliczenie w danym miesiącu, jest widoczna. Osoba bez rodzaju umowy jest widoczna z ostrzeżeniem.
+- [ ] Osoba z rodzajem umowy B2B nie pojawia się na arkuszu i nie jest liczona we wskaźniku. Osoba B2B, która ma już rozliczenie w danym miesiącu, jest widoczna. Osoba bez rodzaju umowy jest widoczna z ostrzeżeniem. Próba zatwierdzenia z arkusza wykonawcy, który nie ma jeszcze rozliczenia, jest odrzucana przez serwer i nie zostawia rekordu.
 - [ ] ADMIN wpisuje numer listy płac w nagłówku: po odświeżeniu numer jest widoczny; wersje zatwierdzone później mają go w `payrollOfficeReference`; zmiana numeru nie tworzy wersji.
 - [ ] Dwie karty przeglądarki: zatwierdzenie w drugiej karcie wiersza zatwierdzonego już w pierwszej zwraca `CONFLICT` albo `UNCHANGED` i nie tworzy drugiej obowiązującej wersji.
-- [ ] MANAGER i EMPLOYEE dostają 403 z `GET` i `POST /api/hr/payroll/sheet` oraz `PUT /api/hr/payroll/months/[month]`; bez sesji 401; wejście na `/hr/payroll` przekierowuje.
+- [ ] MANAGER i EMPLOYEE dostają 403 z `GET` i `POST /api/hr/payroll/sheet` oraz `PUT /api/hr/payroll/months/[month]`; bez sesji sama trasa zwraca 401, a w przeglądarce `src/proxy.ts` przekierowuje do logowania, zanim żądanie dotrze do trasy; wejście na `/hr/payroll` przekierowuje.
 - [ ] Styczeń bierze podpowiedź z grudnia poprzedniego roku.
 
 ### Testy

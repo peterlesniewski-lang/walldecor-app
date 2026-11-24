@@ -457,6 +457,22 @@ Bez wpisu w `PayrollEmployerRate` obowiązują stawki domyślne z kodu. Osoba w 
 Finanse czytają `getMonthlyEmployerCosts` (zatwierdzona wersja albo szacunek z podstawy × stawki) przez `src/lib/finance/employer-costs.ts`;
 koszt wchodzi do wyniku firmy/salonów i progu rentowności jako koszt stały od 04/2026 do bieżącego miesiąca.
 
+#### Arkusz miesiąca i numer listy płac (2026-11-24, #42)
+
+```
+PayrollMonth   (@@id year+month; listReference ≤ 200 znaków albo NULL, updatedById, updatedAt)
+```
+
+Migracja `20261124120000_payroll_month` (CHECK-i roku, miesiąca i długości numeru). Numer listy płac jest cechą miesiąca:
+edytowalny w każdej chwili (`PUT /api/hr/payroll/months/[month]`), nie tworzy wersji; przy zatwierdzeniu z arkusza
+kopiowany do `PayrollSettlementVersion.payrollOfficeReference`.
+Podpowiedź kwot (`src/lib/payroll/carryover.ts`) jest liczona przy odczycie arkusza i **nie** jest zapisywana w bazie.
+`settleEmployeeMonth` (`service.ts`) tworzy rozliczenie, potwierdza kwoty i zatwierdza w jednej transakcji — blokada
+wycofuje całość, więc nie zostaje żaden `PayrollSettlement`. Wersje zatwierdzone od #42 mają w `snapshotJson` klucz
+`inputs` (`employment.from/to` przycięte do miesiąca, `payAffectingAbsenceIds`).
+Wykonawca zewnętrzny (B2B) jest zdefiniowany tylko w `src/lib/hr/contractors.ts` (`STAFF_WHERE` zachowuje karty z pustym
+`employmentType`); arkusz pokazuje B2B wyłącznie, gdy ma już rozliczenie w miesiącu.
+
 ---
 
 ### CostContract — Umowy kosztowe (2026-10-01, #25)
