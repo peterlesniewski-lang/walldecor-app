@@ -1,6 +1,19 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-11-18 (Faktury UE z Subiekta + uzgodnienie płatności — gałąź `eu-invoice-mcp-bridge-6f82721a`, niewdrożone; mostek `bridge/purchases` w realizacji przez Codex na SERWER)
+**Ostatnia aktualizacja:** 2026-11-24 (plan uproszczenia modułu Wynagrodzenia i wydzielenia wykonawców z HR — gałąź `payroll-ux-simplification-8c282c03`, sam plan, bez zmian w kodzie)
+
+## Wynagrodzenia: arkusz miesiąca, automat, stawka godzinowa, wykonawcy poza HR — plan 24.11.2026
+
+Plan i decyzje właściciela: `docs/plans/2026-11-24-payroll-ux-simplification.md`. Każdy etap to osobne zgłoszenie, gałąź i wdrożenie.
+
+[ ] Etap 1 — Arkusz miesiąca: kwoty w wierszach, podpowiedzi z poprzedniego miesiąca, zatwierdzenie i korekta jednym kliknięciem, numer listy płac na miesiąc, B2B poza listą płac (Opus)
+[ ] Etap 2 — Automat 1. dnia miesiąca, etykieta „zmiana po zatwierdzeniu", powiadomienia, szacunek kosztu z ostatniego zatwierdzonego miesiąca (Opus)
+[ ] Etap 3 — Stawka godzinowa: godziny × stawka, „Zatwierdź godziny" w wierszu, przypomnienie przed wypłatą (Opus)
+[ ] Etap 4 — Wykonawcy (B2B) poza HR: zakładka „Wykonawcy", ukrycie w czasie pracy, urlopach, raportach (Sonnet, przegląd Opus)
+[ ] Etap 5 — Uporządkowanie strony szczegółów rozliczenia (Sonnet)
+[ ] Scenariusz finałowy „miesiąc właściciela" na czystej bazie
+
+**Następna sesja:** akceptacja planu przez właściciela → założenie pięciu zgłoszeń GitHub (`ready-for-agent`) → start etapu 1.
 
 ## Faktury UE z Subiekta i uzgodnienie płatności — 18.11.2026 (gałąź `eu-invoice-mcp-bridge-6f82721a`)
 
