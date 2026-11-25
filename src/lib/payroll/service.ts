@@ -24,6 +24,14 @@ import {
 import { describeCarryoverFlag, employmentInPeriod, evaluateCarryover, isPayAffectingLeave } from './carryover'
 import { getWarsawBusinessDate } from '@/lib/hr/business-date'
 import { isExternalContractor, STAFF_WHERE } from '@/lib/hr/contractors'
+import {
+  describePayInputChanges,
+  evaluateChangeAfterApproval,
+  type ChangeAfterApproval,
+  type PayChangesAcknowledgement,
+  type PayInputsState,
+} from './pay-inputs'
+import { withSystemActorName, type PayrollVersionOrigin } from './system-actor'
 
 type Db = PrismaClient | Prisma.TransactionClient
 
@@ -358,6 +366,7 @@ export async function getSettlementDetail(db: Db, id: string) {
     ...settlement.versions.map((version) => version.approvedById),
   ])]
   const actors = await db.user.findMany({ where: { id: { in: actorIds } }, select: { id: true, name: true } })
+  const actorNames = withSystemActorName(Object.fromEntries(actors.map((actor) => [actor.id, actor.name])), actorIds)
 
   return {
     ...settlement,
@@ -369,7 +378,7 @@ export async function getSettlementDetail(db: Db, id: string) {
     calendarInSync,
     summary,
     employerCostContext,
-    actors: Object.fromEntries(actors.map((actor) => [actor.id, actor.name])),
+    actors: actorNames,
   }
 }
 
@@ -621,7 +630,13 @@ async function confirmPayrollOfficeStep(
 }
 
 /** Approves the draft as a new effective version; returns the new version number. */
-async function approveStep(tx: Db, actorId: string, settlement: SettlementForUpdate, note: string | null) {
+async function approveStep(
+  tx: Db,
+  actorId: string,
+  settlement: SettlementForUpdate,
+  note: string | null,
+  origin: PayrollVersionOrigin = 'MANUAL'
+) {
   requireDraft(settlement)
   const period = settlementPeriod(settlement)
   const id = settlement.id
@@ -706,6 +721,7 @@ async function approveStep(tx: Db, actorId: string, settlement: SettlementForUpd
       }),
       approvalNote: note,
       approvedById: actorId,
+      origin,
     },
   })
   await tx.payrollSettlement.update({
@@ -725,6 +741,7 @@ async function approveStep(tx: Db, actorId: string, settlement: SettlementForUpd
       employerCostGrosze: settlement.employerCostGrosze,
       employerCostSource,
       costAllocation,
+      origin,
     },
     reason: note,
   })
@@ -796,6 +813,10 @@ export type SettleEmployeeMonthInput = {
   employerCost?: number | null
   /** Revision the caller saw; must be omitted when the caller saw no settlement. */
   expectedRevision?: number | null
+  /** MANUAL (default) or AUTO_CARRYOVER; the automat may only create a new settlement, never correct one. */
+  origin?: PayrollVersionOrigin
+  /** Note stored on the new version (e.g. "Automatyczne przeniesienie z 2026-10"). */
+  approvalNote?: string | null
 }
 
 export type SettleEmployeeMonthResult = {
@@ -841,6 +862,8 @@ export async function settleEmployeeMonth(
       if (existing ? existing.revision !== input.expectedRevision : input.expectedRevision != null) {
         throw new PayrollError(CONCURRENT_SETTLEMENT_MESSAGE, 409)
       }
+      // D9: the automat never reopens or corrects an existing settlement (approved or draft).
+      if (existing && input.origin === 'AUTO_CARRYOVER') throw new PayrollError(CONCURRENT_SETTLEMENT_MESSAGE, 409)
 
       let settlement: SettlementForUpdate
       if (!existing) {
@@ -886,7 +909,7 @@ export async function settleEmployeeMonth(
         reference: payrollMonth?.listReference ?? null,
       })
       settlement = await reloadSettlement(tx, settlement.id)
-      const versionNumber = await approveStep(tx, actorId, settlement, null)
+      const versionNumber = await approveStep(tx, actorId, settlement, input.approvalNote ?? null, input.origin ?? 'MANUAL')
       return { outcome: 'APPROVED' as const, settlementId: settlement.id, versionNumber }
     }, { maxWait: 10_000, timeout: 30_000 })
   } catch (error) {
@@ -1006,6 +1029,126 @@ const VERSION_FIGURES_SELECT = {
   payrollOfficeReference: true,
 } as const
 
+const CURRENT_VERSION_SELECT = {
+  ...VERSION_FIGURES_SELECT,
+  snapshotJson: true,
+  approvedWorkedMinutes: true,
+  origin: true,
+} as const
+
+// ─── Change after approval (D9) ──────────────────────────────────────────────
+
+/** Audit action of "Kwota aktualna": the ADMIN confirmed the approved amount despite a change. */
+export const CHANGES_ACKNOWLEDGED_ACTION = 'settlement.changesAcknowledged'
+
+type StoredAcknowledgement = PayChangesAcknowledgement & { versionNumber: number }
+
+function parseAcknowledgement(afterJson: string | null): StoredAcknowledgement | null {
+  if (!afterJson) return null
+  try {
+    const value = JSON.parse(afterJson) as { versionNumber?: unknown; signature?: unknown; state?: unknown }
+    if (typeof value.versionNumber !== 'number' || typeof value.signature !== 'string') return null
+    return {
+      versionNumber: value.versionNumber,
+      signature: value.signature,
+      state: typeof value.state === 'object' && value.state !== null ? value.state as PayInputsState : null,
+    }
+  } catch {
+    return null
+  }
+}
+
+/** The latest acknowledgement of each settlement, for the given effective version numbers only. */
+async function loadAcknowledgements(db: Db, effective: Map<string, number>): Promise<Map<string, StoredAcknowledgement>> {
+  if (effective.size === 0) return new Map()
+  const events = await db.payrollAuditEvent.findMany({
+    where: { settlementId: { in: [...effective.keys()] }, action: CHANGES_ACKNOWLEDGED_ACTION },
+    orderBy: { createdAt: 'desc' },
+    select: { settlementId: true, afterJson: true },
+  })
+  const latest = new Map<string, StoredAcknowledgement>()
+  for (const event of events) {
+    if (!event.settlementId || latest.has(event.settlementId)) continue
+    const parsed = parseAcknowledgement(event.afterJson)
+    if (parsed && parsed.versionNumber === effective.get(event.settlementId)) latest.set(event.settlementId, parsed)
+  }
+  return latest
+}
+
+function changeAfterApprovalFor(input: {
+  version: { snapshotJson: string; approvedWorkedMinutes: number; baseBasis: string }
+  snapshot: CalendarSnapshot
+  employee: { startDate: Date; endDate: Date | null }
+  period: PayrollPeriod
+  absenceIds: string[]
+  acknowledgement: StoredAcknowledgement | null
+}): ChangeAfterApproval | null {
+  return evaluateChangeAfterApproval({
+    version: input.version,
+    live: {
+      overtimeLines: input.snapshot.lines,
+      baseSegments: input.snapshot.baseSegments,
+      approvedWorkedMinutes: input.snapshot.approvedWorkedMinutes,
+      employment: employmentInPeriod(input.employee, input.period),
+      absenceIds: input.absenceIds,
+    },
+    acknowledgement: input.acknowledgement,
+  })
+}
+
+/**
+ * "Kwota aktualna": records that the approved amount stays valid for the current pay-relevant inputs.
+ * The signature must be the one the ADMIN saw; a state that changed since then is refused (409).
+ * Never touches the settlement or its version — only an append-only history event.
+ */
+export async function acknowledgePayrollChanges(
+  db: PrismaClient,
+  actorId: string,
+  input: { settlementId: string; signature: string }
+) {
+  return db.$transaction(async (tx) => {
+    const settlement = await loadSettlementForUpdate(tx, input.settlementId)
+    if (!settlement) throw new PayrollError('Rozliczenie nie istnieje.', 404)
+    if (settlement.status !== 'APPROVED') {
+      throw new PayrollError('Rozliczenie nie jest zatwierdzone — dokończ je na stronie szczegółów.', 409)
+    }
+    const version = await tx.payrollSettlementVersion.findFirst({ where: { settlementId: settlement.id, supersededAt: null } })
+    if (!version) throw new PayrollError('Rozliczenie nie ma obowiązującej wersji.', 409)
+    const period = settlementPeriod(settlement)
+    const [snapshot, absences, acknowledgements] = await Promise.all([
+      loadCalendarSnapshot(tx, settlement.employeeId, period, settlement.overtimeLines),
+      loadPayAffectingAbsences(tx, [settlement.employeeId], period),
+      loadAcknowledgements(tx, new Map([[settlement.id, version.versionNumber]])),
+    ])
+    const change = changeAfterApprovalFor({
+      version,
+      snapshot,
+      employee: settlement.employee,
+      period,
+      absenceIds: absences.get(settlement.employeeId) ?? [],
+      acknowledgement: acknowledgements.get(settlement.id) ?? null,
+    })
+    if (!change) throw new PayrollError('Nie ma niepotwierdzonej zmiany po zatwierdzeniu. Odśwież arkusz.', 409)
+    if (change.signature !== input.signature) {
+      throw new PayrollError('Dane osoby zmieniły się w międzyczasie. Odśwież arkusz i sprawdź kwotę ponownie.', 409)
+    }
+    await audit(tx, {
+      ...auditBase(settlement, actorId),
+      action: CHANGES_ACKNOWLEDGED_ACTION,
+      entityType: 'PayrollSettlementVersion',
+      entityId: version.id,
+      after: {
+        versionNumber: version.versionNumber,
+        changesText: describePayInputChanges(change.changes),
+        signature: change.signature,
+        state: change.state,
+      },
+      reason: 'Kwota aktualna mimo zmiany po zatwierdzeniu',
+    })
+    return { settlementId: settlement.id, versionNumber: version.versionNumber, signature: change.signature }
+  })
+}
+
 function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
   const map = new Map<string, T[]>()
   for (const item of items) map.set(key(item), [...(map.get(key(item)) ?? []), item])
@@ -1074,7 +1217,7 @@ export async function getPayrollSheet(db: Db, period: PayrollPeriod) {
       where: { employeeId: { in: ids }, effectiveFrom: { lte: lastDay } },
       select: { id: true, employeeId: true, amountGrosze: true, basis: true, effectiveFrom: true, revokedAt: true },
     }),
-    db.payrollSettlementVersion.findMany({ where: { ...period, supersededAt: null }, select: VERSION_FIGURES_SELECT }),
+    db.payrollSettlementVersion.findMany({ where: { ...period, supersededAt: null }, select: CURRENT_VERSION_SELECT }),
     db.payrollSettlementVersion.findMany({ where: { ...previous, supersededAt: null }, select: VERSION_FIGURES_SELECT }),
     db.payrollMonth.findUnique({ where: { year_month: period }, select: { listReference: true, updatedAt: true } }),
     loadPayAffectingAbsences(db, ids, period),
@@ -1088,6 +1231,10 @@ export async function getPayrollSheet(db: Db, period: PayrollPeriod) {
   const settlementBy = new Map(settlements.map((settlement) => [settlement.employeeId, settlement]))
   const currentBy = new Map(currentVersions.map((version) => [version.employeeId, version]))
   const previousBy = new Map(previousVersions.map((version) => [version.employeeId, version]))
+  const effectiveBySettlement = new Map(settlements
+    .filter((settlement) => settlement.status === 'APPROVED' && currentBy.has(settlement.employeeId))
+    .map((settlement) => [settlement.id, (currentBy.get(settlement.employeeId) as { versionNumber: number }).versionNumber]))
+  const acknowledgements = await loadAcknowledgements(db, effectiveBySettlement)
 
   const rows = employees.map((employee) => {
     const settlement = settlementBy.get(employee.id) ?? null
@@ -1119,6 +1266,16 @@ export async function getPayrollSheet(db: Db, period: PayrollPeriod) {
       : null
     const { overtimeLines: _lines, ...settlementFields } = settlement ?? { overtimeLines: [] }
     void _lines
+    const change = settlement?.status === 'APPROVED' && current
+      ? changeAfterApprovalFor({
+        version: current,
+        snapshot,
+        employee,
+        period,
+        absenceIds,
+        acknowledgement: acknowledgements.get(settlement.id) ?? null,
+      })
+      : null
 
     return {
       employee,
@@ -1133,6 +1290,7 @@ export async function getPayrollSheet(db: Db, period: PayrollPeriod) {
           employerCostGrosze: current.employerCostGrosze,
           employerCostSource: current.employerCostSource,
           payrollOfficeReference: current.payrollOfficeReference,
+          origin: current.origin as PayrollVersionOrigin,
         }
         : null,
       previous: source
@@ -1157,6 +1315,13 @@ export async function getPayrollSheet(db: Db, period: PayrollPeriod) {
       autoEligible: evaluation.autoEligible,
       rates: context.rates,
       employment: evaluation.employment,
+      /** Approved rows only: pay-relevant inputs changed after approval and nobody confirmed the amount yet. */
+      changeAfterApproval: change
+        ? {
+          changes: change.changes.map((code) => ({ code, message: describePayInputChanges([code]) })),
+          signature: change.signature,
+        }
+        : null,
     }
   })
 

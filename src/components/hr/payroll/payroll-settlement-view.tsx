@@ -38,6 +38,7 @@ type Version = {
   approvedById: string
   approvalNote: string | null
   supersededAt: string | null
+  origin: 'MANUAL' | 'AUTO_CARRYOVER'
 }
 type AuditEvent = {
   id: string
@@ -98,6 +99,7 @@ const AUDIT_LABELS: Record<string, string> = {
   'payrollOffice.confirm': 'Zapisano dane od kadrowej',
   'settlement.approve': 'Zatwierdzono wersję',
   'settlement.reopen': 'Otwarto do korekty',
+  'settlement.changesAcknowledged': 'Kwota aktualna mimo zmiany po zatwierdzeniu',
 }
 
 const MONTHS = ['styczeń', 'luty', 'marzec', 'kwiecień', 'maj', 'czerwiec', 'lipiec', 'sierpień', 'wrzesień', 'październik', 'listopad', 'grudzień']
@@ -123,6 +125,8 @@ const FIELD_LABELS: Record<string, string> = {
   status: 'status',
   effectiveVersionStillCounted: 'w kosztach nadal wersja',
   payrollOfficeConfirmationCleared: 'potwierdzenie kadrowej unieważnione',
+  origin: 'zatwierdził',
+  changesText: 'zmiany',
 }
 const VALUE_LABELS: Record<string, string> = {
   BONUS: 'premia',
@@ -131,6 +135,8 @@ const VALUE_LABELS: Record<string, string> = {
   TIME_OFF: 'czas wolny',
   DRAFT: 'robocze',
   APPROVED: 'zatwierdzone',
+  MANUAL: 'ręcznie',
+  AUTO_CARRYOVER: 'automat (przeniesienie z poprzedniego miesiąca)',
 }
 
 function formatAuditValue(key: string, value: unknown): string {
@@ -263,7 +269,10 @@ export function PayrollSettlementView({ id }: { id: string }) {
               {MONTHS[detail.month - 1]} {detail.year} · {detail.employee.position} · {detail.employee.costCenterId} · {detail.employee.employmentType ?? 'umowa nieokreślona'} · rewizja {detail.revision}
             </div>
           </div>
-          <StatusStamp settlement={{ id: detail.id, status: detail.status, currentVersionNumber: detail.currentVersionNumber, payrollOfficeConfirmedAt: detail.payrollOfficeConfirmedAt }} />
+          <StatusStamp
+            settlement={{ id: detail.id, status: detail.status, currentVersionNumber: detail.currentVersionNumber, payrollOfficeConfirmedAt: detail.payrollOfficeConfirmedAt }}
+            origin={detail.versions.find((version) => version.supersededAt === null)?.origin}
+          />
         </div>
         <div className={styles.figures}>
           {[
@@ -602,7 +611,10 @@ export function PayrollSettlementView({ id }: { id: string }) {
                     </div>
                     {version.approvalNote && <div className={styles.sub}>{version.approvalNote}</div>}
                   </div>
-                  <span className={styles.tag}>{version.supersededAt ? 'zastąpiona' : 'obowiązuje'}</span>
+                  <span className={styles.versionTags}>
+                    {version.origin === 'AUTO_CARRYOVER' && <span className={`${styles.tag} ${styles.tagAuto}`}>automat</span>}
+                    <span className={styles.tag}>{version.supersededAt ? 'zastąpiona' : 'obowiązuje'}</span>
+                  </span>
                 </div>
               ))}
             </div>

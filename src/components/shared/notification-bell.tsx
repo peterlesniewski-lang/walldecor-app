@@ -12,6 +12,7 @@ import {
   AlertTriangle,
   AlertOctagon,
   CreditCard,
+  WalletCards,
 } from 'lucide-react'
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover'
 import { Button } from '@/components/ui/button'
@@ -48,6 +49,10 @@ function getTypeIcon(type: string) {
       return <AlertOctagon className="h-4 w-4 shrink-0 text-red-600" />
     case 'payment_due':
       return <CreditCard className="h-4 w-4 shrink-0 text-blue-600" />
+    case 'payroll_auto':
+      return <WalletCards className="h-4 w-4 shrink-0 text-emerald-700" />
+    case 'payroll_change':
+      return <WalletCards className="h-4 w-4 shrink-0 text-amber-600" />
     default:
       return <Bell className="h-4 w-4 shrink-0 text-gray-400" />
   }

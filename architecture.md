@@ -454,7 +454,7 @@ PayrollSettlementVersion.costAllocationJson   [{ costCenterId: JAG|PUL, amountGr
 Koszt pracodawcy = brutto z listy płac + każda składka pracodawcy zaokrąglona osobno do grosza (`src/lib/payroll/employer-cost.ts`).
 Rodzaj rozliczenia wynika z `Employee.employmentType` (UoP → UOP, UZ → UZ, Zarząd → ZARZAD; B2B i pozostałe poza listą płac).
 Bez wpisu w `PayrollEmployerRate` obowiązują stawki domyślne z kodu. Osoba w GLOBAL musi mieć podział, inaczej zatwierdzenie jest blokowane.
-Finanse czytają `getMonthlyEmployerCosts` (zatwierdzona wersja albo szacunek z podstawy × stawki) przez `src/lib/finance/employer-costs.ts`;
+Finanse czytają `getMonthlyEmployerCosts` (zatwierdzona wersja albo szacunek — od #43 z ostatniego zatwierdzonego miesiąca, inaczej z podstawy × stawki) przez `src/lib/finance/employer-costs.ts`;
 koszt wchodzi do wyniku firmy/salonów i progu rentowności jako koszt stały od 04/2026 do bieżącego miesiąca.
 
 #### Arkusz miesiąca i numer listy płac (2026-11-24, #42)
@@ -472,6 +472,37 @@ wycofuje całość, więc nie zostaje żaden `PayrollSettlement`. Wersje zatwier
 `inputs` (`employment.from/to` przycięte do miesiąca, `payAffectingAbsenceIds`).
 Wykonawca zewnętrzny (B2B) jest zdefiniowany tylko w `src/lib/hr/contractors.ts` (`STAFF_WHERE` zachowuje karty z pustym
 `employmentType`); arkusz pokazuje B2B wyłącznie, gdy ma już rozliczenie w miesiącu.
+
+#### Automat 1. dnia miesiąca i zmiana po zatwierdzeniu (2026-11-24, #43)
+
+```
+PayrollSettlementVersion.origin   MANUAL (domyślnie) | AUTO_CARRYOVER   (CHECK; objęta triggerem niezmienności)
+```
+
+Migracja `20261124180000_payroll_auto_carryover`: kolumna `origin` + DROP/CREATE triggera `PayrollSettlementVersion_immutable`
+z pełną listą kolumn. Automat zapisuje rozliczenia, wersje i zdarzenia jako autor `system:payroll-auto` (kolumny autorów
+nie mają kluczy obcych; ekrany pokazują „Automat”). Przebieg: `runPayrollAutoCarryover` (`src/lib/payroll/auto-carryover.ts`)
+zatwierdza przez `settleEmployeeMonth` tylko osoby z `autoEligible = true` i bez żadnego rozliczenia w miesiącu.
+
+Stan automatu w `AppSetting` (bez zmiany schematu):
+
+```
+payroll_auto_carryover_enabled      "true" | "false"   (brak = wyłączony; po wdrożeniu wyłączony)
+payroll_auto_carryover_last_month   "YYYY-MM" — miesiąc ostatniego przebiegu albo włączenia (slot zajmowany przed przebiegiem, CAS)
+payroll_auto_carryover_last_result  JSON { month, ranAt, approved, attention, errors }
+payroll_change_notice_last_day      "YYYY-MM-DD" — dzień ostatniego powiadomienia o zmianach (slot dzienny)
+payroll_change_notice_signatures    JSON { months: { "RRRR-MM": { employeeId: sygnatura } } } — każda zmiana powiadamiana raz
+```
+
+Harmonogram `src/lib/payroll/auto-carryover-scheduler.ts` (rejestracja w `src/instrumentation.ts`, sprawdzenie co 5 min,
+Europe/Warsaw): przebieg należny, gdy automat włączony, jest ≥ 1. dnia 06:00 i `last_month` < bieżący miesiąc; przerwany przebieg nie jest
+powtarzany (miesiąc zostaje zajęty), ADMIN dostaje powiadomienie o niedokończonym przebiegu; powiadomienie
+o zmianach od 07:00 raz dziennie, za bieżący i poprzedni miesiąc. `PAYROLL_AUTO_CARRYOVER=off` wyłącza harmonogram; poza produkcją działa tylko przy `=on`.
+Zmiana po zatwierdzeniu (`src/lib/payroll/pay-inputs.ts`) porównuje tylko wejścia wpływające na wypłatę (nadgodziny: id,
+minuty, status; segmenty angażu; daty zatrudnienia; nieobecności zmieniające wypłatę; przy stawce godzinowej zatwierdzone
+minuty), nie cały `calendarFingerprint`. „Kwota aktualna” dopisuje `PayrollAuditEvent` `settlement.changesAcknowledged`
+(`afterJson`: `versionNumber`, `signature`, `state`, `changesText`) — rozliczenie i wersja nie są zmieniane.
+`getMonthlyEmployerCosts` zwraca `estimateSource` (`LAST_APPROVED` | `BASE_RATES` | `null`).
 
 ---
 

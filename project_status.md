@@ -1,13 +1,13 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-11-24 (etap 1 „Arkusz miesiąca” #42 — gałąź `payroll-sheet-42`, PR do `main`; dowód: `docs/evidence/2026-11-24-payroll-sheet.md`)
+**Ostatnia aktualizacja:** 2026-11-25 (etap 1 „Arkusz miesiąca” wdrożony na produkcję 25.11; etap 2 „Automat 1. dnia miesiąca” #43 — gałąź `payroll-auto-43`, PR do `main`; dowód: `docs/evidence/2026-11-24-payroll-automation.md`)
 
 ## Wynagrodzenia: arkusz miesiąca, automat, stawka godzinowa, wykonawcy poza HR — plan 24.11.2026
 
 Plan i decyzje właściciela: `docs/plans/2026-11-24-payroll-ux-simplification.md`. Każdy etap to osobne zgłoszenie, gałąź i wdrożenie.
 
 [x] Etap 1 — Arkusz miesiąca: kwoty w wierszach, podpowiedzi z poprzedniego miesiąca, zatwierdzenie i korekta jednym kliknięciem, numer listy płac na miesiąc, B2B poza listą płac (Opus)
-[ ] Etap 2 — Automat 1. dnia miesiąca, etykieta „zmiana po zatwierdzeniu", powiadomienia, szacunek kosztu z ostatniego zatwierdzonego miesiąca (Opus)
+[x] Etap 2 — Automat 1. dnia miesiąca, etykieta „zmiana po zatwierdzeniu", powiadomienia, szacunek kosztu z ostatniego zatwierdzonego miesiąca (Opus)
 [ ] Etap 3 — Stawka godzinowa: godziny × stawka, „Zatwierdź godziny" w wierszu, przypomnienie przed wypłatą (Opus)
 [ ] Etap 4 — Wykonawcy (B2B) poza HR: zakładka „Wykonawcy", ukrycie w czasie pracy, urlopach, raportach (Sonnet, przegląd Opus)
 [ ] Etap 5 — Uporządkowanie strony szczegółów rozliczenia (Sonnet)
@@ -17,7 +17,13 @@ Zgłoszenia: #42 (etap 1, `ready-for-agent`), #43, #44, #45, #46 — kolejne dos
 
 Etap 1 (#42) zbudowany 24.11.2026: `src/lib/hr/contractors.ts` (reguła wykonawcy, `STAFF_WHERE`), `src/lib/payroll/carryover.ts` (podpowiedź i znaczniki), `getPayrollSheet` / `settleEmployeeMonth` / `submitPayrollSheet` w `service.ts` (kroki akcji wydzielone z `applySettlementAction`), `GET|POST /api/hr/payroll/sheet`, `PUT /api/hr/payroll/months/[month]`, tabela `PayrollMonth` (migracja `20261124120000_payroll_month`), przebudowany `payroll-month-view.tsx`. Testy: `__tests__/unit/hr/payroll-carryover.test.ts`, `__tests__/integration/hr/payroll-sheet-flow.test.ts`, `e2e/hr-payroll-sheet.spec.ts`.
 
-**Następna sesja:** wdrożenie etapu 1 na produkcję po zgodzie właściciela (migracja `PayrollMonth`, kopia bazy robi się sama przed migracją) → etap 2 (#43, Opus) → etap 3 (#44) → etap 4 (#45) → etap 5 (#46).
+Etap 2 (#43) zbudowany 24–25.11.2026: kolumna `PayrollSettlementVersion.origin` (`MANUAL` | `AUTO_CARRYOVER`, migracja `20261124180000_payroll_auto_carryover` z odtworzonym triggerem niezmienności), autor „Automat” (`src/lib/payroll/system-actor.ts`), przebieg `runPayrollAutoCarryover` (`src/lib/payroll/auto-carryover.ts`) przez `settleEmployeeMonth` (nowe pola `origin`, `approvalNote`), harmonogram `src/lib/payroll/auto-carryover-scheduler.ts` (1. dnia od 6:00, codzienne powiadomienie o zmianach od 7:00) rejestrowany w `src/instrumentation.ts`, zmiana po zatwierdzeniu tylko na wejściach wpływających na wypłatę (`src/lib/payroll/pay-inputs.ts`) z akcją „Kwota aktualna” (`POST /api/hr/payroll/settlements/[id]/acknowledge-changes`, zdarzenie `settlement.changesAcknowledged`), przełącznik `GET|PUT /api/hr/payroll/automation` i panel w „Ustawienia płac” (`/hr/payroll/rates`), pieczątka „Zatwierdzone automatycznie” na arkuszu, szacunek kosztu z ostatniego zatwierdzonego miesiąca (`estimateSource` w `getMonthlyEmployerCosts`). Testy: `__tests__/unit/hr/payroll-auto-carryover.test.ts`, `__tests__/integration/hr/payroll-auto-carryover.test.ts`, rozszerzony `payroll-employer-cost-flow.test.ts`, `e2e/hr-payroll-automation.spec.ts` (+ runner `e2e/payroll-automation-run.ts`). **Automat po wdrożeniu jest wyłączony** — włącza go właściciel w Ustawieniach płac; pierwszy przebieg 1. dnia następnego miesiąca.
+
+Po przeglądzie etapu 2: codzienne powiadomienie o zmianach obejmuje bieżący i poprzedni miesiąc (zmiana z ostatniego dnia miesiąca, zwolnienie doniesione później), a przerwany przebieg automatu daje powiadomienie „automat nie dokończył przebiegu” zamiast ciszy.
+
+Produkcja: etap 1 wdrożony 25.11.2026 (obraz z commita `4a65119`, migracja `20261124120000_payroll_month`; wiersz w rejestrze w `docs/GITHUB-ACTIONS-BUILD.md`).
+
+**Następna sesja:** wdrożenie etapu 2 po zgodzie właściciela (migracja `origin`; automat po wdrożeniu jest wyłączony, włącza go właściciel w „Ustawieniach płac”) → etap 3 (#44) → etap 4 (#45) → etap 5 (#46).
 
 ## Faktury UE z Subiekta i uzgodnienie płatności — 18.11.2026 (gałąź `eu-invoice-mcp-bridge-6f82721a`)
 

@@ -12,7 +12,7 @@ import {
 } from '@/components/ui/dropdown-menu'
 import { calculateEmployerCostGrosze, type EmployerRates } from '@/lib/payroll/employer-cost'
 import { formatGrosze, groszeToPlnString, parsePlnToGrosze } from '@/lib/payroll/money'
-import { MONTH_NAMES, monthGenitive } from '@/lib/payroll/month-names'
+import { dayMonthGenitive, MONTH_NAMES, monthGenitive } from '@/lib/payroll/month-names'
 import { PAYROLL_BASIS_LABELS, type PayrollBasis } from '@/lib/payroll/types'
 import { BaseSalaryDialog } from './base-salary-dialog'
 import styles from './payroll.module.css'
@@ -27,6 +27,14 @@ type StampSettlement = {
 }
 
 type Note = { code: string; message: string }
+
+type VersionOrigin = 'MANUAL' | 'AUTO_CARRYOVER'
+
+type AutomationStatus = {
+  enabled: boolean
+  nextRun: { month: string; date: string } | null
+  schedulerActive: boolean
+}
 
 type SheetRow = {
   employee: { id: string; firstName: string; lastName: string; position: string; costCenterId: string; employmentType: string | null }
@@ -45,6 +53,7 @@ type SheetRow = {
     finalNetGrosze: number
     employerCostGrosze: number
     employerCostSource: string
+    origin: VersionOrigin
   } | null
   previous: { month: string; finalGrossGrosze: number; finalNetGrosze: number; employerCostGrosze: number } | null
   suggestion: {
@@ -58,6 +67,8 @@ type SheetRow = {
   blockers: Note[]
   autoEligible: boolean
   rates: EmployerRates | null
+  /** Approved rows only: pay-relevant inputs changed after approval, amount not confirmed yet. */
+  changeAfterApproval: { changes: Note[]; signature: string } | null
 }
 
 type Sheet = {
@@ -137,8 +148,16 @@ function isApproved(row: SheetRow) {
 
 // ─── Stamps ──────────────────────────────────────────────────────────────────
 
-export function StatusStamp({ settlement }: { settlement: StampSettlement | null }) {
+export function StatusStamp({ settlement, origin }: { settlement: StampSettlement | null; origin?: VersionOrigin }) {
   if (!settlement) return <span className={`${styles.stamp} ${styles.stampNone}`}>brak rozliczenia</span>
+  if (settlement.status === 'APPROVED' && origin === 'AUTO_CARRYOVER') {
+    // A machine stamp: straight and double-ruled, unlike the hand stamp below.
+    return (
+      <span className={`${styles.stamp} ${styles.stampApproved} ${styles.stampAuto}`} title="Zatwierdził automat 1. dnia miesiąca, kwoty z poprzedniego miesiąca">
+        <span>Zatwierdzone</span> <span>automatycznie · v{settlement.currentVersionNumber}</span>
+      </span>
+    )
+  }
   if (settlement.status === 'APPROVED') {
     return <span className={`${styles.stamp} ${styles.stampApproved}`}>Zatwierdzone · v{settlement.currentVersionNumber}</span>
   }
@@ -149,7 +168,7 @@ export function StatusStamp({ settlement }: { settlement: StampSettlement | null
 }
 
 function SheetStatus({ row }: { row: SheetRow }) {
-  if (row.settlement) return <StatusStamp settlement={row.settlement} />
+  if (row.settlement) return <StatusStamp settlement={row.settlement} origin={row.effectiveVersion?.origin} />
   if (row.blockers.length > 0) return <span className={`${styles.stamp} ${styles.stampNone} ${styles.attention}`}>zablokowane</span>
   if (row.autoEligible) return <span className={`${styles.stamp} ${styles.stampReady}`}>gotowe</span>
   if (row.flags.length > 0) return <span className={`${styles.stamp} ${styles.stampDraft}`}>do sprawdzenia</span>
@@ -175,6 +194,8 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
   const [creatingFor, setCreatingFor] = useState<string | null>(null)
   const [reference, setReference] = useState('')
   const [referenceState, setReferenceState] = useState<{ kind: 'idle' | 'saving' | 'saved' | 'error'; text?: string }>({ kind: 'idle' })
+  const [automation, setAutomation] = useState<AutomationStatus | null>(null)
+  const [acknowledging, setAcknowledging] = useState<string | null>(null)
   const savedReference = useRef<string>('')
   const inputs = useRef(new Map<string, HTMLInputElement>())
   const loadedMonth = useRef<string | null>(null)
@@ -206,6 +227,16 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
     return () => { active = false }
   }, [month, reloadKey])
 
+  useEffect(() => {
+    let active = true
+    fetch('/api/hr/payroll/automation', { cache: 'no-store' })
+      .then(async (res) => {
+        if (active && res.ok) setAutomation((await res.json()) as AutomationStatus)
+      })
+      .catch(() => undefined)
+    return () => { active = false }
+  }, [])
+
   const rows = useMemo(() => sheet?.rows ?? [], [sheet])
   const initial = useMemo(() => new Map(rows.map((row) => [row.employee.id, initialDraft(row)])), [rows])
 
@@ -231,7 +262,10 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
   const chosenCost = chosen.reduce((sum, row) => sum + (previewCost(row) ?? 0), 0)
   const dirtyRows = rows.filter(isDirty)
   const approvedCount = rows.filter(isApproved).length
-  const attentionCount = rows.filter((row) => !isApproved(row) && !(row.autoEligible && !row.settlement)).length
+  // Needs a look: rows not ready for one-click approval, and approved rows changed after approval (D9).
+  const attentionCount = rows.filter((row) => isApproved(row)
+    ? row.changeAfterApproval !== null
+    : !(row.autoEligible && !row.settlement)).length
 
   function setDraft(row: SheetRow, patch: Partial<Draft>) {
     const id = row.employee.id
@@ -379,6 +413,32 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
     }
   }
 
+  /** "Kwota aktualna": keeps the approved amount for the change the ADMIN is looking at. */
+  async function acknowledge(row: SheetRow) {
+    const id = row.employee.id
+    if (!row.settlement || !row.changeAfterApproval || acknowledging) return
+    setAcknowledging(id)
+    try {
+      const res = await fetch(`/api/hr/payroll/settlements/${row.settlement.id}/acknowledge-changes`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ signature: row.changeAfterApproval.signature }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok) {
+        setResults((current) => ({ ...current, [id]: { employeeId: id, status: 'CONFLICT', message: json?.error ?? 'Nie udało się zapisać.' } }))
+        if (res.status === 409) setReloadKey((key) => key + 1)
+        return
+      }
+      setResults(({ [id]: _dropped, ...rest }) => { void _dropped; return rest })
+      setReloadKey((key) => key + 1)
+    } catch {
+      setResults((current) => ({ ...current, [id]: { employeeId: id, status: 'CONFLICT', message: 'Błąd połączenia — nic nie zostało zapisane.' } }))
+    } finally {
+      setAcknowledging(null)
+    }
+  }
+
   async function openDetail(row: SheetRow) {
     if (row.settlement) {
       router.push(`/hr/payroll/${row.settlement.id}`)
@@ -448,6 +508,7 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
               ? 'Kwoty z poprzedniego miesiąca są już w polach — popraw tylko to, co się zmieniło, i zatwierdź zaznaczone osoby.'
               : 'Wpisz brutto i netto z listy płac — Tab przechodzi do następnego pola, Enter zatwierdza wiersz.'}
           </p>
+          {automation && <AutomationLine status={automation} />}
         </div>
         <nav className={styles.monthNav} aria-label="Wybór miesiąca">
           <button type="button" className={`${styles.btn} ${styles.ghost}`} onClick={() => goTo(previousMonth)} aria-label="Poprzedni miesiąc">
@@ -567,9 +628,13 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
           const result = results[id]
           const sourceHint = suggested && row.suggestion ? `z ${monthGenitive(row.suggestion.sourceMonth)}` : null
           const invalid = (value: string) => value.trim() !== '' && parsePlnToGrosze(value) === null
+          // An approved row is never "blocked": live blockers only matter once someone corrects it.
+          const change = approved ? row.changeAfterApproval : null
           const rowClass = [
             styles.sheetRow,
-            row.blockers.length > 0 ? styles.rowBlocked : approved && !dirty ? styles.rowApproved : selected.has(id) && canSelect ? styles.rowSelected : '',
+            approved
+              ? dirty ? styles.rowSelected : change ? styles.rowChanged : styles.rowApproved
+              : row.blockers.length > 0 ? styles.rowBlocked : selected.has(id) && canSelect ? styles.rowSelected : '',
             justApproved.has(id) ? styles.justApproved : '',
           ].join(' ')
 
@@ -715,12 +780,28 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
               </div>
 
               <div className={styles.aNotes}>
-                {approved && dirty && (
+                {approved && dirty && row.blockers.length === 0 && (
                   <button type="button" className={`${styles.btn} ${styles.rowBtn}`} disabled={saving} onClick={() => void submit([row])}>
                     Zapisz korektę
                   </button>
                 )}
-                {row.blockers.map((blocker) => (
+                {approved && dirty && row.blockers.length > 0 && !change && row.settlement && (
+                  <span className={styles.blockNote}>
+                    Tej korekty nie zapiszesz na liście: {row.blockers.map((blocker) => blocker.message).join(' ')}
+                    <Link className={`${styles.btn} ${styles.ghost}`} href={`/hr/payroll/${row.settlement.id}`}>Otwórz szczegóły</Link>
+                  </span>
+                )}
+                {change && row.settlement && (
+                  <ChangeNotice
+                    name={name}
+                    change={change}
+                    blockers={row.blockers}
+                    detailHref={`/hr/payroll/${row.settlement.id}`}
+                    busy={acknowledging === id}
+                    onAcknowledge={() => void acknowledge(row)}
+                  />
+                )}
+                {!approved && row.blockers.map((blocker) => (
                   <span key={blocker.code} className={styles.blockNote}>
                     {blocker.message}
                     {blocker.code === 'BASE_MISSING' ? (
@@ -787,4 +868,61 @@ function ResultNote({ result }: { result: RowResult }) {
     case 'INVALID':
       return <span role="alert" className={`${styles.result} ${styles.resultErr}`}>{result.message}</span>
   }
+}
+
+/** One line under the heading: is the automat on, and when does it run next. */
+function AutomationLine({ status }: { status: AutomationStatus }) {
+  return (
+    <p className={styles.autoLine} data-testid="payroll-automation-line">
+      <span className={`${styles.autoDot} ${status.enabled ? styles.autoOn : ''}`} aria-hidden />
+      <span>
+        Automat: {status.enabled ? 'włączony' : 'wyłączony'}
+        {status.enabled && status.nextRun && <> · następny przebieg {dayMonthGenitive(status.nextRun.date)}</>}
+        {status.enabled && !status.schedulerActive && <span className={styles.autoWarn}> · harmonogram nie działa w tym środowisku</span>}
+      </span>
+      <Link href="/hr/payroll/rates#automat" className={styles.autoLink}>Ustawienia płac</Link>
+    </p>
+  )
+}
+
+/**
+ * Approved row whose pay-relevant inputs changed after approval (D9). The approved amount stays in
+ * force; the ADMIN either corrects it (in the row, or on the detail page when the live calendar has
+ * a blocker such as overtime without a decision) or confirms it with "Kwota aktualna".
+ */
+function ChangeNotice({ name, change, blockers, detailHref, busy, onAcknowledge }: {
+  name: string
+  change: NonNullable<SheetRow['changeAfterApproval']>
+  blockers: Note[]
+  detailHref: string
+  busy: boolean
+  onAcknowledge: () => void
+}) {
+  return (
+    <div className={styles.changeNote} role="group" aria-label={`Zmiana po zatwierdzeniu — ${name}`}>
+      <span className={styles.changeHead}>
+        <span className={styles.changeTitle}>zmiana po zatwierdzeniu — sprawdź kwotę</span>
+        {change.changes.map((item) => <span key={item.code} className={styles.changeChip}>{item.message}</span>)}
+      </span>
+      <span className={styles.changeHint}>
+        {blockers.length > 0
+          ? <>Korekta tylko na stronie szczegółów: {blockers.map((blocker) => blocker.message).join(' ')}</>
+          : <>Popraw kwotę w wierszu i zapisz korektę albo potwierdź, że zatwierdzona kwota jest aktualna.</>}
+      </span>
+      <span className={styles.changeActions}>
+        {blockers.length > 0 && (
+          <Link className={`${styles.btn} ${styles.ghost} ${styles.rowBtn}`} href={detailHref}>Otwórz szczegóły</Link>
+        )}
+        <button
+          type="button"
+          className={`${styles.btn} ${styles.ghost} ${styles.rowBtn}`}
+          disabled={busy}
+          aria-label={`Kwota aktualna — ${name}`}
+          onClick={onAcknowledge}
+        >
+          {busy ? 'Zapisuję…' : 'Kwota aktualna'}
+        </button>
+      </span>
+    </div>
+  )
 }

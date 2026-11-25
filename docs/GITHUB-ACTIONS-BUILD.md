@@ -98,6 +98,8 @@ PR-y, commit, pełny digest, migracje i wynik weryfikacji. Aktualny stan produkc
 
 | Data (CEST) | Moduł / PR | Commit | Digest obrazu | Migracje | Weryfikacja |
 |---|---|---|---|---|---|
+| 25.11.2026 11:08 (CET) | Wynagrodzenia: arkusz miesiąca (#48, etap 1 z #42); plan (#47) | `4a65119` | `sha256:bead23e624f3e34f7d46fa66fb385613daf4e4cc7e8646bf70ac909d67d1da1f` (run `45456943327`) | 56 → 57 (`20261124120000_payroll_month`) | `running:healthy`; w logu startu kopia `/data/backups/walldecor-20261125-100843-1.db` i zastosowana migracja `20261124120000_payroll_month`, która istnieje tylko w tym obrazie; widoku po zalogowaniu nie sprawdzano z zewnątrz (potwierdza właściciel) |
+| 20–24.11.2026 (data wdrożenia nieodnotowana; obraz zbudowany 20.11) | wpis odtworzony 25.11 ze stanu Coolify — wdrożenia nie odnotowano w rejestrze; zakres: wszystko z `main` do PR #40 | `bd3bf6f` | `sha256:2771b6601b3757465d860b8d083a3c2874ad67d77c34fd217bd8766cd215051f` (run `44761302672`) | do 56 | stan odczytany 24.11: `running:healthy`, `WALLDECOR_APPROVED_IMAGE` wskazywał ten digest |
 | 27.10.2026 11:28 | KSeF: podświetlanie terminów płatności (#34, #35) | `59a1b60` | `sha256:2219392aff08ce15f98bc3d0b5fc9ca4bbef06c313b140bf0aca675da2cfc548` (run `40486237652`) | brak | `running:healthy`; nowy kod w `page-ea7eaf53…js`, 8 wierszy z kolorem na żywej liście |
 | 26.10.2026 18:17 | Montaże: poprawki UX, e-maile alertów (#32) | `40637b6` | `sha256:e9f58f95…52fd9e` (run `40375069002`) | brak | `running:healthy` |
 | 26.10.2026 16:02 | Montaże: cyfrowy protokół odbioru (#31) | `64ab504` | `sha256:672f6efb8d66754c86ad86b53f15599ca42e90f12b8378083618a41e8b77ec31` (run `40350166671`) | 49 → 55 | `running:healthy` |

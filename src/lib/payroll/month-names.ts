@@ -23,3 +23,9 @@ export function monthGenitive(monthKey: string): string {
 export function monthNominative(monthKey: string): string {
   return MONTH_NAMES[monthIndex(monthKey)] ?? monthKey
 }
+
+/** "2026-12-01" → "1 grudnia"; with `withYear` → "1 grudnia 2026". */
+export function dayMonthGenitive(isoDate: string, withYear = false): string {
+  const day = Number(isoDate.slice(8, 10))
+  return `${day} ${monthGenitive(isoDate.slice(0, 7))}${withYear ? ` ${isoDate.slice(0, 4)}` : ''}`
+}

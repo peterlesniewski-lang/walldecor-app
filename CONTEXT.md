@@ -23,7 +23,7 @@ Stała miesięczna kwota wynagrodzenia z umowy lub uchwały, wpisana przez ADMIN
 _Avoid_: pensja, stawka
 
 **Szacunek kosztu pracodawcy**:
-Koszt pracodawcy wyliczony z Angażu i stawek składek pracodawcy, używany w wyniku, dopóki za dany miesiąc nie ma Listy płac.
+Koszt pracodawcy osoby za miesiąc, za który nie ma jeszcze zatwierdzonej Listy płac, używany w wyniku do czasu zatwierdzenia: koszt pracodawcy z ostatniego wcześniejszego zatwierdzonego miesiąca tej osoby (podzielony na salony według podziału obowiązującego w szacowanym miesiącu); dopiero gdy takiego miesiąca nie ma — wyliczony z Angażu i stawek składek pracodawcy.
 _Avoid_: prognoza, koszt oczekiwany
 
 **Miesiąc kosztu**:
