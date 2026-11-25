@@ -96,8 +96,13 @@ beforeEach(async () => {
   await db.aiQueueLease.deleteMany()
   await db.user.deleteMany()
   await seedBase()
-  await db.$executeRawUnsafe(`CREATE TRIGGER "InvoiceDraftAudit_delete_guard"
-    BEFORE DELETE ON "InvoiceDraftAudit" BEGIN SELECT RAISE(ABORT, 'InvoiceDraftAudit rows are immutable'); END`)
+  // Drop and create on ONE connection: SQLite checks "already exists" against the connection's cached
+  // schema, so a pooled connection that has not noticed the DROP above refuses the CREATE now and then.
+  await db.$transaction([
+    db.$executeRawUnsafe('DROP TRIGGER IF EXISTS "InvoiceDraftAudit_delete_guard"'),
+    db.$executeRawUnsafe(`CREATE TRIGGER "InvoiceDraftAudit_delete_guard"
+      BEFORE DELETE ON "InvoiceDraftAudit" BEGIN SELECT RAISE(ABORT, 'InvoiceDraftAudit rows are immutable'); END`),
+  ])
 })
 
 afterAll(async () => {

@@ -132,8 +132,13 @@ beforeEach(async () => {
   await state.db.ksefSupplierRule.create({ data: {
     supplierNamePattern: 'dostawca', costCenterId: 'JAG', tags: { create: { tagId: 'tag-fixed' } },
   } })
-  await state.db.$executeRawUnsafe(`CREATE TRIGGER "InvoiceDraftAudit_delete_guard"
-    BEFORE DELETE ON "InvoiceDraftAudit" BEGIN SELECT RAISE(ABORT, 'InvoiceDraftAudit rows are immutable'); END`)
+  // Drop and create on ONE connection: SQLite checks "already exists" against the connection's cached
+  // schema, so a pooled connection that has not noticed the DROP above refuses the CREATE now and then.
+  await state.db.$transaction([
+    state.db.$executeRawUnsafe('DROP TRIGGER IF EXISTS "InvoiceDraftAudit_delete_guard"'),
+    state.db.$executeRawUnsafe(`CREATE TRIGGER "InvoiceDraftAudit_delete_guard"
+      BEFORE DELETE ON "InvoiceDraftAudit" BEGIN SELECT RAISE(ABORT, 'InvoiceDraftAudit rows are immutable'); END`),
+  ])
 })
 
 afterAll(async () => {

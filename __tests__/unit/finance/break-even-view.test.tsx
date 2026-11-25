@@ -17,12 +17,15 @@ let sources: BreakEvenSource[]
 let fetchMock: ReturnType<typeof vi.fn>
 let posted: Record<string, unknown>[]
 let rejectMutation: boolean
+/** While set, every read waits for it — lets a test keep the post-save reload on screen until it has seen it. */
+let holdReads: Promise<void> | null
 function respond(data: unknown, status = 200) { return new Response(JSON.stringify(data), { status, headers: { 'Content-Type': 'application/json' } }) }
 beforeEach(() => {
-  report = makeReport(); sources = [makeSource()]; posted = []; rejectMutation = false
+  report = makeReport(); sources = [makeSource()]; posted = []; rejectMutation = false; holdReads = null
   vi.useFakeTimers({ toFake: ['Date'] }); vi.setSystemTime(new Date('2026-09-18T10:00:00Z'))
   fetchMock = vi.fn(async (url: string, options?: RequestInit) => {
     if (options?.method === 'POST') { posted.push(JSON.parse(String(options.body))); return respond(rejectMutation ? { error: 'Nie udało się zapisać zmiany' } : { ok: true }, rejectMutation ? 500 : 200) }
+    if (holdReads) await holdReads
     if (url.includes('/sources?')) return respond({ sources, warnings: [] })
     if (url.includes('/settings?')) return respond({ margins: [report.margin], fixedCosts: [{ id: 'fixed-JAG', name: 'Czynsz JAG', costCenterId: 'JAG', supplierNip: null, supplierName: null, expectedNetAmount: 1000, effectiveFrom: '2026-01', effectiveTo: null, active: true }] })
     return respond({ report })
@@ -32,6 +35,21 @@ beforeEach(() => {
 afterEach(() => { cleanup(); vi.unstubAllGlobals(); vi.useRealTimers() })
 async function load() { render(<BreakEvenView />); await screen.findByRole('region', { name: 'Jagiellońska' }) }
 async function settings() { await load(); fireEvent.click(screen.getByRole('button', { name: 'Ustawienia i koszty stałe' })) }
+/**
+ * Clicks a saving control and waits until the reload that follows a successful save has finished.
+ * A save reloads the month, which replaces the whole content (and any open confirmation with it). The
+ * reads are held until the loading state is on screen, so the test never acts on content about to go.
+ */
+async function saveAndReload(click: () => void, saved: () => void) {
+  let release = () => {}
+  holdReads = new Promise<void>((resolve) => { release = resolve })
+  click()
+  await waitFor(saved)
+  await screen.findByText('Ładuję dane miesiąca…')
+  holdReads = null
+  release()
+  await waitFor(() => expect(screen.queryByText('Ładuję dane miesiąca…')).toBeNull())
+}
 
 describe('break-even monthly interface', () => {
   it('keeps unknown gross targets and HR explicit, preserves foreign currency warnings, switches the month on all reads', async () => {
@@ -112,18 +130,24 @@ describe('break-even monthly interface', () => {
     await settings()
     fireEvent.click(screen.getByRole('button', { name: 'Edytuj marżę 2026-01' }))
     fireEvent.change(screen.getByLabelText('Marża (%)'), { target: { value: '55' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Zapisz marżę' }))
-    await waitFor(() => expect(posted[0]).toMatchObject({ action: 'margin.save', id: 'm1', margin: .55 }))
+    await saveAndReload(
+      () => fireEvent.click(screen.getByRole('button', { name: 'Zapisz marżę' })),
+      () => expect(posted[0]).toMatchObject({ action: 'margin.save', id: 'm1', margin: .55 }),
+    )
     await screen.findByRole('button', { name: 'Dodaj marżę' })
     fireEvent.click(screen.getByRole('button', { name: 'Usuń', exact: true }))
     expect(posted).toHaveLength(1)
-    fireEvent.click(screen.getByRole('button', { name: 'Potwierdź', exact: true }))
-    await waitFor(() => expect(posted[1]).toEqual({ action: 'margin.delete', id: 'm1' }))
+    await saveAndReload(
+      () => fireEvent.click(screen.getByRole('button', { name: 'Potwierdź', exact: true })),
+      () => expect(posted[1]).toEqual({ action: 'margin.delete', id: 'm1' }),
+    )
     await screen.findByRole('button', { name: 'Edytuj Czynsz JAG' })
     fireEvent.click(screen.getByRole('button', { name: 'Edytuj Czynsz JAG' }))
     fireEvent.change(screen.getByLabelText('Oczekiwana kwota netto / miesiąc'), { target: { value: '1200' } })
-    fireEvent.click(screen.getByRole('button', { name: 'Zapisz koszt stały' }))
-    await waitFor(() => expect(posted[2]).toMatchObject({ action: 'fixed.save', id: 'fixed-JAG', expectedNetAmount: 1200 }))
+    await saveAndReload(
+      () => fireEvent.click(screen.getByRole('button', { name: 'Zapisz koszt stały' })),
+      () => expect(posted[2]).toMatchObject({ action: 'fixed.save', id: 'fixed-JAG', expectedNetAmount: 1200 }),
+    )
     await screen.findByRole('button', { name: 'Archiwizuj' })
     fireEvent.click(screen.getByRole('button', { name: 'Archiwizuj' }))
     expect(posted).toHaveLength(3)
