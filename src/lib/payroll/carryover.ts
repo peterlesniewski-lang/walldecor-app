@@ -2,6 +2,7 @@ import { getWarsawBusinessDate } from '@/lib/hr/business-date'
 import type { BaseSegment } from './calendar'
 import type { EmployerCostContext } from './cost-context'
 import { calculateEmployerCostGrosze } from './employer-cost'
+import { hourlyGrossGrosze, netFromLastApproved, type ApprovedFigures } from './hourly'
 import { monthGenitive } from './month-names'
 import {
   payrollMonthKey,
@@ -35,6 +36,7 @@ export const CARRYOVER_FLAGS = [
   'PREVIOUS_HAD_ABSENCE',
   'PAY_AFFECTING_ABSENCE',
   'HOURLY_BASIS',
+  'HOURLY_NO_HOURS',
   'EMPLOYMENT_TYPE_MISSING',
 ] as const
 export type CarryoverFlag = typeof CARRYOVER_FLAGS[number]
@@ -56,7 +58,9 @@ export type CarryoverSourceVersion = {
   employerCostSource: string
 }
 
-export type CarryoverSuggestion = {
+/** Amounts copied from the immediately previous month (stage 1). */
+export type PreviousMonthSuggestion = {
+  kind: 'PREVIOUS_MONTH'
   finalGrossGrosze: number
   finalNetGrosze: number
   employerCostGrosze: number
@@ -64,6 +68,28 @@ export type CarryoverSuggestion = {
   employerCostSource: 'CALCULATED' | 'OVERRIDDEN'
   /** "YYYY-MM" of the version the amounts come from. */
   sourceMonth: string
+}
+
+/** Hourly basis (D15, D17): gross = approved hours × rate; net from the last approved proportion. */
+export type HoursSuggestion = {
+  kind: 'HOURS'
+  finalGrossGrosze: number
+  /** null when the person has no earlier approved version to take the proportion from. */
+  finalNetGrosze: number | null
+  /** null when there are no rates and no source month to copy a manual cost from: the ADMIN types it. */
+  employerCostGrosze: number | null
+  employerCostSource: 'CALCULATED' | 'OVERRIDDEN'
+  /** "YYYY-MM" of the version the net proportion comes from, or null. */
+  sourceMonth: string | null
+}
+
+export type CarryoverSuggestion = PreviousMonthSuggestion | HoursSuggestion
+
+/** "38 h × 50,00 zł" — what the hourly gross is made of. */
+export type HourlyCalculation = {
+  rateGrosze: number
+  approvedMinutes: number
+  grossGrosze: number
 }
 
 export type EmploymentInPeriod = {
@@ -90,10 +116,16 @@ export type CarryoverInput = {
    * did not work in full, holds an untypical amount that must not be carried over unseen.
    */
   previousPayAffectingAbsenceIds: string[]
+  /** Approved worked minutes of the month (`approvedWorkedMinutes`); used for an hourly basis only. */
+  approvedWorkedMinutes?: number
+  /** The person's latest approved version of ANY earlier month (net proportion for an hourly basis). */
+  lastApproved?: ApprovedFigures | null
 }
 
 export type CarryoverEvaluation = {
   suggestion: CarryoverSuggestion | null
+  /** Hourly basis with one segment and approved hours: what the gross is made of; otherwise null. */
+  hourly: HourlyCalculation | null
   flags: CarryoverFlag[]
   autoEligible: boolean
   employment: EmploymentInPeriod
@@ -116,9 +148,10 @@ export function employmentInPeriod(
   }
 }
 
-function suggestionFrom(source: CarryoverSourceVersion, costContext: CarryoverInput['costContext']): CarryoverSuggestion {
+function suggestionFrom(source: CarryoverSourceVersion, costContext: CarryoverInput['costContext']): PreviousMonthSuggestion {
   const recalculate = source.employerCostSource === 'CALCULATED' && costContext.rates !== null
   return {
+    kind: 'PREVIOUS_MONTH',
     finalGrossGrosze: source.finalGrossGrosze,
     finalNetGrosze: source.finalNetGrosze,
     employerCostGrosze: recalculate
@@ -127,6 +160,23 @@ function suggestionFrom(source: CarryoverSourceVersion, costContext: CarryoverIn
     employerCostSource: recalculate ? 'CALCULATED' : 'OVERRIDDEN',
     sourceMonth: payrollMonthKey(source),
   }
+}
+
+/**
+ * Employer cost of an hours-based gross, by the stage 1 rule: calculated from current rates unless the
+ * source month's cost was entered by hand (then copied as a manual amount); with no rates and no
+ * source there is nothing to suggest.
+ */
+function hourlyCost(
+  grossGrosze: number,
+  source: CarryoverSourceVersion | null,
+  costContext: CarryoverInput['costContext']
+): Pick<HoursSuggestion, 'employerCostGrosze' | 'employerCostSource'> {
+  const rates = costContext.rates
+  if (rates !== null && (source === null || source.employerCostSource === 'CALCULATED')) {
+    return { employerCostGrosze: calculateEmployerCostGrosze(grossGrosze, rates), employerCostSource: 'CALCULATED' }
+  }
+  return { employerCostGrosze: source ? source.employerCostGrosze : null, employerCostSource: 'OVERRIDDEN' }
 }
 
 export function evaluateCarryover(input: CarryoverInput): CarryoverEvaluation {
@@ -160,15 +210,48 @@ export function evaluateCarryover(input: CarryoverInput): CarryoverEvaluation {
   }
   if (source && input.previousPayAffectingAbsenceIds.length > 0) flags.push('PREVIOUS_HAD_ABSENCE')
   if (input.payAffectingAbsenceIds.length > 0) flags.push('PAY_AFFECTING_ABSENCE')
-  if (segments.some((segment) => segment.basis === 'HOURLY_GROSS')) flags.push('HOURLY_BASIS')
+  const hourlyBasis = segments.some((segment) => segment.basis === 'HOURLY_GROSS')
+  if (hourlyBasis) flags.push('HOURLY_BASIS')
+
+  let suggestion: CarryoverSuggestion | null = source ? suggestionFrom(source, input.costContext) : null
+  let hourly: HourlyCalculation | null = null
+  if (hourlyBasis) {
+    const minutes = input.approvedWorkedMinutes ?? 0
+    if (segments.length > 1) {
+      // Two bases in one month (BASE_CHANGED is already flagged): no calculation, the ADMIN types it.
+      suggestion = null
+    } else if (minutes === 0) {
+      // D19: no approved hours → last month's amount stays as the suggestion, with a warning.
+      flags.push('HOURLY_NO_HOURS')
+    } else {
+      const rateGrosze = segments[0].amountGrosze
+      const grossGrosze = hourlyGrossGrosze(minutes, rateGrosze)
+      const last = input.lastApproved ?? null
+      const finalNetGrosze = netFromLastApproved(grossGrosze, last)
+      hourly = { rateGrosze, approvedMinutes: minutes, grossGrosze }
+      suggestion = {
+        kind: 'HOURS',
+        finalGrossGrosze: grossGrosze,
+        finalNetGrosze,
+        ...hourlyCost(grossGrosze, source, input.costContext),
+        sourceMonth: finalNetGrosze !== null && last ? payrollMonthKey(last) : null,
+      }
+      // The gross does not depend on the previous month; only a missing net still needs typing.
+      if (finalNetGrosze !== null) {
+        const index = flags.indexOf('NO_PREVIOUS_MONTH')
+        if (index >= 0) flags.splice(index, 1)
+      }
+    }
+  }
   if (!input.employee.employmentType) flags.push('EMPLOYMENT_TYPE_MISSING')
 
-  const suggestion = source ? suggestionFrom(source, input.costContext) : null
   const monthlyBase = segments.length > 0 && segments.every((segment) => segment.basis === 'MONTHLY_GROSS')
 
   return {
     suggestion,
+    hourly,
     flags,
+    // An hourly row is never ready for one-click or automatic approval (D18): monthlyBase is false.
     autoEligible: suggestion !== null && flags.length === 0 && input.blockers.length === 0 && monthlyBase,
     employment,
     previousEmployment,
@@ -219,6 +302,8 @@ export function describeCarryoverFlag(
       return 'nieobecność zmieniająca wypłatę — sprawdź kwotę'
     case 'HOURLY_BASIS':
       return 'stawka godzinowa — sprawdź kwotę'
+    case 'HOURLY_NO_HOURS':
+      return 'brak godzin — sprawdź kwotę'
     case 'EMPLOYMENT_TYPE_MISSING':
       return 'brak rodzaju umowy — uzupełnij w karcie'
   }

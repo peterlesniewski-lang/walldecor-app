@@ -26,6 +26,14 @@ _Avoid_: pensja, stawka
 Koszt pracodawcy osoby za miesiąc, za który nie ma jeszcze zatwierdzonej Listy płac, używany w wyniku do czasu zatwierdzenia: koszt pracodawcy z ostatniego wcześniejszego zatwierdzonego miesiąca tej osoby (podzielony na salony według podziału obowiązującego w szacowanym miesiącu); dopiero gdy takiego miesiąca nie ma — wyliczony z Angażu i stawek składek pracodawcy.
 _Avoid_: prognoza, koszt oczekiwany
 
+**Stawka godzinowa**:
+Podstawa wynagrodzenia wpisana w karcie osoby zamiast miesięcznego Angażu: kwota brutto za godzinę. Brutto miesiąca = zatwierdzone w Czasie pracy godziny × stawka; każda zatwierdzona godzina, także w sobotę i ponad normę, jest płatna tą samą stawką. Osoby na stawce godzinowej są zatwierdzane wyłącznie ręcznie.
+_Avoid_: dniówka, akord, nadgodziny (przy stawce godzinowej)
+
+**Przypomnienie przed wypłatą**:
+Powiadomienie dla ADMIN-a dwa dni robocze przed ostatnim dniem roboczym miesiąca, gdy na liście płac są osoby bez zatwierdzonego rozliczenia. Wynagrodzenia wypłaca się do ostatniego dnia roboczego miesiąca, którego dotyczą.
+_Avoid_: alert płacowy, termin płatności
+
 **Miesiąc kosztu**:
 Miesiąc, za który wykonano pracę; w nim Koszt pracodawcy obciąża wynik, niezależnie od terminu zapłaty składek.
 _Avoid_: miesiąc wypłaty

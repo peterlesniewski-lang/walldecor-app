@@ -12,6 +12,7 @@ import {
 } from './auto-carryover'
 import { isPayrollSchedulerEnabledByEnv } from './automation-env'
 import { monthNominative } from './month-names'
+import { duePayReminderMonth, sendPayrollPayReminder } from './pay-reminder'
 import { parsePayrollMonth, type PayrollPeriod } from './period'
 import { getPayrollSheet } from './service'
 
@@ -22,8 +23,13 @@ import { getPayrollSheet } from './service'
 //  • Daily from 07:00: one notification per month (the current and the previous one) about approved
 //    rows whose pay-relevant inputs changed and nobody confirmed the amount yet; each change is
 //    notified once.
-// Both are OFF until an ADMIN enables the automat (D10). `now` is a parameter so the due-date rules
-// are unit-testable.
+// Both are OFF until an ADMIN enables the automat (D10).
+//  • Pay reminder (D18, stage 3): two working days before the last working day of the month, from
+//    07:00, one notification about people without an approved settlement — once per month (slot
+//    `payroll_pay_reminder_last_month`). It does NOT depend on the automat switch: hourly people are
+//    approved by hand whether the automat is on or off, and D18 sets no condition. Only the env switch
+//    (PAYROLL_AUTO_CARRYOVER=off, or not =on outside production) stops it, with the whole schedule.
+// `now` is a parameter so the due-date rules are unit-testable.
 
 export const PAYROLL_AUTOMATION_TIME_ZONE = 'Europe/Warsaw'
 export const PAYROLL_CARRYOVER_HOUR = 6
@@ -37,6 +43,7 @@ export const PAYROLL_AUTOMATION_KEYS = {
   lastResult: 'payroll_auto_carryover_last_result',
   changeNoticeLastDay: 'payroll_change_notice_last_day',
   changeNoticeSignatures: 'payroll_change_notice_signatures',
+  payReminderLastMonth: 'payroll_pay_reminder_last_month',
 } as const
 
 
@@ -140,6 +147,12 @@ async function claimSetting(db: PrismaClient, key: string, expected: string | nu
   }
   const result = await db.appSetting.updateMany({ where: { key, value: expected }, data: { value } })
   return result.count === 1
+}
+
+/** Undoes `claimSetting` (only if nobody changed the value since), so the next check can try again. */
+async function releaseSetting(db: PrismaClient, key: string, claimed: string, previous: string | null) {
+  if (previous === null) await db.appSetting.deleteMany({ where: { key, value: claimed } })
+  else await db.appSetting.updateMany({ where: { key, value: claimed }, data: { value: previous } })
 }
 
 export type PayrollAutomationStatus = {
@@ -262,6 +275,11 @@ export type PayrollAutomationTick = {
     | { ran: false; reason: 'FAILED'; month: string; message: string }
     | { ran: true; month: string; summary: PayrollAutoCarryoverSummary }
   changeNotice: { ran: false } | { ran: true; pending: number; fresh: number; notified: number }
+  payReminder:
+    | { ran: false }
+    /** Sending failed before anything was sent; the slot was released and the next check tries again. */
+    | { ran: false; reason: 'FAILED'; month: string; message: string }
+    | { ran: true; month: string; unapproved: number; notified: number }
 }
 
 /** One scheduler check; safe to call repeatedly. */
@@ -269,7 +287,11 @@ export async function runDuePayrollAutomation(db: PrismaClient, now = new Date()
   const map = await readSettings(db)
   const enabled = map.get(PAYROLL_AUTOMATION_KEYS.enabled) === 'true'
   const storedLastMonth = map.get(PAYROLL_AUTOMATION_KEYS.lastMonth) ?? null
-  const tick: PayrollAutomationTick = { carryover: { ran: false, reason: enabled ? 'NOT_DUE' : 'DISABLED' }, changeNotice: { ran: false } }
+  const tick: PayrollAutomationTick = {
+    carryover: { ran: false, reason: enabled ? 'NOT_DUE' : 'DISABLED' },
+    changeNotice: { ran: false },
+    payReminder: { ran: false },
+  }
 
   if (enabled && storedLastMonth === null) {
     // Switched on without a month (not via the API): treat it as enabled now, never run the current month.
@@ -304,6 +326,23 @@ export async function runDuePayrollAutomation(db: PrismaClient, now = new Date()
       tick.changeNotice = { ran: true, ...result }
     }
   }
+
+  // Independent of `enabled` — see the header comment.
+  const reminderLastMonth = map.get(PAYROLL_AUTOMATION_KEYS.payReminderLastMonth) ?? null
+  const reminderMonth = duePayReminderMonth(warsawClock(now), reminderLastMonth)
+  const reminderPeriod = reminderMonth ? parsePayrollMonth(reminderMonth) : null
+  if (reminderMonth && reminderPeriod
+    && await claimSetting(db, PAYROLL_AUTOMATION_KEYS.payReminderLastMonth, reminderLastMonth, reminderMonth)) {
+    try {
+      const result = await sendPayrollPayReminder(db, reminderPeriod)
+      tick.payReminder = { ran: true, ...result }
+    } catch (error) {
+      // The notification insert is the last step, so nothing was sent: release the month and let the
+      // next check (5 minutes later, until the month ends) try again instead of silently skipping it.
+      await releaseSetting(db, PAYROLL_AUTOMATION_KEYS.payReminderLastMonth, reminderMonth, reminderLastMonth).catch(() => undefined)
+      tick.payReminder = { ran: false, reason: 'FAILED', month: reminderMonth, message: error instanceof Error ? error.message : 'unknown' }
+    }
+  }
   return tick
 }
 
@@ -334,6 +373,10 @@ export function startPayrollAutomationScheduler(db: PrismaClient) {
         console.error(JSON.stringify({ event: 'PAYROLL_AUTO_CARRYOVER_FAILED', month: outcome.carryover.month, message: outcome.carryover.message }))
       }
       if (outcome.changeNotice.ran) console.info(JSON.stringify({ event: 'PAYROLL_CHANGE_NOTICE', ...outcome.changeNotice }))
+      if (outcome.payReminder.ran) console.info(JSON.stringify({ event: 'PAYROLL_PAY_REMINDER', ...outcome.payReminder }))
+      else if ('reason' in outcome.payReminder) {
+        console.error(JSON.stringify({ event: 'PAYROLL_PAY_REMINDER_FAILED', month: outcome.payReminder.month, message: outcome.payReminder.message }))
+      }
     } catch (error) {
       console.error(JSON.stringify({ event: 'PAYROLL_AUTOMATION_FAILED', message: error instanceof Error ? error.message : 'unknown' }))
     } finally {

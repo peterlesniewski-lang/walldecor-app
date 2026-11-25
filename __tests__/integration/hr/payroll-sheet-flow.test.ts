@@ -265,12 +265,20 @@ describe('payroll month sheet — October from September', () => {
     ['emp-bonus', 'PREVIOUS_HAD_ADJUSTMENTS', 'poprzedni miesiąc zawierał premię'],
     ['emp-part', 'PARTIAL_MONTH', 'niepełny miesiąc — zatrudnienie do 2026-10-15'],
     ['emp-sick', 'PAY_AFFECTING_ABSENCE', 'nieobecność zmieniająca wypłatę — sprawdź kwotę'],
-    ['emp-hourly', 'HOURLY_BASIS', 'stawka godzinowa — sprawdź kwotę'],
     ['emp-basechg', 'BASE_CHANGED', 'angaż zmienił się od września'],
     ['emp-noprev', 'NO_PREVIOUS_MONTH', 'brak zatwierdzonego września — wpisz kwoty'],
   ])('should flag %s with %s and not preselect it', async (employeeId, code, message) => {
     const r = row(await sheet('2026-10'), employeeId)!
     expect([r.flags, r.blockers, r.autoEligible]).toEqual([[{ code, message }], [], false])
+  })
+
+  // Stage 3 (D19): an hourly person without approved hours also gets "brak godzin — sprawdź kwotę".
+  it('should flag emp-hourly without hours with HOURLY_BASIS and HOURLY_NO_HOURS and not preselect it', async () => {
+    const r = row(await sheet('2026-10'), 'emp-hourly')!
+    expect([r.flags, r.blockers, r.autoEligible]).toEqual([[
+      { code: 'HOURLY_BASIS', message: 'stawka godzinowa — sprawdź kwotę' },
+      { code: 'HOURLY_NO_HOURS', message: 'brak godzin — sprawdź kwotę' },
+    ], [], false])
   })
 
   it.each([

@@ -32,6 +32,8 @@ import {
   type PayInputsState,
 } from './pay-inputs'
 import { withSystemActorName, type PayrollVersionOrigin } from './system-actor'
+import { approvePendingTimeEntries } from '@/lib/hr/time-tracking/approve-entry'
+import type { ApprovedFigures } from './hourly'
 
 type Db = PrismaClient | Prisma.TransactionClient
 
@@ -742,6 +744,10 @@ async function approveStep(
       employerCostSource,
       costAllocation,
       origin,
+      // Hourly basis: the approved hours and the rate the amount was based on stay in the history.
+      ...(settlement.baseBasis === 'HOURLY_GROSS'
+        ? { approvedWorkedMinutes: settlement.approvedWorkedMinutes, hourlyRateGrosze: settlement.baseSalaryGrosze }
+        : {}),
     },
     reason: note,
   })
@@ -1149,6 +1155,23 @@ export async function acknowledgePayrollChanges(
   })
 }
 
+/** The latest effective version of each person from a month BEFORE `period` (any distance back). */
+async function loadLastApprovedBefore(db: Db, employeeIds: string[], period: PayrollPeriod): Promise<Map<string, ApprovedFigures>> {
+  if (employeeIds.length === 0) return new Map()
+  const versions = await db.payrollSettlementVersion.findMany({
+    where: {
+      employeeId: { in: employeeIds },
+      supersededAt: null,
+      OR: [{ year: { lt: period.year } }, { year: period.year, month: { lt: period.month } }],
+    },
+    orderBy: [{ year: 'desc' }, { month: 'desc' }],
+    select: { employeeId: true, year: true, month: true, finalGrossGrosze: true, finalNetGrosze: true },
+  })
+  const latest = new Map<string, ApprovedFigures>()
+  for (const { employeeId, ...figures } of versions) if (!latest.has(employeeId)) latest.set(employeeId, figures)
+  return latest
+}
+
 function groupBy<T>(items: T[], key: (item: T) => string): Map<string, T[]> {
   const map = new Map<string, T[]>()
   for (const item of items) map.set(key(item), [...(map.get(key(item)) ?? []), item])
@@ -1228,6 +1251,9 @@ export async function getPayrollSheet(db: Db, period: PayrollPeriod) {
   const entriesBy = groupBy(entries, (entry) => entry.employeeId)
   const requestsBy = groupBy(overtimeRequests, (request) => request.employeeId)
   const basesBy = groupBy(baseSalaries, (base) => base.employeeId)
+  // D17: the net of an hourly person follows the proportion of their latest approved earlier month.
+  const hourlyIds = [...new Set(baseSalaries.filter((base) => base.basis === 'HOURLY_GROSS').map((base) => base.employeeId))]
+  const lastApprovedBy = await loadLastApprovedBefore(db, hourlyIds, period)
   const settlementBy = new Map(settlements.map((settlement) => [settlement.employeeId, settlement]))
   const currentBy = new Map(currentVersions.map((version) => [version.employeeId, version]))
   const previousBy = new Map(previousVersions.map((version) => [version.employeeId, version]))
@@ -1258,8 +1284,11 @@ export async function getPayrollSheet(db: Db, period: PayrollPeriod) {
       blockers,
       payAffectingAbsenceIds: absenceIds,
       previousPayAffectingAbsenceIds: previousAbsences.get(employee.id) ?? [],
+      approvedWorkedMinutes: snapshot.approvedWorkedMinutes,
+      lastApproved: lastApprovedBy.get(employee.id) ?? null,
     })
     const current = currentBy.get(employee.id) ?? null
+    const hourlyBasis = snapshot.baseSegments.some((segment) => segment.basis === 'HOURLY_GROSS')
     const latestBase = snapshot.baseSegments.at(-1) ?? null
     const base = latestBase
       ? (basesBy.get(employee.id) ?? []).find((row) => row.id === latestBase.baseSalaryId) ?? null
@@ -1315,6 +1344,18 @@ export async function getPayrollSheet(db: Db, period: PayrollPeriod) {
       autoEligible: evaluation.autoEligible,
       rates: context.rates,
       employment: evaluation.employment,
+      /** Hourly basis only: the calendar hours behind the amount ("38 h zatwierdzone · 6 h czeka"). */
+      hours: hourlyBasis
+        ? {
+          approvedMinutes: snapshot.approvedWorkedMinutes,
+          pendingMinutes: snapshot.pendingWorkedMinutes,
+          pendingEntries: snapshot.pendingEntryCount,
+          approvablePendingEntries: snapshot.approvablePendingEntryCount,
+          openEntries: snapshot.openEntryCount,
+          /** Set when the gross is calculated: one hourly segment and approved hours. */
+          calculation: evaluation.hourly,
+        }
+        : null,
       /** Approved rows only: pay-relevant inputs changed after approval and nobody confirmed the amount yet. */
       changeAfterApproval: change
         ? {
@@ -1407,6 +1448,50 @@ export async function submitPayrollSheet(
     }
   }
   return results
+}
+
+// ─── Month sheet: approve the hours of an hourly person ──────────────────────
+
+export type ApprovePayrollHoursResult = {
+  month: string
+  employeeId: string
+  /** Entries approved now. */
+  approved: number
+  /** Pending entries without a clock-out: left as they are, they keep blocking the settlement. */
+  leftOpen: number
+}
+
+/**
+ * "Zatwierdź godziny" (D16): approves every waiting time entry of the person in the month that has a
+ * clock-out — also entries entered ahead for days still to come — exactly as Czas pracy approves one
+ * entry (status and approver). Only for a person paid by the hour in that month.
+ */
+export async function approvePayrollMonthHours(
+  db: PrismaClient,
+  actorId: string,
+  input: { employeeId: string; period: PayrollPeriod }
+): Promise<ApprovePayrollHoursResult> {
+  if (isFuturePeriod(input.period)) throw new PayrollError('Nie można zatwierdzać godzin przyszłego miesiąca.', 400)
+  return db.$transaction(async (tx) => {
+    const employee = await tx.employee.findUnique({ where: { id: input.employeeId }, select: { id: true } })
+    if (!employee) throw new PayrollError('Pracownik nie istnieje.', 404)
+    const snapshot = await loadCalendarSnapshot(tx, employee.id, input.period)
+    if (!snapshot.baseSegments.some((segment) => segment.basis === 'HOURLY_GROSS')) {
+      throw new PayrollError('Zatwierdzanie godzin z listy płac dotyczy tylko osób na stawce godzinowej.', 400)
+    }
+    const monthKey = payrollMonthKey(input.period)
+    const entries = await tx.timeEntry.findMany({
+      where: { employeeId: employee.id, date: periodTimeEntryQueryRange(input.period), status: { notIn: ['approved', 'rejected'] } },
+      select: { id: true, date: true, clockOut: true },
+    })
+    const inMonth = entries.filter((entry) => getWarsawBusinessDate(entry.date).isoDate.startsWith(`${monthKey}-`))
+    const approved = await approvePendingTimeEntries(
+      tx,
+      inMonth.filter((entry) => entry.clockOut !== null).map((entry) => entry.id),
+      actorId
+    )
+    return { month: monthKey, employeeId: employee.id, approved, leftOpen: inMonth.filter((entry) => entry.clockOut === null).length }
+  })
 }
 
 // ─── Month-level data ────────────────────────────────────────────────────────

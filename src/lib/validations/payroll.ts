@@ -166,3 +166,9 @@ export const PayrollAutomationUpdateSchema = z.object({
 export const PayrollChangesAcknowledgeSchema = z.object({
   signature: z.string().regex(/^[0-9a-f]{64}$/, 'Nieprawidłowa sygnatura zmiany.'),
 }).strict()
+
+/** "Zatwierdź godziny" on the sheet: every waiting time entry of one hourly person in the month. */
+export const PayrollApproveHoursSchema = z.object({
+  employeeId: z.string().min(1),
+  month: monthKey,
+}).strict()

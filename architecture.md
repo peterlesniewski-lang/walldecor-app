@@ -504,6 +504,28 @@ minuty), nie cały `calendarFingerprint`. „Kwota aktualna” dopisuje `Payroll
 (`afterJson`: `versionNumber`, `signature`, `state`, `changesText`) — rozliczenie i wersja nie są zmieniane.
 `getMonthlyEmployerCosts` zwraca `estimateSource` (`LAST_APPROVED` | `BASE_RATES` | `null`).
 
+#### Stawka godzinowa i przypomnienie przed wypłatą (2026-11-25, #44)
+
+Bez zmiany schematu. Brutto osoby z angażem `HOURLY_GROSS` = zatwierdzone minuty miesiąca (`approvedWorkedMinutes`,
+także soboty i nadgodziny) × stawka / 60, zaokrąglone do grosza w górę od połowy (`src/lib/payroll/hourly.ts`, BigInt);
+netto z proporcji netto/brutto ostatniej zatwierdzonej wersji z wcześniejszego miesiąca. Podpowiedź arkusza ma `kind`
+`PREVIOUS_MONTH` | `HOURS`; wiersz godzinowy ma pole `hours` (zatwierdzone i czekające minuty, wpisy bez wyjścia,
+wyliczenie). Przy `HOURLY_GROSS` w `summarizeSettlement` nie ma blokad `OVERTIME_*`, a minuty nadgodzin do wypłaty
+i do odbioru w wersji wynoszą 0; `HOURLY_ENTRIES_PENDING` i `OPEN_TIME_ENTRY` obowiązują. Zdarzenie `settlement.approve`
+osoby godzinowej ma w `afterJson` `approvedWorkedMinutes` i `hourlyRateGrosze`.
+Zatwierdzanie wpisu czasu pracy: jedna definicja w `src/lib/hr/time-tracking/approve-entry.ts` (status `approved`
++ `approvedById`), używana przez `PATCH /api/hr/time-tracking/[id]/approve` i `POST /api/hr/payroll/sheet/approve-hours`.
+
+```
+payroll_pay_reminder_last_month   "YYYY-MM" — miesiąc, za który przypomnienie przed wypłatą już poszło (slot, CAS)
+```
+
+Przypomnienie (`src/lib/payroll/pay-reminder.ts`, ten sam harmonogram): dzień = ostatni dzień roboczy miesiąca minus dwa
+dni robocze (pon.–pt. bez `getPolishHolidays`), od 07:00, albo pierwsze sprawdzenie później w tym samym miesiącu;
+powiadomienie `payroll_reminder` dla aktywnych ADMIN-ów o osobach z arkusza bez obowiązującej wersji; brak takich osób
+= brak powiadomienia. **Nie zależy od przełącznika automatu** (tylko od zmiennej `PAYROLL_AUTO_CARRYOVER`). Błąd przed
+zapisem powiadomienia zwalnia slot — następne sprawdzenie (po 5 min) próbuje ponownie.
+
 ---
 
 ### CostContract — Umowy kosztowe (2026-10-01, #25)
