@@ -162,7 +162,7 @@ describe('responsive dashboard navigation', () => {
     await user.click(payrollGroup)
     expect(within(dialog).getByRole('link', { name: 'Mój pasek' }).getAttribute('href')).toBe('/hr/my-pay')
     expect(within(dialog).queryByRole('link', { name: 'Rozliczenia miesięczne' })).toBeNull()
-    expect(within(dialog).queryByRole('link', { name: 'Stawki pracodawcy' })).toBeNull()
+    expect(within(dialog).queryByRole('link', { name: 'Ustawienia płac' })).toBeNull()
 
     await user.click(within(dialog).getByRole('button', { name: 'Zamknij' }))
     await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Menu HR' })).toBeNull())

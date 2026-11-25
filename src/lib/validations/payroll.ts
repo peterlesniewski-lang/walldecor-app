@@ -156,3 +156,13 @@ export const PayrollSheetSubmitSchema = z.object({
 export const PayrollMonthUpdateSchema = z.object({
   listReference: optionalText(200),
 }).strict()
+
+/** The payroll automat switch (ADMIN). Enabling never runs the current month (D10). */
+export const PayrollAutomationUpdateSchema = z.object({
+  enabled: z.boolean(),
+}).strict()
+
+/** "Kwota aktualna": the signature of the change after approval the ADMIN saw on the sheet. */
+export const PayrollChangesAcknowledgeSchema = z.object({
+  signature: z.string().regex(/^[0-9a-f]{64}$/, 'Nieprawidłowa sygnatura zmiany.'),
+}).strict()

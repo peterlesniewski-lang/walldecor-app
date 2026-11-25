@@ -1,6 +1,6 @@
 import type { Prisma, PrismaClient } from '@/generated/prisma'
 import { isEmployedInPeriod, payrollMonthKey, periodLastDay, periodTimeEntryQueryRange, type PayrollPeriod } from './period'
-import { allocateEmployerCost, estimateEmployerCostGrosze, payrollSettlementTypeFor } from './employer-cost'
+import { allocateEmployerCost, estimateEmployerCostGrosze, payrollSettlementTypeFor, type ResolvedCostSplit } from './employer-cost'
 import { loadEmployerCostContexts } from './cost-context'
 
 // Read contracts for the next stages. Both read ONLY effective approved versions
@@ -83,6 +83,8 @@ export async function getEffectivePayrollCosts(db: Db, period: PayrollPeriod): P
 
 export type MonthlyEmployerCostStatus = 'APPROVED' | 'ESTIMATE' | 'MISSING'
 export type MonthlyEmployerCostGap = 'BASE_MISSING' | 'HOURLY_BASE' | 'COST_SPLIT_MISSING'
+/** Where an ESTIMATE comes from (D20): the person's last approved month, or base salary × rates. */
+export type MonthlyEmployerCostEstimateSource = 'LAST_APPROVED' | 'BASE_RATES'
 
 export type MonthlyEmployerCost = {
   employeeId: string
@@ -93,12 +95,16 @@ export type MonthlyEmployerCost = {
   gap: MonthlyEmployerCostGap | null
   employerCostGrosze: number | null
   allocations: PayrollCostAllocation[]
+  /** Set only for ESTIMATE; null for APPROVED and MISSING. */
+  estimateSource: MonthlyEmployerCostEstimateSource | null
 }
 
 /**
  * Employer cost of every person settled through payroll (UoP, UZ, management board) for one month.
- * An approved version wins; otherwise the cost is estimated from the base salary and rates, without
- * overtime or bonuses. B2B and other employment types are excluded — their cost arrives as invoices.
+ * An approved version wins. Otherwise (D20) the estimate is the employer cost of the person's latest
+ * effective version from an EARLIER month, split between salons by the split in force in the
+ * estimated month; without such a version it is estimated from the base salary and rates (without
+ * overtime or bonuses). B2B and other employment types are excluded — their cost arrives as invoices.
  */
 export async function getMonthlyEmployerCosts(db: Db, period: PayrollPeriod): Promise<MonthlyEmployerCost[]> {
   const range = periodTimeEntryQueryRange(period)
@@ -126,7 +132,24 @@ export async function getMonthlyEmployerCosts(db: Db, period: PayrollPeriod): Pr
   const inScope = employees.filter((employee) =>
     payrollSettlementTypeFor(employee.employmentType) !== null && isEmployedInPeriod(employee, period)
   )
-  const contexts = await loadEmployerCostContexts(db, inScope, period)
+  const toEstimate = inScope.filter((employee) => !approvedEmployeeIds.has(employee.id))
+  const [contexts, earlier] = await Promise.all([
+    loadEmployerCostContexts(db, inScope, period),
+    db.payrollSettlementVersion.findMany({
+      where: {
+        employeeId: { in: toEstimate.map((employee) => employee.id) },
+        supersededAt: null,
+        OR: [{ year: { lt: period.year } }, { year: period.year, month: { lt: period.month } }],
+      },
+      select: { employeeId: true, year: true, month: true, employerCostGrosze: true },
+      orderBy: [{ year: 'desc' }, { month: 'desc' }],
+    }),
+  ])
+  // Newest first, so the first version seen per person is the latest earlier month.
+  const lastApprovedCost = new Map<string, number>()
+  for (const version of earlier) {
+    if (!lastApprovedCost.has(version.employeeId)) lastApprovedCost.set(version.employeeId, version.employerCostGrosze)
+  }
 
   const approvedRows: MonthlyEmployerCost[] = approved
     .filter((record) => payrollSettlementTypeFor(record.employmentType) !== null)
@@ -138,29 +161,34 @@ export async function getMonthlyEmployerCosts(db: Db, period: PayrollPeriod): Pr
       gap: null,
       employerCostGrosze: record.employerCostGrosze,
       allocations: record.allocations,
+      estimateSource: null,
     }))
 
-  const estimatedRows = inScope
-    .filter((employee) => !approvedEmployeeIds.has(employee.id))
-    .map((employee): MonthlyEmployerCost => {
-      const context = contexts.get(employee.id)
-      const base = employee.payrollBaseSalaries[0] ?? null
-      const missing = (gap: MonthlyEmployerCostGap): MonthlyEmployerCost => ({
-        employeeId: employee.id, ...period, status: 'MISSING', gap, employerCostGrosze: null, allocations: [],
-      })
-      if (!base) return missing('BASE_MISSING')
-      if (!context?.split) return missing('COST_SPLIT_MISSING')
-      const estimate = context.rates ? estimateEmployerCostGrosze(base, context.rates) : null
-      if (estimate === null) return missing('HOURLY_BASE')
-      return {
-        employeeId: employee.id,
-        ...period,
-        status: 'ESTIMATE',
-        gap: null,
-        employerCostGrosze: estimate,
-        allocations: allocateEmployerCost(estimate, context.split),
-      }
+  const estimatedRows = toEstimate.map((employee): MonthlyEmployerCost => {
+    const context = contexts.get(employee.id)
+    const base = employee.payrollBaseSalaries[0] ?? null
+    const missing = (gap: MonthlyEmployerCostGap): MonthlyEmployerCost => ({
+      employeeId: employee.id, ...period, status: 'MISSING', gap, employerCostGrosze: null, allocations: [], estimateSource: null,
     })
+    const estimated = (amount: number, split: ResolvedCostSplit, source: MonthlyEmployerCostEstimateSource): MonthlyEmployerCost => ({
+      employeeId: employee.id,
+      ...period,
+      status: 'ESTIMATE',
+      gap: null,
+      employerCostGrosze: amount,
+      allocations: allocateEmployerCost(amount, split),
+      estimateSource: source,
+    })
+    const lastApproved = lastApprovedCost.get(employee.id)
+    if (lastApproved !== undefined) {
+      return context?.split ? estimated(lastApproved, context.split, 'LAST_APPROVED') : missing('COST_SPLIT_MISSING')
+    }
+    if (!base) return missing('BASE_MISSING')
+    if (!context?.split) return missing('COST_SPLIT_MISSING')
+    const estimate = context.rates ? estimateEmployerCostGrosze(base, context.rates) : null
+    if (estimate === null) return missing('HOURLY_BASE')
+    return estimated(estimate, context.split, 'BASE_RATES')
+  })
 
   return [...approvedRows, ...estimatedRows]
 }

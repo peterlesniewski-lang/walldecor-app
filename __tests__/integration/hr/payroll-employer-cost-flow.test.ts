@@ -296,3 +296,84 @@ describe('employer cost — access', () => {
     expect(responses.map((r) => r.status)).toEqual([403, 403, 403, 403, 403])
   })
 })
+
+describe('employer cost — estimate from the last approved month (D20)', () => {
+  const SEPTEMBER = { year: 2026, month: 9 }
+  const estimate = async (period: { year: number; month: number }, employeeId: string) => {
+    const rows = (await routes.contracts.getMonthlyEmployerCosts(prisma, period)).filter((row) => row.employeeId === employeeId)
+    return rows.map((row) => [row.status, row.estimateSource, row.gap, row.employerCostGrosze, row.allocations])
+  }
+
+  beforeAll(async () => {
+    as('ADMIN')
+    await prisma.employee.createMany({
+      data: [
+        { id: 'emp-hourly', firstName: 'Test', lastName: 'emp-hourly', email: 'emp-hourly@example.test', position: 'Test', costCenterId: 'JAG', startDate: new Date('2025-01-01'), employmentType: 'UZ' },
+        { id: 'emp-nobase', firstName: 'Test', lastName: 'emp-nobase', email: 'emp-nobase@example.test', position: 'Test', costCenterId: 'JAG', startDate: new Date('2025-01-01'), employmentType: 'UoP' },
+        { id: 'emp-yb', firstName: 'Test', lastName: 'emp-yb', email: 'emp-yb@example.test', position: 'Test', costCenterId: 'JAG', startDate: new Date('2025-01-01'), employmentType: 'UoP' },
+      ],
+    })
+    await post(routes.baseSalaries, '/api/hr/payroll/base-salaries', { employeeId: 'emp-hourly', effectiveFrom: '2025-01-01', amount: '40', basis: 'HOURLY_GROSS' })
+    await post(routes.baseSalaries, '/api/hr/payroll/base-salaries', { employeeId: 'emp-yb', effectiveFrom: '2025-01-01', amount: '6000', basis: 'MONTHLY_GROSS' })
+  })
+
+  it('should estimate a month without an approval at the cost of the last approved month', async () => {
+    // emp-uop: August approved at 9 638,40 (July at 9 648,80 is older).
+    expect(await estimate(SEPTEMBER, 'emp-uop')).toEqual([['ESTIMATE', 'LAST_APPROVED', null, 963840, [{ costCenterId: 'PUL', amountGrosze: 963840 }]]])
+  })
+
+  it('should fall back to base salary × rates for a person with no approved month', async () => {
+    expect(await estimate(SEPTEMBER, 'emp-uz')).toEqual([['ESTIMATE', 'BASE_RATES', null, 300000, [{ costCenterId: 'JAG', amountGrosze: 300000 }]]])
+  })
+
+  it('should split the last approved cost by the split in force in the estimated month', async () => {
+    // August was approved 50/50; from September the board is 100% JAG.
+    const { res } = await post(routes.splits, '/api/hr/payroll/cost-splits', { employeeId: 'emp-board', effectiveFrom: '2026-09', jagPercent: 100 })
+    expect([res.status, await estimate(SEPTEMBER, 'emp-board')])
+      .toEqual([201, [['ESTIMATE', 'LAST_APPROVED', null, 1020000, [{ costCenterId: 'JAG', amountGrosze: 1020000 }]]]])
+  })
+
+  it('should give an hourly person with an earlier approved month an estimate instead of MISSING', async () => {
+    const before = await estimate(SEPTEMBER, 'emp-hourly')
+    const id = await createSettlement('emp-hourly', '2026-07')
+    await act(id, { action: 'payrollOffice.confirm', finalGross: '4000', finalNet: '3100' })
+    const approve = await act(id, { action: 'approve' })
+    const cost = approve.json.versions[0].employerCostGrosze as number
+    expect([before, approve.res.status, await estimate(SEPTEMBER, 'emp-hourly')]).toEqual([
+      [['MISSING', null, 'HOURLY_BASE', null, []]],
+      200,
+      [['ESTIMATE', 'LAST_APPROVED', null, cost, [{ costCenterId: 'JAG', amountGrosze: cost }]]],
+    ])
+  })
+
+  it('should report a person with no data as MISSING with no amount (null, not zero)', async () => {
+    expect(await estimate(SEPTEMBER, 'emp-nobase')).toEqual([['MISSING', null, 'BASE_MISSING', null, []]])
+  })
+
+  it('should use only earlier months: January takes December of the previous year, not a later month', async () => {
+    const december = await createSettlement('emp-yb', '2025-12')
+    await act(december, { action: 'payrollOffice.confirm', finalGross: '6000', finalNet: '4300', employerCost: '7300' })
+    await act(december, { action: 'approve' })
+    const august = await createSettlement('emp-yb', '2026-08')
+    await act(august, { action: 'payrollOffice.confirm', finalGross: '6000', finalNet: '4300', employerCost: '7500' })
+    await act(august, { action: 'approve' })
+    expect([await estimate({ year: 2026, month: 1 }, 'emp-yb'), await estimate({ year: 2026, month: 9 }, 'emp-yb')]).toEqual([
+      [['ESTIMATE', 'LAST_APPROVED', null, 730000, [{ costCenterId: 'JAG', amountGrosze: 730000 }]]],
+      [['ESTIMATE', 'LAST_APPROVED', null, 750000, [{ costCenterId: 'JAG', amountGrosze: 750000 }]]],
+    ])
+  })
+
+  it('should show the approved amount once a month is approved, without doubling it', async () => {
+    const id = await createSettlement('emp-uop', '2026-09')
+    await act(id, { action: 'payrollOffice.confirm', finalGross: '8100', finalNet: '5850' })
+    const approve = await act(id, { action: 'approve' })
+    const { loadEmployerCostsForMonths } = await import('@/lib/finance/employer-costs')
+    const year = await loadEmployerCostsForMonths(prisma, 2026, [9])
+    const booked = year.rows.filter((row) => row.employeeId === 'emp-uop').reduce((sum, row) => sum + row.amount, 0)
+    const cost = approve.json.versions[0].employerCostGrosze as number
+    expect([await estimate(SEPTEMBER, 'emp-uop'), Math.round(booked * 100)]).toEqual([
+      [['APPROVED', null, null, cost, [{ costCenterId: 'PUL', amountGrosze: cost }]]],
+      cost,
+    ])
+  })
+})

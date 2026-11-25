@@ -12,6 +12,7 @@ import {
   type PayrollSettlementType,
 } from '@/lib/payroll/employer-cost'
 import { totalRatePercent } from './employer-cost-panel'
+import { PayrollAutomationPanel } from './payroll-automation-panel'
 import styles from './payroll.module.css'
 
 type RateRow = EmployerRates & {
@@ -92,15 +93,19 @@ export function EmployerRatesView() {
       </Link>
       <header className={styles.masthead}>
         <div>
-          <p className={styles.eyebrow}>Ustawienia płac</p>
-          <h1 className={styles.title}>Stawki <em>pracodawcy</em></h1>
+          <p className={styles.eyebrow}>HR · Wynagrodzenia · tylko administrator</p>
+          <h1 className={styles.title}>Ustawienia <em>płac</em></h1>
           <p className={styles.lede}>
-            Składki po stronie pracodawcy doliczane do brutto z listy płac. Każda zmiana obowiązuje od wskazanego miesiąca;
-            błędny wpis cofasz i dodajesz ponownie. Dopóki nie ma wpisu, liczymy stawkami domyślnymi — potwierdź je z księgową.
+            Automat 1. dnia miesiąca oraz stawki pracodawcy — składki doliczane do brutto z listy płac. Każda zmiana stawek
+            obowiązuje od wskazanego miesiąca; błędny wpis cofasz i dodajesz ponownie. Dopóki nie ma wpisu, liczymy stawkami
+            domyślnymi — potwierdź je z księgową.
           </p>
         </div>
       </header>
 
+      <PayrollAutomationPanel />
+
+      <h2 className={styles.panelTitle}>Stawki pracodawcy</h2>
       <section className={styles.ledger} aria-label="Obowiązujące i historyczne stawki">
         {PAYROLL_SETTLEMENT_TYPES.map((settlementType) => {
           const typeRows = (rows ?? []).filter((row) => row.settlementType === settlementType)

@@ -2108,6 +2108,7 @@ model PayrollSettlementVersion {
   employerCostSource     String    @default("ENTERED") // ENTERED (legacy) | CALCULATED | OVERRIDDEN
   employerRatesJson      String?   // rates and exemptions used for CALCULATED / OVERRIDDEN
   costAllocationJson     String    @default("[]") // [{ costCenterId: JAG|PUL, amountGrosze }]
+  origin                 String    @default("MANUAL") // MANUAL | AUTO_CARRYOVER (payroll automat, 1st of the month)
 
   @@unique([settlementId, versionNumber])
   @@index([year, month])
