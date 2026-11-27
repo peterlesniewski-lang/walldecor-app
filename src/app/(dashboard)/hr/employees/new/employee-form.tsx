@@ -47,6 +47,8 @@ interface EmployeeFormProps {
   divisions: Division[]
   departments: Department[]
   managers: Manager[]
+  /** External contractor: employment type is fixed to B2B and cannot be changed in this form. */
+  isContractor?: boolean
 }
 
 const STEPS = ['Dane osobowe', 'Zatrudnienie', 'Struktura']
@@ -101,7 +103,7 @@ function Label({ htmlFor, children, required }: { htmlFor: string; children: Rea
 const inputClass =
   'w-full px-3 py-2 text-sm rounded-lg border border-[var(--wd-border)] bg-white text-[var(--wd-text-primary)] outline-none focus:ring-2 focus:ring-[var(--wd-sand)] focus:border-[var(--wd-sand)] transition-all'
 
-export function EmployeeForm({ divisions, departments, managers }: EmployeeFormProps) {
+export function EmployeeForm({ divisions, departments, managers, isContractor = false }: EmployeeFormProps) {
   const router = useRouter()
   const [step, setStep] = useState(0)
   const [stepData, setStepData] = useState<Partial<FormPayload>>({})
@@ -138,7 +140,7 @@ export function EmployeeForm({ divisions, departments, managers }: EmployeeFormP
     // Strip empty strings — Zod rejects "" for enum/date fields
     const cleaned: Step2 = {
       ...data,
-      employmentType: data.employmentType || undefined,
+      employmentType: isContractor ? 'B2B' : data.employmentType || undefined,
       endDate: data.endDate || undefined,
     }
     setStepData((prev) => ({ ...prev, ...cleaned }))
@@ -165,11 +167,11 @@ export function EmployeeForm({ divisions, departments, managers }: EmployeeFormP
 
       if (!res.ok) {
         const json = await res.json()
-        throw new Error(json.error ?? 'Błąd podczas tworzenia pracownika')
+        throw new Error(json.error ?? (isContractor ? 'Błąd podczas tworzenia wykonawcy' : 'Błąd podczas tworzenia pracownika'))
       }
 
       const employee = await res.json()
-      router.push(`/hr/employees/${employee.id}`)
+      router.push(isContractor ? '/hr/employees?kind=contractors' : `/hr/employees/${employee.id}`)
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Nieznany błąd')
       setIsSubmitting(false)
@@ -222,6 +224,15 @@ export function EmployeeForm({ divisions, departments, managers }: EmployeeFormP
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label htmlFor="employmentType">Typ umowy</Label>
+              {isContractor ? (
+                <input
+                  id="employmentType"
+                  value="B2B — wykonawca zewnętrzny"
+                  readOnly
+                  disabled
+                  className={`${inputClass} bg-[var(--wd-surface-2)] cursor-not-allowed`}
+                />
+              ) : (
               <select id="employmentType" {...form2.register('employmentType')} className={inputClass}>
                 <option value="">Wybierz typ</option>
                 <option value="UoP">UoP — Umowa o pracę</option>
@@ -231,6 +242,7 @@ export function EmployeeForm({ divisions, departments, managers }: EmployeeFormP
                 <option value="Zarząd">Zarząd — powołanie / uchwała</option>
                 <option value="inne">Inne</option>
               </select>
+              )}
             </div>
             <div>
               <Label htmlFor="costCenterId" required>Centrum kosztów</Label>
@@ -300,7 +312,7 @@ export function EmployeeForm({ divisions, departments, managers }: EmployeeFormP
             <div className="p-3 rounded-lg bg-red-50 border border-red-200 text-sm text-red-700">{error}</div>
           )}
 
-          <FormNav onBack={() => setStep(1)} canBack isSubmitting={isSubmitting} isLast />
+          <FormNav onBack={() => setStep(1)} canBack isSubmitting={isSubmitting} isLast isContractor={isContractor} />
         </form>
       )}
     </div>
@@ -312,11 +324,13 @@ function FormNav({
   canBack,
   isSubmitting,
   isLast,
+  isContractor = false,
 }: {
   onBack: () => void
   canBack: boolean
   isSubmitting: boolean
   isLast: boolean
+  isContractor?: boolean
 }) {
   return (
     <div className="flex items-center justify-between pt-4 border-t border-[var(--wd-border)] mt-6">
@@ -333,7 +347,7 @@ function FormNav({
         disabled={isSubmitting}
         className="px-5 py-2 text-sm font-medium rounded-lg bg-[var(--wd-dark)] text-white hover:bg-[#2E2E2E] transition-colors disabled:opacity-60"
       >
-        {isSubmitting ? 'Zapisywanie...' : isLast ? 'Utwórz pracownika' : 'Dalej'}
+        {isSubmitting ? 'Zapisywanie...' : isLast ? (isContractor ? 'Utwórz wykonawcę' : 'Utwórz pracownika') : 'Dalej'}
       </button>
     </div>
   )

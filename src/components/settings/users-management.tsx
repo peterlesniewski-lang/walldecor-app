@@ -353,6 +353,7 @@ function AddUserDialog({
             <EmployeeSelect
               value={employeeId}
               onChange={(v) => setEmployeeId(v)}
+              kind="all"
               placeholder="Wybierz pracownika…"
             />
           </div>

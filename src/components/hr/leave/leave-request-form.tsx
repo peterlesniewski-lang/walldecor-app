@@ -302,6 +302,7 @@ export function LeaveRequestForm({
               setOnDemandUsed(0)
               setLeaveTypeId('')
             }}
+            kind="staff"
             placeholder="Wybierz pracownika…"
           />
         </div>
@@ -480,6 +481,7 @@ export function LeaveRequestForm({
         <EmployeeSelect
           value={substituteId}
           onChange={setSubstituteId}
+          kind="staff"
           placeholder="Wybierz zastępcę (opcjonalnie)"
           excludeIds={employeeId ? [employeeId] : []}
         />

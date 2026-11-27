@@ -2,6 +2,7 @@ import { getServerSession } from 'next-auth'
 import { redirect, notFound } from 'next/navigation'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 import { EmployeeEditForm } from './employee-edit-form'
 
 type Params = { params: Promise<{ id: string }> }
@@ -29,13 +30,19 @@ export default async function EmployeeEditPage({ params }: Params) {
     prisma.department.findMany({ orderBy: { name: 'asc' } }),
     prisma.position.findMany({ orderBy: { name: 'asc' } }),
     prisma.employee.findMany({
-      where: { active: true },
+      where: { active: true, AND: [STAFF_WHERE] },
       select: { id: true, firstName: true, lastName: true },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     }),
   ])
 
   if (!employee) notFound()
+
+  // The list offers active staff only. A supervisor already set on the card (inactive, or an external
+  // contractor) must stay in the dropdown, otherwise saving the form would silently clear the field.
+  const currentManager = employee.manager
+  const managerOptions =
+    currentManager && !managers.some((m) => m.id === currentManager.id) ? [currentManager, ...managers] : managers
 
   return (
     <div className="p-6 lg:p-8 bg-[var(--wd-off-white)] min-h-full">
@@ -44,7 +51,7 @@ export default async function EmployeeEditPage({ params }: Params) {
         divisions={divisions}
         departments={departments}
         positions={positions}
-        managers={managers.filter((m) => m.id !== id)}
+        managers={managerOptions.filter((m) => m.id !== id)}
       />
     </div>
   )

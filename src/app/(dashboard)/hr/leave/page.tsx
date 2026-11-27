@@ -7,6 +7,7 @@ import { getPolishHolidays } from '@/lib/hr/constants'
 import { AbsenceCalendar } from '@/components/hr/leave/absence-calendar'
 import { AdminLeaveButton } from '@/components/hr/leave/admin-leave-button'
 import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 
 function pad(n: number) {
   return String(n).padStart(2, '0')
@@ -100,7 +101,7 @@ export default async function LeavePage({ searchParams }: PageProps) {
   const employeeWhere: Record<string, unknown> =
     scopedWhere.id === HR_NO_EMPLOYEE_ACCESS_ID
       ? { id: HR_NO_EMPLOYEE_ACCESS_ID }
-      : { ...scopedWhere, active: true }
+      : { ...scopedWhere, active: true, AND: [STAFF_WHERE] }
 
   // Fetch employees with their leaves for the month
   const employees = await prisma.employee.findMany({

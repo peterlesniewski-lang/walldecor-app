@@ -38,6 +38,12 @@ _Avoid_: alert płacowy, termin płatności
 Miesiąc, za który wykonano pracę; w nim Koszt pracodawcy obciąża wynik, niezależnie od terminu zapłaty składek.
 _Avoid_: miesiąc wypłaty
 
+### Ludzie w HR
+
+**Wykonawca zewnętrzny**:
+Podwykonawca rozliczany fakturą za pracę, a nie pracownik: karta osoby z rodzajem umowy `B2B` (bez osobnego pola w bazie). Karta istnieje po to, żeby wykonawca miał konto instalatora i mógł być przypisany w Montażach. Widoczny tylko w zakładce „Wykonawcy” listy pracowników, w module Montaże i w Ustawienia → Użytkownicy; nie ma go w Wynagrodzeniach, Czasie pracy, Urlopach, raportach HR, strukturze ani na listach wyboru przełożonego i nie ma salda urlopowego. Karta bez wpisanego rodzaju umowy jest pracownikiem — nikt nie znika z HR przez brak danych.
+_Avoid_: pracownik B2B, współpracownik
+
 ### Koszty bez faktury
 
 **Umowa kosztowa**:

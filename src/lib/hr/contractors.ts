@@ -25,3 +25,18 @@ export const STAFF_WHERE = {
 export const CONTRACTOR_WHERE = {
   employmentType: EXTERNAL_CONTRACTOR_EMPLOYMENT_TYPE,
 } satisfies Prisma.EmployeeWhereInput
+
+// Which cards a list shows: HR staff, external contractors, or everybody (the default of the API,
+// so that callers written before the contractors tab keep working).
+export type EmployeeKind = 'staff' | 'contractors' | 'all'
+
+export function parseEmployeeKind(value: string | null | undefined): EmployeeKind | null {
+  if (value === undefined || value === null || value === '') return null
+  return value === 'staff' || value === 'contractors' || value === 'all' ? value : null
+}
+
+export function employeeKindWhere(kind: EmployeeKind): Prisma.EmployeeWhereInput {
+  if (kind === 'staff') return STAFF_WHERE
+  if (kind === 'contractors') return CONTRACTOR_WHERE
+  return {}
+}

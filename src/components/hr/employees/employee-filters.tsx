@@ -11,12 +11,13 @@ interface Division {
 interface EmployeeFiltersProps {
   divisions: Division[]
   isAdmin?: boolean
+  /** Contractors have no employment-type filter (all are B2B); staff never offers B2B. */
+  kind?: 'staff' | 'contractors'
 }
 
 const EMPLOYMENT_TYPE_OPTIONS = [
   { value: '', label: 'Wszystkie typy' },
   { value: 'UoP', label: 'UoP' },
-  { value: 'B2B', label: 'B2B' },
   { value: 'UZ', label: 'UZ' },
   { value: 'UoD', label: 'UoD' },
   { value: 'Zarząd', label: 'Zarząd' },
@@ -29,7 +30,7 @@ const STATUS_OPTIONS = [
   { value: 'inactive', label: 'Nieaktywni' },
 ]
 
-export function EmployeeFilters({ divisions, isAdmin }: EmployeeFiltersProps) {
+export function EmployeeFilters({ divisions, isAdmin, kind = 'staff' }: EmployeeFiltersProps) {
   const router = useRouter()
   const pathname = usePathname()
   const searchParams = useSearchParams()
@@ -86,7 +87,7 @@ export function EmployeeFilters({ divisions, isAdmin }: EmployeeFiltersProps) {
         </svg>
         <input
           type="search"
-          placeholder="Szukaj pracownika..."
+          placeholder={kind === 'contractors' ? 'Szukaj wykonawcy...' : 'Szukaj pracownika...'}
           defaultValue={search}
           onChange={(e) => handleChange('search', e.target.value)}
           className="w-full pl-9 pr-3 py-2 text-sm rounded-lg border outline-none focus:ring-2"
@@ -117,7 +118,8 @@ export function EmployeeFilters({ divisions, isAdmin }: EmployeeFiltersProps) {
         ))}
       </select>
 
-      {/* Employment type */}
+      {/* Employment type — not on the contractors tab (everyone there is B2B) */}
+      {kind === 'staff' && (
       <select
         value={employmentType}
         onChange={(e) => handleChange('employmentType', e.target.value)}
@@ -134,6 +136,7 @@ export function EmployeeFilters({ divisions, isAdmin }: EmployeeFiltersProps) {
           </option>
         ))}
       </select>
+      )}
 
       {/* Status */}
       <select

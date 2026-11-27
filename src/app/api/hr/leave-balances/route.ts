@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 import {
   canViewEmployeeRecord,
   getScopedEmployeeWhere,
@@ -39,9 +40,11 @@ export async function GET(req: NextRequest) {
   type WhereClause = {
     employeeId?: string | { in: string[] }
     year?: number
+    employee: typeof STAFF_WHERE
   }
 
-  const where: WhereClause = {}
+  // External contractors have no leave balances in HR (D13); old rows stay in the database but are not listed.
+  const where: WhereClause = { employee: STAFF_WHERE }
 
   if (userRole === 'EMPLOYEE') {
     where.employeeId = userEmployeeId!
@@ -59,7 +62,7 @@ export async function GET(req: NextRequest) {
       where.employeeId = employeeId
     } else {
       const scopedEmployees = await prisma.employee.findMany({
-        where: scopedWhere,
+        where: { AND: [scopedWhere, STAFF_WHERE] },
         select: { id: true },
       })
       where.employeeId = { in: scopedEmployees.map((employee) => employee.id) }

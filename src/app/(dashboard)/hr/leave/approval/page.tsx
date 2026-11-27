@@ -6,6 +6,7 @@ import { prisma } from '@/lib/prisma'
 import ApprovalList, { type LeaveRequestItem } from '@/components/hr/leave/approval-list'
 import { ClipboardList, Loader2 } from 'lucide-react'
 import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 
 export default async function LeaveApprovalPage() {
   const session = await getServerSession(authOptions)
@@ -30,11 +31,9 @@ export default async function LeaveApprovalPage() {
   const [rawRequests, employees, leaveTypes] = await Promise.all([
     prisma.leaveRequestNew.findMany({
       where: {
-        ...(role === 'MANAGER'
-          ? noEmployeeScope
-            ? { employeeId: HR_NO_EMPLOYEE_ACCESS_ID }
-            : { employee: scopedEmployeeWhere }
-          : {}),
+        ...(role === 'MANAGER' && noEmployeeScope
+          ? { employeeId: HR_NO_EMPLOYEE_ACCESS_ID }
+          : { employee: { AND: [role === 'MANAGER' ? scopedEmployeeWhere : {}, STAFF_WHERE] } }),
       },
       include: {
         employee: {
@@ -56,8 +55,8 @@ export default async function LeaveApprovalPage() {
         role === 'MANAGER'
           ? noEmployeeScope
             ? { id: HR_NO_EMPLOYEE_ACCESS_ID }
-            : scopedEmployeeWhere
-          : { active: true },
+            : { AND: [scopedEmployeeWhere, STAFF_WHERE] }
+          : { active: true, AND: [STAFF_WHERE] },
       select: { id: true, firstName: true, lastName: true },
       orderBy: { lastName: 'asc' },
     }),

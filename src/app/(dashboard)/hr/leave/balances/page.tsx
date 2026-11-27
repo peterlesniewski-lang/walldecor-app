@@ -596,7 +596,7 @@ export default function LeaveBalancesPage() {
   }, [selectedEmployee, selectedYear])
 
   const fetchEmployees = useCallback(async () => {
-    const res = await fetch('/api/hr/employees?limit=200&status=active')
+    const res = await fetch('/api/hr/employees?limit=200&status=active&kind=staff')
     if (res.ok) {
       const data = await res.json() as { employees: Employee[] }
       setEmployees(data.employees)

@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { leaveRequestCreateSchema } from '@/lib/hr/schemas'
 import { calculateWorkingDays } from '@/lib/hr/utils'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 import {
   isOnDemandLeave,
   LeaveBalancePolicyConfigurationError,
@@ -53,8 +54,9 @@ export async function GET(req: NextRequest) {
         })
       : null
 
+  // Old requests of external contractors stay in the database but are not listed (D13).
   // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  const where: Record<string, any> = {}
+  const where: Record<string, any> = { employee: STAFF_WHERE }
 
   if (!isAdminOrManager) {
     if (!session.user.employeeId) {
@@ -75,7 +77,7 @@ export async function GET(req: NextRequest) {
       where.employeeId = employeeIdParam
     } else {
       const scopedEmployees = await prisma.employee.findMany({
-        where: scopedWhere,
+        where: { AND: [scopedWhere, STAFF_WHERE] },
         select: { id: true },
       })
       where.employeeId = { in: scopedEmployees.map((employee) => employee.id) }

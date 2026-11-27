@@ -91,6 +91,7 @@ beforeAll(async () => {
       "firstName" TEXT NOT NULL,
       "lastName" TEXT NOT NULL,
       "startDate" DATETIME NOT NULL,
+      "employmentType" TEXT,
       "active" BOOLEAN NOT NULL DEFAULT true
     )
   `)

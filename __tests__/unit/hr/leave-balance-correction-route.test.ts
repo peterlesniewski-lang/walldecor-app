@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
@@ -500,13 +501,14 @@ describe('/api/hr/leave-balances collection access', () => {
 
     expect(response.status).toBe(200)
     expect(mockEmployeeFindMany).toHaveBeenCalledWith({
-      where: { active: true, divisionId: 'JAG' },
+      where: { AND: [{ active: true, divisionId: 'JAG' }, STAFF_WHERE] },
       select: { id: true },
     })
     expect(mockBalanceFindMany).toHaveBeenCalledWith(expect.objectContaining({
       where: {
         employeeId: { in: [currentBalance.employeeId] },
         year: 2026,
+        employee: STAFF_WHERE,
       },
     }))
   })

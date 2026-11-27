@@ -7,6 +7,7 @@ import {
   getScopedEmployeeWhere,
   HR_NO_EMPLOYEE_ACCESS_ID,
 } from '@/lib/hr/access'
+import { employeeKindWhere, parseEmployeeKind } from '@/lib/hr/contractors'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -19,6 +20,12 @@ export async function GET(req: NextRequest) {
   const employmentType = searchParams.get('employmentType')
   const search = searchParams.get('search')
   const showHidden = searchParams.get('showHidden') === 'true'
+  const kindParam = searchParams.get('kind')
+  // Default `all` keeps callers written before the contractors tab unchanged; HR callers pass `kind` explicitly.
+  const kind = kindParam ? parseEmployeeKind(kindParam) : 'all'
+  if (kind === null) {
+    return NextResponse.json({ error: 'Invalid kind' }, { status: 400 })
+  }
   const page = Math.max(1, parseInt(searchParams.get('page') ?? '1', 10))
   const limit = Math.min(100, Math.max(1, parseInt(searchParams.get('limit') ?? '20', 10)))
   const skip = (page - 1) * limit
@@ -36,7 +43,10 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ employees: [], total: 0, page, limit })
   }
 
-  const where: Record<string, unknown> = { ...scopedWhere }
+  const where: Record<string, unknown> = {
+    ...scopedWhere,
+    ...(kind === 'all' ? {} : { AND: [employeeKindWhere(kind)] }),
+  }
   const isAdmin = session.user.role === 'ADMIN'
 
   if (divisionId && isAdmin) where.divisionId = divisionId

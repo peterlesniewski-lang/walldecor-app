@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 import {
   getScopedEmployeeWhere,
   HR_NO_EMPLOYEE_ACCESS_ID,
@@ -36,7 +37,7 @@ export async function GET(_req: NextRequest) {
   const requests = await prisma.leaveRequestNew.findMany({
     where: {
       status: 'pending',
-      ...(scopedEmployeeWhere ? { employee: scopedEmployeeWhere } : {}),
+      employee: { AND: [scopedEmployeeWhere ?? {}, STAFF_WHERE] },
     },
     include: {
       employee: {

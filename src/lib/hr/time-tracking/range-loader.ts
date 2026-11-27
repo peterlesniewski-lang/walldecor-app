@@ -4,6 +4,7 @@ import {
   HR_NO_EMPLOYEE_ACCESS_ID,
   type HrSessionLike,
 } from '@/lib/hr/access'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 import { getWarsawBusinessDate } from '@/lib/hr/business-date'
 import { getHrSettings } from '@/lib/hr/hr-settings'
 import type {
@@ -139,6 +140,7 @@ export async function loadTimeTrackingRange({
   const employeeWhere: Record<string, unknown> = {
     active: true,
     ...getScopedEmployeeWhere(session, viewerEmployee),
+    AND: [STAFF_WHERE],
   }
 
   if (

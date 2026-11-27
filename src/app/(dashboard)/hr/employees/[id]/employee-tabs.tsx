@@ -21,10 +21,12 @@ export function EmployeeTabs({ tabs, defaultTab }: EmployeeTabsProps) {
   return (
     <div>
       {/* Tab bar */}
-      <div className="flex border-b border-[var(--wd-border)] mb-6">
+      <div role="tablist" className="flex border-b border-[var(--wd-border)] mb-6">
         {tabs.map((tab) => (
           <button
             key={tab.id}
+            role="tab"
+            aria-selected={tab.id === activeTab}
             onClick={() => setActiveTab(tab.id)}
             className={`px-4 py-2.5 text-sm font-medium border-b-2 transition-colors -mb-px ${
               tab.id === activeTab
