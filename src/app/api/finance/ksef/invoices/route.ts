@@ -76,7 +76,9 @@ export async function GET(req: NextRequest) {
 
   const filters: Prisma.KsefInvoiceWhereInput[] = []
   if (parsed.data.status) filters.push({ status: parsed.data.status })
-  if (parsed.data.paymentStatus) filters.push({ paymentStatus: parsed.data.paymentStatus })
+  if (parsed.data.paymentStatus) {
+    filters.push({ paymentStatus: parsed.data.paymentStatus === 'UNPAID' ? { not: 'PAID' } : parsed.data.paymentStatus })
+  }
   if (parsed.data.documentStatus) filters.push({ documentStatus: parsed.data.documentStatus })
   if (parsed.data.ruleMatchStatus) filters.push({ ruleMatchStatus: parsed.data.ruleMatchStatus })
   if (parsed.data.issueDateFrom || parsed.data.issueDateTo) {

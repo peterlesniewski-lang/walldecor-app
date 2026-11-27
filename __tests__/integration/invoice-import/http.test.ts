@@ -179,7 +179,7 @@ describe('invoice import HTTP boundary', () => {
     const edited = await handlers.draftPATCH(json({ expectedVersion: draft.version, data: {
       documentType: 'INVOICE', supplierName: 'Test HTTP', taxId: 'DEab123', invoiceNumber: 'HTTP/1',
       issueDate: '2026-09-10', currency: 'PLN', gross: 123, net: 100, vat: 23,
-      paymentStatus: 'UNKNOWN', costCenterId: 'JAG', tagIds: ['fixed'],
+      paymentStatus: 'UNPAID', costCenterId: 'JAG', tagIds: ['fixed'],
     } }, 'PATCH'), draft.id)
     const current = (await edited.json()).draft
     const period = await db.financePeriodClose.create({ data: { year: 2026, month: 9 } })

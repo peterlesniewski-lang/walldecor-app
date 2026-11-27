@@ -1,6 +1,14 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-10-27 (KSeF: kopiowanie sumy i tytułu przelewu, podświetlanie terminów płatności — wdrożone; rejestr wdrożeń w `docs/GITHUB-ACTIONS-BUILD.md`)
+**Ostatnia aktualizacja:** 2026-11-27 (KSeF/import: koniec statusu „Płatność nieustalona” dla nowych faktur — gałąź `fix-payment-status-unknown`, niewdrożone)
+
+## Status płatności „nieustalona” — 27.11.2026 (gałąź `fix-payment-status-unknown`, niewdrożone)
+
+- Import AI/ręczny: usunięto „Nie wiadomo” z formularza; `UNKNOWN` z AI = puste pole; zatwierdzenie z `UNKNOWN` odrzucane (`PAYMENT_STATUS_REQUIRED`).
+- Sync KSeF: nowa faktura z terminem płatności (`TerminPlatnosci/Termin`, także z metadanych gdy XML się nie pobrał) i bez znacznika `Zaplacono`/`ZnacznikZaplatyCzesciowej` = `UNPAID`. Bez terminu i bez znacznika zostaje `UNKNOWN`. Funkcja `ksefPaymentStatusForNewInvoice` w `ksef-reconciliation-policy.ts`; snapshot uzgadniania celowo bez zmian (`UNKNOWN` = „nie nadpisuj”).
+- Filtr „Płatność” na liście KSeF: „Do zapłaty” = wszystko poza `PAID` (też `PARTIAL`/`UNKNOWN`), dodane „Częściowo zapłacone” i „Płatność nieustalona” (`VALID_PAYMENT_FILTERS`).
+- Do zrobienia po wdrożeniu: jednorazowa migracja istniejących `UNKNOWN` z `dueDate` na `UNPAID` (tylko `paidAt IS NULL`), po policzeniu rekordów na produkcji.
+- Test `ksef-sync.test.ts` miał bombę czasową (`ksef_sync_from` na sztywno → drugie okno 90 dni); teraz data względna.
 
 ## KSeF — pasek zaznaczenia i terminy płatności — 27.10.2026 (PR #29, #34, #35)
 

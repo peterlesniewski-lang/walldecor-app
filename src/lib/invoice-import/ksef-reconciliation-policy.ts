@@ -324,6 +324,25 @@ function strictDocumentStatusFromMetadata(
   return mapKsefMetadataToInvoice(metadata).documentStatus
 }
 
+/**
+ * Payment status for a KSeF invoice created by sync. A payment term with no
+ * payment marker means a deferred invoice that is still to be paid. Marker
+ * fields that were present but unusable (duplicated, conflicting, not '1')
+ * stay UNKNOWN. Reconciliation keeps using the snapshot status as-is, where
+ * UNKNOWN means "do not overwrite" and an inferred UNPAID would clobber a
+ * payment recorded by hand.
+ */
+export function ksefPaymentStatusForNewInvoice(
+  snapshot: KsefReconciliationSnapshot,
+  xml: string | null,
+): KsefReconciliationSnapshot['data']['paymentStatus'] {
+  const { paymentStatus, dueDate } = snapshot.data
+  if (paymentStatus !== 'UNKNOWN' || dueDate === null) return paymentStatus
+  const values = knownXmlValues(xml)
+  if (values.Zaplacono.length > 0 || values.ZnacznikZaplatyCzesciowej.length > 0) return 'UNKNOWN'
+  return 'UNPAID'
+}
+
 export function buildKsefReconciliationSnapshot(
   metadata: KsefInvoiceMetadata,
   xml: string | null,

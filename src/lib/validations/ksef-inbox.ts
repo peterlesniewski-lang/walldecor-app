@@ -4,6 +4,8 @@ import { normalizeSupplierNip } from '@/lib/finance/ksef-inbox'
 export const VALID_KSEF_STATUSES = ['NEW', 'MAPPED', 'APPROVED', 'IGNORED'] as const
 export const VALID_COST_CENTERS = ['JAG', 'PUL', 'GLOBAL'] as const
 export const VALID_PAYMENT_STATUSES = ['UNPAID', 'PAID'] as const
+/** List filter only: UNPAID means every invoice not fully PAID, so PARTIAL and UNKNOWN never fall out of it. */
+export const VALID_PAYMENT_FILTERS = ['UNPAID', 'PAID', 'PARTIAL', 'UNKNOWN'] as const
 export const VALID_PAYMENT_DEADLINES = ['OVERDUE', 'DUE_0_7', 'DUE_8_14', 'DUE_15_30', 'LATER', 'MISSING_DUE_DATE'] as const
 export const VALID_DOCUMENT_STATUSES = ['ACTIVE', 'CORRECTED', 'CORRECTION', 'CANCELLED'] as const
 export const VALID_RULE_MATCH_STATUSES = ['NO_RULE', 'MATCHED', 'CONFLICT'] as const
@@ -59,7 +61,7 @@ export const KsefInvoiceUpdateSchema = z.object({
 
 export const KsefInvoiceQuerySchema = z.object({
   status: z.enum(VALID_KSEF_STATUSES).optional(),
-  paymentStatus: z.enum(VALID_PAYMENT_STATUSES).optional(),
+  paymentStatus: z.enum(VALID_PAYMENT_FILTERS).optional(),
   paymentDeadline: z.enum(VALID_PAYMENT_DEADLINES).optional(),
   documentStatus: z.enum(VALID_DOCUMENT_STATUSES).optional(),
   ruleMatchStatus: z.enum(VALID_RULE_MATCH_STATUSES).optional(),

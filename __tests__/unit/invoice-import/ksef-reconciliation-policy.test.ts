@@ -9,6 +9,7 @@ import {
   applyKsefSnapshotToDraft,
   buildKsefReconciliationSnapshot,
   compareKsefReconciliation,
+  ksefPaymentStatusForNewInvoice,
   ksefReconciliationSnapshotSchema,
 } from '@/lib/invoice-import/ksef-reconciliation-policy'
 
@@ -649,5 +650,47 @@ describe('explicit KSeF snapshot application', () => {
 
     expect(result.ok).toBe(false)
     if (!result.ok) expect(result.issues.map((issue) => issue.code)).toContain(issueCode)
+  })
+})
+
+describe('ksefPaymentStatusForNewInvoice', () => {
+  const term = '<fa:TerminPlatnosci><fa:Termin>2026-12-01</fa:Termin></fa:TerminPlatnosci>'
+  const status = (xml: string | null, overrides: Partial<KsefInvoiceMetadata> = {}) =>
+    ksefPaymentStatusForNewInvoice(buildKsefReconciliationSnapshot(metadata(overrides), xml), xml)
+
+  it('should treat a payment term without any payment marker as UNPAID', () => {
+    expect(status(fa3Xml(term))).toBe('UNPAID')
+  })
+
+  it('should treat a past payment term without any payment marker as UNPAID', () => {
+    expect(status(fa3Xml('<fa:TerminPlatnosci><fa:Termin>2026-01-01</fa:Termin></fa:TerminPlatnosci>'))).toBe('UNPAID')
+  })
+
+  it('should fall back to the metadata due date when the XML was not fetched', () => {
+    expect(status(null, { dueDate: '2026-12-01' })).toBe('UNPAID')
+  })
+
+  it('should keep PAID when the invoice carries an explicit paid marker and a term', () => {
+    expect(status(fa3Xml(`<fa:Zaplacono>1</fa:Zaplacono>${term}`))).toBe('PAID')
+  })
+
+  it('should keep PARTIAL when the invoice carries a partial-payment marker and a term', () => {
+    expect(status(fa3Xml(`<fa:ZnacznikZaplatyCzesciowej>1</fa:ZnacznikZaplatyCzesciowej>${term}`))).toBe('PARTIAL')
+  })
+
+  it('should keep UNKNOWN when there is neither a payment marker nor a term', () => {
+    expect(status(fa3Xml('<fa:FormaPlatnosci>1</fa:FormaPlatnosci>'))).toBe('UNKNOWN')
+  })
+
+  it('should keep UNKNOWN when the marker is present but unusable', () => {
+    expect(status(fa3Xml(`<fa:Zaplacono>0</fa:Zaplacono>${term}`))).toBe('UNKNOWN')
+  })
+
+  it('should keep UNKNOWN when markers are duplicated', () => {
+    expect(status(fa3Xml(`<fa:Zaplacono>1</fa:Zaplacono><fa:Zaplacono>1</fa:Zaplacono>${term}`))).toBe('UNKNOWN')
+  })
+
+  it('should not change the reconciliation snapshot, where UNKNOWN means do-not-overwrite', () => {
+    expect(buildKsefReconciliationSnapshot(metadata(), fa3Xml(term)).data.paymentStatus).toBe('UNKNOWN')
   })
 })

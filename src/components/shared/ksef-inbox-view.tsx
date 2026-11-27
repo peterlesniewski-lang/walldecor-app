@@ -131,7 +131,7 @@ interface KsefInvoiceFilters {
   amountMax: string
   issueDateFrom: string
   issueDateTo: string
-  paymentStatus: 'UNPAID' | 'PAID' | 'ALL'
+  paymentStatus: 'UNPAID' | 'PAID' | 'PARTIAL' | 'UNKNOWN' | 'ALL'
   paymentDeadline: KsefPaymentDeadline | 'ALL'
 }
 
@@ -215,6 +215,8 @@ const PAYMENT_STATUS_LABELS: Record<KsefInvoiceFilters['paymentStatus'], string>
   ALL: 'Wszystkie',
   UNPAID: 'Do zapłaty',
   PAID: 'Zapłacone',
+  PARTIAL: 'Częściowo zapłacone',
+  UNKNOWN: 'Płatność nieustalona',
 }
 const PAYMENT_ROW_LABELS: Record<KsefPaymentStatus, string> = {
   PAID: 'Zapłacona', UNPAID: 'Do zapłaty', PARTIAL: 'Częściowo zapłacona', UNKNOWN: 'Płatność nieustalona',

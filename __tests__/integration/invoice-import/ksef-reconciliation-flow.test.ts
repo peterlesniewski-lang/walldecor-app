@@ -410,7 +410,7 @@ describe('real KSeF sync, original file and approval flow', () => {
     expect(await fullSnapshot()).toEqual(before)
   })
 
-  it.each(['UNPAID', 'PARTIAL', 'UNKNOWN'] as const)(
+  it.each(['UNPAID', 'PARTIAL'] as const)(
     'an XML payment method with no explicit payment marker preserves local %s and never fabricates paidAt',
     async (paymentStatus) => {
       const { draft } = await uploadDraft({ paymentStatus })

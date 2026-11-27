@@ -82,7 +82,7 @@ describe('POST /api/finance/ksef/sync', () => {
       { key: 'ksef_environment', value: 'test' },
       { key: 'ksef_company_nip', value: '5210000000' },
       { key: 'ksef_token', value: 'token' },
-      { key: 'ksef_sync_from', value: '2026-07-01' },
+      { key: 'ksef_sync_from', value: new Date(Date.now() - 10 * 86_400_000).toISOString().slice(0, 10) }, // one sync window, whatever today is
     ])
     prismaMock.ksefSupplierRule.findMany.mockResolvedValue([])
     prismaMock.ksefInvoice.findUnique.mockResolvedValue(null)
@@ -503,6 +503,42 @@ describe('POST /api/finance/ksef/sync', () => {
     expect(response.status).toBe(200)
     expect(body).toMatchObject({ updated: 1, xmlDetailsFetched: 0, xmlDetailsFailed: 0 })
     expect(ksefClientMock.downloadInvoiceXml).not.toHaveBeenCalled()
+  })
+
+  it('creates an invoice with a payment term and no payment marker as UNPAID without a payment date', async () => {
+    ksefClientMock.queryPurchaseInvoiceMetadata.mockResolvedValue({
+      hasMore: false,
+      isTruncated: false,
+      invoices: [
+        {
+          ksefNumber: 'KSEF-DEFERRED',
+          invoiceNumber: 'FV/12/2026',
+          issueDate: '2026-07-05',
+          seller: { nip: '5250007133', name: 'Dostawca Testowy' },
+          grossAmount: 615,
+          netAmount: 500,
+          vatAmount: 115,
+          currency: 'PLN',
+        },
+      ],
+    })
+    ksefClientMock.downloadInvoiceXml.mockResolvedValue(`<?xml version="1.0" encoding="UTF-8"?>
+<Faktura xmlns="http://crd.gov.pl/wzor/2025/06/25/13775/">
+  <Fa>
+    <Platnosc>
+      <TerminPlatnosci><Termin>2026-12-01</Termin></TerminPlatnosci>
+    </Platnosc>
+  </Fa>
+</Faktura>`)
+
+    expect((await POST()).status).toBe(200)
+    expect(prismaMock.ksefInvoice.create).toHaveBeenCalledWith({
+      data: expect.objectContaining({
+        externalId: 'KSEF-DEFERRED',
+        paymentStatus: 'UNPAID',
+        paidAt: null,
+      }),
+    })
   })
 
   it('does not infer payment or payment date from an XML without a due date', async () => {

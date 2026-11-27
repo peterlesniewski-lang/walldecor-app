@@ -3,7 +3,7 @@ import { withAiQueueMutation } from '@/lib/ai/queue'
 import { InvoiceImportError } from '@/lib/invoice-import/errors'
 import { assertLegacyInvoiceWriteAllowed } from '@/lib/invoice-import/legacy-write-guard'
 import { reconcileImportedKsefInvoice } from '@/lib/invoice-import/ksef-reconciliation-service'
-import { buildKsefReconciliationSnapshot } from '@/lib/invoice-import/ksef-reconciliation-policy'
+import { buildKsefReconciliationSnapshot, ksefPaymentStatusForNewInvoice } from '@/lib/invoice-import/ksef-reconciliation-policy'
 import {
   KsefApiClient,
   mapKsefMetadataToInvoice,
@@ -312,7 +312,7 @@ export async function runKsefSync(db: PrismaClient, actorId: string): Promise<Ks
               xmlContent,
               xmlFetchedAt: paymentDetailsFetchedAt,
               correctsInvoiceId: documentStatus === 'CORRECTION' ? correctsInvoiceId : null,
-              paymentStatus: snapshot.data.paymentStatus,
+              paymentStatus: ksefPaymentStatusForNewInvoice(snapshot, xmlContent),
               paidAt: snapshot.data.paidAt ? new Date(`${snapshot.data.paidAt}T00:00:00.000Z`) : null,
               status: match ? 'MAPPED' : 'NEW',
               ruleMatchStatus: ruleDecision.status === 'CONFLICT' ? 'CONFLICT' : match ? 'MATCHED' : 'NO_RULE',
