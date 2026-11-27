@@ -39,7 +39,15 @@ async function send(url: string, method: 'PUT' | 'POST', body: unknown) {
   return fieldErrors[0] ?? json.error ?? 'Nie udało się zapisać.'
 }
 
-/** Rates, exemptions and the salon split behind one employee's employer cost. ADMIN only. */
+/** One line for the folded panel header: "JAG 50% · PUL 50%" or "brak podziału". */
+export function describeSplit(context: EmployerCostContextView) {
+  return context.split ? `JAG ${context.split.jagPercent}% · PUL ${100 - context.split.jagPercent}%` : 'brak podziału'
+}
+
+/**
+ * Body of the folded "Koszt pracodawcy i podział" panel: rates, exemptions and the salon split behind
+ * one employee's employer cost. The `<details>` chrome lives in the settlement view. ADMIN only.
+ */
 export function EmployerCostPanel({
   employeeId,
   employeeStartDate,
@@ -78,48 +86,42 @@ export function EmployerCostPanel({
   const split = context.split
 
   return (
-    <section className={styles.panel} aria-labelledby="employer-cost-title">
-      <header className={styles.panelHead}>
-        <h2 id="employer-cost-title" className={styles.panelTitle}>Koszt pracodawcy i podział</h2>
-        <Link href="/hr/payroll/rates" className={styles.panelNote}>stawki →</Link>
-      </header>
-      <div className={styles.panelBody}>
-        <p className={styles.hint}>{describeRates(context)}</p>
-        {context.rates && (
-          <p className={`${styles.hint} ${styles.num}`}>
-            {(Object.keys(EMPLOYER_RATE_LABELS) as Array<keyof EmployerRates>)
-              .filter((key) => context.rates![key] > 0)
-              .map((key) => `${EMPLOYER_RATE_LABELS[key]} ${(context.rates![key] / 100).toLocaleString('pl-PL')}%`)
-              .join(' · ') || 'bez składek pracodawcy'}
-          </p>
-        )}
-
-        <fieldset className={styles.checks} disabled={pending}>
-          <legend className={styles.figureLabel}>Zwolnienia</legend>
-          <label>
-            <input type="checkbox" checked={context.exemptions.withoutFunds} onChange={(e) => toggleExemption('withoutFunds', e.target.checked)} />
-            bez Funduszu Pracy i FGŚP (np. 55+/60+)
-          </label>
-          <label>
-            <input type="checkbox" checked={context.exemptions.withoutContributions} onChange={(e) => toggleExemption('withoutContributions', e.target.checked)} />
-            bez składek pracodawcy (np. student na UZ)
-          </label>
-        </fieldset>
-
-        <p className={split ? styles.hint : styles.error}>
-          {split
-            ? `Podział: JAG ${split.jagPercent}% · PUL ${100 - split.jagPercent}%${split.source === 'COST_CENTER' ? ' (z centrum kosztów w karcie)' : ''}`
-            : 'Brak podziału — osoba w GLOBAL musi mieć ustawiony podział na salony.'}
+    <div className={styles.panelBody}>
+      <p className={styles.hint}>{describeRates(context)} · <Link href="/hr/payroll/rates" className={styles.inlineLink}>stawki →</Link></p>
+      {context.rates && (
+        <p className={`${styles.hint} ${styles.num}`}>
+          {(Object.keys(EMPLOYER_RATE_LABELS) as Array<keyof EmployerRates>)
+            .filter((key) => context.rates![key] > 0)
+            .map((key) => `${EMPLOYER_RATE_LABELS[key]} ${(context.rates![key] / 100).toLocaleString('pl-PL')}%`)
+            .join(' · ') || 'bez składek pracodawcy'}
         </p>
-        <form className={styles.form} onSubmit={addSplit}>
-          <label className={styles.field}>Od miesiąca<input name="effectiveFrom" type="month" required defaultValue={defaultCostSplitMonth(employeeStartDate)} /></label>
-          <label className={styles.field}>JAG %<input name="jagPercent" type="number" min={0} max={100} step={1} required defaultValue={split?.jagPercent ?? 50} /></label>
-          <div className={`${styles.full} ${styles.rowActions}`}>
-            <button type="submit" className={`${styles.btn} ${styles.ghost}`} disabled={pending}>Ustaw podział</button>
-          </div>
-        </form>
-        {error && <p className={styles.error} role="alert">{error}</p>}
-      </div>
-    </section>
+      )}
+
+      <fieldset className={styles.checks} disabled={pending}>
+        <legend className={styles.figureLabel}>Zwolnienia</legend>
+        <label>
+          <input type="checkbox" checked={context.exemptions.withoutFunds} onChange={(e) => toggleExemption('withoutFunds', e.target.checked)} />
+          bez Funduszu Pracy i FGŚP (np. 55+/60+)
+        </label>
+        <label>
+          <input type="checkbox" checked={context.exemptions.withoutContributions} onChange={(e) => toggleExemption('withoutContributions', e.target.checked)} />
+          bez składek pracodawcy (np. student na UZ)
+        </label>
+      </fieldset>
+
+      <p className={split ? styles.hint : styles.error}>
+        {split
+          ? `Podział: JAG ${split.jagPercent}% · PUL ${100 - split.jagPercent}%${split.source === 'COST_CENTER' ? ' (z centrum kosztów w karcie)' : ''}`
+          : 'Brak podziału — osoba w GLOBAL musi mieć ustawiony podział na salony.'}
+      </p>
+      <form className={styles.form} onSubmit={addSplit}>
+        <label className={styles.field}>Od miesiąca<input name="effectiveFrom" type="month" required defaultValue={defaultCostSplitMonth(employeeStartDate)} /></label>
+        <label className={styles.field}>JAG %<input name="jagPercent" type="number" min={0} max={100} step={1} required defaultValue={split?.jagPercent ?? 50} /></label>
+        <div className={`${styles.full} ${styles.rowActions}`}>
+          <button type="submit" className={`${styles.btn} ${styles.ghost}`} disabled={pending}>Ustaw podział</button>
+        </div>
+      </form>
+      {error && <p className={styles.error} role="alert">{error}</p>}
+    </div>
   )
 }

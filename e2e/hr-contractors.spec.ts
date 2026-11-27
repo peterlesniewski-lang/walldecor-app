@@ -148,6 +148,15 @@ test.describe('HR — external contractors outside HR', () => {
     })
   })
 
+  // Specs of one Playwright run share this database. Move the employment of every card this spec made
+  // to a month no other spec uses, so the cards do not show up on their payroll sheets and HR lists.
+  test.afterAll(async () => {
+    await withDb((db) => db.employee.updateMany({
+      where: { email: { startsWith: 'e2e-ctr-' } },
+      data: { active: false, startDate: new Date('2024-12-01T00:00:00Z'), endDate: new Date('2024-12-31T00:00:00Z') },
+    }))
+  })
+
   test('splits staff and contractors into two tabs whose counters match the rows', async ({ page }) => {
     await page.setViewportSize({ width: 1440, height: 1000 })
     await loginAdmin(page)

@@ -238,8 +238,10 @@ test.describe('HR payroll — stawka godzinowa', () => {
     await expect(page.getByTestId('hourly-overtime-info')).toBeVisible()
     await expect(page.getByTestId('ot-2026-03-07')).toContainText('płatne stawką')
     await expect(page.getByRole('button', { name: 'Wypłata' })).toHaveCount(0)
-    await expect(page.getByText(/przepracowane: 26 h/).first()).toBeVisible()
-    await expect(page.getByText(/stawka godzinowa: 50,00/).first()).toBeVisible()
+    // The change history is the folded "Historia zmian" panel since stage 5 (§12): open it by click.
+    await page.getByTestId('fold-history-summary').click()
+    await expect(page.getByTestId('fold-history').getByText(/przepracowane: 26 h/).first()).toBeVisible()
+    await expect(page.getByTestId('fold-history').getByText(/stawka godzinowa: 50,00/).first()).toBeVisible()
     await shot(page, '05-detail-hourly.png')
 
     await restartServer(databaseUrl)

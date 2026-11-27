@@ -823,6 +823,8 @@ export type SettleEmployeeMonthInput = {
   origin?: PayrollVersionOrigin
   /** Note stored on the new version (e.g. "Automatyczne przeniesienie z 2026-10"). */
   approvalNote?: string | null
+  /** Reason written to the history when an approved settlement is reopened as a correction (detail page); default: the sheet's. */
+  correctionReason?: string | null
 }
 
 export type SettleEmployeeMonthResult = {
@@ -893,7 +895,7 @@ export async function settleEmployeeMonth(
           if (effective && sameApprovedFigures(effective, input, context)) {
             return { outcome: 'UNCHANGED' as const, settlementId: settlement.id, versionNumber: effective.versionNumber }
           }
-          await reopenStep(tx, actorId, settlement, SHEET_CORRECTION_REASON)
+          await reopenStep(tx, actorId, settlement, input.correctionReason ?? SHEET_CORRECTION_REASON)
           settlement = await reloadSettlement(tx, settlement.id)
         }
       }
