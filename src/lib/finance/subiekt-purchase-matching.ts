@@ -110,8 +110,13 @@ export interface PaymentReconciliation {
   settleInSubiekt: SettlementRow[]
   /** Liability settled in Subiekt, app invoice not marked paid. */
   paidOnlyInSubiekt: SettlementRow[]
-  /** Paid app invoices in the window without any Subiekt document (not entered in GT yet?). */
+  /**
+   * Paid app invoices in the window without a Subiekt document, limited to suppliers that do have
+   * documents in Subiekt (goods for resale). Most cost suppliers are never entered in GT.
+   */
   paidInAppMissingInSubiekt: AppInvoiceForMatch[]
+  /** Paid, unmatched app invoices left out because their supplier has no document in Subiekt (or no NIP). */
+  skippedNonSubiektSuppliers: number
   ambiguous: MatchResult['ambiguous']
 }
 
@@ -128,7 +133,17 @@ export function reconcilePayments(match: MatchResult, windowInvoices: AppInvoice
     if (invoice.paymentStatus === 'PAID' && !document.is_paid) settleInSubiekt.push(row)
     else if (invoice.paymentStatus !== 'PAID' && document.is_paid) paidOnlyInSubiekt.push(row)
   }
-  const paidInAppMissingInSubiekt = windowInvoices.filter((invoice) =>
+  const subiektSuppliers = new Set(
+    [...match.pairs.map((pair) => pair.document), ...match.ambiguous.map((item) => item.document), ...match.unmatchedDocuments]
+      .map((document) => normalizeSupplierNip(document.supplier_tax_id))
+      .filter(Boolean),
+  )
+  const unmatchedPaid = windowInvoices.filter((invoice) =>
     invoice.paymentStatus === 'PAID' && invoice.documentStatus !== 'CANCELLED' && !match.matchedInvoiceIds.has(invoice.id))
-  return { settleInSubiekt, paidOnlyInSubiekt, paidInAppMissingInSubiekt, ambiguous: match.ambiguous }
+  const paidInAppMissingInSubiekt = unmatchedPaid.filter((invoice) => subiektSuppliers.has(normalizeSupplierNip(invoice.supplierNip)))
+  return {
+    settleInSubiekt, paidOnlyInSubiekt, paidInAppMissingInSubiekt,
+    skippedNonSubiektSuppliers: unmatchedPaid.length - paidInAppMissingInSubiekt.length,
+    ambiguous: match.ambiguous,
+  }
 }
