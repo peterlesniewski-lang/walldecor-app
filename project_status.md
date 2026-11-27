@@ -1,6 +1,6 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-11-27 (etap 5 „Szczegóły rozliczenia” #46 + scenariusz finałowy — gałąź `payroll-details-46`, bez migracji; etap 4 „Wykonawcy poza HR” #45 — gałąź `hr-contractors-45`, bez migracji; etap 1 wdrożony na produkcję 25.11; etap 2 #43 scalony do `main`; etap 3 „Stawka godzinowa” #44 — gałąź `payroll-hourly-44`, PR do `main`; dowód: `docs/evidence/2026-11-24-payroll-hourly.md`)
+**Ostatnia aktualizacja:** 2026-11-27 (plan uproszczenia płac zamknięty: etapy 1–5 scalone, #42–#46 zamknięte; etapy 2–5 wdrożone na produkcję 27.11.2026 15:45 obrazem `sha256:e939a25e…43c4` z commita `36263d6`, migracje 57 → 58, automat wyłączony; rejestr: `docs/GITHUB-ACTIONS-BUILD.md`)
 
 ## Wynagrodzenia: arkusz miesiąca, automat, stawka godzinowa, wykonawcy poza HR — plan 24.11.2026
 
@@ -29,7 +29,7 @@ Etap 5 (#46) zbudowany 27.11.2026, bez zmiany schematu: strona szczegółów z �
 
 Produkcja: etap 1 wdrożony 25.11.2026 (obraz z commita `4a65119`, migracja `20261124120000_payroll_month`; wiersz w rejestrze w `docs/GITHUB-ACTIONS-BUILD.md`).
 
-**Następna sesja:** wdrożenie końcowego obrazu z etapami 2–5 (polecenie właściciela z 27.11.2026: po dokończeniu wszystkich etapów; jedna migracja `20261124180000_payroll_auto_carryover`, automat wyłączony do włączenia w „Ustawieniach płac”, przypomnienie przed wypłatą działa od razu) → ręczna próba „miesiąca właściciela” przez właściciela. Kolejność specyfikacji `hr-contractors` naprawiona w etapie 5 (`afterAll`).
+**Następna sesja:** ręczna próba „miesiąca właściciela” przez właściciela na produkcji; włączenie automatu w „Ustawieniach płac” przed 1.12.2026, jeśli grudzień ma się zatwierdzić sam (włączenie nigdy nie uruchamia bieżącego miesiąca); zgłoszenie #52 (nieaktualny test E2E katalogu montaży).
 
 ## Faktury UE z Subiekta i uzgodnienie płatności — 18.11.2026 (gałąź `eu-invoice-mcp-bridge-6f82721a`)
 
