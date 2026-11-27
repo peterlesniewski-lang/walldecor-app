@@ -195,6 +195,9 @@ test.describe('HR payroll — automat 1. dnia miesiąca', () => {
     await page.goto('/hr/payroll?month=2026-05')
     await rowOf(page, PEOPLE[0].id).getByRole('button', { name: `Akcje — ${nameOf(PEOPLE[0])}` }).click()
     await page.getByRole('menuitem', { name: 'Szczegóły rozliczenia' }).click()
+    // "Wersje" and "Historia zmian" are folded panels since stage 5 (§12): open both by click.
+    await page.getByTestId('fold-versions-summary').click()
+    await page.getByTestId('fold-history-summary').click()
     await expect(page.getByText('Zatwierdzono wersję · Automat')).toBeVisible()
     await expect(page.getByText('Utworzono rozliczenie · Automat')).toBeVisible()
     await expect(page.getByText('Automatyczne przeniesienie z 2026-04', { exact: true })).toBeVisible()
@@ -263,6 +266,7 @@ test.describe('HR payroll — automat 1. dnia miesiąca', () => {
     await page.setViewportSize({ width: 1440, height: 1000 })
     await notice.getByRole('link', { name: 'Otwórz szczegóły' }).click()
     await expect(page).toHaveURL(/\/hr\/payroll\/[^/?]+$/)
+    await page.getByTestId('fold-history-summary').click() // "Historia zmian" is folded since stage 5 (§12)
     await expect(page.getByText('Kwota aktualna mimo zmiany po zatwierdzeniu · E2E Administrator')).toBeVisible()
   })
 

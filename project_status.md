@@ -1,6 +1,6 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-11-27 (etap 4 „Wykonawcy poza HR” #45 — gałąź `hr-contractors-45`, bez migracji; etap 1 wdrożony na produkcję 25.11; etap 2 #43 scalony do `main`; etap 3 „Stawka godzinowa” #44 — gałąź `payroll-hourly-44`, PR do `main`; dowód: `docs/evidence/2026-11-24-payroll-hourly.md`)
+**Ostatnia aktualizacja:** 2026-11-27 (etap 5 „Szczegóły rozliczenia” #46 + scenariusz finałowy — gałąź `payroll-details-46`, bez migracji; etap 4 „Wykonawcy poza HR” #45 — gałąź `hr-contractors-45`, bez migracji; etap 1 wdrożony na produkcję 25.11; etap 2 #43 scalony do `main`; etap 3 „Stawka godzinowa” #44 — gałąź `payroll-hourly-44`, PR do `main`; dowód: `docs/evidence/2026-11-24-payroll-hourly.md`)
 
 ## Wynagrodzenia: arkusz miesiąca, automat, stawka godzinowa, wykonawcy poza HR — plan 24.11.2026
 
@@ -10,8 +10,8 @@ Plan i decyzje właściciela: `docs/plans/2026-11-24-payroll-ux-simplification.m
 [x] Etap 2 — Automat 1. dnia miesiąca, etykieta „zmiana po zatwierdzeniu", powiadomienia, szacunek kosztu z ostatniego zatwierdzonego miesiąca (Opus)
 [x] Etap 3 — Stawka godzinowa: godziny × stawka, „Zatwierdź godziny" w wierszu, przypomnienie przed wypłatą (Opus)
 [x] Etap 4 — Wykonawcy (B2B) poza HR: zakładka „Wykonawcy", ukrycie w czasie pracy, urlopach, raportach (Sonnet, przegląd Opus) — #45, gałąź `hr-contractors-45`, dowód: `docs/evidence/2026-11-24-hr-contractors.md`
-[ ] Etap 5 — Uporządkowanie strony szczegółów rozliczenia (Sonnet)
-[ ] Scenariusz finałowy „miesiąc właściciela" na czystej bazie
+[x] Etap 5 — Uporządkowanie strony szczegółów rozliczenia (Sonnet) — #46, gałąź `payroll-details-46`, dowód: `docs/evidence/2026-11-24-payroll-details.md`
+[x] Scenariusz finałowy „miesiąc właściciela" na czystej bazie — `e2e/hr-payroll-owner-month.spec.ts` (10 kroków, zielony); ręczna próba właściciela jeszcze przed nim
 
 Zgłoszenia: #42 (etap 1, `ready-for-agent`), #43, #44, #45, #46 — kolejne dostają etykietę po scaleniu poprzedników.
 
@@ -25,9 +25,11 @@ Etap 3 (#44) zbudowany 25.11.2026, bez zmiany schematu: wyliczenie brutto z godz
 
 Etap 4 (#45) zbudowany 27.11.2026, bez zmiany schematu (D12): zakładki „Pracownicy” / „Wykonawcy” z licznikami na `/hr/employees` (`?kind=contractors`), parametr `kind=staff|contractors|all` w `GET /api/hr/employees` (domyślnie `all`; każde wywołanie z HR podaje `kind`, `EmployeeSelect` wymaga go jawnie), „Dodaj wykonawcę” (formularz z rodzajem umowy B2B na stałe), profil wykonawcy tylko z danymi podstawowymi i etykietą „Wykonawca zewnętrzny”, `STAFF_WHERE` we wszystkich listach HR (czas pracy, grafik wraz z kopiowaniem i szablonem, nadgodziny, urlopy, salda, eksporty, raporty, PDF, struktura, listy przełożonych), brak przenoszenia sald na nowy rok i brak ustawiania limitu urlopu dla wykonawcy (D21). Pełna tabela decyzji dla każdego zapytania: `docs/evidence/2026-11-24-hr-contractors.md`. Testy: `__tests__/integration/hr/contractor-visibility.test.ts`, `e2e/hr-contractors.spec.ts`.
 
+Etap 5 (#46) zbudowany 27.11.2026, bez zmiany schematu: strona szczegółów z „Kwoty i zatwierdzenie” (`POST /api/hr/payroll/settlements/[id]/settle` przez `settleEmployeeMonth`; korekta zatwierdzonego wymaga powodu), zwijane `<details>` („Koszt pracodawcy i podział”, „Wersje”, „Historia zmian”), numer listy płac tylko do odczytu z `PayrollMonth`, bez paska etapów i „rewizji”; jedyna zmiana w `src/lib/payroll/service.ts`: opcjonalne `correctionReason` w `settleEmployeeMonth`. Scenariusz finałowy `e2e/hr-payroll-owner-month.spec.ts` (czerwiec/lipiec 2026) zielony. Znany problem testów: `hr-contractors.spec.ts` uruchomiony przed specyfikacjami płac zostawia karty UoP, które psują `hr-payroll-automation` i `hr-payroll-sheet` — osobno zielone.
+
 Produkcja: etap 1 wdrożony 25.11.2026 (obraz z commita `4a65119`, migracja `20261124120000_payroll_month`; wiersz w rejestrze w `docs/GITHUB-ACTIONS-BUILD.md`).
 
-**Następna sesja:** wdrożenie etapów 2 i 3 po zgodzie właściciela (etap 2: migracja `origin`, automat wyłączony; etap 3: bez migracji, przypomnienie przed wypłatą włączone od razu) → przegląd i scalenie etapu 4 (#45) → etap 5 (#46).
+**Następna sesja:** wdrożenie końcowego obrazu z etapami 2–5 (polecenie właściciela z 27.11.2026: po dokończeniu wszystkich etapów; jedna migracja `20261124180000_payroll_auto_carryover`, automat wyłączony do włączenia w „Ustawieniach płac”, przypomnienie przed wypłatą działa od razu) → ręczna próba „miesiąca właściciela” przez właściciela. Kolejność specyfikacji `hr-contractors` naprawiona w etapie 5 (`afterAll`).
 
 ## Faktury UE z Subiekta i uzgodnienie płatności — 18.11.2026 (gałąź `eu-invoice-mcp-bridge-6f82721a`)
 

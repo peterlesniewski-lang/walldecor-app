@@ -148,6 +148,25 @@ export const PayrollSheetRowSchema = z.object({
 
 export type PayrollSheetRowInput = z.infer<typeof PayrollSheetRowSchema>
 
+/**
+ * "Zapisz i zatwierdź" / "Zapisz korektę" on the settlement detail page: the same figures as a sheet
+ * row, run through the same server path (settleEmployeeMonth). `reason` is required for a correction
+ * of an approved settlement; the route checks it against the settlement's status.
+ */
+export const PayrollSettlementSettleSchema = z.object({
+  expectedRevision,
+  finalGross: plnAmount('Brutto'),
+  finalNet: plnAmount('Netto do wypłaty'),
+  employerCost: plnAmount('Pełny koszt pracodawcy').nullish(),
+  note: optionalText(500),
+  reason: optionalText(500),
+}).strict()
+  .refine((row) => row.finalGross > 0, { message: 'Brutto musi być większe od zera.', path: ['finalGross'] })
+  .refine((row) => row.employerCost == null || row.employerCost > 0, {
+    message: 'Pełny koszt pracodawcy musi być większy od zera.',
+    path: ['employerCost'],
+  })
+
 export const PayrollSheetSubmitSchema = z.object({
   month: monthKey,
   rows: z.array(z.unknown()).min(1, 'Wybierz co najmniej jeden wiersz.').max(300),

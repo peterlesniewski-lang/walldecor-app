@@ -145,25 +145,8 @@
 .slip .stampReady { color: #f0c27a; }
 .slip .stampDraft { color: rgba(247, 246, 244, .7); }
 
-/* ── Step rail ────────────────────────────────────────── */
-.rail { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 6px; counter-reset: step; }
-.step {
-  counter-increment: step; position: relative;
-  padding: 10px 12px 10px 38px; border-radius: 10px; border: 1px solid var(--border);
-  background: var(--pr-paper); font-size: 12.5px; font-weight: 600; line-height: 1.25; min-width: 0;
-}
-.step::before {
-  content: counter(step); position: absolute; left: 10px; top: 50%; transform: translateY(-50%);
-  width: 20px; height: 20px; border-radius: 50%; display: grid; place-items: center;
-  font: 600 11px/1 var(--pr-mono); border: 1.5px solid var(--pr-rule); color: var(--pr-muted);
-}
-.stepDone { border-color: var(--pr-ink); }
-.stepDone::before { content: '✓'; background: var(--pr-ink); color: var(--pr-sand); border-color: var(--pr-ink); }
-.stepTodo { color: var(--pr-muted); }
-
 /* ── Panels ───────────────────────────────────────────── */
-.grid2 { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(0, 1fr); gap: 22px; align-items: start; }
-.stack { display: grid; gap: 22px; min-width: 0; }
+.stack { display: grid; gap: 22px; min-width: 0; } /* still used by the automat panel */
 .panel { border: 1px solid var(--border); border-radius: var(--pr-radius); background: var(--pr-paper); box-shadow: var(--card-shadow); min-width: 0; }
 .panelHead { display: flex; justify-content: space-between; align-items: baseline; gap: 12px; flex-wrap: wrap; padding: 16px 18px 12px; border-bottom: 1px dashed var(--pr-rule); }
 .panelTitle { font-size: 15px; font-weight: 800; letter-spacing: -.02em; }
@@ -224,9 +207,6 @@
 
 .dialogList { max-height: 220px; overflow: auto; display: grid; }
 
-@container (max-width: 940px) {
-  .grid2 { grid-template-columns: minmax(0, 1fr); }
-}
 /* The ledger reacts to its own width (two sidebars can leave little room on desktop). */
 @container (max-width: 880px) {
   .ledgerHead { display: none; }
@@ -242,7 +222,6 @@
   .ledgerRow > :nth-child(2) { grid-column: 1 / -1; }
 }
 @media (max-width: 760px) {
-  .rail { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .figures { grid-template-columns: minmax(0, 1fr); }
   .form { grid-template-columns: minmax(0, 1fr); }
   .line { grid-template-columns: 80px minmax(0, 1fr); }
@@ -550,3 +529,45 @@
 }
 /* Wraps between figures (each held together by non-breaking spaces), never widening the column. */
 .calcHint { overflow-wrap: anywhere; }
+
+
+/* ── Settlement details page (stage 5) ───────────────── */
+/* Room under the last panel for the floating assistant button (48 px, fixed bottom-right). */
+.detailPage { padding-bottom: 112px; }
+.slipCompact { padding: 16px 20px; }
+.slipCompact .figures { margin-top: 14px; }
+.slipCompact .figure { padding: 10px 14px; }
+.slipCompact .figureValue { font-size: clamp(1.05rem, 2vw, 1.45rem); margin-top: 4px; }
+.inlineLink { text-decoration: underline; text-underline-offset: 3px; }
+.inlineLink:focus-visible { outline: 2px solid var(--pr-ink); outline-offset: 2px; border-radius: 3px; }
+.blockerBox { border: 1px solid #f0c9b8; background: #fbeee7; border-radius: 10px; padding: 10px 14px; }
+
+/* Amounts and approval: three amounts in one row, note and the button under them. */
+.amountsForm { grid-template-columns: repeat(3, minmax(0, 1fr)); align-items: start; gap: 12px 14px; }
+.amountsHints { grid-column: 1 / -1; display: grid; gap: 6px; }
+.amountsHints:empty { display: none; }
+.noteField { grid-column: 1 / span 2; }
+.saveCell { display: flex; justify-content: flex-end; align-self: end; }
+.saveCell .btn { min-height: 40px; padding-inline: 22px; }
+.amountInput { text-align: right; font-variant-numeric: tabular-nums; }
+.costOutput { min-height: 36px; display: flex; align-items: center; justify-content: flex-end; font-size: 14px; }
+.fieldNote { font: 400 10.5px/1.3 var(--pr-mono); color: var(--pr-muted); text-align: right; font-style: italic; overflow-wrap: anywhere; }
+.fieldError { font-size: 12px; color: var(--pr-alert); font-weight: 600; }
+.field input[aria-invalid='true'] { border-color: var(--pr-alert); }
+@container (max-width: 720px) {
+  .amountsForm { grid-template-columns: minmax(0, 1fr); }
+  .noteField { grid-column: 1 / -1; }
+  .saveCell .btn { width: 100%; }
+}
+
+/* Folded panels: native <details>; the summary carries the numbers. */
+.fold > summary { list-style: none; cursor: pointer; display: flex; align-items: baseline; flex-wrap: wrap; gap: 4px 10px; padding: 14px 18px; min-height: 48px; border-radius: var(--pr-radius); }
+.fold > summary::-webkit-details-marker { display: none; }
+.fold > summary:focus-visible { outline: 2px solid var(--pr-ink); outline-offset: 2px; }
+.fold[open] > summary { border-bottom: 1px dashed var(--pr-rule); border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.foldChevron { align-self: center; transition: transform 160ms ease; flex: none; }
+.fold[open] .foldChevron { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .foldChevron { transition: none; } }
+.amountsForm > * { margin-top: 0; }
+.field input[type='checkbox'] { width: auto; min-height: 0; accent-color: var(--pr-ink); vertical-align: -2px; }
+.costOutput { font-weight: 400; }
