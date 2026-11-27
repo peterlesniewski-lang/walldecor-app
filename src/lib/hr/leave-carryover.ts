@@ -1,5 +1,6 @@
 import { z } from 'zod'
 import type { Prisma } from '@/generated/prisma'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 import {
   calculateConfiguredEntitlement,
   selectEffectiveEntitlement,
@@ -134,7 +135,8 @@ export async function executeLeaveCarryoverBatch(
     where: {
       year: input.fromYear,
       leaveTypeId: vlType.id,
-      employee: { active: true },
+      // D21: external contractors get no new-year balances (their old rows stay untouched).
+      employee: { active: true, AND: [STAFF_WHERE] },
     },
     select: {
       id: true,

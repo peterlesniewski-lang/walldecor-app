@@ -1,6 +1,6 @@
 # Project Status — WallDecor App
 
-**Ostatnia aktualizacja:** 2026-11-25 (etap 1 wdrożony na produkcję 25.11; etap 2 #43 scalony do `main`; etap 3 „Stawka godzinowa” #44 — gałąź `payroll-hourly-44`, PR do `main`; dowód: `docs/evidence/2026-11-24-payroll-hourly.md`)
+**Ostatnia aktualizacja:** 2026-11-27 (etap 4 „Wykonawcy poza HR” #45 — gałąź `hr-contractors-45`, bez migracji; etap 1 wdrożony na produkcję 25.11; etap 2 #43 scalony do `main`; etap 3 „Stawka godzinowa” #44 — gałąź `payroll-hourly-44`, PR do `main`; dowód: `docs/evidence/2026-11-24-payroll-hourly.md`)
 
 ## Wynagrodzenia: arkusz miesiąca, automat, stawka godzinowa, wykonawcy poza HR — plan 24.11.2026
 
@@ -9,7 +9,7 @@ Plan i decyzje właściciela: `docs/plans/2026-11-24-payroll-ux-simplification.m
 [x] Etap 1 — Arkusz miesiąca: kwoty w wierszach, podpowiedzi z poprzedniego miesiąca, zatwierdzenie i korekta jednym kliknięciem, numer listy płac na miesiąc, B2B poza listą płac (Opus)
 [x] Etap 2 — Automat 1. dnia miesiąca, etykieta „zmiana po zatwierdzeniu", powiadomienia, szacunek kosztu z ostatniego zatwierdzonego miesiąca (Opus)
 [x] Etap 3 — Stawka godzinowa: godziny × stawka, „Zatwierdź godziny" w wierszu, przypomnienie przed wypłatą (Opus)
-[ ] Etap 4 — Wykonawcy (B2B) poza HR: zakładka „Wykonawcy", ukrycie w czasie pracy, urlopach, raportach (Sonnet, przegląd Opus)
+[x] Etap 4 — Wykonawcy (B2B) poza HR: zakładka „Wykonawcy", ukrycie w czasie pracy, urlopach, raportach (Sonnet, przegląd Opus) — #45, gałąź `hr-contractors-45`, dowód: `docs/evidence/2026-11-24-hr-contractors.md`
 [ ] Etap 5 — Uporządkowanie strony szczegółów rozliczenia (Sonnet)
 [ ] Scenariusz finałowy „miesiąc właściciela" na czystej bazie
 
@@ -23,9 +23,11 @@ Po przeglądzie etapu 2: codzienne powiadomienie o zmianach obejmuje bieżący i
 
 Etap 3 (#44) zbudowany 25.11.2026, bez zmiany schematu: wyliczenie brutto z godzin i netto z proporcji (`src/lib/payroll/hourly.ts`, gałąź godzinowa w `carryover.ts`, znacznik `HOURLY_NO_HOURS`), blokady nadgodzin nie dotyczą stawki godzinowej (`summary.ts`), „Zatwierdź godziny” w wierszu arkusza (`POST /api/hr/payroll/sheet/approve-hours`, wspólne zatwierdzanie wpisu w `src/lib/hr/time-tracking/approve-entry.ts`, także w trasie Czasu pracy), panel nadgodzin na stronie szczegółów bez „Wypłata / Czas wolny” dla stawki godzinowej, przypomnienie przed wypłatą (`src/lib/payroll/pay-reminder.ts`, slot `payroll_pay_reminder_last_month`). Testy: `__tests__/unit/hr/payroll-hourly.test.ts`, `__tests__/integration/hr/payroll-hourly-flow.test.ts`, `e2e/hr-payroll-hourly.spec.ts` (runner: tryb `remind`). **Przypomnienie działa niezależnie od przełącznika automatu** — po wdrożeniu na produkcję właściciel dostanie je w najbliższym dniu przypomnienia (decyzja do potwierdzenia przy wdrożeniu, patrz raport).
 
+Etap 4 (#45) zbudowany 27.11.2026, bez zmiany schematu (D12): zakładki „Pracownicy” / „Wykonawcy” z licznikami na `/hr/employees` (`?kind=contractors`), parametr `kind=staff|contractors|all` w `GET /api/hr/employees` (domyślnie `all`; każde wywołanie z HR podaje `kind`, `EmployeeSelect` wymaga go jawnie), „Dodaj wykonawcę” (formularz z rodzajem umowy B2B na stałe), profil wykonawcy tylko z danymi podstawowymi i etykietą „Wykonawca zewnętrzny”, `STAFF_WHERE` we wszystkich listach HR (czas pracy, grafik wraz z kopiowaniem i szablonem, nadgodziny, urlopy, salda, eksporty, raporty, PDF, struktura, listy przełożonych), brak przenoszenia sald na nowy rok i brak ustawiania limitu urlopu dla wykonawcy (D21). Pełna tabela decyzji dla każdego zapytania: `docs/evidence/2026-11-24-hr-contractors.md`. Testy: `__tests__/integration/hr/contractor-visibility.test.ts`, `e2e/hr-contractors.spec.ts`.
+
 Produkcja: etap 1 wdrożony 25.11.2026 (obraz z commita `4a65119`, migracja `20261124120000_payroll_month`; wiersz w rejestrze w `docs/GITHUB-ACTIONS-BUILD.md`).
 
-**Następna sesja:** wdrożenie etapów 2 i 3 po zgodzie właściciela (etap 2: migracja `origin`, automat wyłączony; etap 3: bez migracji, przypomnienie przed wypłatą włączone od razu) → etap 4 (#45) → etap 5 (#46).
+**Następna sesja:** wdrożenie etapów 2 i 3 po zgodzie właściciela (etap 2: migracja `origin`, automat wyłączony; etap 3: bez migracji, przypomnienie przed wypłatą włączone od razu) → przegląd i scalenie etapu 4 (#45) → etap 5 (#46).
 
 ## Faktury UE z Subiekta i uzgodnienie płatności — 18.11.2026 (gałąź `eu-invoice-mcp-bridge-6f82721a`)
 

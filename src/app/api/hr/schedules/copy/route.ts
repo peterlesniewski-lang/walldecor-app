@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
 import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 
 // ─── Schema ───────────────────────────────────────────────────────────────────
 
@@ -43,11 +44,20 @@ export async function POST(req: NextRequest) {
 
     const requestedEmployeeIds = [...new Set([fromEmployeeId, ...toEmployeeIds])]
     const scopedEmployees = await prisma.employee.findMany({
-      where: { ...scopedWhere, id: { in: requestedEmployeeIds } },
+      where: { ...scopedWhere, id: { in: requestedEmployeeIds }, AND: [STAFF_WHERE] },
       select: { id: true },
     })
     if (scopedEmployees.length !== requestedEmployeeIds.length) {
       return NextResponse.json({ error: 'Forbidden' }, { status: 403 })
+    }
+  } else {
+    // External contractors are not scheduled in HR (D13), also not by ADMIN through the API.
+    const requestedEmployeeIds = [...new Set([fromEmployeeId, ...toEmployeeIds])]
+    const staffCount = await prisma.employee.count({
+      where: { id: { in: requestedEmployeeIds }, AND: [STAFF_WHERE] },
+    })
+    if (staffCount !== requestedEmployeeIds.length) {
+      return NextResponse.json({ error: 'Grafik można układać tylko dla pracowników.' }, { status: 400 })
     }
   }
 

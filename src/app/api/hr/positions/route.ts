@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 
 const positionCreateSchema = z.object({
   name: z.string().min(1).max(100),
@@ -15,7 +16,7 @@ export async function GET() {
   const positions = await prisma.position.findMany({
     orderBy: { name: 'asc' },
     include: {
-      _count: { select: { employees: true } },
+      _count: { select: { employees: { where: STAFF_WHERE } } },
     },
   })
 

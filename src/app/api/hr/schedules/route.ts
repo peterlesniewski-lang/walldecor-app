@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { workScheduleCreateSchema } from '@/lib/hr/schemas'
 import { getPolishHolidays } from '@/lib/hr/constants'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 import { canViewEmployeeRecord, getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
 
 // ─── GET /api/hr/schedules?month=2026-03&employeeId=&divisionId= ────────────
@@ -44,6 +45,7 @@ export async function GET(req: NextRequest) {
   const employeeWhere: Record<string, unknown> = {
     active: true,
     ...getScopedEmployeeWhere(session, viewerEmployee),
+    AND: [STAFF_WHERE],
   }
 
   if (employeeWhere.id === HR_NO_EMPLOYEE_ACCESS_ID) {

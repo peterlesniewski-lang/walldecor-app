@@ -3,6 +3,7 @@ import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
 import { POST } from '@/app/api/hr/leave-balances/carryover/route'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 
 vi.mock('next-auth', () => ({
   getServerSession: vi.fn(),
@@ -311,7 +312,7 @@ describe('POST /api/hr/leave-balances/carryover transaction scope', () => {
       where: {
         year: 2025,
         leaveTypeId: canonicalVl.id,
-        employee: { active: true },
+        employee: { active: true, AND: [STAFF_WHERE] },
       },
       select: {
         id: true,

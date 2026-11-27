@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { z } from 'zod'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 
 const divisionCreateSchema = z.object({
   name: z.string().min(1).max(100),
@@ -18,15 +19,15 @@ export async function GET() {
     include: {
       departments: {
         include: {
-          _count: { select: { employees: true } },
+          _count: { select: { employees: { where: STAFF_WHERE } } },
           employees: {
-            where: { active: true },
+            where: { active: true, AND: [STAFF_WHERE] },
             select: { id: true, firstName: true, lastName: true, position: true },
             orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
           },
         },
       },
-      _count: { select: { employees: true } },
+      _count: { select: { employees: { where: STAFF_WHERE } } },
     },
   })
 

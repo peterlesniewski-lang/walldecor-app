@@ -3,6 +3,7 @@ import type { Session } from 'next-auth'
 import type { PrismaClient } from '@/generated/prisma'
 import { timeEntryBulkCreateSchema } from '@/lib/hr/schemas'
 import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 import {
   ApprovedLeaveBlocksTimeEntryError,
   createTimeEntryRespectingApprovedLeave,
@@ -64,7 +65,7 @@ async function handleBulkTimeEntries(
 
   // Validate employees exist and are inside the caller's HR scope.
   const employees = await db.employee.findMany({
-    where: { ...scopedWhere, id: { in: employeeIds } },
+    where: { ...scopedWhere, id: { in: employeeIds }, AND: [STAFF_WHERE] },
     select: { id: true },
   })
   if (employees.length !== employeeIds.length) {

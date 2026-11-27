@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { getMonthRange } from '@/lib/hr/utils'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 import { canViewEmployeeRecord, getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
 import jsPDF from 'jspdf'
 import autoTable from 'jspdf-autotable'
@@ -292,7 +293,7 @@ export async function GET(req: NextRequest) {
     }
 
     const employeesRaw = await prisma.employee.findMany({
-      where: filterIds ? { id: { in: filterIds } } : { active: true },
+      where: { AND: [STAFF_WHERE], ...(filterIds ? { id: { in: filterIds } } : { active: true }) },
       select: { id: true, firstName: true, lastName: true },
       orderBy: { lastName: 'asc' },
     })

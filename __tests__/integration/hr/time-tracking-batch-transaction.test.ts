@@ -245,6 +245,7 @@ async function createSchema() {
       "lastName" TEXT NOT NULL,
       "userId" TEXT,
       "divisionId" TEXT,
+      "employmentType" TEXT,
       "active" BOOLEAN NOT NULL DEFAULT true
     )
   `)

@@ -5,6 +5,7 @@ import { prisma } from '@/lib/prisma'
 import { getPolishHolidays } from '@/lib/hr/constants'
 import { ScheduleCalendar } from '@/components/hr/time-tracking/schedule-calendar'
 import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -44,6 +45,7 @@ export default async function SchedulePage() {
   const scopedEmployeeWhere: Record<string, unknown> = {
     active: true,
     ...getScopedEmployeeWhere(session, viewerEmployee),
+    AND: [STAFF_WHERE],
   }
   const noEmployeeScope = scopedEmployeeWhere.id === HR_NO_EMPLOYEE_ACCESS_ID
   const managerDivisionId = session.user.role === 'MANAGER' ? viewerEmployee?.divisionId ?? null : null

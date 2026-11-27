@@ -8,6 +8,7 @@ import {
   getScopedEmployeeWhere,
   HR_NO_EMPLOYEE_ACCESS_ID,
 } from '@/lib/hr/access'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 
 function csvRow(cells: (string | number | null | undefined)[]): string {
   return cells
@@ -72,11 +73,11 @@ export async function GET(req: NextRequest) {
   const scopedEmployeeWhere = getScopedEmployeeWhere(session, viewerEmployee)
   const scopedEmployeeIds =
     role === 'MANAGER' && scopedEmployeeWhere.id !== HR_NO_EMPLOYEE_ACCESS_ID
-      ? (await prisma.employee.findMany({ where: scopedEmployeeWhere, select: { id: true } })).map((employee) => employee.id)
+      ? (await prisma.employee.findMany({ where: { AND: [scopedEmployeeWhere, STAFF_WHERE] }, select: { id: true } })).map((employee) => employee.id)
       : null
 
   const scopedActiveEmployeeWhere = (requestedDivisionId?: string | null) => {
-    const where: Record<string, unknown> = { ...scopedEmployeeWhere, active: true }
+    const where: Record<string, unknown> = { ...scopedEmployeeWhere, active: true, AND: [STAFF_WHERE] }
     if (where.id === HR_NO_EMPLOYEE_ACCESS_ID) return null
     if (requestedDivisionId && role === 'ADMIN') where.divisionId = requestedDivisionId
     if (requestedDivisionId && role === 'MANAGER' && viewerEmployee?.divisionId !== requestedDivisionId) return null
@@ -218,6 +219,7 @@ export async function GET(req: NextRequest) {
     const entryWhere: Record<string, unknown> = {
       date: { gte: start, lte: end },
       projectId: { not: null },
+      employee: STAFF_WHERE,
     }
     if (projectIdParam) entryWhere.projectId = projectIdParam
     if (scopedEmployeeIds) entryWhere.employeeId = { in: scopedEmployeeIds }

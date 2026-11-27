@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 
 export async function GET(req: NextRequest) {
   const session = await getServerSession(authOptions)
@@ -31,7 +32,7 @@ export async function GET(req: NextRequest) {
   nextWeekEnd.setHours(23, 59, 59, 999)
 
   // Total active employees
-  const total = await prisma.employee.count({ where: { active: true } })
+  const total = await prisma.employee.count({ where: { active: true, AND: [STAFF_WHERE] } })
 
   // Approved leaves covering target date
   const approvedLeaves = await prisma.leaveRequestNew.findMany({
@@ -39,6 +40,7 @@ export async function GET(req: NextRequest) {
       status: 'approved',
       startDate: { lte: dayEnd },
       endDate: { gte: dayStart },
+      employee: STAFF_WHERE,
     },
     select: {
       id: true,
@@ -57,6 +59,7 @@ export async function GET(req: NextRequest) {
     where: {
       status: 'approved',
       startDate: { gte: nextWeekStart, lte: nextWeekEnd },
+      employee: STAFF_WHERE,
     },
   })
 

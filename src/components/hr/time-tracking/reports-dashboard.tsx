@@ -317,7 +317,7 @@ function TimecardTab({ divisions: _divisions }: { divisions: Division[] }) {
       <FilterPanel>
         <FilterField label="Pracownik">
           <div className="w-64">
-            <EmployeeSelect value={employeeId} onChange={setEmployeeId} />
+            <EmployeeSelect value={employeeId} onChange={setEmployeeId} kind="staff" />
           </div>
         </FilterField>
         <FilterField label="Miesiąc">
@@ -821,7 +821,7 @@ function PdfTab() {
   const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
-    fetch('/api/hr/employees')
+    fetch('/api/hr/employees?kind=staff')
       .then((r) => r.json())
       .then((data) => {
         const list = Array.isArray(data) ? data : (data.employees ?? [])
@@ -912,7 +912,7 @@ function PdfTab() {
             Raport miesięczny ewidencji czasu pracy
           </p>
           <p className="text-xs mt-1" style={{ color: 'var(--wd-text-muted)' }}>
-            Wybierz miesiąc i pracownika, następnie kliknij „Generuj i pobierz PDF"
+            Wybierz miesiąc i pracownika, następnie kliknij „Generuj i pobierz PDF”
           </p>
           <p className="text-xs mt-0.5" style={{ color: 'var(--wd-text-muted)' }}>
             PDF zawiera dzień po dniu: wejścia, wyjścia, godziny, urlopy, sobotnie nadgodziny

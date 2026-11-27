@@ -87,7 +87,7 @@ function installFetchMock(options: {
   ) => {
     const url = String(input)
 
-    if (url === '/api/hr/employees?limit=200&status=active') {
+    if (url === '/api/hr/employees?limit=200&status=active&kind=staff') {
       return jsonResponse({ employees: [employee] })
     }
     if (url.startsWith('/api/hr/leave-balances?') && !init?.method) {

@@ -8,6 +8,9 @@ import { EmployeeFilters } from '@/components/hr/employees/employee-filters'
 import { EmployeeRowActions } from '@/components/hr/employees/employee-row-actions'
 import { Suspense } from 'react'
 import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
+import { CONTRACTOR_WHERE, STAFF_WHERE } from '@/lib/hr/contractors'
+import { pluralPl } from '@/lib/plural-pl'
+import type { Prisma } from '@/generated/prisma'
 
 // ─── Badges ──────────────────────────────────────────────────────────────────
 
@@ -54,6 +57,7 @@ interface SearchParams {
   search?: string
   page?: string
   showHidden?: string
+  kind?: string
 }
 
 export default async function EmployeesPage({
@@ -86,6 +90,8 @@ export default async function EmployeesPage({
   const skip = (page - 1) * limit
 
   const showHidden = isAdmin && sp.showHidden === 'true'
+  // Two tabs (D13): staff is the default; external contractors (B2B) live on their own tab.
+  const kind: 'staff' | 'contractors' = sp.kind === 'contractors' ? 'contractors' : 'staff'
 
   // Build filters
   type WhereClause = {
@@ -94,6 +100,7 @@ export default async function EmployeesPage({
     departmentId?: string
     employmentType?: string
     active?: boolean
+    AND?: Prisma.EmployeeWhereInput[]
     OR?: Array<{ firstName?: { contains: string }; lastName?: { contains: string }; email?: { contains: string } }>
   }
 
@@ -110,7 +117,6 @@ export default async function EmployeesPage({
 
   if (sp.divisionId && isAdmin) where.divisionId = sp.divisionId
   if (sp.departmentId) where.departmentId = sp.departmentId
-  if (sp.employmentType) where.employmentType = sp.employmentType
   if (sp.status === 'active') where.active = true
   else if (sp.status === 'inactive' && isAdmin) where.active = false
   else if (!showHidden && !('active' in where)) where.active = true
@@ -122,9 +128,20 @@ export default async function EmployeesPage({
     ]
   }
 
-  const [employees, total, divisions] = await Promise.all([
+  // Tab counters use the shared filters (scope, division, department, status, search), so the counter
+  // of the open tab always equals the number of rows in its list.
+  // The employment-type filter exists on the staff tab only.
+  const staffWhere: WhereClause = {
+    ...where,
+    ...(sp.employmentType ? { employmentType: sp.employmentType } : {}),
+    AND: [STAFF_WHERE],
+  }
+  const contractorsWhere: WhereClause = { ...where, AND: [CONTRACTOR_WHERE] }
+  const listWhere = kind === 'contractors' ? contractorsWhere : staffWhere
+
+  const [employees, total, divisions, staffCount, contractorsCount] = await Promise.all([
     prisma.employee.findMany({
-      where,
+      where: listWhere,
       skip,
       take: limit,
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
@@ -135,8 +152,10 @@ export default async function EmployeesPage({
         costCenter: true,
       },
     }),
-    prisma.employee.count({ where }),
+    prisma.employee.count({ where: listWhere }),
     prisma.division.findMany({ orderBy: { name: 'asc' } }),
+    prisma.employee.count({ where: staffWhere }),
+    prisma.employee.count({ where: contractorsWhere }),
   ])
 
   const totalPages = Math.ceil(total / limit)
@@ -144,11 +163,13 @@ export default async function EmployeesPage({
   return (
     <div className="p-6 lg:p-8 bg-[var(--wd-off-white)] min-h-full">
       {/* Header */}
-      <div className="flex items-start justify-between mb-6 gap-4">
+      <div className="flex flex-wrap items-start justify-between mb-6 gap-4">
         <div>
           <h1 className="text-2xl font-bold text-[var(--wd-text-primary)]">Pracownicy</h1>
           <p className="text-sm mt-0.5" style={{ color: 'var(--wd-text-muted)' }}>
-            {total} {total === 1 ? 'pracownik' : total < 5 ? 'pracownicy' : 'pracowników'} w systemie
+            {kind === 'contractors'
+              ? `${total} ${pluralPl(total, 'wykonawca', 'wykonawcy', 'wykonawców')} w systemie`
+              : `${total} ${pluralPl(total, 'pracownik', 'pracownicy', 'pracowników')} w systemie`}
             {showHidden && (
               <span className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-xs bg-amber-50 text-amber-700 border border-amber-200">
                 Widoczni ukryci
@@ -158,23 +179,62 @@ export default async function EmployeesPage({
         </div>
         {isAdmin && (
           <Link
-            href="/hr/employees/new"
-            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-[var(--wd-dark)] text-white hover:bg-[#2E2E2E]"
+            href={kind === 'contractors' ? '/hr/employees/new?kind=contractor' : '/hr/employees/new'}
+            className="inline-flex items-center gap-2 px-4 py-2 text-sm font-medium rounded-lg transition-colors bg-[var(--wd-dark)] text-white hover:bg-[#2E2E2E] shrink-0"
           >
             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
             </svg>
-            Dodaj pracownika
+            {kind === 'contractors' ? 'Dodaj wykonawcę' : 'Dodaj pracownika'}
           </Link>
         )}
       </div>
 
       {/* Card */}
       <div className="bg-white border border-[var(--wd-border)] rounded-xl shadow-sm overflow-hidden">
+        {/* Tabs: staff / external contractors */}
+        <div role="tablist" aria-label="Rodzaj kart" className="flex overflow-x-auto border-b border-[var(--wd-border)] px-2">
+          {([
+            { id: 'staff', label: 'Pracownicy', count: staffCount },
+            { id: 'contractors', label: 'Wykonawcy', count: contractorsCount },
+          ] as const).map((tab) => {
+            const isActive = tab.id === kind
+            // Keep the shared filters when switching; `page` and the staff-only type filter are dropped.
+            const params = new URLSearchParams(
+              Object.entries(sp).filter(([key, v]) => v !== undefined && key !== 'page' && key !== 'kind' && key !== 'employmentType') as [string, string][]
+            )
+            if (tab.id === 'contractors') params.set('kind', 'contractors')
+            const query = params.toString()
+            return (
+              <Link
+                key={tab.id}
+                role="tab"
+                aria-selected={isActive}
+                href={query ? `/hr/employees?${query}` : '/hr/employees'}
+                className={`inline-flex items-center gap-2 px-4 py-3 text-sm font-medium border-b-2 -mb-px whitespace-nowrap transition-colors ${
+                  isActive
+                    ? 'border-[var(--wd-dark)] text-[var(--wd-dark)]'
+                    : 'border-transparent text-[var(--wd-text-muted)] hover:text-[var(--wd-text-primary)] hover:border-[var(--wd-border)]'
+                }`}
+              >
+                {tab.label}
+                <span
+                  data-testid={`employees-tab-count-${tab.id}`}
+                  className={`num inline-flex min-w-[1.5rem] justify-center rounded-full px-1.5 py-0.5 text-xs ${
+                    isActive ? 'bg-[var(--wd-dark)] text-white' : 'bg-[var(--wd-surface-2)] text-[var(--wd-text-muted)]'
+                  }`}
+                >
+                  {tab.count}
+                </span>
+              </Link>
+            )
+          })}
+        </div>
+
         {/* Filters */}
         <div className="p-4 border-b border-[var(--wd-border)]">
           <Suspense fallback={null}>
-            <EmployeeFilters divisions={divisions} isAdmin={isAdmin} />
+            <EmployeeFilters divisions={divisions} isAdmin={isAdmin} kind={kind} />
           </Suspense>
         </div>
 
@@ -183,14 +243,16 @@ export default async function EmployeesPage({
           {employees.length === 0 ? (
             <div className="py-16 text-center">
               <p className="text-sm" style={{ color: 'var(--wd-text-muted)' }}>
-                Brak pracowników spełniających kryteria wyszukiwania.
+                {kind === 'contractors'
+                  ? 'Brak wykonawców spełniających kryteria wyszukiwania.'
+                  : 'Brak pracowników spełniających kryteria wyszukiwania.'}
               </p>
             </div>
           ) : (
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Pracownik</th>
+                  <th>{kind === 'contractors' ? 'Wykonawca' : 'Pracownik'}</th>
                   <th>Stanowisko</th>
                   <th>Oddział</th>
                   <th>Umowa</th>

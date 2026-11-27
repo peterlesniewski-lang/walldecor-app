@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 import { NextRequest } from 'next/server'
 import { getServerSession } from 'next-auth'
 import { prisma } from '@/lib/prisma'
@@ -85,7 +86,7 @@ describe('HR operational access scoping', () => {
 
     expect(response.status).toBe(200)
     expect(mockEmployeeFindMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { active: true, divisionId: 'JAG' },
+      where: { active: true, divisionId: 'JAG', AND: [STAFF_WHERE] },
     }))
   })
 

@@ -3,18 +3,26 @@ import { redirect } from 'next/navigation'
 import Link from 'next/link'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 import { EmployeeForm } from './employee-form'
 
-export default async function NewEmployeePage() {
+export default async function NewEmployeePage({
+  searchParams,
+}: {
+  searchParams: Promise<{ kind?: string }>
+}) {
   const session = await getServerSession(authOptions)
   if (!session) redirect('/login')
   if (session.user.role !== 'ADMIN') redirect('/hr/employees')
+
+  const { kind } = await searchParams
+  const isContractor = kind === 'contractor'
 
   const [divisions, departments, managers] = await Promise.all([
     prisma.division.findMany({ orderBy: { name: 'asc' } }),
     prisma.department.findMany({ orderBy: { name: 'asc' } }),
     prisma.employee.findMany({
-      where: { active: true },
+      where: { active: true, AND: [STAFF_WHERE] },
       select: { id: true, firstName: true, lastName: true },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
     }),
@@ -25,7 +33,7 @@ export default async function NewEmployeePage() {
       {/* Header */}
       <div className="flex items-center gap-3 mb-8">
         <Link
-          href="/hr/employees"
+          href={isContractor ? '/hr/employees?kind=contractors' : '/hr/employees'}
           className="flex items-center justify-center w-8 h-8 rounded-lg border border-[var(--wd-border)] hover:bg-[var(--wd-surface-2)] transition-colors"
         >
           <svg className="w-4 h-4 text-[var(--wd-text-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -33,8 +41,12 @@ export default async function NewEmployeePage() {
           </svg>
         </Link>
         <div>
-          <h1 className="text-2xl font-bold text-[var(--wd-text-primary)]">Nowy pracownik</h1>
-          <p className="text-sm" style={{ color: 'var(--wd-text-muted)' }}>Wypełnij dane nowego pracownika</p>
+          <h1 className="text-2xl font-bold text-[var(--wd-text-primary)]">
+            {isContractor ? 'Nowy wykonawca' : 'Nowy pracownik'}
+          </h1>
+          <p className="text-sm" style={{ color: 'var(--wd-text-muted)' }}>
+            {isContractor ? 'Wypełnij dane nowego wykonawcy zewnętrznego' : 'Wypełnij dane nowego pracownika'}
+          </p>
         </div>
       </div>
 
@@ -44,6 +56,7 @@ export default async function NewEmployeePage() {
           divisions={divisions}
           departments={departments}
           managers={managers}
+          isContractor={isContractor}
         />
       </div>
     </div>

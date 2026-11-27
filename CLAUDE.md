@@ -236,3 +236,4 @@ Ecommerce to kanał przychodów przypisany zawsze do `PUL`.
 - Soboty = **automatycznie liczone jako nadgodziny**
 - Raport nadgodzin generowany automatycznie na koniec miesiąca
 - Saldo urlopowe: automatycznie aktualizowane po zatwierdzeniu wniosku
+- Każde zapytanie HR zwracające listę lub liczbę osób używa `STAFF_WHERE` z `src/lib/hr/contractors.ts` (wykonawcy B2B są poza HR); nigdy `{ not: 'B2B' }` samo — w Prisma odrzuca też karty z pustym rodzajem umowy (NULL), które mają zostać na liście. Przy własnym `OR` łącz przez `AND: [STAFF_WHERE, …]`.

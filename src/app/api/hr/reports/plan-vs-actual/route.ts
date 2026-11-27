@@ -4,6 +4,7 @@ import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { getMonthRange } from '@/lib/hr/utils'
 import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 
 function scheduleMinutes(startTime: string, endTime: string, breakMinutes: number): number {
   const [sh, sm] = startTime.split(':').map(Number)
@@ -48,6 +49,7 @@ export async function GET(req: NextRequest) {
   const employeeWhere: Record<string, unknown> = {
     ...getScopedEmployeeWhere(session, viewerEmployee),
     active: true,
+    AND: [STAFF_WHERE],
   }
 
   if (employeeWhere.id === HR_NO_EMPLOYEE_ACCESS_ID) return NextResponse.json([])

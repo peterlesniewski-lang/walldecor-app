@@ -13,6 +13,7 @@ import {
   type LeaveEntitlementPanelData,
 } from '@/components/hr/employees/leave-entitlement-panel'
 import { canViewEmployeeRecord } from '@/lib/hr/access'
+import { isExternalContractor } from '@/lib/hr/contractors'
 import {
   calculateConfiguredEntitlement,
   selectEffectiveEntitlement,
@@ -67,13 +68,14 @@ function PersonalDataTab({
   employee: NonNullable<EmployeeWithRelations>
   isAdmin: boolean
 }) {
+  const isContractor = isExternalContractor(employee)
   const formatDate = (d: Date | null | undefined) =>
     d ? new Intl.DateTimeFormat('pl-PL', { dateStyle: 'long' }).format(new Date(d)) : null
 
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
-        <h3 className="text-base font-semibold text-[var(--wd-text-primary)]">Dane pracownika</h3>
+        <h3 className="text-base font-semibold text-[var(--wd-text-primary)]">{isContractor ? 'Dane wykonawcy' : 'Dane pracownika'}</h3>
         {isAdmin && (
           <Link
             href={`/hr/employees/${employee.id}/edit`}
@@ -420,6 +422,63 @@ export default async function EmployeeProfilePage({ params }: Params) {
   const employee = await fetchEmployee(id, isAdmin)
   if (!employee) notFound()
   if (!canViewEmployeeRecord(session, employee, viewerEmployee)) notFound()
+
+  // External contractors (B2B) get basic data only: no time tracking and no leave in HR (D13).
+  if (isExternalContractor(employee)) {
+    return (
+      <div className="p-6 lg:p-8 bg-[var(--wd-off-white)] min-h-full">
+        <div className="flex items-center gap-3 mb-6">
+          <Link
+            href="/hr/employees?kind=contractors"
+            aria-label="Wróć do listy wykonawców"
+            className="flex items-center justify-center w-8 h-8 rounded-lg border border-[var(--wd-border)] hover:bg-[var(--wd-surface-2)] transition-colors flex-shrink-0"
+          >
+            <svg className="w-4 h-4 text-[var(--wd-text-primary)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+          </Link>
+          <div className="flex items-center gap-4 flex-1 min-w-0">
+            <EmployeeAvatar
+              firstName={employee.firstName}
+              lastName={employee.lastName}
+              size="lg"
+              avatarUrl={employee.avatarUrl}
+            />
+            <div className="min-w-0">
+              <h1 className="text-2xl font-bold text-[var(--wd-text-primary)] truncate">
+                {employee.firstName} {employee.lastName}
+              </h1>
+              <p className="text-sm truncate" style={{ color: 'var(--wd-text-muted)' }}>
+                <span className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium border bg-sky-50 text-sky-700 border-sky-200">
+                  Wykonawca zewnętrzny
+                </span>
+              </p>
+            </div>
+            {employee.active ? (
+              <span className="flex-shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-emerald-500" />
+                Aktywny
+              </span>
+            ) : (
+              <span className="flex-shrink-0 inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-red-50 text-red-600 border border-red-200">
+                <span className="w-1.5 h-1.5 rounded-full bg-red-400" />
+                Nieaktywny
+              </span>
+            )}
+          </div>
+          {isAdmin && (
+            <EmployeeActions
+              employeeId={employee.id}
+              employeeName={`${employee.firstName} ${employee.lastName}`}
+            />
+          )}
+        </div>
+        <div className="bg-white border border-[var(--wd-border)] rounded-xl shadow-sm p-6">
+          <PersonalDataTab employee={employee} isAdmin={isAdmin} />
+        </div>
+      </div>
+    )
+  }
 
   const now = new Date()
   const targetYear = getWarsawBusinessDate(now).year

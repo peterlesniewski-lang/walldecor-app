@@ -4,6 +4,7 @@ import { z } from 'zod'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { leaveEntitlementSaveSchema } from '@/lib/hr/schemas'
+import { isExternalContractor } from '@/lib/hr/contractors'
 import {
   entitlementAsOfDate,
   getWarsawBusinessDate,
@@ -284,13 +285,20 @@ export async function POST(req: NextRequest, context: RouteContext) {
   const [employee, vlType] = await Promise.all([
     prisma.employee.findUnique({
       where: { id: employeeId },
-      select: { id: true, startDate: true },
+      select: { id: true, startDate: true, employmentType: true },
     }),
     prisma.leaveType.findUnique({ where: { code: 'VL' } }),
   ])
 
   if (!employee) {
     return NextResponse.json({ error: 'Employee not found' }, { status: 404 })
+  }
+  // D21: external contractors do not get leave balances.
+  if (isExternalContractor(employee)) {
+    return NextResponse.json(
+      { error: 'Wykonawca zewnętrzny nie ma salda urlopowego.' },
+      { status: 409 }
+    )
   }
   if (!vlType) return missingCanonicalVl()
 

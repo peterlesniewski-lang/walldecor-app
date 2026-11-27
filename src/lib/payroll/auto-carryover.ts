@@ -1,4 +1,5 @@
 import type { Prisma, PrismaClient } from '@/generated/prisma'
+import { pluralPl } from '@/lib/plural-pl'
 import { monthNominative } from './month-names'
 import { payrollMonthKey, type PayrollPeriod } from './period'
 import { getPayrollSheet, settleEmployeeMonth, sheetRowResultFromError, type PayrollSheetRow } from './service'
@@ -86,13 +87,7 @@ export async function runPayrollAutoCarryover(db: PrismaClient, period: PayrollP
 
 // ─── Notifications ───────────────────────────────────────────────────────────
 
-/** Polish noun/adjective form for a count: 1 → one, 2–4 (not 12–14) → few, otherwise → many. */
-export function pluralPl(count: number, one: string, few: string, many: string) {
-  if (count === 1) return one
-  const lastDigit = count % 10
-  const lastTwo = count % 100
-  return lastDigit >= 2 && lastDigit <= 4 && (lastTwo < 12 || lastTwo > 14) ? few : many
-}
+export { pluralPl }
 
 export function payrollSheetLink(month: string) {
   return `/hr/payroll?month=${month}`

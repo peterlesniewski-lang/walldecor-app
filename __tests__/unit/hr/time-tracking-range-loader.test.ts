@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 import { prisma } from '@/lib/prisma'
 import { getHrSettings } from '@/lib/hr/hr-settings'
 import {
@@ -85,7 +86,7 @@ describe('loadTimeTrackingRange', () => {
     })
 
     expect(mockEmployeeFindMany).toHaveBeenCalledWith(expect.objectContaining({
-      where: { active: true, divisionId: 'JAG' },
+      where: { active: true, divisionId: 'JAG', AND: [STAFF_WHERE] },
     }))
     expect(result.employees).toEqual([])
   })
@@ -132,6 +133,7 @@ describe('loadTimeTrackingRange', () => {
         divisionId: 'JAG',
         departmentId: 'sales',
         id: 'employee-1',
+        AND: [STAFF_WHERE],
       },
       orderBy: [{ lastName: 'asc' }, { firstName: 'asc' }],
       select: {

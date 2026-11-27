@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { getScopedEmployeeWhere, HR_NO_EMPLOYEE_ACCESS_ID } from '@/lib/hr/access'
+import { STAFF_WHERE } from '@/lib/hr/contractors'
 
 function escapeCSV(value: string | null | undefined): string {
   if (value === null || value === undefined) return ''
@@ -101,7 +102,7 @@ export async function GET(req: NextRequest) {
     }
 
     const scopedEmployees = await prisma.employee.findMany({
-      where: scopedWhere,
+      where: { AND: [scopedWhere, STAFF_WHERE] },
       select: { id: true },
     })
     scopedEmployeeIds = scopedEmployees.map((employee) => employee.id)
@@ -114,7 +115,7 @@ export async function GET(req: NextRequest) {
         ? { startDate: { gte: startOfMonth, lte: endOfMonth } }
         : {}),
       ...(role === 'MANAGER' && scopedEmployeeIds ? { employeeId: { in: scopedEmployeeIds } } : {}),
-      ...(role === 'ADMIN' && divisionIdFilter ? { employee: { divisionId: divisionIdFilter } } : {}),
+      employee: role === 'ADMIN' && divisionIdFilter ? { AND: [STAFF_WHERE, { divisionId: divisionIdFilter }] } : STAFF_WHERE,
     },
     include: {
       employee: {

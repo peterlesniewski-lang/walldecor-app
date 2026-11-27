@@ -17,6 +17,8 @@ interface EmployeeSelectProps {
   onChange: (value: string | undefined) => void
   placeholder?: string
   excludeIds?: string[]
+  /** Which cards the picker offers. Required: HR pickers pass `staff`, account/installation pickers `all`. */
+  kind: 'staff' | 'contractors' | 'all'
 }
 
 export function EmployeeSelect({
@@ -24,6 +26,7 @@ export function EmployeeSelect({
   onChange,
   placeholder = 'Wybierz pracownika…',
   excludeIds = [],
+  kind,
 }: EmployeeSelectProps) {
   const [employees, setEmployees] = useState<Employee[]>([])
   const [search, setSearch] = useState('')
@@ -34,7 +37,7 @@ export function EmployeeSelect({
   const fetchEmployees = useCallback(async () => {
     setLoading(true)
     try {
-      const params = new URLSearchParams({ status: 'active', limit: '100' })
+      const params = new URLSearchParams({ status: 'active', limit: '100', kind })
       if (search) params.set('search', search)
       const res = await fetch(`/api/hr/employees?${params.toString()}`)
       if (res.ok) {
@@ -44,7 +47,7 @@ export function EmployeeSelect({
     } finally {
       setLoading(false)
     }
-  }, [search])
+  }, [search, kind])
 
   useEffect(() => {
     fetchEmployees()
