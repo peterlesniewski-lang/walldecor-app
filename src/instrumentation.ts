@@ -10,7 +10,8 @@ export async function register() {
   // The Subiekt bridge read is opt-in everywhere: only SUBIEKT_BRIDGE_AUTO_SYNC=on starts it.
   const subiekt = process.env.SUBIEKT_BRIDGE_AUTO_SYNC === 'on'
   // Payroll automat: runs in production unless PAYROLL_AUTO_CARRYOVER=off, elsewhere only with =on.
-  // Even when the schedule runs, nothing happens until an ADMIN enables the automat in the payroll settings.
+  // Even when the schedule runs, the carry-over and the daily change notice wait until an ADMIN enables
+  // the automat; the pay reminder before the last working day (D18) does not wait for the switch.
   const payroll = isPayrollSchedulerEnabledByEnv(process.env)
   if (!ksef && !subiekt && !payroll) return
 

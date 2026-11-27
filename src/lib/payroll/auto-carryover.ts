@@ -50,7 +50,8 @@ export async function runPayrollAutoCarryover(db: PrismaClient, period: PayrollP
       else summary.attention.push({ ...person, reasons: ['rozliczenie robocze czeka na dokończenie'] })
       continue
     }
-    if (!row.autoEligible || !row.suggestion) {
+    // Hourly rows are never autoEligible (D18); the kind check also narrows the suggestion's type.
+    if (!row.autoEligible || !row.suggestion || row.suggestion.kind !== 'PREVIOUS_MONTH') {
       summary.attention.push({ ...person, reasons: attentionReasons(row) })
       continue
     }

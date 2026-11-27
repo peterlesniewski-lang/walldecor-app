@@ -85,13 +85,16 @@ export function summarizeSettlement(input: SummaryInput): SettlementSummary {
   const withResolution = (resolution: OvertimeResolution) => approved.filter((line) => line.resolution === resolution)
 
   const pendingOvertimeMinutes = minutes(input.lines.filter((line) => line.entryStatus === 'pending'))
-  const unresolvedOvertimeMinutes = minutes(approved.filter((line) => !line.resolution))
   const isHourly = (input.baseBasis as PayrollBasis | null) === 'HOURLY_GROSS'
+  // D15: at an hourly rate every approved hour — Saturdays and overtime included — is paid at the same
+  // rate, so there is no "payout or time off" decision and no overtime minutes go into the version.
+  // A pending entry still blocks (HOURLY_ENTRIES_PENDING), and so does an open one (OPEN_TIME_ENTRY).
+  const unresolvedOvertimeMinutes = isHourly ? 0 : minutes(approved.filter((line) => !line.resolution))
 
   const inputBlockers: PayrollBlocker[] = []
   if (input.baseSalaryGrosze === null) inputBlockers.push('BASE_MISSING')
   if (!input.calendarInSync) inputBlockers.push('CALENDAR_OUT_OF_SYNC')
-  if (pendingOvertimeMinutes > 0) inputBlockers.push('OVERTIME_PENDING_APPROVAL')
+  if (!isHourly && pendingOvertimeMinutes > 0) inputBlockers.push('OVERTIME_PENDING_APPROVAL')
   if (unresolvedOvertimeMinutes > 0) inputBlockers.push('OVERTIME_UNRESOLVED')
   if (isHourly && input.pendingEntryCount > 0) inputBlockers.push('HOURLY_ENTRIES_PENDING')
   if (input.openEntryCount > 0) inputBlockers.push('OPEN_TIME_ENTRY')
@@ -104,8 +107,8 @@ export function summarizeSettlement(input: SummaryInput): SettlementSummary {
   return {
     bonusesGrosze: byKind('BONUS'),
     correctionsGrosze: byKind('CORRECTION'),
-    payoutOvertimeMinutes: minutes(withResolution('PAYOUT')),
-    timeOffOvertimeMinutes: minutes(withResolution('TIME_OFF')),
+    payoutOvertimeMinutes: isHourly ? 0 : minutes(withResolution('PAYOUT')),
+    timeOffOvertimeMinutes: isHourly ? 0 : minutes(withResolution('TIME_OFF')),
     pendingOvertimeMinutes,
     rejectedOvertimeMinutes: minutes(input.lines.filter((line) => line.entryStatus === 'rejected')),
     unresolvedOvertimeMinutes,

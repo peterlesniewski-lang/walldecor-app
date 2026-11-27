@@ -3,9 +3,12 @@
 // in-process schedule.
 //   node --preserve-symlinks --import tsx e2e/payroll-automation-run.ts run 2026-05  → one month's run
 //   node --preserve-symlinks --import tsx e2e/payroll-automation-run.ts due          → one scheduler check "now"
+//   node --preserve-symlinks --import tsx e2e/payroll-automation-run.ts remind 2026-03 → the pay reminder for a month
+//     (what the schedule sends once it has claimed the reminder slot on the reminder day)
 import { PrismaClient } from '../src/generated/prisma'
 import { validateInstallationCalendarE2eDatabase } from '../src/lib/installations/calendar-e2e-database'
 import { executePayrollAutoCarryover, runDuePayrollAutomation } from '../src/lib/payroll/auto-carryover-scheduler'
+import { sendPayrollPayReminder } from '../src/lib/payroll/pay-reminder'
 import { parsePayrollMonth } from '../src/lib/payroll/period'
 
 async function main() {
@@ -31,8 +34,12 @@ async function main() {
     } else if (mode === 'due') {
       const tick = await runDuePayrollAutomation(db)
       console.log(JSON.stringify({ carryover: tick.carryover.ran ? { ran: true, month: tick.carryover.month } : tick.carryover }))
+    } else if (mode === 'remind') {
+      const period = parsePayrollMonth(month)
+      if (!period) throw new Error('Usage: remind YYYY-MM')
+      console.log(JSON.stringify(await sendPayrollPayReminder(db, period)))
     } else {
-      throw new Error('Usage: run YYYY-MM | due')
+      throw new Error('Usage: run YYYY-MM | due | remind YYYY-MM')
     }
   } finally {
     await db.$disconnect()

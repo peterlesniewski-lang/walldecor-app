@@ -11,7 +11,7 @@ import {
   DropdownMenuTrigger,
 } from '@/components/ui/dropdown-menu'
 import { calculateEmployerCostGrosze, type EmployerRates } from '@/lib/payroll/employer-cost'
-import { formatGrosze, groszeToPlnString, parsePlnToGrosze } from '@/lib/payroll/money'
+import { formatGrosze, formatMinutesAsHours, groszeToPlnString, parsePlnToGrosze } from '@/lib/payroll/money'
 import { dayMonthGenitive, MONTH_NAMES, monthGenitive } from '@/lib/payroll/month-names'
 import { PAYROLL_BASIS_LABELS, type PayrollBasis } from '@/lib/payroll/types'
 import { BaseSalaryDialog } from './base-salary-dialog'
@@ -56,12 +56,23 @@ type SheetRow = {
     origin: VersionOrigin
   } | null
   previous: { month: string; finalGrossGrosze: number; finalNetGrosze: number; employerCostGrosze: number } | null
+  /** PREVIOUS_MONTH: copied from last month; HOURS: approved hours × rate, net from the last proportion. */
   suggestion: {
+    kind: 'PREVIOUS_MONTH' | 'HOURS'
     finalGrossGrosze: number
-    finalNetGrosze: number
-    employerCostGrosze: number
+    finalNetGrosze: number | null
+    employerCostGrosze: number | null
     employerCostSource: 'CALCULATED' | 'OVERRIDDEN'
-    sourceMonth: string
+    sourceMonth: string | null
+  } | null
+  /** Hourly basis only: calendar hours behind the amount. */
+  hours: {
+    approvedMinutes: number
+    pendingMinutes: number
+    pendingEntries: number
+    approvablePendingEntries: number
+    openEntries: number
+    calculation: { rateGrosze: number; approvedMinutes: number; grossGrosze: number } | null
   } | null
   flags: Note[]
   blockers: Note[]
@@ -104,6 +115,12 @@ function toInput(grosze: number | null | undefined) {
 function signed(grosze: number) {
   if (grosze === 0) return '±0'
   return `${grosze > 0 ? '+' : '−'}${formatGrosze(Math.abs(grosze))}`
+}
+
+/** "1 wpis", "3 wpisy", "5 wpisów" */
+function entriesPl(count: number) {
+  const few = count % 10 >= 2 && count % 10 <= 4 && (count % 100 < 12 || count % 100 > 14)
+  return `${count} ${count === 1 ? 'wpis' : few ? 'wpisy' : 'wpisów'}`
 }
 
 function personName(row: SheetRow) {
@@ -196,6 +213,8 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
   const [referenceState, setReferenceState] = useState<{ kind: 'idle' | 'saving' | 'saved' | 'error'; text?: string }>({ kind: 'idle' })
   const [automation, setAutomation] = useState<AutomationStatus | null>(null)
   const [acknowledging, setAcknowledging] = useState<string | null>(null)
+  const [approvingHours, setApprovingHours] = useState<string | null>(null)
+  const [hoursNotes, setHoursNotes] = useState<Record<string, { ok: boolean; text: string }>>({})
   const savedReference = useRef<string>('')
   const inputs = useRef(new Map<string, HTMLInputElement>())
   const loadedMonth = useRef<string | null>(null)
@@ -439,6 +458,43 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
     }
   }
 
+  /**
+   * "Zatwierdź godziny": approves the person's waiting time entries (with a clock-out) for the month,
+   * then re-reads the sheet so the row recalculates in place — no page reload. Typed amounts stay.
+   */
+  async function approveHours(row: SheetRow) {
+    const id = row.employee.id
+    if (approvingHours) return
+    setApprovingHours(id)
+    try {
+      const res = await fetch('/api/hr/payroll/sheet/approve-hours', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ employeeId: id, month }),
+      })
+      const json = await res.json().catch(() => null)
+      if (!res.ok || !json) {
+        setHoursNotes((current) => ({ ...current, [id]: { ok: false, text: json?.error ?? 'Nie udało się zatwierdzić godzin.' } }))
+        return
+      }
+      const approvedCount = json.approved as number
+      const leftOpen = json.leftOpen as number
+      setHoursNotes((current) => ({
+        ...current,
+        [id]: {
+          ok: leftOpen === 0,
+          text: `Zatwierdzono ${entriesPl(approvedCount)} czasu pracy`
+            + (leftOpen > 0 ? ` · ${entriesPl(leftOpen)} bez godziny wyjścia — uzupełnij w Czasie pracy` : ''),
+        },
+      }))
+      setReloadKey((key) => key + 1)
+    } catch {
+      setHoursNotes((current) => ({ ...current, [id]: { ok: false, text: 'Błąd połączenia — nic nie zostało zapisane.' } }))
+    } finally {
+      setApprovingHours(null)
+    }
+  }
+
   async function openDetail(row: SheetRow) {
     if (row.settlement) {
       router.push(`/hr/payroll/${row.settlement.id}`)
@@ -504,7 +560,7 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
             {MONTH_NAMES[m - 1]} <em>{y}</em>
           </h1>
           <p className={styles.lede}>
-            {rows.some((row) => row.suggestion)
+            {rows.some((row) => row.suggestion?.kind === 'PREVIOUS_MONTH')
               ? 'Kwoty z poprzedniego miesiąca są już w polach — popraw tylko to, co się zmieniło, i zatwierdź zaznaczone osoby.'
               : 'Wpisz brutto i netto z listy płac — Tab przechodzi do następnego pola, Enter zatwierdza wiersz.'}
           </p>
@@ -626,7 +682,26 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
           const gross = parsePlnToGrosze(draft.gross)
           const diff = row.previous && gross !== null ? gross - row.previous.finalGrossGrosze : null
           const result = results[id]
-          const sourceHint = suggested && row.suggestion ? `z ${monthGenitive(row.suggestion.sourceMonth)}` : null
+          const sourceHint = suggested && row.suggestion?.kind === 'PREVIOUS_MONTH' && row.suggestion.sourceMonth
+            ? `z ${monthGenitive(row.suggestion.sourceMonth)}`
+            : null
+          // Hourly basis: "38 h × 50,00 zł" next to gross; the net comes from the last approved proportion.
+          const calculation = row.hours?.calculation ?? null
+          // A typed gross wins over the calculation (D15); the hint then still shows what was calculated.
+          // Non-breaking spaces keep "26 h" and "50,00 zł" whole; the hint wraps between them.
+          const keep = (text: string) => text.replace(/ /g, '\u00a0')
+          const calcText = calculation
+            ? `${keep(formatMinutesAsHours(calculation.approvedMinutes))} × ${keep(formatGrosze(calculation.rateGrosze))}`
+            : null
+          const calcHint = calculation && calcText
+            ? gross !== null && gross !== calculation.grossGrosze
+              ? `wyliczono ${calcText} = ${keep(formatGrosze(calculation.grossGrosze))}`
+              : `= ${calcText}`
+            : null
+          const netHint = suggested && row.suggestion?.kind === 'HOURS' && row.suggestion.sourceMonth
+            ? `proporcja z ${monthGenitive(row.suggestion.sourceMonth)}`
+            : sourceHint
+          const hoursNote = hoursNotes[id]
           const invalid = (value: string) => value.trim() !== '' && parsePlnToGrosze(value) === null
           // An approved row is never "blocked": live blockers only matter once someone corrects it.
           const change = approved ? row.changeAfterApproval : null
@@ -670,6 +745,14 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
                     <span>angaż nie ustawiony</span>
                   )}
                 </div>
+                {row.hours && (
+                  <HoursLine
+                    name={name}
+                    hours={row.hours}
+                    busy={approvingHours === id}
+                    onApprove={() => void approveHours(row)}
+                  />
+                )}
               </div>
 
               <label className={`${styles.cell} ${styles.aGross}`}>
@@ -685,6 +768,7 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
                   onChange={(event) => setDraft(row, { gross: event.target.value })}
                   onKeyDown={(event) => onFieldKey(event, row, 'gross')}
                 />
+                {calcHint && <span className={styles.calcHint} data-testid={`payroll-calc-${id}`}>{calcHint}</span>}
                 {sourceHint && <span className={styles.fieldHint}>{sourceHint}</span>}
               </label>
 
@@ -701,7 +785,7 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
                   onChange={(event) => setDraft(row, { net: event.target.value })}
                   onKeyDown={(event) => onFieldKey(event, row, 'net')}
                 />
-                {sourceHint && <span className={styles.fieldHint}>{sourceHint}</span>}
+                {netHint && <span className={styles.fieldHint}>{netHint}</span>}
               </label>
 
               <div className={`${styles.cell} ${styles.aCost}`}>
@@ -804,7 +888,15 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
                 {!approved && row.blockers.map((blocker) => (
                   <span key={blocker.code} className={styles.blockNote}>
                     {blocker.message}
-                    {blocker.code === 'BASE_MISSING' ? (
+                    {row.hours && blocker.code === 'HOURLY_ENTRIES_PENDING' && row.hours.approvablePendingEntries > 0 ? (
+                      <button type="button" className={`${styles.btn} ${styles.ghost}`} disabled={approvingHours === id} onClick={() => void approveHours(row)}>
+                        Zatwierdź godziny
+                      </button>
+                    ) : row.hours && (blocker.code === 'HOURLY_ENTRIES_PENDING' || blocker.code === 'OPEN_TIME_ENTRY') ? (
+                      <Link className={`${styles.btn} ${styles.ghost}`} href={`/hr/time-tracking?view=month&mode=employee&month=${month}&employeeId=${id}`}>
+                        Czas pracy
+                      </Link>
+                    ) : blocker.code === 'BASE_MISSING' ? (
                       <button type="button" className={`${styles.btn} ${styles.ghost}`} onClick={() => setBaseFor(row.employee)}>Angaż…</button>
                     ) : (
                       <button type="button" className={`${styles.btn} ${styles.ghost}`} disabled={creatingFor === id} onClick={() => void openDetail(row)}>
@@ -814,6 +906,11 @@ export function PayrollMonthView({ initialMonth, maxMonth }: { initialMonth: str
                   </span>
                 ))}
                 {!approved && row.flags.map((flag) => <span key={flag.code} className={styles.flag}>{flag.message}</span>)}
+                {hoursNote && (
+                  <span role={hoursNote.ok ? 'status' : 'alert'} className={`${styles.result} ${hoursNote.ok ? styles.resultOk : styles.resultErr}`}>
+                    {hoursNote.text}
+                  </span>
+                )}
                 {result && <ResultNote result={result} />}
               </div>
             </div>
@@ -882,6 +979,38 @@ function AutomationLine({ status }: { status: AutomationStatus }) {
       </span>
       <Link href="/hr/payroll/rates#automat" className={styles.autoLink}>Ustawienia płac</Link>
     </p>
+  )
+}
+
+/** Hourly basis: "38 h zatwierdzone · 6 h czeka" and the one-click approval of the waiting hours. */
+function HoursLine({ name, hours, busy, onApprove }: {
+  name: string
+  hours: NonNullable<SheetRow['hours']>
+  busy: boolean
+  onApprove: () => void
+}) {
+  const open = hours.pendingEntries - hours.approvablePendingEntries
+  return (
+    <div className={styles.hoursLine}>
+      <span data-testid="payroll-hours">
+        <span className={styles.hoursApproved}><span className={styles.num}>{formatMinutesAsHours(hours.approvedMinutes)}</span> zatwierdzone</span>
+        {hours.approvablePendingEntries > 0 && (
+          <span className={styles.hoursWaiting}> · <span className={styles.num}>{formatMinutesAsHours(hours.pendingMinutes)}</span> czeka</span>
+        )}
+        {open > 0 && <span className={styles.hoursWaiting}> · {entriesPl(open)} bez wyjścia</span>}
+      </span>
+      {hours.approvablePendingEntries > 0 && (
+        <button
+          type="button"
+          className={`${styles.btn} ${styles.ghost} ${styles.rowBtn}`}
+          disabled={busy}
+          aria-label={`Zatwierdź godziny — ${name}`}
+          onClick={onApprove}
+        >
+          {busy ? 'Zatwierdzam…' : 'Zatwierdź godziny'}
+        </button>
+      )}
+    </div>
   )
 }
 

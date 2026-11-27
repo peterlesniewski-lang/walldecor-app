@@ -53,6 +53,8 @@ function getTypeIcon(type: string) {
       return <WalletCards className="h-4 w-4 shrink-0 text-emerald-700" />
     case 'payroll_change':
       return <WalletCards className="h-4 w-4 shrink-0 text-amber-600" />
+    case 'payroll_reminder':
+      return <WalletCards className="h-4 w-4 shrink-0 text-[#b4441f]" />
     default:
       return <Bell className="h-4 w-4 shrink-0 text-gray-400" />
   }

@@ -127,6 +127,7 @@ const FIELD_LABELS: Record<string, string> = {
   payrollOfficeConfirmationCleared: 'potwierdzenie kadrowej unieważnione',
   origin: 'zatwierdził',
   changesText: 'zmiany',
+  hourlyRateGrosze: 'stawka godzinowa',
 }
 const VALUE_LABELS: Record<string, string> = {
   BONUS: 'premia',
@@ -237,6 +238,8 @@ export function PayrollSettlementView({ id }: { id: string }) {
   const isDraft = detail.status === 'DRAFT'
   const s = detail.summary
   const confirmed = Boolean(detail.payrollOfficeConfirmedAt)
+  // D15: at an hourly rate every approved hour is paid at the rate — no "payout or time off" decision.
+  const hourly = detail.baseBasis === 'HOURLY_GROSS'
   const calendarReady = detail.calendarInSync && !s.inputBlockers.some((b) => b.startsWith('OVERTIME') || b === 'HOURLY_ENTRIES_PENDING' || b === 'OPEN_TIME_ENTRY')
   const steps = [
     { label: 'Podstawa', done: detail.baseSalaryGrosze !== null },
@@ -325,7 +328,9 @@ export function PayrollSettlementView({ id }: { id: string }) {
             <header className={styles.panelHead}>
               <h2 id="ot-title" className={styles.panelTitle}>Nadgodziny z kalendarza</h2>
               <span className={styles.panelNote}>
-                do wypłaty {formatMinutesAsHours(s.payoutOvertimeMinutes)} · czas wolny {formatMinutesAsHours(s.timeOffOvertimeMinutes)}
+                {hourly
+                  ? <>płatne stawką · przepracowane {formatMinutesAsHours(detail.approvedWorkedMinutes)}</>
+                  : <>do wypłaty {formatMinutesAsHours(s.payoutOvertimeMinutes)} · czas wolny {formatMinutesAsHours(s.timeOffOvertimeMinutes)}</>}
               </span>
             </header>
             <div className={styles.panelBody}>
@@ -333,6 +338,11 @@ export function PayrollSettlementView({ id }: { id: string }) {
                 Godziny nie są tu wpisywane — pochodzą z modułu Czas pracy. Liczą się wyłącznie wpisy zatwierdzone.
                 {detail.calendarSyncedAt && ` Ostatnie pobranie: ${dateTime(detail.calendarSyncedAt)}.`}
               </p>
+              {hourly && (
+                <p className={styles.okLine} data-testid="hourly-overtime-info">
+                  Stawka godzinowa: każda zatwierdzona godzina — także w sobotę i ponad normę — jest płatna tą samą stawką. Nie wybierasz „wypłata czy czas wolny”.
+                </p>
+              )}
               {detail.overtimeLines.length === 0 && <p className={styles.hint}>Brak nadgodzin w kalendarzu za ten miesiąc.</p>}
               <div className={styles.lines}>
                 {detail.overtimeLines.map((line) => (
@@ -345,6 +355,9 @@ export function PayrollSettlementView({ id }: { id: string }) {
                       {line.entryStatus === 'rejected' && <span className={`${styles.tag} ${styles.tagWarn}`}>odrzucony — nie liczy się</span>}
                       {line.resolutionSource === 'OVERTIME_REQUEST' && <span className={styles.tag}>z wniosku</span>}
                     </span>
+                    {hourly ? (
+                      <span className={styles.tag}>płatne stawką</span>
+                    ) : (
                     <span className={styles.seg} role="group" aria-label={`Rozliczenie nadgodzin ${line.date}`}>
                       {(['PAYOUT', 'TIME_OFF'] as const).map((resolution) => (
                         <button
@@ -358,6 +371,7 @@ export function PayrollSettlementView({ id }: { id: string }) {
                         </button>
                       ))}
                     </span>
+                    )}
                   </div>
                 ))}
               </div>

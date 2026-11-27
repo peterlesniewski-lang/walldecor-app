@@ -231,7 +231,12 @@ describe('carryover flags (each on its own)', () => {
 
   it('should flag HOURLY_BASIS and never mark the row as ready', () => {
     const hourly = { baseSalaryId: 'base-h', from: '2026-10-01', amountGrosze: 5000, basis: 'HOURLY_GROSS' as const }
-    const result = evaluateCarryover(input({ baseSegments: [hourly], source: source({ baseSalaryGrosze: 5000, baseBasis: 'HOURLY_GROSS' }) }))
+    // Approved hours present (stage 3): otherwise HOURLY_NO_HOURS would join the flag.
+    const result = evaluateCarryover(input({
+      baseSegments: [hourly],
+      source: source({ baseSalaryGrosze: 5000, baseBasis: 'HOURLY_GROSS' }),
+      approvedWorkedMinutes: 600,
+    }))
     expect([result.flags, result.autoEligible]).toEqual([['HOURLY_BASIS'], false])
   })
 
@@ -259,6 +264,7 @@ describe('carryover flag descriptions', () => {
     ['PREVIOUS_HAD_ABSENCE', 'poprzedni miesiąc zawierał nieobecność zmieniającą wypłatę — sprawdź kwotę'],
     ['PAY_AFFECTING_ABSENCE', 'nieobecność zmieniająca wypłatę — sprawdź kwotę'],
     ['HOURLY_BASIS', 'stawka godzinowa — sprawdź kwotę'],
+    ['HOURLY_NO_HOURS', 'brak godzin — sprawdź kwotę'],
     ['EMPLOYMENT_TYPE_MISSING', 'brak rodzaju umowy — uzupełnij w karcie'],
   ] as const)('should describe %s in Polish', (flag, text) => {
     expect(describeCarryoverFlag(flag, { period: OCTOBER, employment })).toBe(text)

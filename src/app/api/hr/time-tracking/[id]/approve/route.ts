@@ -3,6 +3,7 @@ import { getServerSession } from 'next-auth'
 import { authOptions } from '@/lib/auth'
 import { prisma } from '@/lib/prisma'
 import { canViewEmployeeRecord } from '@/lib/hr/access'
+import { approveTimeEntry } from '@/lib/hr/time-tracking/approve-entry'
 
 export async function PATCH(
   _req: NextRequest,
@@ -35,13 +36,7 @@ export async function PATCH(
     }
   }
 
-  const entry = await prisma.timeEntry.update({
-    where: { id },
-    data: {
-      status: 'approved',
-      approvedById: session.user.id,
-    },
-  })
+  const entry = await approveTimeEntry(prisma, id, session.user.id)
 
   return NextResponse.json(entry)
 }

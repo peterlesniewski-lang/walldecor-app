@@ -296,7 +296,7 @@
 
 .sheetHead, .sheetRow {
   display: grid;
-  grid-template-columns: 26px minmax(0, 2.2fr) minmax(96px, 1fr) minmax(96px, 1fr) minmax(118px, 1.15fr) minmax(70px, .7fr) 156px 32px;
+  grid-template-columns: 26px minmax(0, 2.2fr) minmax(96px, 1fr) minmax(96px, 1fr) minmax(118px, 1.15fr) minmax(96px, .8fr) 156px 32px;
   grid-template-areas: "check person gross net cost diff status actions";
   column-gap: 14px;
   align-items: center;
@@ -532,3 +532,21 @@
 @container (max-width: 760px) {
   .autoGrid { grid-template-columns: minmax(0, 1fr); }
 }
+
+/* ── Hourly basis (stage 3) ──────────────────────────── */
+/* The hours behind an hourly row: a ledger line under the name, mono figures like the amounts. */
+.hoursLine {
+  display: flex; flex-wrap: wrap; align-items: center; gap: 6px 10px; margin-top: 6px;
+  font: 500 11.5px/1.3 var(--pr-mono); color: var(--pr-ink);
+}
+.hoursLine .num { font-size: 12px; }
+.hoursApproved { white-space: nowrap; }
+.hoursWaiting { color: #8a5a12; white-space: nowrap; }
+.hoursLine .rowBtn { min-height: 26px; padding: 0 10px; font-family: inherit; }
+/* "38 h × 50,00 zł" under gross: the calculation, upright — unlike the italic suggestion source. */
+.calcHint {
+  min-width: 0; font: 500 10.5px/1.3 var(--pr-mono); text-align: right;
+  color: color-mix(in srgb, var(--pr-ink) 72%, var(--pr-muted)); font-variant-numeric: tabular-nums;
+}
+/* Wraps between figures (each held together by non-breaking spaces), never widening the column. */
+.calcHint { overflow-wrap: anywhere; }

@@ -56,7 +56,11 @@ export type DerivedOvertimeLine = {
 export type CalendarSnapshot = {
   lines: DerivedOvertimeLine[]
   approvedWorkedMinutes: number
+  /** Worked minutes (time minus breaks) of entries still waiting for approval; open entries count 0. */
+  pendingWorkedMinutes: number
   pendingEntryCount: number
+  /** Pending entries that have a clock-out, i.e. can be approved right away. */
+  approvablePendingEntryCount: number
   openEntryCount: number
   baseSegments: BaseSegment[]
   baseSalaryGrosze: number | null
@@ -128,17 +132,24 @@ export function buildCalendarSnapshot(input: {
     .sort((a, b) => a.isoDate.localeCompare(b.isoDate) || a.entry.id.localeCompare(b.entry.id))
 
   let approvedWorkedMinutes = 0
+  let pendingWorkedMinutes = 0
   let pendingEntryCount = 0
+  let approvablePendingEntryCount = 0
   let openEntryCount = 0
   const lines: DerivedOvertimeLine[] = []
 
   for (const { entry, isoDate } of monthEntries) {
     const status = normalizeEntryStatus(entry.status)
     if (entry.clockOut === null) openEntryCount++
-    if (status === 'pending') pendingEntryCount++
-    if (status === 'approved') {
-      approvedWorkedMinutes += Math.max(0, (entry.totalMinutes ?? 0) - (entry.breakMinutes ?? 0))
+    const workedMinutes = Math.max(0, (entry.totalMinutes ?? 0) - (entry.breakMinutes ?? 0))
+    if (status === 'pending') {
+      pendingEntryCount++
+      if (entry.clockOut !== null) {
+        approvablePendingEntryCount++
+        pendingWorkedMinutes += workedMinutes
+      }
     }
+    if (status === 'approved') approvedWorkedMinutes += workedMinutes
     if (entry.overtimeMinutes <= 0) continue
 
     const previous = existing.get(entry.id)
@@ -186,7 +197,9 @@ export function buildCalendarSnapshot(input: {
   return {
     lines,
     approvedWorkedMinutes,
+    pendingWorkedMinutes,
     pendingEntryCount,
+    approvablePendingEntryCount,
     openEntryCount,
     baseSegments,
     baseSalaryGrosze: latestBase?.amountGrosze ?? null,
